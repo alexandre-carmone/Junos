@@ -328,16 +328,21 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
         }
     });
 
-    // Subscribe to the INDI properties we care about on the active train's
-    // camera and mount, and also fire a one-shot `device_property_get` as a
-    // fast path for devices that are already connected. The subscribe makes
-    // KStars push the property as soon as the device comes online — without
-    // it we'd wait until the first natural push (minutes on an idle sim).
+    // Subscribe + get the INDI properties we care about on the active train's
+    // camera (CCD_INFO) and mount (EQUATORIAL_EOD_COORD).
+    //
+    // Pitfall: `processDeviceCommands` in kstars/ekos/ekoslive/message.cpp:1664
+    // drops the command silently if `INDIListener::findDevice` fails — and the
+    // INDI driver may not be registered yet right after profile start. So
+    // fire-and-forget isn't enough: we retry on a timer until the property
+    // actually comes back, then stop.
     {
-        let prop_send = send_fn.clone();
+        let trains_sig2 = store.optical_trains;
+        let camera_sig  = store.camera_status;
+        let mount_sig   = store.mount_status;
         let last_cam   = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let last_mount = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
-        let trains_sig2 = store.optical_trains;
+        let send_for_effect = send_fn.clone();
         Effect::new(move |_| {
             let trains = trains_sig2.get();
             let Some(train) = trains.first() else { return };
@@ -346,32 +351,26 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                 && *last_cam.borrow() != train.camera
             {
                 *last_cam.borrow_mut() = train.camera.clone();
-                let sub = serde_json::json!({
-                    "type":"device_property_subscribe",
-                    "payload":{ "device": train.camera, "properties": ["CCD_INFO"] }
-                }).to_string();
-                prop_send(sub);
-                let get = serde_json::json!({
-                    "type":"device_property_get",
-                    "payload":{ "device": train.camera, "property": "CCD_INFO", "compact": true }
-                }).to_string();
-                prop_send(get);
+                spawn_retry_property(
+                    send_for_effect.clone(),
+                    train.camera.clone(),
+                    "CCD_INFO",
+                    camera_sig,
+                    |cs| cs.as_ref().and_then(|c| c.sensor_width).is_some(),
+                );
             }
 
             if !train.mount.is_empty() && train.mount != "--"
                 && *last_mount.borrow() != train.mount
             {
                 *last_mount.borrow_mut() = train.mount.clone();
-                let sub = serde_json::json!({
-                    "type":"device_property_subscribe",
-                    "payload":{ "device": train.mount, "properties": ["EQUATORIAL_EOD_COORD"] }
-                }).to_string();
-                prop_send(sub);
-                let get = serde_json::json!({
-                    "type":"device_property_get",
-                    "payload":{ "device": train.mount, "property": "EQUATORIAL_EOD_COORD", "compact": true }
-                }).to_string();
-                prop_send(get);
+                spawn_retry_property(
+                    send_for_effect.clone(),
+                    train.mount.clone(),
+                    "EQUATORIAL_EOD_COORD",
+                    mount_sig,
+                    |ms| ms.as_ref().and_then(|m| m.ra_h).is_some(),
+                );
             }
         });
     }
@@ -414,4 +413,46 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
     });
 
     (store, send_fn)
+}
+
+/// Repeatedly subscribe+get an INDI property on a device until `done_pred`
+/// is satisfied (i.e. the expected data has landed in the store), or we
+/// give up after a reasonable timeout. Needed because `processDeviceCommands`
+/// in KStars silently drops commands while the INDI driver isn't registered
+/// yet (`message.cpp:1664`), and drivers may take seconds to come up.
+fn spawn_retry_property<T, F>(
+    send: SendCmd,
+    device: String,
+    property: &'static str,
+    signal: RwSignal<T>,
+    done_pred: F,
+)
+where
+    T: Clone + Send + Sync + 'static,
+    F: Fn(&T) -> bool + 'static,
+{
+    use gloo_timers::future::TimeoutFuture;
+    spawn_local(async move {
+        // First shot — subscribe (persistent push) + get (fast path).
+        let sub = serde_json::json!({
+            "type":"device_property_subscribe",
+            "payload":{ "device": device, "properties":[property] }
+        }).to_string();
+        let get = serde_json::json!({
+            "type":"device_property_get",
+            "payload":{ "device": device, "property": property, "compact": true }
+        }).to_string();
+        send(sub.clone());
+        send(get.clone());
+
+        // Retry budget: 60 attempts × 1s = 1 minute.
+        for _ in 0..60 {
+            TimeoutFuture::new(1_000).await;
+            if done_pred(&signal.get_untracked()) {
+                return;
+            }
+            send(sub.clone());
+            send(get.clone());
+        }
+    });
 }
