@@ -2,6 +2,12 @@ set shell := ["bash", "-cu"]
 
 default: run
 
+# Install all toolchain bits needed to build and run rekos.
+# Assumes `rustup` and `cargo` are already on PATH.
+install:
+    rustup target add wasm32-unknown-unknown
+    cargo install --locked trunk
+
 # Rebuild WASM frontend (release) and server, then run the server.
 run: build
     ./target/release/rekos-server
