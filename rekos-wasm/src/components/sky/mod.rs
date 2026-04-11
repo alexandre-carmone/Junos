@@ -761,9 +761,6 @@ pub fn SkyTab(
                 />
             </div>
 
-            // ── Tab switcher (in-planetarium gear bar) ──────────────────────
-            <SkyTabSwitcher />
-
             // ── Context menu ────────────────────────────────────────────────
             <SkyContextMenu
                 ctx_menu=ctx_menu
@@ -793,7 +790,7 @@ pub fn SkyTab(
 // ---------------------------------------------------------------------------
 
 #[component]
-fn SkyTabSwitcher() -> impl IntoView {
+pub fn SkyTabSwitcher() -> impl IntoView {
     let active = use_context::<ActiveTabCtx>()
         .map(|c| c.0)
         .unwrap_or_else(|| RwSignal::new(Tab::Sky));

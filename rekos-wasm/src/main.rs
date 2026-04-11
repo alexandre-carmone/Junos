@@ -18,8 +18,8 @@ use leptos::prelude::*;
 use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
 use components::focus::FocusTab;
-use components::sky::SkyTab;
-use i18n::{Lang, t};
+use components::sky::{SkyTab, SkyTabSwitcher};
+use i18n::Lang;
 use ws::{AlignDefaultsData, SolveRadius};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -159,18 +159,23 @@ fn App() -> impl IntoView {
 
     view! {
         <div id="rekos-app" style="position:fixed; inset:0; background:#0a0a0f; color:#c0c0d0; font-family:monospace; overflow:hidden;">
-            <SkyTab
-                mount=mount
-                camera=camera
-                site=site
-                solve=solve
-                focal_length_mm=focal_length_mm
-                send=Arc::clone(&send)
-                center_alt=sky_center_alt
-                center_az=sky_center_az
-                fov_radius=sky_fov_radius
-                follow_mount=sky_follow_mount
-            />
+            <div style=move || format!(
+                "position:absolute; inset:0; {}",
+                if focus_visible() { "display:none;" } else { "" }
+            )>
+                <SkyTab
+                    mount=mount
+                    camera=camera
+                    site=site
+                    solve=solve
+                    focal_length_mm=focal_length_mm
+                    send=Arc::clone(&send)
+                    center_alt=sky_center_alt
+                    center_az=sky_center_az
+                    fov_radius=sky_fov_radius
+                    follow_mount=sky_follow_mount
+                />
+            </div>
             <Show when=focus_visible>
                 <div style="position:absolute; inset:0; z-index:40;">
                     <FocusTab
@@ -180,14 +185,9 @@ fn App() -> impl IntoView {
                     />
                 </div>
             </Show>
-            <div class="status-strip"
-                 style="position:fixed; top:0; left:0; right:0; z-index:500; \
-                        padding:6px 12px; background:rgba(6,6,15,0.75); \
-                        border-bottom:1px solid #222; font-size:12px; color:#88aaff; \
-                        pointer-events:none; \
-                        padding-top:max(6px, env(safe-area-inset-top));">
-                {status_text}
-            </div>
+            // Tab switcher lives at the app root so it stays visible on
+            // every tab (SkyTab is hidden when another tab is active).
+            <SkyTabSwitcher />
         </div>
     }
 }
