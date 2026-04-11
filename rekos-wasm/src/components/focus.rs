@@ -206,9 +206,11 @@ pub fn FocusTab(
             // Body
             <div class="focus-body" style="gap:0;">
                 // Left — preview + HFR plot
-                <div style="display:grid; grid-template-rows:1fr 110px; \
+                <div class="focus-left-col"
+                     style="display:grid; grid-template-rows:1fr 110px; \
                             min-height:0; border-right:1px solid #222;">
-                    <div style="position:relative; min-height:0; overflow:hidden; \
+                    <div class="focus-preview"
+                         style="position:relative; min-height:0; overflow:hidden; \
                                 display:flex; align-items:center; justify-content:center; \
                                 background:#06060c;">
                         {move || match focus.with(|f| f.preview_url.clone()) {
@@ -222,13 +224,14 @@ pub fn FocusTab(
                                 />
                             }.into_any(),
                             None => view! {
-                                <div style="color:#444; font-size:12px;">
+                                <div style="color:#444; font-size:12px; text-align:center; padding:0 12px;">
                                     "No focus frame yet — click Capture or Loop"
                                 </div>
                             }.into_any(),
                         }}
                     </div>
-                    <div style="border-top:1px solid #222; padding:6px; background:#06060c;">
+                    <div class="focus-hfr-pane"
+                         style="border-top:1px solid #222; padding:6px; background:#06060c;">
                         <canvas
                             node_ref=canvas_ref
                             width="640"

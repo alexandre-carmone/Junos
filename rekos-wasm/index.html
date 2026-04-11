@@ -99,11 +99,18 @@
             grid-template-columns: 2fr 1fr;
             min-height: 0;
         }
+        .focus-left-col {
+            display: grid;
+            grid-template-rows: 1fr 110px;
+            min-height: 0;
+        }
 
         /* ── TABLET  768 – 1023 px ───────────────────────────────────────── */
         @media (min-width: 768px) and (max-width: 1023px) {
             .sky-controls-panel { min-width: 160px; }
             .focus-body { grid-template-columns: 3fr 2fr; }
+            .focus-left-col { grid-template-rows: 1fr 90px; }
+            .focus-hfr-pane canvas { height: 76px !important; }
         }
 
         /* ── SMARTPHONE  ≤ 767 px  (iPhone SE → 14 Pro Max) ─────────────── */
@@ -187,11 +194,20 @@
             }
             .focus-body {
                 grid-template-columns: 1fr !important;
-                grid-template-rows: minmax(220px, 1fr) auto !important;
+                grid-template-rows: minmax(50dvh, 1fr) auto !important;
             }
             .focus-body > div:first-child {
                 border-right: none !important;
                 border-bottom: 1px solid #222 !important;
+            }
+            .focus-left-col {
+                grid-template-rows: 1fr 72px !important;
+            }
+            .focus-hfr-pane {
+                padding: 4px !important;
+            }
+            .focus-hfr-pane canvas {
+                height: 62px !important;
             }
             .focus-setting-row > span:first-child {
                 flex: 0 0 110px !important;
