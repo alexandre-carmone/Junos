@@ -1,15 +1,31 @@
 //! Minimal WebSocket + DeviceStore for milestone 1.
 //!
 //! Scope: attach to the rekos-server `/ws` endpoint and decode just the
-//! Ekos Live messages the planetarium needs for the FOV reticle:
-//!   - `new_connection_state`    → KStars attached flag
-//!   - `new_mount_state`         → mount RA/Dec + slew/track/park flags
-//!   - `get_scopes`              → primary telescope focal length
-//!   - `train_get_all`           → list of optical trains
-//!   - `train_settings_get`      → focal length + pixel size + sensor WxH
+//! Ekos Live messages the planetarium needs for the FOV reticle.
 //!
-//! Any other Ekos Live message is ignored. Device tabs and their state
-//! come back in later milestones.
+//! # Where FOV inputs actually come from
+//!
+//! The FOV reticle needs focal length, aperture, pixel size and sensor
+//! dimensions. These live in three different places in KStars:
+//!
+//! 1. **Scope focal length + aperture** — `get_scopes` returns the OAL
+//!    scope DB as `[{name, focal_length, aperture, …}]`. We match the
+//!    active train's `scope` field against this list by name.
+//! 2. **Active train's scope/camera names** — `train_get_all` returns
+//!    records `[{id, name, scope, camera, mount, …}]`. Take the first
+//!    entry as the active train.
+//! 3. **Camera pixel size + sensor dimensions** — these come from the
+//!    INDI `CCD_INFO` number property. Fetch via
+//!    `device_property_get {device: <camera name>, property: "CCD_INFO"}`.
+//!    The reply comes back as a `device_property_get` event whose payload
+//!    is `{device, name, state, numbers:[{name, value}, …]}` (compact
+//!    form from `kstars/indi/indistd.cpp::numberToJson`). Relevant element
+//!    names: `CCD_MAX_X`, `CCD_MAX_Y`, `CCD_PIXEL_SIZE_X`, `CCD_PIXEL_SIZE_Y`,
+//!    or the fallback `CCD_PIXEL_SIZE`.
+//!
+//! Note: `train_settings_get` is NOT a source for FOV data — it returns
+//! `OpticalTrainSettings`, a map of module-enum IDs (`"0"`, `"1"`, …) to
+//! per-module configs (Capture/Focus/Guide/Align settings), not hardware.
 
 use std::sync::Arc;
 
@@ -61,10 +77,15 @@ pub struct OpticalTrain {
     pub guider: String,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ScopeInfo {
+    pub name: String,
+    pub focal_length_mm: f64,
+    pub aperture_mm: f64,
+}
+
 // ---------------------------------------------------------------------------
 // Stub types still referenced by sky/actions.rs via crate-level contexts.
-// Kept as defaults — actions.rs reads them but milestone 1 ignores the
-// contents on the wire.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -92,20 +113,26 @@ pub struct AlignDefaultsData {
 #[derive(Clone)]
 pub struct DeviceStore {
     pub connected:          RwSignal<bool>,
+    /// Ekos::Success, i.e. a profile is running and requests that gate on it
+    /// will actually be handled. Driven by `new_connection_state.online`.
+    pub online:             RwSignal<bool>,
     pub mount_status:       RwSignal<Option<MountStatusData>>,
     pub camera_status:      RwSignal<Option<CameraStatusData>>,
     pub telescope_settings: RwSignal<TelescopeSettingsData>,
     pub optical_trains:     RwSignal<Vec<OpticalTrain>>,
+    pub scopes:             RwSignal<Vec<ScopeInfo>>,
 }
 
 impl DeviceStore {
     fn new() -> Self {
         Self {
             connected:          RwSignal::new(false),
+            online:             RwSignal::new(false),
             mount_status:       RwSignal::new(None),
             camera_status:      RwSignal::new(None),
             telescope_settings: RwSignal::new(TelescopeSettingsData::default()),
             optical_trains:     RwSignal::new(Vec::new()),
+            scopes:             RwSignal::new(Vec::new()),
         }
     }
 
@@ -113,7 +140,9 @@ impl DeviceStore {
         match type_str {
             "new_connection_state" => {
                 let connected = payload["connected"].as_bool().unwrap_or(false);
+                let online = payload["online"].as_bool().unwrap_or(false);
                 self.connected.set(connected);
+                self.online.set(connected && online);
                 if !connected {
                     self.mount_status.set(None);
                     self.camera_status.set(None);
@@ -133,24 +162,22 @@ impl DeviceStore {
                         ms.parked   = sl.contains("park");
                         ms.connected = true;
                     }
-                    // KStars sends RA in degrees (ra) and Dec in degrees (de).
+                    // KStars sends RA and Dec in degrees.
                     if let Some(ra_deg) = payload["ra"].as_f64() { ms.ra_h = Some(ra_deg / 15.0); }
                     if let Some(dec)    = payload["de"].as_f64() { ms.dec_deg = Some(dec); }
                 });
             }
 
             "get_scopes" => {
-                // sendScopes(): array of { id, model, vendor, type, aperture, focal_length }.
-                // First entry = primary scope.
+                // OAL scope DB — full list, not just the active one.
+                // Shape: [{ id, model, vendor, type, name, focal_length, aperture }].
                 if let Some(arr) = payload.as_array() {
-                    if let Some(s) = arr.first() {
-                        let fl = s["focal_length"].as_f64();
-                        let ap = s["aperture"].as_f64();
-                        self.telescope_settings.update(|t| {
-                            if fl.is_some() { t.focal_length_mm = fl; }
-                            if ap.is_some() { t.aperture_mm = ap; }
-                        });
-                    }
+                    let scopes: Vec<ScopeInfo> = arr.iter().map(|s| ScopeInfo {
+                        name:            s["name"].as_str().unwrap_or("").to_string(),
+                        focal_length_mm: s["focal_length"].as_f64().unwrap_or(0.0),
+                        aperture_mm:     s["aperture"].as_f64().unwrap_or(0.0),
+                    }).collect();
+                    self.scopes.set(scopes);
                 }
             }
 
@@ -164,36 +191,81 @@ impl DeviceStore {
                         scope:  t["scope"].as_str().unwrap_or("").to_string(),
                         guider: t["guider"].as_str().unwrap_or("").to_string(),
                     }).collect();
+                    // Carry the first train's camera name into camera_status so
+                    // it's visible before CCD_INFO comes back.
+                    if let Some(first) = trains.first() {
+                        self.camera_status.update(|opt| {
+                            let cs = opt.get_or_insert_with(CameraStatusData::default);
+                            if !first.camera.is_empty() { cs.device = first.camera.clone(); }
+                        });
+                    }
                     self.optical_trains.set(trains);
                 }
             }
 
-            "train_settings_get" => {
-                // Settings is a flat key/value map. We pull focal length + pixel
-                // size + sensor dimensions and feed them into telescope_settings +
-                // camera_status so the planetarium FOV reticle uses real values.
-                let fl = payload["focalLength"].as_f64()
-                    .or_else(|| payload["focal_length"].as_f64());
-                let ap = payload["aperture"].as_f64();
-                if fl.is_some() || ap.is_some() {
-                    self.telescope_settings.update(|t| {
-                        if fl.is_some() { t.focal_length_mm = fl; }
-                        if ap.is_some() { t.aperture_mm = ap; }
-                    });
-                }
-                let pix = payload["pixelSize"].as_f64()
-                    .or_else(|| payload["pixel_size"].as_f64());
-                let sw  = payload["width"].as_u64().map(|v| v as u32)
-                    .or_else(|| payload["sensorWidth"].as_u64().map(|v| v as u32));
-                let sh  = payload["height"].as_u64().map(|v| v as u32)
-                    .or_else(|| payload["sensorHeight"].as_u64().map(|v| v as u32));
-                if pix.is_some() || sw.is_some() || sh.is_some() {
-                    self.camera_status.update(|opt| {
-                        let cs = opt.get_or_insert_with(CameraStatusData::default);
-                        if pix.is_some() { cs.pixel_size_um = pix; }
-                        if sw.is_some()  { cs.sensor_width  = sw; }
-                        if sh.is_some()  { cs.sensor_height = sh; }
-                    });
+            // INDI property reply — either a direct get response, or a
+            // pushed update from a prior device_property_subscribe.
+            // We only consume two properties: CCD_INFO (camera sensor specs)
+            // and EQUATORIAL_EOD_COORD (mount RA/Dec fast path).
+            "device_property_get" | "device_property_set" => {
+                let prop = payload["name"].as_str().unwrap_or("");
+
+                if prop == "CCD_INFO" {
+                    let mut max_x: Option<f64> = None;
+                    let mut max_y: Option<f64> = None;
+                    let mut pix_x: Option<f64> = None;
+                    let mut pix_y: Option<f64> = None;
+                    let mut pix_any: Option<f64> = None;
+                    if let Some(arr) = payload["numbers"].as_array() {
+                        for el in arr {
+                            let n = el["name"].as_str().unwrap_or("");
+                            let v = el["value"].as_f64();
+                            match n {
+                                "CCD_MAX_X"        => max_x   = v,
+                                "CCD_MAX_Y"        => max_y   = v,
+                                "CCD_PIXEL_SIZE_X" => pix_x   = v,
+                                "CCD_PIXEL_SIZE_Y" => pix_y   = v,
+                                "CCD_PIXEL_SIZE"   => pix_any = v,
+                                _ => {}
+                            }
+                        }
+                    }
+                    let pix = pix_x.or(pix_y).or(pix_any);
+                    let sw  = max_x.map(|v| v as u32);
+                    let sh  = max_y.map(|v| v as u32);
+                    if pix.is_some() || sw.is_some() || sh.is_some() {
+                        self.camera_status.update(|opt| {
+                            let cs = opt.get_or_insert_with(CameraStatusData::default);
+                            if pix.is_some() { cs.pixel_size_um = pix; }
+                            if sw.is_some()  { cs.sensor_width  = sw; }
+                            if sh.is_some()  { cs.sensor_height = sh; }
+                        });
+                    }
+                } else if prop == "EQUATORIAL_EOD_COORD" {
+                    // INDI mount coord property: RA in hours, DEC in degrees.
+                    let mut ra_h: Option<f64> = None;
+                    let mut de_d: Option<f64> = None;
+                    if let Some(arr) = payload["numbers"].as_array() {
+                        for el in arr {
+                            let n = el["name"].as_str().unwrap_or("");
+                            let v = el["value"].as_f64();
+                            match n {
+                                "RA"  => ra_h = v,
+                                "DEC" => de_d = v,
+                                _ => {}
+                            }
+                        }
+                    }
+                    if ra_h.is_some() || de_d.is_some() {
+                        self.mount_status.update(|opt| {
+                            let ms = opt.get_or_insert_with(MountStatusData::default);
+                            if let Some(dev) = payload["device"].as_str() {
+                                if !dev.is_empty() { ms.device = dev.to_string(); }
+                            }
+                            if ra_h.is_some() { ms.ra_h = ra_h; }
+                            if de_d.is_some() { ms.dec_deg = de_d; }
+                        });
+                    }
                 }
             }
 
@@ -224,18 +296,85 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
         let _ = cmd_tx.unbounded_send(json);
     });
 
-    // Prime sequence: once KStars reports connected=true we ask for the data
-    // that populates FOV inputs. These requests are silently dropped if Ekos
-    // hasn't started a profile yet, so re-fire on every connect.
-    let connected_sig = store.connected;
-    let prime_send = send_fn.clone();
+    // Prime: once Ekos is online, fetch scope DB and active train list.
+    // Both commands bypass the Ekos::Success gate (handled above message.cpp:264).
+    let online_sig = store.online;
+    {
+        let prime_send = send_fn.clone();
+        Effect::new(move |_| {
+            if online_sig.get() {
+                prime_send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
+            }
+        });
+    }
+
+    // Cross-reference: when both the scopes list and the active train are
+    // known, match the train's scope name against the scope DB and write
+    // focal length + aperture into telescope_settings.
+    let trains_sig = store.optical_trains;
+    let scopes_sig = store.scopes;
+    let telescope_sig = store.telescope_settings;
     Effect::new(move |_| {
-        if connected_sig.get() {
-            prime_send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
-            prime_send(r#"{"type":"train_settings_get","payload":{}}"#.to_string());
-            prime_send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
+        let trains = trains_sig.get();
+        let scopes = scopes_sig.get();
+        let Some(train) = trains.first() else { return };
+        if train.scope.is_empty() || scopes.is_empty() { return; }
+        if let Some(s) = scopes.iter().find(|s| s.name == train.scope) {
+            telescope_sig.update(|t| {
+                t.focal_length_mm = Some(s.focal_length_mm);
+                t.aperture_mm     = Some(s.aperture_mm);
+            });
         }
     });
+
+    // Subscribe to the INDI properties we care about on the active train's
+    // camera and mount, and also fire a one-shot `device_property_get` as a
+    // fast path for devices that are already connected. The subscribe makes
+    // KStars push the property as soon as the device comes online — without
+    // it we'd wait until the first natural push (minutes on an idle sim).
+    {
+        let prop_send = send_fn.clone();
+        let last_cam   = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let last_mount = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let trains_sig2 = store.optical_trains;
+        Effect::new(move |_| {
+            let trains = trains_sig2.get();
+            let Some(train) = trains.first() else { return };
+
+            if !train.camera.is_empty() && train.camera != "--"
+                && *last_cam.borrow() != train.camera
+            {
+                *last_cam.borrow_mut() = train.camera.clone();
+                let sub = serde_json::json!({
+                    "type":"device_property_subscribe",
+                    "payload":{ "device": train.camera, "properties": ["CCD_INFO"] }
+                }).to_string();
+                prop_send(sub);
+                let get = serde_json::json!({
+                    "type":"device_property_get",
+                    "payload":{ "device": train.camera, "property": "CCD_INFO", "compact": true }
+                }).to_string();
+                prop_send(get);
+            }
+
+            if !train.mount.is_empty() && train.mount != "--"
+                && *last_mount.borrow() != train.mount
+            {
+                *last_mount.borrow_mut() = train.mount.clone();
+                let sub = serde_json::json!({
+                    "type":"device_property_subscribe",
+                    "payload":{ "device": train.mount, "properties": ["EQUATORIAL_EOD_COORD"] }
+                }).to_string();
+                prop_send(sub);
+                let get = serde_json::json!({
+                    "type":"device_property_get",
+                    "payload":{ "device": train.mount, "property": "EQUATORIAL_EOD_COORD", "compact": true }
+                }).to_string();
+                prop_send(get);
+            }
+        });
+    }
 
     let store_for_ws = store.clone();
     spawn_local(async move {
@@ -267,6 +406,7 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                 Err(e) => {
                     leptos::logging::error!("WS error: {:?}", e);
                     store_for_ws.connected.set(false);
+                    store_for_ws.online.set(false);
                     break;
                 }
             }

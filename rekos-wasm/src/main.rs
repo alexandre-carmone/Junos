@@ -141,6 +141,7 @@ fn App() -> impl IntoView {
 
     // ── Status strip data ─────────────────────────────────────────────────
     let connected_sig = store.connected;
+    let online_sig = store.online;
     let status_text = move || {
         let tr = t(lang.get());
         let m = mount.get();
@@ -154,7 +155,11 @@ fn App() -> impl IntoView {
                 format!("{:.1}'", arcmin)
             })
             .unwrap_or_else(|| "--".into());
-        let state = if connected_sig.get() { "Ekos Live connected" } else { tr.disconnected };
+        let state = match (connected_sig.get(), online_sig.get()) {
+            (false, _) => tr.disconnected.to_string(),
+            (true, false) => "KStars attached · Ekos not started".to_string(),
+            (true, true) => "Ekos online".to_string(),
+        };
         format!("{state}  ·  RA {ra}  Dec {dec}  ·  FOV {fov}")
     };
 
