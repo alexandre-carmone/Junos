@@ -146,30 +146,6 @@ fn App() -> impl IntoView {
         }
     });
 
-    // ── Status strip data ─────────────────────────────────────────────────
-    let connected_sig = store.connected;
-    let online_sig = store.online;
-    let status_text = move || {
-        let tr = t(lang.get());
-        let m = mount.get();
-        let ra = m.ra_h.map(|v| format!("{:6.2}h", v)).unwrap_or_else(|| "--".into());
-        let dec = m.dec_deg.map(|v| format!("{:+6.2}°", v)).unwrap_or_else(|| "--".into());
-        let fov = focal_length_mm.get()
-            .zip(camera.get().sensor_width)
-            .zip(camera.get().pixel_size_um)
-            .map(|((fl, sw), pix)| {
-                let arcmin = astro::fov_deg(fl, sw as f64, pix) * 60.0;
-                format!("{:.1}'", arcmin)
-            })
-            .unwrap_or_else(|| "--".into());
-        let state = match (connected_sig.get(), online_sig.get()) {
-            (false, _) => tr.disconnected.to_string(),
-            (true, false) => "KStars attached · Ekos not started".to_string(),
-            (true, true) => "Ekos online".to_string(),
-        };
-        format!("{state}  ·  RA {ra}  Dec {dec}  ·  FOV {fov}")
-    };
-
     // ── Active tab ────────────────────────────────────────────────────────
     // Provided via context so the in-planetarium gear bar (rendered inside
     // SkyTab) can read/write it without SkyTab carrying a prop for it.
@@ -204,10 +180,12 @@ fn App() -> impl IntoView {
                     />
                 </div>
             </Show>
-            <div style="position:fixed; top:0; left:0; right:0; z-index:500; \
+            <div class="status-strip"
+                 style="position:fixed; top:0; left:0; right:0; z-index:500; \
                         padding:6px 12px; background:rgba(6,6,15,0.75); \
                         border-bottom:1px solid #222; font-size:12px; color:#88aaff; \
-                        pointer-events:none;">
+                        pointer-events:none; \
+                        padding-top:max(6px, env(safe-area-inset-top));">
                 {status_text}
             </div>
         </div>

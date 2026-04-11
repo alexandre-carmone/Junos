@@ -32,7 +32,8 @@ pub fn SkySearch(
 
     view! {
         <div
-            style="position:absolute; top:8px; left:8px; z-index:50; width:230px;"
+            class="sky-search"
+            style="position:absolute; top:8px; left:8px; z-index:50;"
             on:click=move |ev| ev.stop_propagation()
         >
             <input type="text"
@@ -86,7 +87,7 @@ pub fn SkySearch(
                     let label = name.clone();
                     view! {
                         <div
-                            on:mousedown=move |_| {
+                            on:click=move |_| {
                                 let now = js_sys::Date::new_0();
                                 let jd = astro::julian_date(
                                     now.get_utc_full_year() as i32,

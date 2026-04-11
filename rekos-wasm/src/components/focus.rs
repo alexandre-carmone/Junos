@@ -165,11 +165,13 @@ pub fn FocusTab(
     };
 
     view! {
-        <div style="position:absolute; inset:0; background:#0a0a0f; color:#c0c0d0; \
+        <div class="focus-tab-root"
+             style="position:absolute; inset:0; background:#0a0a0f; color:#c0c0d0; \
                     font-family:monospace; display:grid; \
                     grid-template-rows:56px 1fr; overflow:hidden;">
             // Header
-            <div style="display:flex; align-items:center; gap:18px; padding:0 20px 0 80px; \
+            <div class="focus-header"
+                 style="display:flex; align-items:center; gap:18px; padding:0 20px 0 80px; \
                         border-bottom:1px solid #222; background:rgba(6,6,15,0.85); \
                         font-size:13px;">
                 <span style=move || format!(
@@ -202,7 +204,7 @@ pub fn FocusTab(
             </div>
 
             // Body
-            <div style="display:grid; grid-template-columns:2fr 1fr; min-height:0; gap:0;">
+            <div class="focus-body" style="gap:0;">
                 // Left — preview + HFR plot
                 <div style="display:grid; grid-template-rows:1fr 110px; \
                             min-height:0; border-right:1px solid #222;">
@@ -389,7 +391,7 @@ fn render_setting_row(
 
     let title_key = key.clone();
     view! {
-        <div style="display:flex; align-items:center; gap:8px; font-size:11px;">
+        <div class="focus-setting-row" style="display:flex; align-items:center; gap:8px; font-size:11px;">
             <span style="flex:0 0 140px; color:#88aaff; overflow:hidden; \
                          text-overflow:ellipsis; white-space:nowrap;"
                   title=title_key>

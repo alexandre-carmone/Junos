@@ -85,8 +85,11 @@ pub fn SkyContextMenu(
                 let decd = dec_abs as u32;
                 let decm = ((dec_abs - decd as f64) * 60.0) as u32;
                 view! {
-                    <div style=format!(
-                        "position:fixed; left:{}px; top:{}px; background:#1a1a2e; border:1px solid #555; \
+                    <div class="sky-ctx-menu"
+                        style=format!(
+                        "position:fixed; left:min({}px, calc(100vw - 200px)); \
+                         top:min({}px, calc(100dvh - 180px)); \
+                         background:#1a1a2e; border:1px solid #555; \
                          border-radius:4px; padding:8px; font-size:12px; z-index:100; min-width:180px;",
                         sx, sy
                     )
@@ -185,6 +188,7 @@ pub fn SkyConfirmPopup(
                 let send_align = Arc::clone(&send);
                 view! {
                     <div
+                        class="sky-confirm-popup"
                         style="position:absolute; bottom:0; left:0; right:0; z-index:200; \
                                background:rgba(10,10,20,0.97); border-top:1px solid #446; \
                                padding:14px 16px; display:flex; align-items:center; \

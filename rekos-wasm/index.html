@@ -50,73 +50,95 @@
 
         /* ── Responsive layout ────────────────────────────────────────────── */
 
-        /* On all screens: panels and flex containers size correctly */
-        div[style*="min-width"] {
-            box-sizing: border-box;
+        /* Sky pane defaults — full dynamic viewport height so iOS chrome
+           doesn't crop. The top status strip sits on top with pointer-events
+           disabled, so the sky can fill the whole viewport underneath. */
+        .sky-pane {
+            height: 100dvh;
+        }
+
+        /* Top status strip — may wrap on very narrow widths */
+        .status-strip {
+            line-height: 1.3;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Sky search box — fluid width capped at 230px */
+        .sky-search {
+            width: min(230px, calc(100vw - 120px));
+        }
+
+        /* Sky controls collapsible panel — fluid, capped to viewport */
+        .sky-controls-panel {
+            min-width: 180px;
+            max-width: calc(100vw - 16px);
+            max-height: calc(100dvh - 120px);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+        }
+
+        /* Sky context menu — never overflow the viewport */
+        .sky-ctx-menu {
+            max-width: calc(100vw - 16px);
+            max-height: calc(100dvh - 32px);
+            overflow-y: auto;
+        }
+
+        /* Bottom confirm popup — safe-area aware */
+        .sky-confirm-popup {
+            padding-left:   max(16px, env(safe-area-inset-left))  !important;
+            padding-right:  max(16px, env(safe-area-inset-right)) !important;
+            padding-bottom: max(14px, env(safe-area-inset-bottom)) !important;
+        }
+
+        /* Focus tab grid — desktop default */
+        .focus-body {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            min-height: 0;
         }
 
         /* ── TABLET  768 – 1023 px ───────────────────────────────────────── */
         @media (min-width: 768px) and (max-width: 1023px) {
-            /* Tighten tab content padding/gap */
-            div[style*="display:flex"][style*="flex-wrap:wrap"][style*="gap:16px"] {
-                padding: 10px !important;
-                gap: 12px !important;
-            }
-            /* Panels: soften minimum width so two fit side-by-side on 768px */
-            div[style*="background:#111"][style*="min-width"],
-            div[style*="flex:1"][style*="min-width"] {
-                min-width: 200px !important;
-            }
+            .sky-controls-panel { min-width: 160px; }
+            .focus-body { grid-template-columns: 3fr 2fr; }
         }
 
         /* ── SMARTPHONE  ≤ 767 px  (iPhone SE → 14 Pro Max) ─────────────── */
         @media (max-width: 767px) {
 
-            /* Header: tighter padding, slightly smaller title */
-            #junos-app > div:first-child {
-                padding: 6px 10px !important;
-            }
-
-            /* Tab-pane flex containers → single column */
-            div[style*="display:flex"][style*="flex-wrap:wrap"][style*="gap:16px"] {
-                flex-direction: column !important;
-                padding: 8px !important;
-                gap: 8px !important;
-            }
-
-            /* Panel cards: full width, no horizontal overflow */
-            div[style*="background:#111"][style*="min-width"],
-            div[style*="flex:1"][style*="min-width"] {
-                min-width: 0 !important;
-                width: 100% !important;
-            }
-
-            /* Focus tab inner panels */
-            div[style*="background:#111"][style*="border:1px solid #334"][style*="padding:10px"] {
-                min-width: 0 !important;
-                width: 100% !important;
-            }
-
-            /* max-width panels (dust cover, light panel) fill full width */
-            div[style*="max-width:480px"] {
-                max-width: 100% !important;
+            /* Status strip — smaller, tighter, still non-interactive */
+            .status-strip {
+                font-size: 10px !important;
+                padding: 4px 8px !important;
             }
 
             /* Inputs: prevent fixed widths from overflowing */
             input[type="text"],
             input[type="number"] {
-                width: 100% !important;
                 max-width: 100% !important;
                 box-sizing: border-box !important;
             }
 
-            /* Two-column grids inside panels (e.g. RA/Dec inputs) become
-               label-above-input stacks */
-            div[style*="display:grid"][style*="grid-template-columns:130px"] {
-                grid-template-columns: 1fr !important;
+            /* Sky search — fill the row, leave space for controls gear */
+            .sky-search {
+                width: calc(100vw - 72px) !important;
+                top: 34px !important;
             }
-            div[style*="display:grid"][style*="grid-template-columns:80px"] {
-                grid-template-columns: 1fr !important;
+
+            /* Sky controls — slide below status strip, cap height */
+            .sky-controls {
+                top: 34px !important;
+            }
+            .sky-controls-panel {
+                min-width: 0 !important;
+                width: calc(100vw - 16px);
+                max-height: calc(100dvh - 160px);
+            }
+            .sky-controls-panel input[type="number"] {
+                width: 72px !important;
             }
 
             /* Sky map: push time-slider to full-width row above action buttons */
@@ -130,18 +152,54 @@
                 bottom: 52px !important;
             }
 
-            /* Use the full dynamic viewport height so iOS chrome doesn't crop */
-            .sky-pane {
-                height: calc(100dvh - 110px) !important;
+            /* Zoom bar: stays right, shifted to clear time slider */
+            .sky-zoom-bar {
+                top: 72px !important;
+                bottom: 150px !important;
+            }
+
+            /* Confirm popup: stack the two main rows vertically */
+            .sky-confirm-popup {
+                flex-direction: column !important;
+                align-items: stretch !important;
+            }
+            .sky-confirm-popup > div:last-child {
+                justify-content: space-between;
+                flex-wrap: wrap;
+            }
+            .sky-confirm-popup button {
+                flex: 1 1 30%;
+                min-width: 0;
+                padding: 12px 10px !important;
+                font-size: 13px !important;
+            }
+
+            /* Focus tab */
+            .focus-header {
+                padding: 0 12px !important;
+                flex-wrap: wrap !important;
+                gap: 10px !important;
+                font-size: 12px !important;
+                height: auto !important;
+            }
+            .focus-tab-root {
+                grid-template-rows: auto 1fr !important;
+            }
+            .focus-body {
+                grid-template-columns: 1fr !important;
+                grid-template-rows: minmax(220px, 1fr) auto !important;
+            }
+            .focus-body > div:first-child {
+                border-right: none !important;
+                border-bottom: 1px solid #222 !important;
+            }
+            .focus-setting-row > span:first-child {
+                flex: 0 0 110px !important;
             }
 
             /* Safe-area padding for iPhone notch / home indicator */
-            #junos-app {
+            #rekos-app {
                 padding-bottom: env(safe-area-inset-bottom);
-            }
-            nav {
-                padding-left:  max(8px, env(safe-area-inset-left)) !important;
-                padding-right: max(8px, env(safe-area-inset-right)) !important;
             }
         }
 
@@ -151,6 +209,8 @@
                 min-width: 36px !important;
                 font-size: 12px !important;
             }
+            .sky-search { width: calc(100vw - 72px) !important; }
+            .status-strip { font-size: 9px !important; }
         }
     </style>
     <!-- Trunk replaces this with the built WASM entry point -->

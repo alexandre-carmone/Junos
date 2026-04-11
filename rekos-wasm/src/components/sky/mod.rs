@@ -595,7 +595,7 @@ pub fn SkyTab(
 
     view! {
         <div class="sky-pane"
-             style="position:relative; width:100%; height:calc(100vh - 100px); overflow:hidden;"
+             style="position:relative; width:100%; overflow:hidden;"
              on:click=move |_| { set_ctx_menu.set(None); set_pending_action.set(None); }>
 
             // WebGPU canvas (bottom layer)

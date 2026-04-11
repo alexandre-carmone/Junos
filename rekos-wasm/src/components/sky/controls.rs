@@ -72,7 +72,8 @@ pub fn SkyControls(
     let send_location = StoredValue::new(Arc::clone(&set_site_location));
 
     view! {
-        <div style="position:absolute; top:8px; right:8px; display:flex; flex-direction:column; align-items:flex-end; gap:4px;"
+        <div class="sky-controls"
+             style="position:absolute; top:8px; right:8px; display:flex; flex-direction:column; align-items:flex-end; gap:4px; z-index:50;"
              on:click=move |ev| ev.stop_propagation()>
             // Toggle button
             <button
@@ -97,8 +98,9 @@ pub fn SkyControls(
                                    cursor:pointer; display:flex; justify-content:space-between; \
                                    align-items:center; min-height:36px;";
                 view! {
-                <div style="background:rgba(10,10,20,0.88); border:1px solid #333; \
-                             border-radius:4px; font-size:12px; min-width:180px; overflow:hidden;">
+                <div class="sky-controls-panel"
+                     style="background:rgba(10,10,20,0.88); border:1px solid #333; \
+                             border-radius:4px; font-size:12px; overflow:hidden;">
 
                     // ── Part 1 : Sky display ───────────────────────────
                     <button style=section_hdr
