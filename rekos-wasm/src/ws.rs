@@ -191,6 +191,12 @@ impl DeviceStore {
                         scope:  t["scope"].as_str().unwrap_or("").to_string(),
                         guider: t["guider"].as_str().unwrap_or("").to_string(),
                     }).collect();
+                    for t in &trains {
+                        leptos::logging::log!(
+                            "[ws] train: name={:?} mount={:?} scope={:?} camera={:?}",
+                            t.name, t.mount, t.scope, t.camera
+                        );
+                    }
                     // Carry the first train's camera name into camera_status so
                     // it's visible before CCD_INFO comes back.
                     if let Some(first) = trains.first() {
@@ -209,6 +215,12 @@ impl DeviceStore {
             // and EQUATORIAL_EOD_COORD (mount RA/Dec fast path).
             "device_property_get" | "device_property_set" => {
                 let prop = payload["name"].as_str().unwrap_or("");
+                leptos::logging::log!(
+                    "[ws] recv {} device={} prop={}",
+                    type_str,
+                    payload["device"].as_str().unwrap_or("?"),
+                    prop
+                );
 
                 if prop == "CCD_INFO" {
                     let mut max_x: Option<f64> = None;
@@ -398,6 +410,7 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
                         let type_str = val["type"].as_str().unwrap_or("").to_string();
                         let payload  = val["payload"].clone();
+                        leptos::logging::log!("[ws] recv type={}", type_str);
                         store_for_ws.apply_ekos_event(&type_str, &payload);
                     }
                 }
@@ -433,6 +446,7 @@ where
 {
     use gloo_timers::future::TimeoutFuture;
     spawn_local(async move {
+        leptos::logging::log!("[ws] retry_property start device={} prop={}", device, property);
         // First shot — subscribe (persistent push) + get (fast path).
         let sub = serde_json::json!({
             "type":"device_property_subscribe",
@@ -444,15 +458,18 @@ where
         }).to_string();
         send(sub.clone());
         send(get.clone());
+        leptos::logging::log!("[ws] retry_property sent subscribe+get for {}", property);
 
         // Retry budget: 60 attempts × 1s = 1 minute.
-        for _ in 0..60 {
+        for i in 0..60 {
             TimeoutFuture::new(1_000).await;
             if done_pred(&signal.get_untracked()) {
+                leptos::logging::log!("[ws] retry_property done for {} after {}s", property, i + 1);
                 return;
             }
             send(sub.clone());
             send(get.clone());
         }
+        leptos::logging::log!("[ws] retry_property giving up on {} after 60s", property);
     });
 }

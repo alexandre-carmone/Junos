@@ -8,10 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Two crates:
 
-- **`rekos-server`** (Axum/Tokio) — local relay. KStars connects *inbound* to it; browsers connect to it; it broadcasts KStars events to all browsers and forwards browser commands to the attached KStars session. It also serves the WASM frontend from `rekos-wasm/dist/`.
+- **`rekos-server`** (Axum/Tokio) — local relay. KStars connects *inbound* to it; browsers connect to it; it broadcasts KStars events to all browsers and forwards browser commands to the attached KStars session. Also serves the WASM frontend from `rekos-wasm/dist/`.
 - **`rekos-wasm`** (Leptos 0.7 CSR + WebGPU) — browser app. Connects to the server's `/ws` and exchanges raw Ekos Live JSON `{type, payload}` messages with KStars.
 
-`junos-web/` is legacy and unused. `kstars/` is the upstream KStars C++ source kept as a read-only reference for the Ekos Live wire format — never edit it, but grep it heavily when you need to know what KStars actually sends/accepts.
+`kstars/` is the upstream KStars C++ source kept as a **read-only reference** for the Ekos Live wire format — never edit it, but grep it heavily when you need to know what KStars actually sends/accepts.
+
+## Current state: milestone-1 rebuild
+
+The project was recently reset. The `rekos-wasm` frontend now contains **only the planetarium** — every other device tab (mount, camera, focus, guide, align, scheduler, filters, profiles, devices, log…) has been wiped. The sky view runs fullscreen with a small top status strip. `rekos-server` was not touched.
+
+`ws.rs` is deliberately minimal: one `DeviceStore` with five signals (`connected`, `online`, `mount_status`, `camera_status`, `telescope_settings`, `optical_trains`, `scopes`). Its sole job for milestone 1 is feeding the FOV reticle with real values from KStars. Adding tabs back means growing both the store and the match arm, but don't do it unless the user asks.
 
 ## Build & run
 
@@ -20,37 +26,33 @@ Two crates:
 rustup target add wasm32-unknown-unknown
 cargo install trunk
 
-# Build (from workspace root)
-cd rekos-wasm && trunk build --release && cd ..   # outputs rekos-wasm/dist/
+# Preferred — uses the repo's justfile
+just               # release build (wasm + server) then run
+just build         # release build only
+just check         # fast typecheck both crates (no codegen)
+just dev-wasm      # `trunk watch` in rekos-wasm/
+just dev-server    # `cargo run -p rekos-server`
+just clean         # cargo clean + rm rekos-wasm/dist
+
+# Manual equivalents
+cd rekos-wasm && trunk build --release
 cargo build --release -p rekos-server
-
-# Run (from workspace root — default DIST_DIR is rekos-wasm/dist)
 ./target/release/rekos-server
-# Defaults: BIND_ADDR=0.0.0.0:8080, DIST_DIR=rekos-wasm/dist
-# Override: --bind-addr / --dist-dir, or env vars
-
-# Dev loop (two terminals)
-cd rekos-wasm && trunk watch                       # rebuilds dist/ on change
-cargo run -p rekos-server                          # serves the same dist/
-
-# Type-check the WASM crate without building (much faster than trunk)
 cargo check -p rekos-wasm --target wasm32-unknown-unknown
-
-# Type-check the server
 cargo check -p rekos-server
 ```
 
-The workspace root `Cargo.toml` sets `default-members = ["rekos-server"]` so `cargo build`/`cargo run` from the root operate on the server only — `rekos-wasm` is only buildable through Trunk (or with `--target wasm32-unknown-unknown -p rekos-wasm`).
+Workspace root `Cargo.toml` sets `default-members = ["rekos-server"]`, so `cargo build`/`cargo run` from the root operate on the server only. `rekos-wasm` is only buildable through Trunk (or `cargo check --target wasm32-unknown-unknown -p rekos-wasm`).
 
-There are no tests — verification is manual: run KStars, enable Ekos Live, point it at `http://localhost:8080`, start an equipment profile (simulators are fine), open the browser to the same URL.
+There are no unit tests — verification is manual: run KStars, enable Ekos Live, point it at `http://localhost:8080`, start an equipment profile (simulators are fine), open the browser to the same URL, click Start in Ekos, check the top status strip flips to `Ekos online` and the mount-anchored FOV reticle appears on the sky.
 
 ## Architecture
 
 ### Server (`rekos-server`)
 
-`hub.rs` is the central state. It holds a `tokio::sync::broadcast` channel that fans KStars events out to every connected browser, plus an `Option<mpsc::Sender>` that points at the currently-attached KStars session (only one KStars can be attached at a time).
+`hub.rs` is the central state. A `tokio::sync::broadcast` channel fans KStars events out to every connected browser, plus an `Option<mpsc::Sender>` that points at the currently-attached KStars session (only one KStars can be attached at a time).
 
-- `kstars_ws.rs` handles `GET /message/ekos` and `GET /media/ekos` (KStars connects to these as an Ekos Live "offline server"). On connect it sends KStars the `set_client_state` handshake and publishes a synthetic `new_connection_state` to the hub. Inbound text messages are broadcast to browsers verbatim.
+- `kstars_ws.rs` handles `GET /message/ekos` and `GET /media/ekos` (KStars connects to these as an Ekos Live "offline server"). On connect it sends KStars the `set_client_state` handshake (required — KStars drops every outbound event until it receives that) and publishes a synthetic `new_connection_state {connected:true}` to the hub. Inbound text is broadcast to browsers verbatim; binary media frames are decoded from the 512-byte metadata header plus JPEG/FITS payload and re-emitted as `new_preview_image`.
 - `proxy.rs` handles `GET /ws` (browser side). On connect it tells the new browser the current KStars-attached state, then loops: KStars events → browser, browser commands → KStars via the hub.
 - `auth.rs` is a stub for `POST /api/authenticate` (no real auth — local relay only).
 - `config.rs` parses `--bind-addr` / `--dist-dir` (clap, env-aware).
@@ -59,51 +61,71 @@ There is **no protocol translation** in the server. Messages flow through opaque
 
 ### Frontend (`rekos-wasm`)
 
-Leptos 0.7 CSR. Single binary, all reactive state lives in `ws.rs::DeviceStore`.
+Leptos 0.7 CSR. Entry point `main.rs` → `App()` → `<SkyTab …>`. Module layout:
 
-**`ws.rs` is the spine.** It owns:
-- `DeviceStore` — a struct of `RwSignal`s, one per Ekos subsystem (`mount_status`, `camera_status`, `guider_status`, `focus_status`, `align_status`, `optical_trains`, `ekos_profiles`, `device_conn`, `drivers_catalog`, `devices_catalog`, …).
-- `apply_ekos_event(type_str, payload)` — the giant `match` that translates incoming KStars JSON into store updates. Adding support for a new Ekos Live message means adding an arm here.
-- `SendCmd = Arc<dyn Fn(String)>` — the type-erased command sink. Components dispatch raw JSON strings; do not invent strongly-typed wrappers, just use `serde_json::json!({"type": "...", "payload": {...}})`.
-- `use_rekos_ws()` — opens the WebSocket to `/ws`, spawns the read/write tasks, returns `(DeviceStore, SendCmd)`.
+- `ws.rs` — the WebSocket spine. Owns `DeviceStore`, `apply_ekos_event()`, `use_rekos_ws()`, and the cross-referencing Effects that derive `telescope_settings` from `scopes ∩ trains`. Also fires per-device retry loops via `spawn_retry_property()` for `CCD_INFO` and `EQUATORIAL_EOD_COORD`.
+- `compat.rs` — flat snapshot types (`MountSnapshot`, `CameraSnapshot`, `SiteSnapshot`, `SolveSnapshot`) derived from `DeviceStore`. The sky module imports these, not `DeviceStore`.
+- `main.rs` — wires catalogs, site location, language, the five Leptos contexts still required by `sky/actions.rs` (`MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx`), and the fullscreen `<SkyTab>`. The top status strip (position `fixed`, `pointer-events:none`) shows WS state + mount RA/Dec + active FOV in arcmin.
+- `components/sky/` — the only surviving component. Dual-canvas renderer (WebGPU bottom + Canvas2D overlay, fallback to all-Canvas2D). See below.
+- `astro.rs` / `coords.rs` — equatorial↔horizontal math (Julian date, GMST/LST, precession to/from J2000, `fov_deg(focal, sensor_px, pixel_um)`). Correct — reuse, do not reimplement.
+- `catalog.rs`, `dso_catalog.rs`, `nebulae.rs` — async fetchers for the binary blobs in `public/`.
+- `gpu.rs` + `shaders/` — WebGPU compute pipeline.
+- `i18n.rs` — string table (EN/FR). Has many unused strings; don't gratuitously prune.
 
-**`main.rs` wires everything.** It builds the store, derives compatibility snapshots via `compat.rs`, sets up Leptos contexts (`MountDeviceCtx`, `CameraDeviceCtx`, `DeviceConnCtx`, `ServiceBusyCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`), and hands signals to each tab component. Tabs do **not** receive `DeviceStore` whole — they receive only the signals they need (e.g. `MountTab` gets `mount_status: RwSignal<...>`).
+`SendCmd = Arc<dyn Fn(String) + Send + Sync>` — type-erased command sink. Components dispatch raw JSON strings via `send(serde_json::json!({"type":"…","payload":{…}}).to_string())`. Do not introduce a typed command enum.
 
-**Tabs live in `components/`** (mount, camera, focus, internal_guide, align, polar_align, scheduler, dust_cap, filter_wheel, flat_calibrator, devices, profiles, sky, log, indiserver). Each is a self-contained `#[component]` function. The `connect_button` component is reusable across device tabs and reads `DeviceConnCtx` from context to render Connect/Disconnect against the INDI `CONNECTION` switch property.
+### Planetarium (`components/sky/`)
 
-**The planetarium (`components/sky/`)** is a dual-canvas renderer:
-- Bottom canvas: WebGPU compute (`gpu.rs` + `shaders/`) — projects `catalog.rs` star data and constellation lines on the GPU. The packed star buffer is built once at startup from `public/junos.bin`.
-- Top canvas: Canvas2D overlay (`render.rs`) — grid, horizon, DSO labels (`dso_catalog.rs` + `public/dso.bin`), nebulae thumbnails (`nebulae.rs` + `public/nebulae/`), FOV reticle, mount-position crosshair.
-- Falls back to all-Canvas2D when WebGPU is unavailable.
-- `astro.rs` and `coords.rs` hold the equatorial↔horizontal coordinate math (Julian date, GMST/LST, precession to/from J2000). The math is correct — don't reimplement it, reuse it.
+Do not touch this directory for feature work on milestone 1 — it already draws what's needed. Structure:
 
-### Ekos Live wire format
+- `mod.rs` — `SkyTab` component, canvas/GPU setup, event loop, localStorage persistence (`sky_center_alt`, `sky_center_az`, `sky_fov_radius`, `sky_follow_mount`, `sky_focal_override`).
+- `render.rs` — Canvas2D overlay: grid, horizon, constellations (falls back from GPU), DSO labels, nebulae thumbnails, `render_center_fov()` and `render_mount_fov()` — the two FOV rectangles. Both call `astro::fov_deg` with `RenderParams.{fl, cam_pixel_size_um, cam_sensor_width, cam_sensor_height, rotation_deg, mount_ra_h, mount_dec_deg}`.
+- `controls.rs` — right-panel render toggles + focal length override input.
+- `search.rs` — catalog object search.
+- `actions.rs` — right-click context menu + confirm popup that dispatches `mount_goto_rade` and `align_solve`. Imports `MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx` from the crate root — these newtypes still live in `main.rs` and must be provided even if their inner signals are defaulted (for milestone 1 `MountDeviceCtx` is mirrored from `mount_status.device`, the rest are defaults).
 
-The protocol is JSON `{"type": "...", "payload": {...}}` over WebSocket. The full command vocabulary is enumerated in `kstars/kstars/ekos/ekoslive/commands.h` (~200 message types). Server-side handling lives in `kstars/kstars/ekos/ekoslive/message.cpp` — when extending the client, **read that file first** to know the exact field names KStars sends and accepts.
+## Ekos Live wire format
 
-Critical pitfalls observed in this codebase:
+JSON `{"type": "...", "payload": {...}}` over WebSocket. Authoritative references:
 
-- KStars only answers `get_devices`, `get_states`, `train_settings_get`, `get_scopes`, etc. **after** a profile has been started (`getEkosStartingStatus() == Success`, see `message.cpp:264`). Requests sent before that are silently dropped. The Devices tab refetches on `connection.connected` flips and exposes a manual ⟳ Refresh.
-- `get_profiles` returns `{selectedProfile, profiles}`, **not** a bare array. Field names follow `kstars/auxiliary/profileinfo.cpp::toJson()`.
-- Profile start uses `profile_start` with `payload.name` (not `id`).
-- Ekos Live has **no** high-level "connect device" command. Connection is toggled by writing the INDI `CONNECTION` switch property via `device_property_set` with `elements: [{name: "CONNECT" | "DISCONNECT", value: "On"}]`. The `ConnectButton` component implements exactly this.
-- `new_connection_state` is sent both by the rekos-server (synthetic, on KStars attach/detach) and by KStars itself (real, when Ekos starts). Treat `connected=true` as "we can talk to KStars" and gate further work on it.
+- **`kstars/kstars/ekos/ekoslive/commands.h`** — the enum of ~200 message types. Name list.
+- **`kstars/kstars/ekos/ekoslive/message.cpp`** — handlers. Read this first when extending the client. Especially `processTextMessage()` (top of the big command switch), `processDeviceCommands()` (line 1652), `updateMountCoords()` in `manager.cpp:3173`.
+- **`kstars/kstars/indi/indistd.cpp`** — `numberToJson`, `switchToJson`, `textToJson`. This is how `device_property_get` / `device_property_set` payloads are serialized.
+
+### Critical pitfalls — *read these before adding features*
+
+1. **Two gates, not one.** `new_connection_state` carries `{connected, online}`. `rekos-server`'s synthetic event only sets `connected`. KStars' real event after profile start sets `online: true`. Many endpoints (`get_devices`, `get_states`, `get_scopes` in most call sites, `process*Commands`) gate on `getEkosStartingStatus() == Success` and are silently dropped before that — see `message.cpp:264, 291`. `ws.rs` prime requests fire on `online=true`, not `connected=true`, for this reason.
+
+2. **`m_ClientState`.** KStars' `Node::sendResponse` (`node.cpp:156`) drops every outbound event if the remote peer hasn't sent `{"type":"set_client_state","payload":{"state":true}}`. `rekos-server/src/kstars_ws.rs` sends this on connect; don't remove it.
+
+3. **`processDeviceCommands` silent drop.** `message.cpp:1664` — `if (!INDIListener::findDevice(device, …)) return;`. If the INDI driver for a device isn't registered yet when you send `device_property_get` / `device_property_set` / `device_property_subscribe`, the command is dropped with no reply and the subscription is not recorded. This is why `ws.rs::spawn_retry_property` exists: it keeps firing subscribe+get for up to 60 s until the expected data actually lands in the store.
+
+4. **Mount coordinates come from a timer, not a signal.** `kstars/indi/indimount.cpp:244` — `updateCoordinatesTimer.start()` is only called after the first `processNumber(EQUATORIAL_EOD_COORD)` arrives from INDI. For idle drivers that don't push until something changes (e.g. Telescope Simulator at rest), `new_mount_state` carries `{status, target, …}` but **no RA/Dec** until the user triggers movement. The retry fetches `EQUATORIAL_EOD_COORD` directly via `device_property_get` to short-circuit this.
+
+5. **`new_mount_state` is sent from multiple places.** Coord updates (full payload `{ra, de, ra0, de0, az, at, ha, …}`, throttled to 1 s in `message.cpp:2552`) vs status-only updates (`{status}`, `{target}`, `{pierSide}`, …). Match arms must tolerate partial payloads.
+
+### Where FOV inputs actually live
+
+- **Focal length + aperture** → `get_scopes` (OAL scope DB, keyed by `name`). Cross-reference the active train's `scope` field against this list. *Not* in `train_settings_get`.
+- **Pixel size + sensor WxH** → INDI `CCD_INFO` number property on the camera device. Fetch via `device_property_get {device, property:"CCD_INFO"}`. Element names: `CCD_MAX_X`, `CCD_MAX_Y`, `CCD_PIXEL_SIZE_X/_Y` (fallback `CCD_PIXEL_SIZE`).
+- **`train_settings_get` is a red herring** — it returns `OpticalTrainSettings` (a map keyed by module-enum IDs like `"0"`, `"1"`, storing per-module configs), not hardware specs. Don't add arms that parse `focalLength`/`pixelSize` from it; those fields will never exist.
+- **Active train** → `train_get_all`, take `trains[0]`. Fields: `{id, name, mount, camera, scope, guider}`.
 
 ### Adding a new device control
 
-1. Find the message in `kstars/ekos/ekoslive/commands.h` and read its handler in `kstars/ekos/ekoslive/message.cpp` to learn the payload schema.
-2. If KStars *sends* it, add a match arm in `ws.rs::apply_ekos_event` and add fields to the relevant `*StatusData` struct in `ws.rs`.
-3. If the browser *sends* it, add a button or input to the relevant tab component and dispatch via `send(serde_json::json!({...}).to_string())`.
-4. To expose new state to the planetarium, plumb it through `compat.rs` (the `*Snapshot` types are flat, derived projections of `DeviceStore` consumed by `SkyTab`).
+1. Find the message in `commands.h` and read its handler in `message.cpp` to learn the payload schema. If it's an INDI property, read `indistd.cpp::{numberToJson, switchToJson, textToJson}` for the exact wire shape (compact vs non-compact).
+2. If KStars *sends* it, add a match arm in `ws.rs::apply_ekos_event` and add fields to the relevant `*StatusData` struct.
+3. If the browser *sends* it, dispatch via `send(serde_json::json!({…}).to_string())`. For INDI properties that may arrive before the driver is registered, use the `spawn_retry_property` pattern.
+4. To expose new state to the planetarium, plumb it through `compat.rs` (the `*Snapshot` types consumed by `SkyTab`).
 
-### Static assets
+## Static assets
 
-`rekos-wasm/public/` contains binary catalogs (`junos.bin` star catalog, `dso.bin` deep-sky catalog, `nebulae.json` + `nebulae/` thumbnails). Trunk copies these into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes.
+`rekos-wasm/public/` contains binary catalogs — `junos.bin` (star catalog), `dso.bin` (deep-sky catalog), `nebulae.json` + `nebulae/` (thumbnails). Trunk copies these into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes.
 
 ## Code style observed in this codebase
 
-- French comments and English comments coexist; mirror the surrounding file.
-- Tab components do not take `DeviceStore` as a prop — they take only the specific signals they need, plus `SendCmd`. Use Leptos context only when the value needs to cross many tabs (see `*Ctx` newtypes in `main.rs`).
+- French and English comments coexist; mirror the surrounding file.
 - Commands are dispatched as raw JSON strings; do not introduce a typed command enum.
-- Arc-clone `SendCmd` aggressively before moving into closures (camera.rs uses `send2`…`send13` — that's the existing pattern).
-- IDE-reported `unused_variables`/`dead_code` warnings are a long-standing background; don't gratuitously fix them while doing unrelated work.
+- Arc-clone `SendCmd` aggressively before moving it into closures.
+- IDE-reported `unused_variables`/`dead_code` warnings are long-standing background — don't gratuitously fix them while doing unrelated work. The `i18n` string table in particular has many unused entries that stay intentionally.
+- Tab components (when they come back) should take only the specific signals they need plus `SendCmd`, never `DeviceStore` whole. Use Leptos context only for values that need to cross many components (see `*Ctx` newtypes in `main.rs`).

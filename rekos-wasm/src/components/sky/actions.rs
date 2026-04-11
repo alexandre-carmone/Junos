@@ -13,6 +13,25 @@ use crate::CameraDeviceCtx;
 use crate::ws::SendCmd;
 use crate::{AlignDefaultsCtx, AlignSolveRadiusCtx, MountDeviceCtx};
 
+/// Build a `mount_goto_rade` message.
+///
+/// KStars parses `ra`/`de` via `dms::fromString(payload["ra"].toString(), …)`,
+/// so the values must be JSON strings (decimal hours / decimal degrees).
+/// Coords arriving here have already been precessed to J2000 by `open_confirm`,
+/// so `isJ2000` is true.
+fn goto_rade_msg(ra_deg_j2000: f64, dec_deg_j2000: f64) -> String {
+    let ra_h = ra_deg_j2000 / 15.0;
+    serde_json::json!({
+        "type": "mount_goto_rade",
+        "payload": {
+            "ra": format!("{:.8}", ra_h),
+            "de": format!("{:.8}", dec_deg_j2000),
+            "isJ2000": true,
+        }
+    })
+    .to_string()
+}
+
 /// Right-click context menu overlay.
 #[component]
 pub fn SkyContextMenu(
@@ -39,26 +58,20 @@ pub fn SkyContextMenu(
     let send_for_align = Arc::clone(&send);
     let on_goto = move |_| {
         if let Some((_sx, _sy, ra_deg, dec_deg)) = ctx_menu.get_untracked() {
-            let ra_h = ra_deg / 15.0;
-            let _device = mount_ctx.and_then(|c| c.0.get_untracked());
-            send_for_goto(serde_json::json!({"type":"mount_goto_rade","payload":{"ra":ra_h*15.0,"de":dec_deg,"isJ2000":false}}).to_string());
+            send_for_goto(goto_rade_msg(ra_deg, dec_deg));
             set_ctx_menu.set(None);
         }
     };
 
     let on_align = move |_| {
         if let Some((_sx, _sy, ra_deg, dec_deg)) = ctx_menu.get_untracked() {
-            let ra_h = ra_deg / 15.0;
-            let _mount_device = mount_ctx.and_then(|c| c.0.get_untracked());
-            let _camera_device = camera_ctx.and_then(|c| c.0.get_untracked());
-            let _solve_radius = solve_radius_ctx.map(|c| c.0.get_untracked());
-            let _defaults = align_defaults_ctx.map(|c| c.0.get_untracked());
             // First slew then solve
-            send_for_align(serde_json::json!({"type":"mount_goto_rade","payload":{"ra":ra_h*15.0,"de":dec_deg,"isJ2000":false}}).to_string());
+            send_for_align(goto_rade_msg(ra_deg, dec_deg));
             send_for_align(serde_json::json!({"type":"align_solve","payload":{}}).to_string());
             set_ctx_menu.set(None);
         }
     };
+    let _ = (mount_ctx, camera_ctx, solve_radius_ctx, align_defaults_ctx);
 
     view! {
         {move || {
@@ -198,9 +211,7 @@ pub fn SkyConfirmPopup(
                                 disabled=move || goto_disabled.get()
                                 on:click=move |_| {
                                     if goto_disabled.get_untracked() { return; }
-                                    let ra_h = ra_deg / 15.0;
-                                    let _device = mount_ctx.and_then(|c| c.0.get_untracked());
-                                    send_c(serde_json::json!({"type":"mount_goto_rade","payload":{"ra":ra_h*15.0,"de":dec_deg,"isJ2000":false}}).to_string());
+                                    send_c(goto_rade_msg(ra_deg, dec_deg));
                                     set_pending_action.set(None);
                                 }
                                 style=move || if goto_disabled.get() {
@@ -219,12 +230,7 @@ pub fn SkyConfirmPopup(
                                 disabled=move || align_disabled.get()
                                 on:click=move |_| {
                                     if align_disabled.get_untracked() { return; }
-                                    let ra_h = ra_deg / 15.0;
-                                    let _mount_device = mount_ctx.and_then(|c| c.0.get_untracked());
-                                    let _camera_device = camera_ctx.and_then(|c| c.0.get_untracked());
-                                    let _solve_radius = solve_radius_ctx.map(|c| c.0.get_untracked());
-                                    let _defaults = align_defaults_ctx.map(|c| c.0.get_untracked());
-                                    send_align(serde_json::json!({"type":"mount_goto_rade","payload":{"ra":ra_h*15.0,"de":dec_deg,"isJ2000":false}}).to_string());
+                                    send_align(goto_rade_msg(ra_deg, dec_deg));
                                     send_align(serde_json::json!({"type":"align_solve","payload":{}}).to_string());
                                     set_pending_action.set(None);
                                 }
