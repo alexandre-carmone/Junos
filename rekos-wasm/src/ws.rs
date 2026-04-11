@@ -59,6 +59,22 @@ pub struct CameraStatusData {
     pub pixel_size_um: Option<f64>,
     pub sensor_width: Option<u32>,
     pub sensor_height: Option<u32>,
+    // Live imaging state — driven by new_camera_state / new_capture_state /
+    // INDI CCD_TEMPERATURE / CCD_COOLER.
+    pub temperature: Option<f64>,
+    pub target_temperature: Option<f64>,
+    pub cooler_on: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CaptureStatusData {
+    pub status: String,
+    pub target: String,
+    pub seq_total: Option<i64>,
+    pub seq_current: Option<i64>,
+    pub progress: Option<f64>,
+    pub overall_remaining: Option<f64>,
+    pub log: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -144,6 +160,10 @@ pub struct DeviceStore {
     pub focus_settings:     RwSignal<serde_json::Value>,
     pub focus_preview_url:  RwSignal<Option<String>>,
     pub focus_hfr_history:  RwSignal<Vec<HfrSample>>,
+    pub capture_status:     RwSignal<CaptureStatusData>,
+    pub capture_settings:   RwSignal<serde_json::Value>,
+    pub capture_sequence:   RwSignal<serde_json::Value>,
+    pub capture_preview_url:RwSignal<Option<String>>,
 }
 
 impl DeviceStore {
@@ -160,6 +180,10 @@ impl DeviceStore {
             focus_settings:     RwSignal::new(serde_json::Value::Null),
             focus_preview_url:  RwSignal::new(None),
             focus_hfr_history:  RwSignal::new(Vec::new()),
+            capture_status:     RwSignal::new(CaptureStatusData::default()),
+            capture_settings:   RwSignal::new(serde_json::Value::Null),
+            capture_sequence:   RwSignal::new(serde_json::Value::Null),
+            capture_preview_url:RwSignal::new(None),
         }
     }
 
@@ -320,6 +344,40 @@ impl DeviceStore {
                             fs.temperature = temp;
                         });
                     }
+                } else if prop == "CCD_TEMPERATURE" {
+                    let mut t: Option<f64> = None;
+                    if let Some(arr) = payload["numbers"].as_array() {
+                        for el in arr {
+                            if el["name"].as_str() == Some("CCD_TEMPERATURE_VALUE") {
+                                t = el["value"].as_f64();
+                            }
+                        }
+                    }
+                    if t.is_some() {
+                        self.camera_status.update(|opt| {
+                            let cs = opt.get_or_insert_with(CameraStatusData::default);
+                            if let Some(dev) = payload["device"].as_str() {
+                                if !dev.is_empty() { cs.device = dev.to_string(); }
+                            }
+                            cs.temperature = t;
+                        });
+                    }
+                } else if prop == "CCD_COOLER" {
+                    let mut on: Option<bool> = None;
+                    if let Some(arr) = payload["switches"].as_array() {
+                        for el in arr {
+                            let n = el["name"].as_str().unwrap_or("");
+                            let v = el["value"].as_bool()
+                                .or_else(|| el["state"].as_str().map(|s| s == "On"));
+                            if n == "COOLER_ON" { on = v; }
+                        }
+                    }
+                    if on.is_some() {
+                        self.camera_status.update(|opt| {
+                            let cs = opt.get_or_insert_with(CameraStatusData::default);
+                            cs.cooler_on = on;
+                        });
+                    }
                 } else if prop == "EQUATORIAL_EOD_COORD" {
                     // INDI mount coord property: RA in hours, DEC in degrees.
                     let mut ra_h: Option<f64> = None;
@@ -387,18 +445,65 @@ impl DeviceStore {
                 self.focus_settings.set(payload.clone());
             }
 
+            // Camera state: temperature (see message.cpp:446 sendTemperature).
+            // Payload is {name, temperature}.
+            "new_camera_state" => {
+                self.camera_status.update(|opt| {
+                    let cs = opt.get_or_insert_with(CameraStatusData::default);
+                    if let Some(dev) = payload["name"].as_str() {
+                        if !dev.is_empty() { cs.device = dev.to_string(); }
+                    }
+                    if let Some(t) = payload["temperature"].as_f64() {
+                        cs.temperature = Some(t);
+                    }
+                });
+            }
+
+            // Capture module status (message.cpp:2567). Partial payloads.
+            "new_capture_state" => {
+                self.capture_status.update(|c| {
+                    if let Some(s) = payload["status"].as_str() {
+                        c.status = s.to_string();
+                    }
+                    if let Some(t) = payload["target"].as_str() {
+                        c.target = t.to_string();
+                    }
+                    if let Some(v) = payload["seqTotal"].as_i64() { c.seq_total = Some(v); }
+                    if let Some(v) = payload["seqCurrent"].as_i64() { c.seq_current = Some(v); }
+                    if let Some(v) = payload["progress"].as_f64() { c.progress = Some(v); }
+                    if let Some(v) = payload["overallRemaining"].as_f64() {
+                        c.overall_remaining = Some(v);
+                    }
+                    if let Some(l) = payload["log"].as_str() {
+                        if !l.is_empty() { c.log = l.to_string(); }
+                    }
+                });
+            }
+
+            "capture_get_all_settings" => {
+                self.capture_settings.set(payload.clone());
+            }
+
+            "capture_get_sequences" => {
+                self.capture_sequence.set(payload.clone());
+            }
+
             // Binary media frames come through as JSON after server-side
             // decoding (rekos-server/src/kstars_ws.rs:169-198). Metadata is the
             // parsed header; we only consume focus frames (uuid starts with
             // "+F", see kstars media.cpp:752).
             "new_preview_image" => {
                 let uuid = payload["metadata"]["uuid"].as_str().unwrap_or("");
-                if uuid.starts_with("+F") {
-                    if let Some(b64) = payload["data"].as_str() {
-                        let ext = payload["metadata"]["ext"].as_str().unwrap_or("jpg");
-                        let mime = if ext == "jpg" { "image/jpeg" } else { "image/png" };
-                        let url = format!("data:{};base64,{}", mime, b64);
+                if let Some(b64) = payload["data"].as_str() {
+                    let ext = payload["metadata"]["ext"].as_str().unwrap_or("jpg");
+                    let mime = if ext == "jpg" { "image/jpeg" } else { "image/png" };
+                    let url = format!("data:{};base64,{}", mime, b64);
+                    // Focus frames are uuid-prefixed "+F" (kstars media.cpp:752).
+                    // Everything else → capture preview target.
+                    if uuid.starts_with("+F") {
                         self.focus_preview_url.set(Some(url));
+                    } else {
+                        self.capture_preview_url.set(Some(url));
                     }
                 }
             }
@@ -440,6 +545,8 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                 prime_send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"capture_get_all_settings","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
             }
         });
     }
@@ -494,6 +601,20 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                     "CCD_INFO",
                     camera_sig,
                     |cs| cs.as_ref().and_then(|c| c.sensor_width).is_some(),
+                );
+                spawn_retry_property(
+                    send_for_effect.clone(),
+                    train.camera.clone(),
+                    "CCD_TEMPERATURE",
+                    camera_sig,
+                    |cs| cs.as_ref().and_then(|c| c.temperature).is_some(),
+                );
+                spawn_retry_property(
+                    send_for_effect.clone(),
+                    train.camera.clone(),
+                    "CCD_COOLER",
+                    camera_sig,
+                    |cs| cs.as_ref().and_then(|c| c.cooler_on).is_some(),
                 );
             }
 

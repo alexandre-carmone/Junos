@@ -803,9 +803,10 @@ pub fn SkyTabSwitcher() -> impl IntoView {
             ("rgba(12,14,24,0.85)", "#2a2a35", "#88aaff")
         };
         format!(
-            "width:40px; height:40px; border-radius:50%; border:1px solid {border}; \
+            "width:48px; height:48px; border-radius:50%; border:1px solid {border}; \
              background:{bg}; color:{color}; display:flex; align-items:center; \
              justify-content:center; cursor:pointer; padding:0; \
+             touch-action:manipulation; -webkit-tap-highlight-color:transparent; \
              transition:background 0.15s, border-color 0.15s;"
         )
     };
@@ -834,6 +835,11 @@ pub fn SkyTabSwitcher() -> impl IntoView {
             <button title="Focus"
                     style=move || btn_style(Tab::Focus)
                     on:click=move |_| active.set(Tab::Focus)>
+                {gear(20)}
+            </button>
+            <button title="Imaging"
+                    style=move || btn_style(Tab::Imaging)
+                    on:click=move |_| active.set(Tab::Imaging)>
                 {gear(20)}
             </button>
         </div>

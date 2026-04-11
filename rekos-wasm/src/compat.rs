@@ -20,9 +20,25 @@ pub struct MountSnapshot {
 
 #[derive(Debug, Clone, Default)]
 pub struct CameraSnapshot {
+    pub device: String,
     pub pixel_size_um: Option<f64>,
     pub sensor_width: Option<u32>,
     pub sensor_height: Option<u32>,
+    pub temperature: Option<f64>,
+    pub cooler_on: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CaptureSnapshot {
+    pub status: String,
+    pub target: String,
+    pub seq_total: Option<i64>,
+    pub seq_current: Option<i64>,
+    pub progress: Option<f64>,
+    pub log: String,
+    pub preview_url: Option<String>,
+    pub settings: serde_json::Value,
+    pub sequence: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -99,11 +115,35 @@ pub fn derive_camera(store: &DeviceStore) -> Signal<CameraSnapshot> {
     Signal::derive(move || {
         match camera_status.get() {
             Some(cs) => CameraSnapshot {
+                device: cs.device,
                 pixel_size_um: cs.pixel_size_um,
                 sensor_width: cs.sensor_width,
                 sensor_height: cs.sensor_height,
+                temperature: cs.temperature,
+                cooler_on: cs.cooler_on,
             },
             None => CameraSnapshot::default(),
+        }
+    })
+}
+
+pub fn derive_capture(store: &DeviceStore) -> Signal<CaptureSnapshot> {
+    let status_sig   = store.capture_status;
+    let settings_sig = store.capture_settings;
+    let seq_sig      = store.capture_sequence;
+    let preview_sig  = store.capture_preview_url;
+    Signal::derive(move || {
+        let s = status_sig.get();
+        CaptureSnapshot {
+            status: s.status,
+            target: s.target,
+            seq_total: s.seq_total,
+            seq_current: s.seq_current,
+            progress: s.progress,
+            log: s.log,
+            preview_url: preview_sig.get(),
+            settings: settings_sig.get(),
+            sequence: seq_sig.get(),
         }
     })
 }

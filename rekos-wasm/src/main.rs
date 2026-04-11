@@ -18,12 +18,13 @@ use leptos::prelude::*;
 use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
 use components::focus::FocusTab;
+use components::imaging::ImagingTab;
 use components::sky::{SkyTab, SkyTabSwitcher};
 use i18n::Lang;
 use ws::{AlignDefaultsData, SolveRadius};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tab { Sky, Focus }
+pub enum Tab { Sky, Focus, Imaging }
 
 #[derive(Clone, Copy)]
 pub struct ActiveTabCtx(pub RwSignal<Tab>);
@@ -151,17 +152,21 @@ fn App() -> impl IntoView {
     // SkyTab) can read/write it without SkyTab carrying a prop for it.
     let active_tab = RwSignal::new(Tab::Sky);
     provide_context(ActiveTabCtx(active_tab));
-    let focus_visible = move || active_tab.get() == Tab::Focus;
+    let sky_visible     = move || active_tab.get() == Tab::Sky;
+    let focus_visible   = move || active_tab.get() == Tab::Focus;
+    let imaging_visible = move || active_tab.get() == Tab::Imaging;
 
-    // ── Focus tab wiring ──────────────────────────────────────────────────
-    let focus_snapshot = compat::derive_focus(&store);
-    let send_focus = Arc::clone(&send);
+    // ── Focus + Imaging tab wiring ────────────────────────────────────────
+    let focus_snapshot   = compat::derive_focus(&store);
+    let capture_snapshot = compat::derive_capture(&store);
+    let send_focus   = Arc::clone(&send);
+    let send_imaging = Arc::clone(&send);
 
     view! {
         <div id="rekos-app" style="position:fixed; inset:0; background:#0a0a0f; color:#c0c0d0; font-family:monospace; overflow:hidden;">
             <div style=move || format!(
                 "position:absolute; inset:0; {}",
-                if focus_visible() { "display:none;" } else { "" }
+                if sky_visible() { "" } else { "display:none;" }
             )>
                 <SkyTab
                     mount=mount
@@ -182,6 +187,15 @@ fn App() -> impl IntoView {
                         focus=focus_snapshot
                         camera=camera
                         send=Arc::clone(&send_focus)
+                    />
+                </div>
+            </Show>
+            <Show when=imaging_visible>
+                <div style="position:absolute; inset:0; z-index:40;">
+                    <ImagingTab
+                        capture=capture_snapshot
+                        camera=camera
+                        send=Arc::clone(&send_imaging)
                     />
                 </div>
             </Show>
