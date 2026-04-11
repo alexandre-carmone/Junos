@@ -75,6 +75,25 @@ pub struct OpticalTrain {
     pub camera: String,
     pub scope: String,
     pub guider: String,
+    pub focuser: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FocusStatusData {
+    pub device: String,
+    pub connected: bool,
+    pub status: String,
+    pub hfr: Option<f64>,
+    pub position: Option<i64>,
+    pub temperature: Option<f64>,
+    pub log: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct HfrSample {
+    pub t_ms: f64,
+    pub hfr: f64,
+    pub position: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -121,6 +140,10 @@ pub struct DeviceStore {
     pub telescope_settings: RwSignal<TelescopeSettingsData>,
     pub optical_trains:     RwSignal<Vec<OpticalTrain>>,
     pub scopes:             RwSignal<Vec<ScopeInfo>>,
+    pub focus_status:       RwSignal<Option<FocusStatusData>>,
+    pub focus_settings:     RwSignal<serde_json::Value>,
+    pub focus_preview_url:  RwSignal<Option<String>>,
+    pub focus_hfr_history:  RwSignal<Vec<HfrSample>>,
 }
 
 impl DeviceStore {
@@ -133,6 +156,10 @@ impl DeviceStore {
             telescope_settings: RwSignal::new(TelescopeSettingsData::default()),
             optical_trains:     RwSignal::new(Vec::new()),
             scopes:             RwSignal::new(Vec::new()),
+            focus_status:       RwSignal::new(None),
+            focus_settings:     RwSignal::new(serde_json::Value::Null),
+            focus_preview_url:  RwSignal::new(None),
+            focus_hfr_history:  RwSignal::new(Vec::new()),
         }
     }
 
@@ -146,6 +173,9 @@ impl DeviceStore {
                 if !connected {
                     self.mount_status.set(None);
                     self.camera_status.set(None);
+                    self.focus_status.set(None);
+                    self.focus_preview_url.set(None);
+                    self.focus_hfr_history.set(Vec::new());
                 }
             }
 
@@ -190,6 +220,7 @@ impl DeviceStore {
                         camera: t["camera"].as_str().unwrap_or("").to_string(),
                         scope:  t["scope"].as_str().unwrap_or("").to_string(),
                         guider: t["guider"].as_str().unwrap_or("").to_string(),
+                        focuser: t["focuser"].as_str().unwrap_or("").to_string(),
                     }).collect();
                     for t in &trains {
                         leptos::logging::log!(
@@ -253,6 +284,42 @@ impl DeviceStore {
                             if sh.is_some()  { cs.sensor_height = sh; }
                         });
                     }
+                } else if prop == "ABS_FOCUS_POSITION" {
+                    let mut pos: Option<i64> = None;
+                    if let Some(arr) = payload["numbers"].as_array() {
+                        for el in arr {
+                            if el["name"].as_str() == Some("FOCUS_ABSOLUTE_POSITION") {
+                                pos = el["value"].as_f64().map(|v| v as i64);
+                            }
+                        }
+                    }
+                    if pos.is_some() {
+                        self.focus_status.update(|opt| {
+                            let fs = opt.get_or_insert_with(FocusStatusData::default);
+                            if let Some(dev) = payload["device"].as_str() {
+                                if !dev.is_empty() { fs.device = dev.to_string(); }
+                            }
+                            if pos.is_some() { fs.position = pos; }
+                        });
+                    }
+                } else if prop == "FOCUS_TEMPERATURE" {
+                    let mut temp: Option<f64> = None;
+                    if let Some(arr) = payload["numbers"].as_array() {
+                        for el in arr {
+                            if el["name"].as_str() == Some("TEMPERATURE") {
+                                temp = el["value"].as_f64();
+                            }
+                        }
+                    }
+                    if temp.is_some() {
+                        self.focus_status.update(|opt| {
+                            let fs = opt.get_or_insert_with(FocusStatusData::default);
+                            if let Some(dev) = payload["device"].as_str() {
+                                if !dev.is_empty() { fs.device = dev.to_string(); }
+                            }
+                            fs.temperature = temp;
+                        });
+                    }
                 } else if prop == "EQUATORIAL_EOD_COORD" {
                     // INDI mount coord property: RA in hours, DEC in degrees.
                     let mut ra_h: Option<f64> = None;
@@ -277,6 +344,61 @@ impl DeviceStore {
                             if ra_h.is_some() { ms.ra_h = ra_h; }
                             if de_d.is_some() { ms.dec_deg = de_d; }
                         });
+                    }
+                }
+            }
+
+            // Focus module state. Partial payloads: any subset of
+            // {status, hfr, pos, log, focusAdvisorMessage, focusAdvisorStage,
+            //  focusinitHFRPlot, title}. See kstars manager.cpp:2530+ for the
+            // emission sites.
+            "new_focus_state" => {
+                let hfr = payload["hfr"].as_f64();
+                let pos = payload["pos"].as_i64()
+                    .or_else(|| payload["pos"].as_f64().map(|v| v as i64));
+                self.focus_status.update(|opt| {
+                    let fs = opt.get_or_insert_with(FocusStatusData::default);
+                    fs.connected = true;
+                    if let Some(s) = payload["status"].as_str() {
+                        fs.status = s.to_string();
+                    }
+                    if let Some(h) = hfr { fs.hfr = Some(h); }
+                    if let Some(p) = pos { fs.position = Some(p); }
+                    if let Some(l) = payload["log"].as_str() {
+                        if !l.is_empty() { fs.log = l.to_string(); }
+                    }
+                });
+                if let Some(h) = hfr {
+                    if h > 0.0 && h.is_finite() {
+                        let t_ms = web_sys::js_sys::Date::now();
+                        self.focus_hfr_history.update(|v| {
+                            v.push(HfrSample { t_ms, hfr: h, position: pos });
+                            if v.len() > 200 {
+                                let drop = v.len() - 200;
+                                v.drain(..drop);
+                            }
+                        });
+                    }
+                }
+            }
+
+            // Debounced settings snapshot reply (see message.cpp:734).
+            "focus_get_all_settings" => {
+                self.focus_settings.set(payload.clone());
+            }
+
+            // Binary media frames come through as JSON after server-side
+            // decoding (rekos-server/src/kstars_ws.rs:169-198). Metadata is the
+            // parsed header; we only consume focus frames (uuid starts with
+            // "+F", see kstars media.cpp:752).
+            "new_preview_image" => {
+                let uuid = payload["metadata"]["uuid"].as_str().unwrap_or("");
+                if uuid.starts_with("+F") {
+                    if let Some(b64) = payload["data"].as_str() {
+                        let ext = payload["metadata"]["ext"].as_str().unwrap_or("jpg");
+                        let mime = if ext == "jpg" { "image/jpeg" } else { "image/png" };
+                        let url = format!("data:{};base64,{}", mime, b64);
+                        self.focus_preview_url.set(Some(url));
                     }
                 }
             }
@@ -308,8 +430,8 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
         let _ = cmd_tx.unbounded_send(json);
     });
 
-    // Prime: once Ekos is online, fetch scope DB and active train list.
-    // Both commands bypass the Ekos::Success gate (handled above message.cpp:264).
+    // Prime: once Ekos is online, fetch scope DB, active train list, and the
+    // debounced focus settings snapshot. All bypass the Ekos::Success gate.
     let online_sig = store.online;
     {
         let prime_send = send_fn.clone();
@@ -317,6 +439,7 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
             if online_sig.get() {
                 prime_send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
             }
         });
     }
@@ -352,8 +475,10 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
         let trains_sig2 = store.optical_trains;
         let camera_sig  = store.camera_status;
         let mount_sig   = store.mount_status;
-        let last_cam   = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
-        let last_mount = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let focus_sig   = store.focus_status;
+        let last_cam     = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let last_mount   = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let last_focuser = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let send_for_effect = send_fn.clone();
         Effect::new(move |_| {
             let trains = trains_sig2.get();
@@ -382,6 +507,32 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                     "EQUATORIAL_EOD_COORD",
                     mount_sig,
                     |ms| ms.as_ref().and_then(|m| m.ra_h).is_some(),
+                );
+            }
+
+            if !train.focuser.is_empty() && train.focuser != "--"
+                && *last_focuser.borrow() != train.focuser
+            {
+                *last_focuser.borrow_mut() = train.focuser.clone();
+                // Seed focus_status with the focuser device name so UI has
+                // something to show before the first new_focus_state lands.
+                focus_sig.update(|opt| {
+                    let fs = opt.get_or_insert_with(FocusStatusData::default);
+                    fs.device = train.focuser.clone();
+                });
+                spawn_retry_property(
+                    send_for_effect.clone(),
+                    train.focuser.clone(),
+                    "ABS_FOCUS_POSITION",
+                    focus_sig,
+                    |fs| fs.as_ref().and_then(|f| f.position).is_some(),
+                );
+                spawn_retry_property(
+                    send_for_effect.clone(),
+                    train.focuser.clone(),
+                    "FOCUS_TEMPERATURE",
+                    focus_sig,
+                    |fs| fs.as_ref().and_then(|f| f.temperature).is_some(),
                 );
             }
         });

@@ -26,6 +26,7 @@ use web_sys::{
 
 use crate::compat::{CameraSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot};
 use crate::ws::SendCmd;
+use crate::{ActiveTabCtx, Tab};
 
 use crate::astro;
 use crate::coords::JNow;
@@ -760,6 +761,9 @@ pub fn SkyTab(
                 />
             </div>
 
+            // ── Tab switcher (in-planetarium gear bar) ──────────────────────
+            <SkyTabSwitcher />
+
             // ── Context menu ────────────────────────────────────────────────
             <SkyContextMenu
                 ctx_menu=ctx_menu
@@ -773,6 +777,68 @@ pub fn SkyTab(
                 set_pending_action=set_pending_action
                 send=send_for_confirm
             />
+        </div>
+    }
+}
+
+// ---------------------------------------------------------------------------
+// In-planetarium gear bar — switches between sky and focus tabs.
+// Renders as a sibling of the other sky overlays (time slider, zoom bar) so
+// visually it reads as part of the planetarium, not a global HUD. Z-index 60
+// is deliberately above both the sky actions button (z:50) and the FocusTab
+// overlay (z:40 in main.rs) — since `.sky-pane` does not establish its own
+// stacking context (position:relative, no z-index/opacity/transform), the
+// gear bar z-index stacks against FocusTab in the parent context and pokes
+// through even when focus is active.
+// ---------------------------------------------------------------------------
+
+#[component]
+fn SkyTabSwitcher() -> impl IntoView {
+    let active = use_context::<ActiveTabCtx>()
+        .map(|c| c.0)
+        .unwrap_or_else(|| RwSignal::new(Tab::Sky));
+
+    let btn_style = move |tab: Tab| {
+        let on = active.get() == tab;
+        let (bg, border, color) = if on {
+            ("rgba(40,60,110,0.95)", "#88aaff", "#cfe0ff")
+        } else {
+            ("rgba(12,14,24,0.85)", "#2a2a35", "#88aaff")
+        };
+        format!(
+            "width:40px; height:40px; border-radius:50%; border:1px solid {border}; \
+             background:{bg}; color:{color}; display:flex; align-items:center; \
+             justify-content:center; cursor:pointer; padding:0; \
+             transition:background 0.15s, border-color 0.15s;"
+        )
+    };
+
+    let gear = |size: i32| view! {
+        <svg width=size height=size viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+    };
+
+    view! {
+        <div class="sky-tab-switcher"
+             style="position:absolute; bottom:48px; left:50%; transform:translateX(-50%); \
+                    z-index:60; display:flex; gap:10px; padding:6px 10px; \
+                    background:rgba(6,6,15,0.75); border:1px solid #222; \
+                    border-radius:24px; pointer-events:auto;"
+             on:click=|ev: MouseEvent| ev.stop_propagation()>
+            <button title="Sky"
+                    style=move || btn_style(Tab::Sky)
+                    on:click=move |_| active.set(Tab::Sky)>
+                {gear(20)}
+            </button>
+            <button title="Focus"
+                    style=move || btn_style(Tab::Focus)
+                    on:click=move |_| active.set(Tab::Focus)>
+                {gear(20)}
+            </button>
         </div>
     }
 }

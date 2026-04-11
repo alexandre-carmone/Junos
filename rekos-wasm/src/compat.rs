@@ -5,7 +5,7 @@
 
 use leptos::prelude::*;
 
-use crate::ws::DeviceStore;
+use crate::ws::{DeviceStore, HfrSample};
 
 #[derive(Debug, Clone, Default)]
 pub struct MountSnapshot {
@@ -36,6 +36,20 @@ pub struct SolveSnapshot {
     pub rotation_deg: Option<f64>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct FocusSnapshot {
+    pub device: String,
+    pub connected: bool,
+    pub status: String,
+    pub hfr: Option<f64>,
+    pub position: Option<i64>,
+    pub temperature: Option<f64>,
+    pub log: String,
+    pub preview_url: Option<String>,
+    pub history: Vec<HfrSample>,
+    pub settings: serde_json::Value,
+}
+
 pub fn derive_mount(store: &DeviceStore) -> Signal<MountSnapshot> {
     let mount_status = store.mount_status;
     Signal::derive(move || {
@@ -50,6 +64,32 @@ pub fn derive_mount(store: &DeviceStore) -> Signal<MountSnapshot> {
                 dec_deg: ms.dec_deg,
             },
             None => MountSnapshot::default(),
+        }
+    })
+}
+
+pub fn derive_focus(store: &DeviceStore) -> Signal<FocusSnapshot> {
+    let focus_status      = store.focus_status;
+    let focus_settings    = store.focus_settings;
+    let focus_preview_url = store.focus_preview_url;
+    let focus_hfr_history = store.focus_hfr_history;
+    Signal::derive(move || {
+        let (device, connected, status, hfr, position, temperature, log) =
+            match focus_status.get() {
+                Some(fs) => (fs.device, fs.connected, fs.status, fs.hfr, fs.position, fs.temperature, fs.log),
+                None => (String::new(), false, String::new(), None, None, None, String::new()),
+            };
+        FocusSnapshot {
+            device,
+            connected,
+            status,
+            hfr,
+            position,
+            temperature,
+            log,
+            preview_url: focus_preview_url.get(),
+            history: focus_hfr_history.get(),
+            settings: focus_settings.get(),
         }
     })
 }

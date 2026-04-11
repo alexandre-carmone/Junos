@@ -17,9 +17,16 @@ use leptos::prelude::*;
 
 use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
+use components::focus::FocusTab;
 use components::sky::SkyTab;
 use i18n::{Lang, t};
 use ws::{AlignDefaultsData, SolveRadius};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Tab { Sky, Focus }
+
+#[derive(Clone, Copy)]
+pub struct ActiveTabCtx(pub RwSignal<Tab>);
 
 // ---------------------------------------------------------------------------
 // Context newtypes kept for sky/actions.rs. They are optional at the call
@@ -163,6 +170,17 @@ fn App() -> impl IntoView {
         format!("{state}  ·  RA {ra}  Dec {dec}  ·  FOV {fov}")
     };
 
+    // ── Active tab ────────────────────────────────────────────────────────
+    // Provided via context so the in-planetarium gear bar (rendered inside
+    // SkyTab) can read/write it without SkyTab carrying a prop for it.
+    let active_tab = RwSignal::new(Tab::Sky);
+    provide_context(ActiveTabCtx(active_tab));
+    let focus_visible = move || active_tab.get() == Tab::Focus;
+
+    // ── Focus tab wiring ──────────────────────────────────────────────────
+    let focus_snapshot = compat::derive_focus(&store);
+    let send_focus = Arc::clone(&send);
+
     view! {
         <div id="rekos-app" style="position:fixed; inset:0; background:#0a0a0f; color:#c0c0d0; font-family:monospace; overflow:hidden;">
             <SkyTab
@@ -177,6 +195,15 @@ fn App() -> impl IntoView {
                 fov_radius=sky_fov_radius
                 follow_mount=sky_follow_mount
             />
+            <Show when=focus_visible>
+                <div style="position:absolute; inset:0; z-index:40;">
+                    <FocusTab
+                        focus=focus_snapshot
+                        camera=camera
+                        send=Arc::clone(&send_focus)
+                    />
+                </div>
+            </Show>
             <div style="position:fixed; top:0; left:0; right:0; z-index:500; \
                         padding:6px 12px; background:rgba(6,6,15,0.75); \
                         border-bottom:1px solid #222; font-size:12px; color:#88aaff; \
