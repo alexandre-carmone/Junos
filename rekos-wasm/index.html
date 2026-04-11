@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Junos — Astrophotography Control</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0a0f;
+            color: #c0c0d0;
+            min-height: 100vh;
+            /* Prevent elastic overscroll from interfering with the sky map */
+            overscroll-behavior: none;
+        }
+        #app { width: 100%; }
+
+        /* ── Touch-friendly interactive elements ─────────────────────────── */
+
+        /* Eliminate the 300 ms tap delay on all interactive elements */
+        button, input, select, textarea, a, label {
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Minimum 44 × 44 px touch targets on buttons */
+        button {
+            min-height: 44px;
+            min-width: 44px;
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Visible press feedback that works on touch (no :hover needed) */
+        button:active {
+            opacity: 0.65;
+        }
+
+        /* Slightly taller inputs/selects for fat fingers */
+        input, select {
+            min-height: 36px;
+        }
+
+        /* iOS: prevent zoom-on-focus for inputs without an explicit font-size */
+        input, select, textarea {
+            font-size: max(16px, 1em);
+        }
+
+        /* ── Responsive layout ────────────────────────────────────────────── */
+
+        /* On all screens: panels and flex containers size correctly */
+        div[style*="min-width"] {
+            box-sizing: border-box;
+        }
+
+        /* ── TABLET  768 – 1023 px ───────────────────────────────────────── */
+        @media (min-width: 768px) and (max-width: 1023px) {
+            /* Tighten tab content padding/gap */
+            div[style*="display:flex"][style*="flex-wrap:wrap"][style*="gap:16px"] {
+                padding: 10px !important;
+                gap: 12px !important;
+            }
+            /* Panels: soften minimum width so two fit side-by-side on 768px */
+            div[style*="background:#111"][style*="min-width"],
+            div[style*="flex:1"][style*="min-width"] {
+                min-width: 200px !important;
+            }
+        }
+
+        /* ── SMARTPHONE  ≤ 767 px  (iPhone SE → 14 Pro Max) ─────────────── */
+        @media (max-width: 767px) {
+
+            /* Header: tighter padding, slightly smaller title */
+            #junos-app > div:first-child {
+                padding: 6px 10px !important;
+            }
+
+            /* Tab-pane flex containers → single column */
+            div[style*="display:flex"][style*="flex-wrap:wrap"][style*="gap:16px"] {
+                flex-direction: column !important;
+                padding: 8px !important;
+                gap: 8px !important;
+            }
+
+            /* Panel cards: full width, no horizontal overflow */
+            div[style*="background:#111"][style*="min-width"],
+            div[style*="flex:1"][style*="min-width"] {
+                min-width: 0 !important;
+                width: 100% !important;
+            }
+
+            /* Focus tab inner panels */
+            div[style*="background:#111"][style*="border:1px solid #334"][style*="padding:10px"] {
+                min-width: 0 !important;
+                width: 100% !important;
+            }
+
+            /* max-width panels (dust cover, light panel) fill full width */
+            div[style*="max-width:480px"] {
+                max-width: 100% !important;
+            }
+
+            /* Inputs: prevent fixed widths from overflowing */
+            input[type="text"],
+            input[type="number"] {
+                width: 100% !important;
+                max-width: 100% !important;
+                box-sizing: border-box !important;
+            }
+
+            /* Two-column grids inside panels (e.g. RA/Dec inputs) become
+               label-above-input stacks */
+            div[style*="display:grid"][style*="grid-template-columns:130px"] {
+                grid-template-columns: 1fr !important;
+            }
+            div[style*="display:grid"][style*="grid-template-columns:80px"] {
+                grid-template-columns: 1fr !important;
+            }
+
+            /* Sky map: push time-slider to full-width row above action buttons */
+            .sky-time-slider {
+                left: 8px !important;
+                bottom: 100px !important;
+            }
+
+            /* Sky action buttons: move up so they clear the time slider */
+            .sky-actions {
+                bottom: 52px !important;
+            }
+
+            /* Use the full dynamic viewport height so iOS chrome doesn't crop */
+            .sky-pane {
+                height: calc(100dvh - 110px) !important;
+            }
+
+            /* Safe-area padding for iPhone notch / home indicator */
+            #junos-app {
+                padding-bottom: env(safe-area-inset-bottom);
+            }
+            nav {
+                padding-left:  max(8px, env(safe-area-inset-left)) !important;
+                padding-right: max(8px, env(safe-area-inset-right)) !important;
+            }
+        }
+
+        /* ── Very small phones  ≤ 374 px  (iPhone SE 1st gen) ───────────── */
+        @media (max-width: 374px) {
+            button {
+                min-width: 36px !important;
+                font-size: 12px !important;
+            }
+        }
+    </style>
+    <!-- Trunk replaces this with the built WASM entry point -->
+    <link data-trunk rel="rust" data-wasm-opt="z" />
+    <!-- Static binary catalogs served at /junos.bin and /dso.bin -->
+    <link data-trunk rel="copy-file" href="public/junos.bin"/>
+    <link data-trunk rel="copy-file" href="public/dso.bin"/>
+    <!-- Nebulae runtime index + images (generated by scripts/download_nebulae.py) -->
+    <link data-trunk rel="copy-file" href="public/nebulae.json"/>
+    <link data-trunk rel="copy-dir" href="public/nebulae"/>
+</head>
+<body>
+    <div id="app"></div>
+</body>
+</html>

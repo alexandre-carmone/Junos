@@ -1,0 +1,4 @@
+[workspace]
+members = ["rekos-server", "rekos-wasm"]
+default-members = ["rekos-server"]
+resolver = "2"

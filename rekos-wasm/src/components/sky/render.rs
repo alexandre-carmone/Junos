@@ -1,0 +1,943 @@
+//! Canvas2D rendering logic for the sky map overlay.
+
+use std::collections::HashMap;
+use std::f64::consts::PI;
+use std::sync::Arc;
+
+use web_sys::{CanvasGradient, CanvasRenderingContext2d, HtmlImageElement};
+
+use crate::astro;
+use crate::catalog::CatalogData;
+use crate::coords::J2000;
+use crate::dso_catalog::{DsoCatalogData, DsoType};
+use crate::i18n::{Lang, constellation_name};
+use crate::nebulae::NebulaeIndex;
+
+use super::utils::bv_to_rgb;
+
+// ── Star size tuning ──────────────────────────────────────────────────────────
+// Radius (CSS pixels) = STAR_SIZE_BASE - mag * STAR_SIZE_MAG_SCALE
+// Increase STAR_SIZE_BASE to make all stars larger.
+const STAR_SIZE_BASE:      f64 = 3.5;
+const STAR_SIZE_MAG_SCALE: f64 = 0.35;
+const STAR_SIZE_MIN:       f64 = 0.5;
+
+/// All values needed to render a single frame (no reactive signals).
+pub struct RenderParams {
+    pub wf: f64,
+    pub hf: f64,
+    pub c_alt: f64,
+    pub c_az: f64,
+    pub fov: f64,
+    pub lst: f64,
+    pub latitude: f64,
+    pub sin_lat: f64,
+    pub cos_lat: f64,
+    pub mag_limit: f32,
+    pub has_gpu: bool,
+    pub stars_on: bool,
+    pub names_on: bool,
+    pub const_on: bool,
+    pub con_names_on: bool,
+    pub grid_on: bool,
+    pub eq_grid_on: bool,
+    pub meridian_on: bool,
+    pub fov_on: bool,
+    pub dso_on: bool,
+    pub dso_gx: bool,
+    pub dso_oc: bool,
+    pub dso_gc: bool,
+    pub dso_nb: bool,
+    pub dso_pn: bool,
+    pub dso_snr: bool,
+    pub dso_gal: bool,
+    pub dso_mag: f64,
+    pub fl: Option<f64>,
+    pub mount_connected: bool,
+    pub mount_ra_h: Option<f64>,
+    pub mount_dec_deg: Option<f64>,
+    pub cam_pixel_size_um: Option<f64>,
+    pub cam_sensor_width: Option<u32>,
+    pub cam_sensor_height: Option<u32>,
+    pub rotation_deg: Option<f64>,
+    pub t_off: f64,
+    pub jd: f64,
+    pub cur_lang: Lang,
+}
+
+/// Render the full sky overlay on a Canvas2D context.
+pub fn render_overlay(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    cat: &Option<Arc<CatalogData>>,
+    dso_cat: &Option<Arc<DsoCatalogData>>,
+    nebulae_index: Option<&NebulaeIndex>,
+    nebulae_cache: &mut HashMap<String, HtmlImageElement>,
+) {
+    let cx = p.wf / 2.0;
+    let cy = p.hf / 2.0;
+    let scale = p.hf.min(p.wf) / 2.0;
+
+    let project = |alt: f64, az: f64| -> Option<(f64, f64)> {
+        astro::project(alt, az, p.c_alt, p.c_az, p.fov)
+            .map(|(x, y)| (cx + x * scale, cy - y * scale))
+    };
+
+    if p.has_gpu {
+        // Clear overlay (transparent — shows GPU canvas underneath)
+        ctx.clear_rect(0.0, 0.0, p.wf, p.hf);
+    } else {
+        // Full Canvas2D fallback rendering
+        ctx.set_fill_style_str("#0a0a14");
+        ctx.fill_rect(0.0, 0.0, p.wf, p.hf);
+        render_fallback_stars(ctx, p, cat, &project, cx, cy, scale);
+    }
+
+    // Everything below renders on the Canvas2D overlay (both GPU and fallback)
+    render_ground(ctx, p, &project);
+    if p.grid_on {
+        render_altaz_grid(ctx, p, &project);
+    }
+    if p.meridian_on {
+        render_meridian(ctx, p, &project);
+    }
+    if p.eq_grid_on {
+        render_eq_grid(ctx, p, &project);
+    }
+    if p.has_gpu && p.names_on && p.stars_on {
+        render_star_names_gpu(ctx, p, cat, &project);
+    }
+    if p.has_gpu && p.const_on && p.con_names_on {
+        render_constellation_names_gpu(ctx, p, cat, &project);
+    }
+    if p.dso_on {
+        render_dso(ctx, p, dso_cat, &project, scale, nebulae_index, nebulae_cache);
+    }
+    render_mount_crosshair(ctx, p, &project);
+    render_center_crosshair(ctx, cx, cy);
+    if p.fov_on {
+        render_center_fov(ctx, p, &project, cx, cy);
+        render_mount_fov(ctx, p, &project, cx, cy);
+    }
+    render_info_overlay(ctx, p);
+}
+
+// ---------------------------------------------------------------------------
+// Fallback CPU rendering (stars + constellation lines + names)
+// ---------------------------------------------------------------------------
+
+fn render_fallback_stars(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    cat: &Option<Arc<CatalogData>>,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    _cx: f64,
+    _cy: f64,
+    _scale: f64,
+) {
+    let Some(ref cat) = cat else { return };
+
+    let mut idx_screen: Vec<Option<(f64, f64, f32, f32)>> = vec![None; cat.stars.len()];
+    if p.stars_on || p.const_on {
+        let lst_rad = p.lst.to_radians();
+        for (i, star) in cat.stars.iter().enumerate() {
+            if p.stars_on && star.mag > p.mag_limit { continue; }
+            let jnow = J2000::new(star.ra_deg as f64, star.dec_deg as f64).to_jnow(p.jd);
+            let ha = lst_rad - jnow.ra_deg.to_radians();
+            let dec = jnow.dec_deg.to_radians();
+            let sin_dec = dec.sin();
+            let cos_dec = dec.cos();
+            let sin_alt = sin_dec * p.sin_lat + cos_dec * p.cos_lat * ha.cos();
+            let alt_rad = sin_alt.asin();
+            let alt = alt_rad.to_degrees();
+            if alt < -5.0 { continue; }
+            let cos_az = (sin_dec - alt_rad.sin() * p.sin_lat) / (alt_rad.cos() * p.cos_lat);
+            let mut az = cos_az.clamp(-1.0, 1.0).acos().to_degrees();
+            if ha.sin() > 0.0 { az = 360.0 - az; }
+            if let Some((sx, sy)) = project(alt, az) {
+                if sx > -50.0 && sx < p.wf + 50.0 && sy > -50.0 && sy < p.hf + 50.0 {
+                    idx_screen[i] = Some((sx, sy, star.mag, star.bv));
+                }
+            }
+        }
+    }
+
+    // Constellation lines
+    if p.const_on {
+        ctx.set_stroke_style_str("#334");
+        ctx.set_line_width(0.6);
+        ctx.begin_path();
+        for &(a, b) in cat.lines.iter() {
+            if let (Some(Some((x1, y1, _, _))), Some(Some((x2, y2, _, _)))) =
+                (idx_screen.get(a as usize), idx_screen.get(b as usize))
+            {
+                ctx.move_to(*x1, *y1);
+                ctx.line_to(*x2, *y2);
+            }
+        }
+        ctx.stroke();
+    }
+
+    // Stars — simple filled circles (no per-star gradients for performance)
+    if p.stars_on {
+        // Scale star size with screen: reference = 1000 CSS pixels (min dimension)
+        let screen_scale = (p.wf.min(p.hf) / 1000.0).clamp(0.4, 1.5);
+        for screen in &idx_screen {
+            if let Some((sx, sy, mag, bv)) = screen {
+                let radius = ((STAR_SIZE_BASE - *mag as f64 * STAR_SIZE_MAG_SCALE) * screen_scale).max(STAR_SIZE_MIN);
+                let t = ((*mag + 2.0) / 8.5).clamp(0.0, 1.0);
+                let brightness = 1.0 - t * 0.69;
+                let (r, g, b) = bv_to_rgb(*bv);
+                let ri = (r * brightness * 255.0) as u8;
+                let gi = (g * brightness * 255.0) as u8;
+                let bi = (b * brightness * 255.0) as u8;
+                // Whitened core color
+                let cr = ((ri as f64 * 0.55 + 255.0 * 0.45) as u8).min(255);
+                let cg = ((gi as f64 * 0.55 + 255.0 * 0.45) as u8).min(255);
+                let cb = ((bi as f64 * 0.55 + 255.0 * 0.45) as u8).min(255);
+                ctx.set_fill_style_str(&format!("rgb({cr},{cg},{cb})"));
+                ctx.begin_path();
+                let _ = ctx.arc(*sx, *sy, radius, 0.0, 2.0 * PI);
+                ctx.fill();
+            }
+        }
+    }
+
+    // Star names
+    if p.names_on && p.stars_on {
+        ctx.set_fill_style_str("#8899aa");
+        ctx.set_font("10px monospace");
+        ctx.set_text_align("left");
+        for (i, star) in cat.stars.iter().enumerate() {
+            if let (Some(name), Some(Some((sx, sy, mag, _)))) =
+                (star.name.as_deref(), idx_screen.get(i))
+            {
+                if *mag < 3.0 {
+                    let _ = ctx.fill_text(name, sx + 6.0, sy - 4.0);
+                }
+            }
+        }
+    }
+
+    // Constellation names
+    if p.const_on && p.con_names_on {
+        ctx.set_fill_style_str("rgba(100,120,180,0.7)");
+        ctx.set_font("italic 11px monospace");
+        ctx.set_text_align("center");
+        let lst_rad = p.lst.to_radians();
+        for (abbr, name, cra, cdec) in &cat.centers {
+            let cjnow = J2000::new(*cra as f64, *cdec as f64).to_jnow(p.jd);
+            let ha = lst_rad - cjnow.ra_deg.to_radians();
+            let dec_rad = cjnow.dec_deg.to_radians();
+            let sin_dec = dec_rad.sin();
+            let cos_dec = dec_rad.cos();
+            let sin_alt = sin_dec * p.sin_lat + cos_dec * p.cos_lat * ha.cos();
+            let alt_rad = sin_alt.asin();
+            let alt = alt_rad.to_degrees();
+            if alt < -5.0 { continue; }
+            let cos_az = (sin_dec - alt_rad.sin() * p.sin_lat) / (alt_rad.cos() * p.cos_lat);
+            let mut az = cos_az.clamp(-1.0, 1.0).acos().to_degrees();
+            if ha.sin() > 0.0 { az = 360.0 - az; }
+            if let Some((sx, sy)) = project(alt, az) {
+                let label = constellation_name(abbr, p.cur_lang).unwrap_or(name);
+                let _ = ctx.fill_text(label, sx, sy);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ground + horizon
+// ---------------------------------------------------------------------------
+
+fn render_ground(
+    ctx: &CanvasRenderingContext2d,
+    _p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    // Horizon line
+    {
+        let mut first = true;
+        ctx.begin_path();
+        for i in (0..=360).step_by(3) {
+            let az = i as f64;
+            if let Some((px, py)) = project(0.0, az) {
+                if first { ctx.move_to(px, py); first = false; }
+                else { ctx.line_to(px, py); }
+            }
+        }
+        ctx.set_stroke_style_str("#b07840");
+        ctx.set_line_width(2.5);
+        ctx.stroke();
+    }
+
+    // Cardinal labels
+    ctx.set_font("bold 14px monospace");
+    ctx.set_text_align("center");
+    for (label, az) in &[("N", 0.0), ("E", 90.0), ("S", 180.0), ("W", 270.0)] {
+        if let Some((sx, sy)) = project(-2.0, *az) {
+            ctx.set_fill_style_str("#000");
+            let _ = ctx.fill_text(label, sx + 1.0, sy + 15.0);
+            ctx.set_fill_style_str("#ddaa66");
+            let _ = ctx.fill_text(label, sx, sy + 14.0);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Alt/Az grid
+// ---------------------------------------------------------------------------
+
+fn render_altaz_grid(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    // Adaptive step: coarser when zoomed out to reduce projection count
+    let az_step = if p.fov > 60.0 { 6 } else if p.fov > 20.0 { 4 } else { 3 };
+    let alt_step = if p.fov > 60.0 { 10 } else { 5 };
+
+    ctx.set_stroke_style_str("rgba(60,60,100,0.6)");
+    ctx.set_line_width(0.7);
+
+    ctx.begin_path();
+    for alt_i in (-1..=9).map(|i| i * 10) {
+        let mut first = true;
+        for az_i in (0..=360).step_by(az_step) {
+            if let Some((sx, sy)) = project(alt_i as f64, az_i as f64) {
+                if first { ctx.move_to(sx, sy); first = false; }
+                else { ctx.line_to(sx, sy); }
+            }
+        }
+    }
+    ctx.stroke();
+
+    ctx.begin_path();
+    for az_i in (0..360).step_by(30) {
+        let mut first = true;
+        for alt_i in (0..=90).step_by(alt_step) {
+            if let Some((sx, sy)) = project(alt_i as f64, az_i as f64) {
+                if first { ctx.move_to(sx, sy); first = false; }
+                else { ctx.line_to(sx, sy); }
+            }
+        }
+    }
+    ctx.stroke();
+}
+
+fn render_meridian(
+    ctx: &CanvasRenderingContext2d,
+    _p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    ctx.set_stroke_style_str("rgba(80,80,140,0.7)");
+    ctx.set_line_width(1.0);
+    ctx.begin_path();
+    let mut first = true;
+    for alt_i in (0..=90).step_by(3) {
+        if let Some((sx, sy)) = project(alt_i as f64, 0.0) {
+            if first { ctx.move_to(sx, sy); first = false; }
+            else { ctx.line_to(sx, sy); }
+        }
+    }
+    for alt_i in (0..=90).rev().step_by(3) {
+        if let Some((sx, sy)) = project(alt_i as f64, 180.0) {
+            ctx.line_to(sx, sy);
+        }
+    }
+    ctx.stroke();
+}
+
+// ---------------------------------------------------------------------------
+// Equatorial grid
+// ---------------------------------------------------------------------------
+
+fn render_eq_grid(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    let project_eq = |ra_deg: f64, dec_deg: f64| -> Option<(f64, f64)> {
+        let (alt, az) = astro::eq_to_altaz(ra_deg, dec_deg, p.lst, p.latitude);
+        project(alt, az)
+    };
+
+    // Adaptive step: coarser when zoomed out
+    let step = if p.fov > 60.0 { 6 } else if p.fov > 20.0 { 4 } else { 2 };
+
+    // Dec parallels every 30 deg
+    ctx.set_stroke_style_str("rgba(100,100,200,0.6)");
+    ctx.set_line_width(0.7);
+    ctx.begin_path();
+    for dec_i in (-3..=3).map(|i| i * 30) {
+        let dec = dec_i as f64;
+        let mut first = true;
+        for ra_i in (0..=360).step_by(step) {
+            let ra = ra_i as f64;
+            if let Some((sx, sy)) = project_eq(ra, dec) {
+                if first { ctx.move_to(sx, sy); first = false; }
+                else { ctx.line_to(sx, sy); }
+            } else {
+                first = true;
+            }
+        }
+    }
+    ctx.stroke();
+
+    // RA meridians every 2h (= 30 deg)
+    ctx.begin_path();
+    for ra_i in (0..12).map(|i| i * 30) {
+        let ra = ra_i as f64;
+        let mut first = true;
+        for dec_i in (-90..=90).step_by(step) {
+            let dec = dec_i as f64;
+            if let Some((sx, sy)) = project_eq(ra, dec) {
+                if first { ctx.move_to(sx, sy); first = false; }
+                else { ctx.line_to(sx, sy); }
+            } else {
+                first = true;
+            }
+        }
+    }
+    ctx.stroke();
+
+    // Celestial equator highlighted
+    ctx.set_stroke_style_str("rgba(120,120,255,0.8)");
+    ctx.set_line_width(1.2);
+    ctx.begin_path();
+    let mut first = true;
+    for ra_i in (0..=360).step_by(step) {
+        let ra = ra_i as f64;
+        if let Some((sx, sy)) = project_eq(ra, 0.0) {
+            if first { ctx.move_to(sx, sy); first = false; }
+            else { ctx.line_to(sx, sy); }
+        } else {
+            first = true;
+        }
+    }
+    ctx.stroke();
+}
+
+// ---------------------------------------------------------------------------
+// Star names (GPU path — project only named bright stars on CPU)
+// ---------------------------------------------------------------------------
+
+fn render_star_names_gpu(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    cat: &Option<Arc<CatalogData>>,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    let Some(ref cat) = cat else { return };
+    ctx.set_fill_style_str("#8899aa");
+    ctx.set_font("10px monospace");
+    ctx.set_text_align("left");
+    let lst_rad = p.lst.to_radians();
+    for star in cat.stars.iter() {
+        let Some(name) = star.name.as_deref() else { continue };
+        if star.mag >= 3.0 { continue; }
+        let jnow = J2000::new(star.ra_deg as f64, star.dec_deg as f64).to_jnow(p.jd);
+        let ha = lst_rad - jnow.ra_deg.to_radians();
+        let dec = jnow.dec_deg.to_radians();
+        let sin_dec = dec.sin();
+        let cos_dec = dec.cos();
+        let sin_alt = sin_dec * p.sin_lat + cos_dec * p.cos_lat * ha.cos();
+        let alt_rad = sin_alt.asin();
+        let alt = alt_rad.to_degrees();
+        if alt < -5.0 { continue; }
+        let cos_az = (sin_dec - alt_rad.sin() * p.sin_lat) / (alt_rad.cos() * p.cos_lat);
+        let mut az = cos_az.clamp(-1.0, 1.0).acos().to_degrees();
+        if ha.sin() > 0.0 { az = 360.0 - az; }
+        if let Some((sx, sy)) = project(alt, az) {
+            let _ = ctx.fill_text(name, sx + 6.0, sy - 4.0);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Constellation names (GPU path)
+// ---------------------------------------------------------------------------
+
+fn render_constellation_names_gpu(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    cat: &Option<Arc<CatalogData>>,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    let Some(ref cat) = cat else { return };
+    ctx.set_fill_style_str("rgba(100,120,180,0.7)");
+    ctx.set_font("italic 11px monospace");
+    ctx.set_text_align("center");
+    let lst_rad = p.lst.to_radians();
+    for (abbr, name, cra, cdec) in &cat.centers {
+        let cjnow = J2000::new(*cra as f64, *cdec as f64).to_jnow(p.jd);
+        let ha = lst_rad - cjnow.ra_deg.to_radians();
+        let dec_rad = cjnow.dec_deg.to_radians();
+        let sin_dec = dec_rad.sin();
+        let cos_dec = dec_rad.cos();
+        let sin_alt = sin_dec * p.sin_lat + cos_dec * p.cos_lat * ha.cos();
+        let alt_rad = sin_alt.asin();
+        let alt = alt_rad.to_degrees();
+        if alt < -5.0 { continue; }
+        let cos_az = (sin_dec - alt_rad.sin() * p.sin_lat) / (alt_rad.cos() * p.cos_lat);
+        let mut az = cos_az.clamp(-1.0, 1.0).acos().to_degrees();
+        if ha.sin() > 0.0 { az = 360.0 - az; }
+        if let Some((sx, sy)) = project(alt, az) {
+            let label = constellation_name(abbr, p.cur_lang).unwrap_or(name);
+            let _ = ctx.fill_text(label, sx, sy);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Deep-sky objects
+// ---------------------------------------------------------------------------
+
+fn render_dso(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    dso_cat: &Option<Arc<DsoCatalogData>>,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    scale: f64,
+    nebulae_index: Option<&NebulaeIndex>,
+    nebulae_cache: &mut HashMap<String, HtmlImageElement>,
+) {
+    let Some(ref dso_cat) = dso_cat else { return };
+    let lst_rad = p.lst.to_radians();
+    let cx = p.wf / 2.0;
+    let cy = p.hf / 2.0;
+    ctx.set_line_width(1.0);
+    ctx.set_font("9px monospace");
+
+    for dso in dso_cat.dsos.iter() {
+        let type_ok = match dso.kind {
+            DsoType::Galaxy          => p.dso_gx,
+            DsoType::OpenCluster     => p.dso_oc,
+            DsoType::GlobularCluster => p.dso_gc,
+            DsoType::Nebula          => p.dso_nb,
+            DsoType::PlanetaryNebula => p.dso_pn,
+            DsoType::SupernovaRemnant => p.dso_snr,
+            DsoType::GalaxyCluster   => p.dso_gal,
+        };
+        if !type_ok { continue; }
+        if (dso.mag as f64) > p.dso_mag { continue; }
+
+        let dso_jnow = J2000::new(dso.ra_deg as f64, dso.dec_deg as f64).to_jnow(p.jd);
+        let ha = lst_rad - dso_jnow.ra_deg.to_radians();
+        let dec_rad = dso_jnow.dec_deg.to_radians();
+        let sin_dec = dec_rad.sin();
+        let cos_dec = dec_rad.cos();
+        let sin_alt = sin_dec * p.sin_lat + cos_dec * p.cos_lat * ha.cos();
+        let alt_rad = sin_alt.asin();
+        let alt = alt_rad.to_degrees();
+        if alt < -3.0 { continue; }
+        let cos_az_val = (sin_dec - alt_rad.sin() * p.sin_lat) / (alt_rad.cos() * p.cos_lat);
+        let mut az = cos_az_val.clamp(-1.0, 1.0).acos().to_degrees();
+        if ha.sin() > 0.0 { az = 360.0 - az; }
+        let Some((sx, sy)) = project(alt, az) else { continue };
+        if sx < -40.0 || sx > p.wf + 40.0 || sy < -40.0 || sy > p.hf + 40.0 { continue; }
+
+        let px_size = (dso.size_arcmin as f64 / 60.0 / (p.fov * 2.0) * scale * 2.0)
+            .clamp(4.0, 40.0);
+        let r = px_size / 2.0;
+
+        // ── Try real image from Stellarium nebulae set ──────────────────────
+        let drew_image = if let Some(tex) = nebulae_index.and_then(|idx| idx.map.get(&dso.name)) {
+            // Lazy-load: insert HtmlImageElement on first encounter
+            if !nebulae_cache.contains_key(&tex.path) {
+                if let Ok(img) = HtmlImageElement::new() {
+                    img.set_src(&format!("/{}", tex.path));
+                    nebulae_cache.insert(tex.path.clone(), img);
+                }
+            }
+            // Draw only when the image has finished loading
+            if let Some(img) = nebulae_cache.get(&tex.path) {
+                if img.complete() && img.natural_width() > 0 {
+                    // Project all 4 corners with no distance cutoff so that
+                    // large objects don't disappear when some corner is off-FOV.
+                    // Canvas2D clips anything outside the canvas bounds.
+                    let mut pts = [(0.0_f64, 0.0_f64); 4];
+                    let mut ok = true;
+                    for (i, &(cra, cdec)) in tex.corners.iter().enumerate() {
+                        let corner_jnow =
+                            J2000::new(cra as f64, cdec as f64).to_jnow(p.jd);
+                        let (calt, caz) =
+                            astro::eq_to_altaz(corner_jnow.ra_deg, corner_jnow.dec_deg, p.lst, p.latitude);
+                        let (nx, ny) = astro::project_unclamped(
+                            calt, caz, p.c_alt, p.c_az, p.fov,
+                        );
+                        let px = cx + nx * scale;
+                        let py = cy - ny * scale;
+                        // Reject absurdly far-off points (e.g. back-hemisphere)
+                        if !px.is_finite()
+                            || !py.is_finite()
+                            || px.abs() > p.wf * 20.0
+                            || py.abs() > p.hf * 20.0
+                        {
+                            ok = false;
+                            break;
+                        }
+                        pts[i] = (px, py);
+                    }
+                    if ok {
+                        // Affine: maps texture [0,1]² to the sky quad.
+                        // Stellarium worldCoords order (OpenGL UV): BL(0,0), BR(1,0), TR(1,1), TL(0,1)
+                        // Canvas2D drawImage UV (0,0) = image top-left, (0,1) = image bottom-left.
+                        // OpenGL UV(0,0) = image bottom-left → Canvas2D (0,1).
+                        // So: pts[3] (TL/OpenGL) = image top-left → Canvas2D (0,0)
+                        //     pts[2] (TR/OpenGL) = image top-right → Canvas2D (1,0)
+                        //     pts[0] (BL/OpenGL) = image bottom-left → Canvas2D (0,1)
+                        let p0 = pts[3]; // TL → canvas (0,0) = image top-left
+                        let p1 = pts[2]; // TR → canvas (1,0) = image top-right
+                        let p3 = pts[0]; // BL → canvas (0,1) = image bottom-left
+                        let a = p1.0 - p0.0;
+                        let b = p1.1 - p0.1;
+                        let c = p3.0 - p0.0;
+                        let d = p3.1 - p0.1;
+                        let e = p0.0;
+                        let f = p0.1;
+                        ctx.save();
+                        // transform() multiplies with the current matrix (DPR
+                        // scale stays intact), so coordinates are in CSS pixels.
+                        let _ = ctx.transform(a, b, c, d, e, f);
+                        ctx.set_global_alpha(0.85);
+                        let _ = ctx.draw_image_with_html_image_element_and_dw_and_dh(
+                            img, 0.0, 0.0, 1.0, 1.0,
+                        );
+                        ctx.set_global_alpha(1.0);
+                        ctx.restore();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false // image still loading
+                }
+            } else {
+                false
+            }
+        } else {
+            false // no nebula image for this DSO
+        };
+
+        // ── Symbol fallback (when no image available / loaded) ──────────────
+        if !drew_image {
+            match dso.kind {
+                DsoType::Galaxy => {
+                    let minor_px = if dso.size_minor_arcmin > 0.0 {
+                        (dso.size_minor_arcmin as f64 / 60.0 / (p.fov * 2.0) * scale * 2.0)
+                            .clamp(2.0, r)
+                    } else {
+                        r * 0.45
+                    };
+                    let angle = (dso.pa_deg as f64).to_radians();
+                    ctx.save();
+                    ctx.translate(sx, sy).unwrap();
+                    ctx.rotate(angle).unwrap();
+                    ctx.set_stroke_style_str("rgba(0,200,220,0.75)");
+                    ctx.begin_path();
+                    ctx.ellipse(0.0, 0.0, r, minor_px, 0.0, 0.0, 2.0 * PI).unwrap();
+                    ctx.stroke();
+                    ctx.restore();
+                }
+                DsoType::OpenCluster => {
+                    ctx.set_stroke_style_str("rgba(255,220,50,0.8)");
+                    ctx.set_line_dash(&js_sys::Array::of2(&3.0_f64.into(), &3.0_f64.into()))
+                        .unwrap();
+                    ctx.begin_path();
+                    ctx.arc(sx, sy, r, 0.0, 2.0 * PI).unwrap();
+                    ctx.stroke();
+                    ctx.set_line_dash(&js_sys::Array::new()).unwrap();
+                }
+                DsoType::GlobularCluster => {
+                    ctx.set_stroke_style_str("rgba(255,160,60,0.8)");
+                    ctx.begin_path();
+                    ctx.arc(sx, sy, r, 0.0, 2.0 * PI).unwrap();
+                    ctx.stroke();
+                    ctx.begin_path();
+                    ctx.move_to(sx - r, sy); ctx.line_to(sx + r, sy);
+                    ctx.move_to(sx, sy - r); ctx.line_to(sx, sy + r);
+                    ctx.stroke();
+                }
+                DsoType::PlanetaryNebula => {
+                    ctx.set_stroke_style_str("rgba(0,230,180,0.85)");
+                    ctx.begin_path();
+                    ctx.arc(sx, sy, r, 0.0, 2.0 * PI).unwrap();
+                    ctx.stroke();
+                    let tick = r * 0.5;
+                    ctx.begin_path();
+                    ctx.move_to(sx - r - tick, sy); ctx.line_to(sx - r, sy);
+                    ctx.move_to(sx + r, sy);         ctx.line_to(sx + r + tick, sy);
+                    ctx.move_to(sx, sy - r - tick); ctx.line_to(sx, sy - r);
+                    ctx.move_to(sx, sy + r);         ctx.line_to(sx, sy + r + tick);
+                    ctx.stroke();
+                }
+                DsoType::GalaxyCluster => {
+                    ctx.set_stroke_style_str("rgba(220,100,220,0.75)");
+                    ctx.set_line_dash(&js_sys::Array::of2(&2.0_f64.into(), &4.0_f64.into()))
+                        .unwrap();
+                    ctx.begin_path();
+                    ctx.arc(sx, sy, r, 0.0, 2.0 * PI).unwrap();
+                    ctx.stroke();
+                    ctx.set_line_dash(&js_sys::Array::new()).unwrap();
+                }
+                DsoType::Nebula | DsoType::SupernovaRemnant => {
+                    ctx.set_stroke_style_str("rgba(60,220,100,0.75)");
+                    ctx.stroke_rect(sx - r, sy - r, px_size, px_size);
+                }
+            }
+        }
+
+        // Label (always, image or symbol)
+        if p.names_on && p.fov < 50.0 {
+            ctx.set_fill_style_str(match dso.kind {
+                DsoType::Galaxy           => "rgba(0,200,220,0.85)",
+                DsoType::OpenCluster      => "rgba(255,220,50,0.85)",
+                DsoType::GlobularCluster  => "rgba(255,160,60,0.85)",
+                DsoType::PlanetaryNebula  => "rgba(0,230,180,0.85)",
+                DsoType::GalaxyCluster    => "rgba(220,100,220,0.85)",
+                _                         => "rgba(60,220,100,0.85)",
+            });
+            ctx.set_text_align("left");
+            let _ = ctx.fill_text(&dso.name, sx + r + 3.0, sy + 4.0);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mount crosshair
+// ---------------------------------------------------------------------------
+
+fn render_mount_crosshair(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    if !p.mount_connected { return; }
+    if let (Some(ra_h), Some(dec)) = (p.mount_ra_h, p.mount_dec_deg) {
+        let (malt, maz) = astro::eq_to_altaz(ra_h * 15.0, dec, p.lst, p.latitude);
+        if let Some((mx, my)) = project(malt, maz) {
+            let arm = 14.0;
+            ctx.set_stroke_style_str("#44ff44");
+            ctx.set_line_width(1.5);
+            ctx.begin_path();
+            ctx.move_to(mx - arm, my); ctx.line_to(mx - 4.0, my);
+            ctx.move_to(mx + 4.0, my); ctx.line_to(mx + arm, my);
+            ctx.move_to(mx, my - arm); ctx.line_to(mx, my - 4.0);
+            ctx.move_to(mx, my + 4.0); ctx.line_to(mx, my + arm);
+            ctx.stroke();
+
+            ctx.set_fill_style_str("#ff4444");
+            ctx.begin_path();
+            let _ = ctx.arc(mx, my, 2.0, 0.0, 2.0 * PI);
+            ctx.fill();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Center crosshair
+// ---------------------------------------------------------------------------
+
+fn render_center_crosshair(ctx: &CanvasRenderingContext2d, cx: f64, cy: f64) {
+    let arm = 18.0;
+    let gap = 6.0;
+    ctx.set_stroke_style_str("rgba(180,220,255,0.75)");
+    ctx.set_line_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(cx - arm, cy); ctx.line_to(cx - gap, cy);
+    ctx.move_to(cx + gap, cy); ctx.line_to(cx + arm, cy);
+    ctx.move_to(cx, cy - arm); ctx.line_to(cx, cy - gap);
+    ctx.move_to(cx, cy + gap); ctx.line_to(cx, cy + arm);
+    ctx.stroke();
+    ctx.begin_path();
+    let _ = ctx.arc(cx, cy, gap, 0.0, 2.0 * PI);
+    ctx.stroke();
+}
+
+// ---------------------------------------------------------------------------
+// Center FOV rectangle
+// ---------------------------------------------------------------------------
+
+fn render_center_fov(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    cx: f64,
+    cy: f64,
+) {
+    let (Some(fl_mm), Some(px_um), Some(sw), Some(sh)) = (
+        p.fl, p.cam_pixel_size_um, p.cam_sensor_width, p.cam_sensor_height,
+    ) else { return };
+
+    let fov_w = astro::fov_deg(fl_mm, sw as f64, px_um);
+    let fov_h = astro::fov_deg(fl_mm, sh as f64, px_um);
+    let half_w = fov_w / 2.0;
+    let half_h = fov_h / 2.0;
+
+    let (cra_deg, cdec_deg) = astro::altaz_to_eq(p.c_alt, p.c_az, p.lst, p.latitude);
+    let cos_dec = cdec_deg.to_radians().cos().abs().max(0.01);
+    let corners_eq = [
+        (cra_deg - half_w / cos_dec, cdec_deg - half_h),
+        (cra_deg + half_w / cos_dec, cdec_deg - half_h),
+        (cra_deg + half_w / cos_dec, cdec_deg + half_h),
+        (cra_deg - half_w / cos_dec, cdec_deg + half_h),
+    ];
+
+    let (pcx, pcy) = project(p.c_alt, p.c_az).unwrap_or((cx, cy));
+    let rot_rad = p.rotation_deg.unwrap_or(0.0).to_radians();
+    let sin_r = rot_rad.sin();
+    let cos_r = rot_rad.cos();
+
+    ctx.set_stroke_style_str("rgba(80,190,255,0.85)");
+    ctx.set_line_width(1.0);
+    ctx.begin_path();
+    let mut first = true;
+    for (cra, cdec) in &corners_eq {
+        let (calt, caz) = astro::eq_to_altaz(*cra, *cdec, p.lst, p.latitude);
+        if let Some((sx, sy)) = project(calt, caz) {
+            let dx = sx - pcx;
+            let dy = sy - pcy;
+            let rx = pcx + dx * cos_r - dy * sin_r;
+            let ry = pcy + dx * sin_r + dy * cos_r;
+            if first { ctx.move_to(rx, ry); first = false; }
+            else { ctx.line_to(rx, ry); }
+        }
+    }
+    ctx.close_path();
+    ctx.stroke();
+
+    // Label below the rectangle
+    let (lalt, laz) = astro::eq_to_altaz(cra_deg, cdec_deg - half_h - 0.5, p.lst, p.latitude);
+    if let Some((lx, ly)) = project(lalt, laz) {
+        let dx = lx - pcx;
+        let dy = ly - pcy;
+        let rlx = pcx + dx * cos_r - dy * sin_r;
+        let rly = pcy + dx * sin_r + dy * cos_r;
+        ctx.set_fill_style_str("rgba(80,190,255,0.85)");
+        ctx.set_font("10px monospace");
+        ctx.set_text_align("center");
+        let _ = ctx.fill_text(
+            &format!("{:.0}x{:.0}'", fov_w * 60.0, fov_h * 60.0),
+            rlx, rly + 12.0,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mount FOV rectangle
+// ---------------------------------------------------------------------------
+
+fn render_mount_fov(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    cx: f64,
+    cy: f64,
+) {
+    if !p.mount_connected { return; }
+    let (Some(fl_mm), Some(px_um), Some(sw), Some(sh)) = (
+        p.fl, p.cam_pixel_size_um, p.cam_sensor_width, p.cam_sensor_height,
+    ) else { return };
+    let (Some(ra_h), Some(dec)) = (p.mount_ra_h, p.mount_dec_deg) else { return };
+
+    let fov_w = astro::fov_deg(fl_mm, sw as f64, px_um);
+    let fov_h = astro::fov_deg(fl_mm, sh as f64, px_um);
+
+    let ra_deg = ra_h * 15.0;
+    let half_w = fov_w / 2.0;
+    let half_h = fov_h / 2.0;
+    let corners_eq = [
+        (ra_deg - half_w / dec.to_radians().cos().abs().max(0.01), dec - half_h),
+        (ra_deg + half_w / dec.to_radians().cos().abs().max(0.01), dec - half_h),
+        (ra_deg + half_w / dec.to_radians().cos().abs().max(0.01), dec + half_h),
+        (ra_deg - half_w / dec.to_radians().cos().abs().max(0.01), dec + half_h),
+    ];
+
+    let (mpcx, mpcy) = {
+        let (malt, maz) = astro::eq_to_altaz(ra_deg, dec, p.lst, p.latitude);
+        project(malt, maz).unwrap_or((cx, cy))
+    };
+    let rot_rad = p.rotation_deg.unwrap_or(0.0).to_radians();
+    let sin_r = rot_rad.sin();
+    let cos_r = rot_rad.cos();
+
+    ctx.set_stroke_style_str("#ffcc00");
+    ctx.set_line_width(1.0);
+    ctx.begin_path();
+    let mut first = true;
+    for (cra, cdec) in &corners_eq {
+        let (calt, caz) = astro::eq_to_altaz(*cra, *cdec, p.lst, p.latitude);
+        if let Some((sx, sy)) = project(calt, caz) {
+            let dx = sx - mpcx;
+            let dy = sy - mpcy;
+            let rx = mpcx + dx * cos_r - dy * sin_r;
+            let ry = mpcy + dx * sin_r + dy * cos_r;
+            if first { ctx.move_to(rx, ry); first = false; }
+            else { ctx.line_to(rx, ry); }
+        }
+    }
+    ctx.close_path();
+    ctx.stroke();
+
+    let (lalt, laz) = astro::eq_to_altaz(ra_deg, dec - half_h - 0.3, p.lst, p.latitude);
+    if let Some((lx, ly)) = project(lalt, laz) {
+        let dx = lx - mpcx;
+        let dy = ly - mpcy;
+        let rlx = mpcx + dx * cos_r - dy * sin_r;
+        let rly = mpcy + dx * sin_r + dy * cos_r;
+        ctx.set_fill_style_str("#ffcc00");
+        ctx.set_font("10px monospace");
+        ctx.set_text_align("center");
+        let _ = ctx.fill_text(
+            &format!("{:.0}x{:.0}'", fov_w * 60.0, fov_h * 60.0),
+            rlx, rly + 12.0,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Info overlay (bottom-left)
+// ---------------------------------------------------------------------------
+
+fn render_info_overlay(ctx: &CanvasRenderingContext2d, p: &RenderParams) {
+    ctx.set_fill_style_str("rgba(10,10,20,0.75)");
+    ctx.fill_rect(0.0, p.hf - 128.0, 360.0, 128.0);
+    ctx.set_fill_style_str("#aabbcc");
+    ctx.set_font("11px monospace");
+    ctx.set_text_align("left");
+
+    let lst_h = p.lst / 15.0;
+    let lst_hh = lst_h as u32;
+    let lst_mm = ((lst_h - lst_hh as f64) * 60.0) as u32;
+    let _ = ctx.fill_text(
+        &format!("LST: {:02}h{:02}m  FOV: {:.0}\u{00b0}", lst_hh, lst_mm, p.fov),
+        8.0, p.hf - 108.0,
+    );
+    let _ = ctx.fill_text(
+        &format!("Center: Alt {:.1}\u{00b0}  Az {:.1}\u{00b0}", p.c_alt, p.c_az),
+        8.0, p.hf - 92.0,
+    );
+    if let (Some(ra_h), Some(dec)) = (p.mount_ra_h, p.mount_dec_deg) {
+        let rah = ra_h as u32;
+        let ram = ((ra_h - rah as f64) * 60.0) as u32;
+        let _ = ctx.fill_text(
+            &format!("Mount: {:02}h{:02}m  {:+.1}\u{00b0}", rah, ram, dec),
+            8.0, p.hf - 76.0,
+        );
+    } else {
+        let _ = ctx.fill_text("Mount: --", 8.0, p.hf - 76.0);
+    }
+    if let Some(rot) = p.rotation_deg {
+        let _ = ctx.fill_text(
+            &format!("Camera angle: {:.1}\u{00b0}", rot),
+            8.0, p.hf - 60.0,
+        );
+    }
+    if p.t_off.abs() > 0.5 {
+        let _ = ctx.fill_text(
+            &format!("Time offset: {:+.0}s", p.t_off),
+            8.0, p.hf - 44.0,
+        );
+    }
+}
