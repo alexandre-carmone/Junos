@@ -457,19 +457,32 @@ pub fn ImagingTab(
     // {Status, Filter, Count, Exp, Type, Bin, "ISO/Gain", Offset, Encoding,
     //  Format, Temperature, ...}. All capitalised. Count/Exp are strings.
     let sequence_rows = move || {
-        let seq = capture.with(|c| c.sequence.clone());
-        let Some(arr) = seq.as_array().cloned() else { return Vec::new(); };
-        arr.into_iter().enumerate().map(|(i, job)| {
+        let cap = capture.get();
+        let seq = &cap.sequence;
+        let Some(arr) = seq.as_array() else { return Vec::new(); };
+        // Live frame count from new_capture_state (seqv / seqr)
+        let live_current = cap.seq_current;
+        let live_total   = cap.seq_total;
+        arr.iter().enumerate().map(|(i, job)| {
             let count_raw = job["Count"].as_str().unwrap_or("0/0");
             let (completed, total) = match count_raw.split_once('/') {
                 Some((c, t)) => (c.trim().to_string(), t.trim().to_string()),
                 None         => (String::new(), count_raw.to_string()),
             };
+            let status = job["Status"].as_str().unwrap_or("Idle").to_string();
+            // For the active job, override with live seqv/seqr counts
+            let (completed, total) = if status == "In Progress" {
+                (
+                    live_current.map(|v| v.to_string()).unwrap_or(completed),
+                    live_total.map(|v| v.to_string()).unwrap_or(total),
+                )
+            } else {
+                (completed, total)
+            };
             let exp    = job["Exp"].as_str().unwrap_or("—").to_string();
             let ftype  = job["Type"].as_str().unwrap_or("").to_string();
             let filter = job["Filter"].as_str().unwrap_or("").to_string();
             let bin    = job["Bin"].as_str().unwrap_or("").to_string();
-            let status = job["Status"].as_str().unwrap_or("Idle").to_string();
             SequenceRow { index: i, completed, total, exp, ftype, filter, bin, status }
         }).collect::<Vec<_>>()
     };
