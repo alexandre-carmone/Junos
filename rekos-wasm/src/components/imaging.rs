@@ -416,10 +416,10 @@ pub fn ImagingTab(
         let dev = cam_cool_on.with(|c| c.device.clone());
         if dev.is_empty() { return; }
         send_cmd(&s_cool_on, "device_property_set", serde_json::json!({
-            "device": dev, "name": "CCD_COOLER",
-            "switches": [
-                { "name": "COOLER_ON",  "value": true  },
-                { "name": "COOLER_OFF", "value": false },
+            "device": dev, "property": "CCD_COOLER",
+            "elements": [
+                { "name": "COOLER_ON",  "state": 1 },
+                { "name": "COOLER_OFF", "state": 0 },
             ]
         }));
     };
@@ -429,10 +429,10 @@ pub fn ImagingTab(
         let dev = cam_cool_off.with(|c| c.device.clone());
         if dev.is_empty() { return; }
         send_cmd(&s_cool_off, "device_property_set", serde_json::json!({
-            "device": dev, "name": "CCD_COOLER",
-            "switches": [
-                { "name": "COOLER_ON",  "value": false },
-                { "name": "COOLER_OFF", "value": true  },
+            "device": dev, "property": "CCD_COOLER",
+            "elements": [
+                { "name": "COOLER_ON",  "state": 0 },
+                { "name": "COOLER_OFF", "state": 1 },
             ]
         }));
     };
@@ -442,8 +442,8 @@ pub fn ImagingTab(
         let dev = cam_set_temp.with(|c| c.device.clone());
         if dev.is_empty() { return; }
         send_cmd(&s_set_temp, "device_property_set", serde_json::json!({
-            "device": dev, "name": "CCD_TEMPERATURE",
-            "numbers": [
+            "device": dev, "property": "CCD_TEMPERATURE",
+            "elements": [
                 { "name": "CCD_TEMPERATURE_VALUE", "value": target_temp.get() },
             ]
         }));

@@ -73,7 +73,10 @@ pub struct CaptureStatusData {
     pub seq_total: Option<i64>,
     pub seq_current: Option<i64>,
     pub progress: Option<f64>,
-    pub overall_remaining: Option<f64>,
+    pub seq_remaining_time: String,
+    pub overall_remaining_time: String,
+    pub exposure_left: Option<f64>,
+    pub exposure_total: Option<f64>,
     pub log: String,
 }
 
@@ -468,12 +471,17 @@ impl DeviceStore {
                     if let Some(t) = payload["target"].as_str() {
                         c.target = t.to_string();
                     }
-                    if let Some(v) = payload["seqTotal"].as_i64() { c.seq_total = Some(v); }
-                    if let Some(v) = payload["seqCurrent"].as_i64() { c.seq_current = Some(v); }
-                    if let Some(v) = payload["progress"].as_f64() { c.progress = Some(v); }
-                    if let Some(v) = payload["overallRemaining"].as_f64() {
-                        c.overall_remaining = Some(v);
+                    if let Some(v) = payload["seqr"].as_i64() { c.seq_total = Some(v); }
+                    if let Some(v) = payload["seqv"].as_i64() { c.seq_current = Some(v); }
+                    if let Some(v) = payload["ovp"].as_f64() { c.progress = Some(v); }
+                    if let Some(s) = payload["seqt"].as_str() {
+                        c.seq_remaining_time = s.to_string();
                     }
+                    if let Some(s) = payload["ovt"].as_str() {
+                        c.overall_remaining_time = s.to_string();
+                    }
+                    if let Some(v) = payload["expv"].as_f64() { c.exposure_left = Some(v); }
+                    if let Some(v) = payload["expr"].as_f64() { c.exposure_total = Some(v); }
                     if let Some(l) = payload["log"].as_str() {
                         if !l.is_empty() { c.log = l.to_string(); }
                     }
