@@ -659,6 +659,9 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
         });
     }
 
+    // Long-lived refresh loop — keeps INDI properties current after bootstrap.
+    spawn_refresh_loop(send_fn.clone(), store.clone());
+
     let store_for_ws = store.clone();
     spawn_local(async move {
         let ws = match WebSocket::open(&ws_url) {
@@ -743,5 +746,62 @@ where
             send(get.clone());
         }
         leptos::logging::log!("[ws] retry_property giving up on {} after 60s", property);
+    });
+}
+
+/// Long-lived periodic refresh: re-requests key INDI properties every few
+/// seconds so the UI stays current even if KStars drops a push subscription.
+/// Complements `spawn_retry_property` (which handles fast bootstrap then stops).
+fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
+    use gloo_timers::future::TimeoutFuture;
+
+    let online   = store.online;
+    let trains   = store.optical_trains;
+
+    spawn_local(async move {
+        loop {
+            TimeoutFuture::new(5_000).await;
+
+            if !online.get_untracked() {
+                continue;
+            }
+            let train_list = trains.get_untracked();
+            let Some(train) = train_list.first() else { continue };
+
+            // ── Ekos module-level state ─────────────────────────────
+            send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
+            send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
+            send(r#"{"type":"capture_get_all_settings","payload":{}}"#.to_string());
+            send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
+            send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
+
+            // ── Camera INDI properties ───────────────────────────────
+            if !train.camera.is_empty() && train.camera != "--" {
+                for prop in ["CCD_INFO", "CCD_TEMPERATURE", "CCD_COOLER"] {
+                    send(serde_json::json!({
+                        "type": "device_property_get",
+                        "payload": { "device": train.camera, "property": prop, "compact": true }
+                    }).to_string());
+                }
+            }
+
+            // ── Mount INDI properties ────────────────────────────────
+            if !train.mount.is_empty() && train.mount != "--" {
+                send(serde_json::json!({
+                    "type": "device_property_get",
+                    "payload": { "device": train.mount, "property": "EQUATORIAL_EOD_COORD", "compact": true }
+                }).to_string());
+            }
+
+            // ── Focuser INDI properties ──────────────────────────────
+            if !train.focuser.is_empty() && train.focuser != "--" {
+                for prop in ["ABS_FOCUS_POSITION", "FOCUS_TEMPERATURE"] {
+                    send(serde_json::json!({
+                        "type": "device_property_get",
+                        "payload": { "device": train.focuser, "property": prop, "compact": true }
+                    }).to_string());
+                }
+            }
+        }
     });
 }
