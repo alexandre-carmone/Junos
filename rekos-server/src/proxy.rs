@@ -28,12 +28,18 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
 
     let (mut sink, mut stream) = socket.split();
 
-    // On connect, tell the browser whether KStars is currently attached.
-    let connected = hub.kstars_msg_tx.lock().await.is_some();
-    let init = format!(
-        r#"{{"type":"new_connection_state","payload":{{"connected":{}}}}}"#,
-        connected
-    );
+    // On connect, replay the last connection state from KStars so the browser
+    // gets the full connected+online flags even after a page refresh.
+    let init = match hub.last_connection_state.lock().await.clone() {
+        Some(state) => state,
+        None => {
+            let connected = hub.kstars_msg_tx.lock().await.is_some();
+            format!(
+                r#"{{"type":"new_connection_state","payload":{{"connected":{}}}}}"#,
+                connected
+            )
+        }
+    };
     let _ = sink.send(Message::Text(init.into())).await;
 
     loop {

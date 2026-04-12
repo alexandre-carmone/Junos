@@ -25,6 +25,10 @@ pub struct Hub {
     /// `None` while no KStars session is connected. Set by the `/message/ekos`
     /// handler on connect and cleared on disconnect.
     pub kstars_msg_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
+
+    /// Last `new_connection_state` received from KStars, replayed to browsers
+    /// on connect so a page refresh gets the full connected+online state.
+    pub last_connection_state: Arc<Mutex<Option<String>>>,
 }
 
 impl Hub {
@@ -33,6 +37,7 @@ impl Hub {
         Self {
             browser_tx,
             kstars_msg_tx: Arc::new(Mutex::new(None)),
+            last_connection_state: Arc::new(Mutex::new(None)),
         }
     }
 

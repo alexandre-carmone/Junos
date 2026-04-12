@@ -542,6 +542,8 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
         let prime_send = send_fn.clone();
         Effect::new(move |_| {
             if online_sig.get() {
+                prime_send(r#"{"type":"get_devices","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"get_states","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
@@ -769,6 +771,8 @@ fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             let Some(train) = train_list.first() else { continue };
 
             // ── Ekos module-level state ─────────────────────────────
+            send(r#"{"type":"get_devices","payload":{}}"#.to_string());
+            send(r#"{"type":"get_states","payload":{}}"#.to_string());
             send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
             send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
             send(r#"{"type":"capture_get_all_settings","payload":{}}"#.to_string());

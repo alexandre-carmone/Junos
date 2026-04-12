@@ -71,6 +71,11 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
                 match frame {
                     Some(Ok(Message::Text(text))) => {
                         debug!(len = text.len(), "KStars message → browsers");
+                        // Snapshot new_connection_state so late-joining browsers
+                        // get the full connected+online state on connect.
+                        if text.contains("\"new_connection_state\"") {
+                            *hub.last_connection_state.lock().await = Some(text.to_string());
+                        }
                         let _ = hub.browser_tx.send(text.to_string());
                     }
                     Some(Ok(Message::Ping(data))) => {
@@ -121,6 +126,7 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
 async fn clear_kstars_sender(hub: &Hub) {
     let mut guard = hub.kstars_msg_tx.lock().await;
     *guard = None;
+    *hub.last_connection_state.lock().await = None;
 }
 
 // ---------------------------------------------------------------------------
