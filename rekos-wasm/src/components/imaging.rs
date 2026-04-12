@@ -156,25 +156,20 @@ details.imaging-panel > .imaging-panel-body {
     border-top: 1px solid #1a1c28;
 }
 
-/* Foldable sequence-job cards */
-details.imaging-job-card {
-    padding: 0; overflow: hidden;
+.imaging-job-badge {
+    font-size: 9px; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 1px 7px; border-radius: 3px;
+    color: #0a0c14; white-space: nowrap;
 }
-details.imaging-job-card > summary {
-    list-style: none; cursor: pointer;
-    padding: 8px 10px;
-    display: flex; align-items: center; gap: 8px;
-    user-select: none;
+.imaging-job-sep {
+    color: #333; font-size: 10px;
 }
-details.imaging-job-card > summary::-webkit-details-marker { display: none; }
-details.imaging-job-card > summary::before {
-    content: "▸"; width: 10px; font-size: 10px; color: #557;
-    transition: transform 0.12s;
+.imaging-job-field {
+    color: #aab8d0; font-size: 11px; white-space: nowrap;
 }
-details.imaging-job-card[open] > summary::before { transform: rotate(90deg); }
-details.imaging-job-card > .imaging-job-meta {
-    padding: 6px 10px 10px 28px;
-    border-top: 1px solid #1a1c28;
+.imaging-job-count {
+    color: #cfe0ff; font-size: 11px; font-weight: bold; white-space: nowrap;
 }
 
 /* Medium: <=1200px — preview on top, settings + sequence side by side */
@@ -265,8 +260,8 @@ details.imaging-job-card > .imaging-job-meta {
         padding: 14px 14px;
         font-size: 12px;
     }
-    details.imaging-job-card > summary {
-        padding: 12px 10px;
+    .imaging-job-card {
+        padding: 10px 12px;
     }
     .imaging-job-remove {
         min-height: 36px;
@@ -465,13 +460,17 @@ pub fn ImagingTab(
         let seq = capture.with(|c| c.sequence.clone());
         let Some(arr) = seq.as_array().cloned() else { return Vec::new(); };
         arr.into_iter().enumerate().map(|(i, job)| {
-            let count  = job["Count"].as_str().unwrap_or("—").to_string();
+            let count_raw = job["Count"].as_str().unwrap_or("0/0");
+            let (completed, total) = match count_raw.split_once('/') {
+                Some((c, t)) => (c.trim().to_string(), t.trim().to_string()),
+                None         => (String::new(), count_raw.to_string()),
+            };
             let exp    = job["Exp"].as_str().unwrap_or("—").to_string();
             let ftype  = job["Type"].as_str().unwrap_or("").to_string();
             let filter = job["Filter"].as_str().unwrap_or("").to_string();
             let bin    = job["Bin"].as_str().unwrap_or("").to_string();
             let status = job["Status"].as_str().unwrap_or("Idle").to_string();
-            SequenceRow { index: i, count, exp, ftype, filter, bin, status }
+            SequenceRow { index: i, completed, total, exp, ftype, filter, bin, status }
         }).collect::<Vec<_>>()
     };
 
@@ -732,30 +731,36 @@ pub fn ImagingTab(
                             rows.into_iter().map(|r| {
                                 let on_remove = on_remove_job.clone();
                                 let idx = r.index;
+                                let badge_color = job_status_color(&r.status);
+                                let filter_label = if r.filter.is_empty() { "—".into() } else { r.filter };
                                 view! {
-                                    <details class="imaging-job-card">
-                                        <summary>
+                                    <div class="imaging-job-card">
+                                        <div class="imaging-job-head">
                                             <span class="imaging-job-idx">{format!("#{}", idx + 1)}</span>
-                                            <span class="imaging-job-main">
-                                                {format!("{} × {} s  {}", r.count, r.exp, r.ftype)}
+                                            <span
+                                                class="imaging-job-badge"
+                                                style:background=badge_color>
+                                                {r.status}
                                             </span>
                                             <button
                                                 class="imaging-job-remove"
                                                 title="Remove job"
-                                                on:click=move |ev| {
-                                                    ev.stop_propagation();
-                                                    ev.prevent_default();
-                                                    on_remove(idx);
-                                                }>
+                                                on:click=move |_| on_remove(idx)>
                                                 "×"
                                             </button>
-                                        </summary>
-                                        <div class="imaging-job-meta">
-                                            <span>{format!("Filter: {}", if r.filter.is_empty() { "—".into() } else { r.filter })}</span>
-                                            <span>{format!("Bin: {}", if r.bin.is_empty() { "—".into() } else { r.bin })}</span>
-                                            <span style="margin-left:auto;">{r.status}</span>
                                         </div>
-                                    </details>
+                                        <div class="imaging-job-meta">
+                                            <span class="imaging-job-field">{r.ftype}</span>
+                                            <span class="imaging-job-sep">"|"</span>
+                                            <span class="imaging-job-field">{format!("{} s", r.exp)}</span>
+                                            <span class="imaging-job-sep">"|"</span>
+                                            <span class="imaging-job-field">{filter_label}</span>
+                                            <span class="imaging-job-sep">"|"</span>
+                                            <span class="imaging-job-count">
+                                                {format!("{} / {}", r.completed, r.total)}
+                                            </span>
+                                        </div>
+                                    </div>
                                 }.into_any()
                             }).collect::<Vec<_>>().into_any()
                         }}
@@ -768,13 +773,22 @@ pub fn ImagingTab(
 
 #[derive(Clone)]
 struct SequenceRow {
-    index:  usize,
-    count:  String,
-    exp:    String,
-    ftype:  String,
-    filter: String,
-    bin:    String,
-    status: String,
+    index:     usize,
+    completed: String,
+    total:     String,
+    exp:       String,
+    ftype:     String,
+    filter:    String,
+    bin:       String,
+    status:    String,
+}
+
+fn job_status_color(s: &str) -> &'static str {
+    let lo = s.to_lowercase();
+    if lo == "complete"                                     { "#7affa0" }
+    else if lo == "capturing" || lo == "in progress"        { "#88aaff" }
+    else if lo.contains("abort") || lo.contains("error")   { "#ff6a6a" }
+    else                                                    { "#808090" }
 }
 
 // ── Shared render helpers ────────────────────────────────────────────────
