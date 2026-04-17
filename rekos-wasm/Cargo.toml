@@ -59,3 +59,4 @@ gloo-utils           = "0.2"
 futures              = "0.3"
 wgpu                 = { version = "24", default-features = false, features = ["webgpu", "wgsl"] }
 bytemuck             = { version = "1", features = ["derive"] }
+fuzzy-matcher        = "0.3"

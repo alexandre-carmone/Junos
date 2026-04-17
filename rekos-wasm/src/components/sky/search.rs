@@ -12,6 +12,7 @@ use crate::i18n::{Lang, t};
 
 use crate::compat::SiteSnapshot;
 
+use super::object_search::{SearchHit, search_objects};
 use super::utils::event_target_value;
 
 #[component]
@@ -46,45 +47,17 @@ pub fn SkySearch(
                        box-sizing:border-box; border-radius:2px;" />
             {move || {
                 let q = sky_search.get();
-                let ql = q.trim().to_lowercase();
-                if ql.len() < 2 {
-                    return view! { <></> }.into_any();
-                }
-
-                let mut items: Vec<(String, f64, f64, f32)> = Vec::new();
-
                 let cat = catalog_sig.get();
                 let dso_cat = dso_catalog_sig.get();
+                let stars = cat.as_deref().map(|c| c.stars.as_slice()).unwrap_or(&[]);
+                let dsos  = dso_cat.as_deref().map(|d| d.dsos.as_slice()).unwrap_or(&[]);
+                let hits = search_objects(&q, stars, dsos, 25);
 
-                let mut n = 0usize;
-                if let Some(ref cat) = cat {
-                    for star in cat.stars.iter() {
-                        if n >= 10 { break; }
-                        if let Some(name) = star.name.as_deref() {
-                            if name.to_lowercase().contains(&ql) {
-                                items.push((name.to_string(), star.ra_deg as f64, star.dec_deg as f64, 0.0));
-                                n += 1;
-                            }
-                        }
-                    }
-                }
-
-                let mut n = 0usize;
-                if let Some(ref dso_cat) = dso_cat {
-                    for dso in dso_cat.dsos.iter() {
-                        if n >= 15 { break; }
-                        if dso.name.to_lowercase().contains(&ql) {
-                            items.push((dso.name.to_string(), dso.ra_deg as f64, dso.dec_deg as f64, dso.size_arcmin));
-                            n += 1;
-                        }
-                    }
-                }
-
-                if items.is_empty() {
+                if hits.is_empty() {
                     return view! { <></> }.into_any();
                 }
 
-                let rows = items.into_iter().map(|(name, ra_deg, dec_deg, size_arcmin)| {
+                let rows = hits.into_iter().map(|SearchHit { name, ra_deg, dec_deg, size_arcmin }| {
                     let label = name.clone();
                     view! {
                         <div

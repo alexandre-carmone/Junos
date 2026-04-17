@@ -9,6 +9,7 @@
 mod actions;
 mod controls;
 mod info_popup;
+mod object_search;
 pub(crate) mod render;
 mod search;
 pub(crate) mod utils;
