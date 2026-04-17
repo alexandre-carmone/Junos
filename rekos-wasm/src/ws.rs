@@ -200,6 +200,18 @@ pub struct AlignDefaultsData {
     pub solve_radius: Option<SolveRadius>,
 }
 
+/// Latest plate-solve result. Populated from the `solution` payload of
+/// `new_align_state` (kstars/ekos/align/align.cpp:2351). All RA/Dec values are
+/// JNow — KStars uses `m_AlignCoord` which is epoch-of-date.
+#[derive(Debug, Clone, Default)]
+pub struct AlignSolutionData {
+    pub ra_jnow_deg:      Option<f64>,
+    pub dec_jnow_deg:     Option<f64>,
+    pub orientation_deg:  Option<f64>, // PA from align.cpp:2364
+    pub pixscale_arcsec:  Option<f64>, // pix from align.cpp:2363
+    pub solved_at_ms:     Option<f64>, // js_sys::Date::now() at receipt
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -225,6 +237,7 @@ pub struct DeviceStore {
     pub capture_preview_url:RwSignal<Option<String>>,
     pub polar_state:        RwSignal<PolarStateData>,
     pub align_settings:     RwSignal<serde_json::Value>,
+    pub align_solution:     RwSignal<AlignSolutionData>,
     pub align_preview_url:  RwSignal<Option<String>>,
     pub guide_status:       RwSignal<Option<GuideStatusData>>,
     pub guide_settings:     RwSignal<serde_json::Value>,
@@ -254,6 +267,7 @@ impl DeviceStore {
             capture_preview_url:RwSignal::new(None),
             polar_state:        RwSignal::new(PolarStateData::default()),
             align_settings:     RwSignal::new(serde_json::Value::Null),
+            align_solution:     RwSignal::new(AlignSolutionData::default()),
             align_preview_url:  RwSignal::new(None),
             guide_status:       RwSignal::new(None),
             guide_settings:     RwSignal::new(serde_json::Value::Null),
@@ -277,6 +291,7 @@ impl DeviceStore {
                     self.focus_hfr_history.set(Vec::new());
                     self.polar_state.set(PolarStateData::default());
                     self.align_settings.set(serde_json::Value::Null);
+                    self.align_solution.set(AlignSolutionData::default());
                     self.align_preview_url.set(None);
                     self.guide_status.set(None);
                     self.guide_preview_url.set(None);
@@ -614,6 +629,31 @@ impl DeviceStore {
             // Payload is the settings map directly.
             "align_get_all_settings" => {
                 self.align_settings.set(payload.clone());
+            }
+
+            // Align state. KStars emits this from two places:
+            //   - setAlignStatus  → {status}
+            //   - setAlignSolution → {solution: {ra.Hours, de.Degrees, PA, pix, fov, ...}}
+            // (see message.cpp:927, 943; align.cpp:2351 for the solution map).
+            // RA/Dec in the solution are JNow.
+            "new_align_state" => {
+                if let Some(sol) = payload.get("solution").and_then(|v| v.as_object()) {
+                    leptos::logging::log!("[ws] new_align_state solution: {}",
+                        serde_json::to_string(sol).unwrap_or_default());
+                    let ra_h = sol.get("ra.Hours").and_then(|x| x.as_f64());
+                    let de_d = sol.get("de.Degrees").and_then(|x| x.as_f64());
+                    let pa   = sol.get("PA").and_then(|x| x.as_f64());
+                    let pix  = sol.get("pix").and_then(|x| x.as_f64());
+                    if ra_h.is_some() || de_d.is_some() || pa.is_some() || pix.is_some() {
+                        self.align_solution.update(|a| {
+                            if let Some(v) = ra_h { a.ra_jnow_deg = Some(v * 15.0); }
+                            if let Some(v) = de_d { a.dec_jnow_deg = Some(v); }
+                            if let Some(v) = pa   { a.orientation_deg = Some(v); }
+                            if let Some(v) = pix  { a.pixscale_arcsec = Some(v); }
+                            a.solved_at_ms = Some(web_sys::js_sys::Date::now());
+                        });
+                    }
+                }
             }
 
             // Guide module status. KStars emits `new_guide_state` from

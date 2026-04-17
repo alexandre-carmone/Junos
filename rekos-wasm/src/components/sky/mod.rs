@@ -8,12 +8,13 @@
 
 mod actions;
 mod controls;
-mod render;
+mod info_popup;
+pub(crate) mod render;
 mod search;
 pub(crate) mod utils;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -37,9 +38,41 @@ use crate::nebulae::NebulaeIndex;
 
 use actions::{SkyConfirmPopup, SkyContextMenu, open_confirm};
 use controls::SkyControls;
-use render::RenderParams;
+use info_popup::SkyInfoPopup;
+use render::{HitItem, RenderParams};
 use search::SkySearch;
 use utils::event_target_value;
+
+// ---------------------------------------------------------------------------
+// Toggles bundle — passed as a single prop to SkyControls / consumed by the
+// render Effect. Avoids the ~40-prop signature SkyControls would otherwise need.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+pub struct SkyToggles {
+    pub stars:              RwSignal<bool>,
+    pub names:              RwSignal<bool>,
+    pub constellations:     RwSignal<bool>,
+    pub con_names:          RwSignal<bool>,
+    pub grid:               RwSignal<bool>,
+    pub eq_grid:            RwSignal<bool>,
+    pub meridian:           RwSignal<bool>,
+    pub fov:                RwSignal<bool>,
+    pub dso:                RwSignal<bool>,
+    pub ecliptic:           RwSignal<bool>,
+    pub zenith:             RwSignal<bool>,
+    pub solar_system:       RwSignal<bool>,
+    pub solve_marker:       RwSignal<bool>,
+    pub slew_trail:         RwSignal<bool>,
+    pub dso_galaxy:         RwSignal<bool>,
+    pub dso_open_cluster:   RwSignal<bool>,
+    pub dso_globular:       RwSignal<bool>,
+    pub dso_nebula:         RwSignal<bool>,
+    pub dso_planetary:      RwSignal<bool>,
+    pub dso_snr:            RwSignal<bool>,
+    pub dso_galaxy_cluster: RwSignal<bool>,
+    pub dso_mag_limit:      RwSignal<f64>,
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -108,46 +141,81 @@ pub fn SkyTab(
             .unwrap_or(default)
     };
 
-    let (show_stars, set_show_stars) = signal(ls_bool("sky_show_stars", true));
-    let (show_names, set_show_names) = signal(ls_bool("sky_show_names", true));
-    let (show_constellations, set_show_constellations) = signal(ls_bool("sky_show_constellations", true));
-    let (show_con_names, set_show_con_names) = signal(ls_bool("sky_show_con_names", true));
-    let (show_grid, set_show_grid) = signal(ls_bool("sky_show_grid", true));
-    let (show_eq_grid, set_show_eq_grid) = signal(ls_bool("sky_show_eq_grid", false));
-    let (show_meridian, set_show_meridian) = signal(ls_bool("sky_show_meridian", true));
-    let (show_fov, set_show_fov) = signal(ls_bool("sky_show_fov", true));
-    let (show_dso, set_show_dso) = signal(ls_bool("sky_show_dso", true));
+    let show_stars            = RwSignal::new(ls_bool("sky_show_stars", true));
+    let show_names            = RwSignal::new(ls_bool("sky_show_names", true));
+    let show_constellations   = RwSignal::new(ls_bool("sky_show_constellations", true));
+    let show_con_names        = RwSignal::new(ls_bool("sky_show_con_names", true));
+    let show_grid             = RwSignal::new(ls_bool("sky_show_grid", true));
+    let show_eq_grid          = RwSignal::new(ls_bool("sky_show_eq_grid", false));
+    let show_meridian         = RwSignal::new(ls_bool("sky_show_meridian", true));
+    let show_fov              = RwSignal::new(ls_bool("sky_show_fov", true));
+    let show_dso              = RwSignal::new(ls_bool("sky_show_dso", true));
+    let show_ecliptic         = RwSignal::new(ls_bool("sky_show_ecliptic", true));
+    let show_zenith           = RwSignal::new(ls_bool("sky_show_zenith", false));
+    let show_solar_system     = RwSignal::new(ls_bool("sky_show_solar_system", true));
+    let show_solve_marker     = RwSignal::new(ls_bool("sky_show_solve_marker", true));
+    let show_slew_trail       = RwSignal::new(ls_bool("sky_show_slew_trail", true));
 
-    let (dso_filter_galaxy, set_dso_filter_galaxy) = signal(ls_bool("sky_dso_galaxy", true));
-    let (dso_filter_open_cluster, set_dso_filter_open_cluster) = signal(ls_bool("sky_dso_open_cluster", true));
-    let (dso_filter_globular, set_dso_filter_globular) = signal(ls_bool("sky_dso_globular", true));
-    let (dso_filter_nebula, set_dso_filter_nebula) = signal(ls_bool("sky_dso_nebula", true));
-    let (dso_filter_planetary, set_dso_filter_planetary) = signal(ls_bool("sky_dso_planetary", true));
-    let (dso_filter_snr, set_dso_filter_snr) = signal(ls_bool("sky_dso_snr", true));
-    let (dso_filter_galaxy_cluster, set_dso_filter_galaxy_cluster) = signal(ls_bool("sky_dso_galaxy_cluster", true));
-    let (dso_mag_limit, set_dso_mag_limit) = signal(ls_f64_init("sky_dso_mag_limit", 11.0));
+    let dso_filter_galaxy         = RwSignal::new(ls_bool("sky_dso_galaxy", true));
+    let dso_filter_open_cluster   = RwSignal::new(ls_bool("sky_dso_open_cluster", true));
+    let dso_filter_globular       = RwSignal::new(ls_bool("sky_dso_globular", true));
+    let dso_filter_nebula         = RwSignal::new(ls_bool("sky_dso_nebula", true));
+    let dso_filter_planetary      = RwSignal::new(ls_bool("sky_dso_planetary", true));
+    let dso_filter_snr            = RwSignal::new(ls_bool("sky_dso_snr", true));
+    let dso_filter_galaxy_cluster = RwSignal::new(ls_bool("sky_dso_galaxy_cluster", true));
+    let dso_mag_limit             = RwSignal::new(ls_f64_init("sky_dso_mag_limit", 11.0));
+
+    let toggles = SkyToggles {
+        stars:               show_stars,
+        names:               show_names,
+        constellations:      show_constellations,
+        con_names:           show_con_names,
+        grid:                show_grid,
+        eq_grid:             show_eq_grid,
+        meridian:            show_meridian,
+        fov:                 show_fov,
+        dso:                 show_dso,
+        ecliptic:            show_ecliptic,
+        zenith:              show_zenith,
+        solar_system:        show_solar_system,
+        solve_marker:        show_solve_marker,
+        slew_trail:          show_slew_trail,
+        dso_galaxy:          dso_filter_galaxy,
+        dso_open_cluster:    dso_filter_open_cluster,
+        dso_globular:        dso_filter_globular,
+        dso_nebula:          dso_filter_nebula,
+        dso_planetary:       dso_filter_planetary,
+        dso_snr:             dso_filter_snr,
+        dso_galaxy_cluster:  dso_filter_galaxy_cluster,
+        dso_mag_limit,
+    };
 
     // Persist checkbox state to localStorage on change
     Effect::new(move || {
         let bools: &[(&str, bool)] = &[
-            ("sky_show_stars", show_stars.get()),
-            ("sky_show_names", show_names.get()),
-            ("sky_show_constellations", show_constellations.get()),
-            ("sky_show_con_names", show_con_names.get()),
-            ("sky_show_grid", show_grid.get()),
-            ("sky_show_eq_grid", show_eq_grid.get()),
-            ("sky_show_meridian", show_meridian.get()),
-            ("sky_show_fov", show_fov.get()),
-            ("sky_show_dso", show_dso.get()),
-            ("sky_dso_galaxy", dso_filter_galaxy.get()),
-            ("sky_dso_open_cluster", dso_filter_open_cluster.get()),
-            ("sky_dso_globular", dso_filter_globular.get()),
-            ("sky_dso_nebula", dso_filter_nebula.get()),
-            ("sky_dso_planetary", dso_filter_planetary.get()),
-            ("sky_dso_snr", dso_filter_snr.get()),
-            ("sky_dso_galaxy_cluster", dso_filter_galaxy_cluster.get()),
+            ("sky_show_stars",          toggles.stars.get()),
+            ("sky_show_names",          toggles.names.get()),
+            ("sky_show_constellations", toggles.constellations.get()),
+            ("sky_show_con_names",      toggles.con_names.get()),
+            ("sky_show_grid",           toggles.grid.get()),
+            ("sky_show_eq_grid",        toggles.eq_grid.get()),
+            ("sky_show_meridian",       toggles.meridian.get()),
+            ("sky_show_fov",            toggles.fov.get()),
+            ("sky_show_dso",            toggles.dso.get()),
+            ("sky_show_ecliptic",       toggles.ecliptic.get()),
+            ("sky_show_zenith",         toggles.zenith.get()),
+            ("sky_show_solar_system",   toggles.solar_system.get()),
+            ("sky_show_solve_marker",   toggles.solve_marker.get()),
+            ("sky_show_slew_trail",     toggles.slew_trail.get()),
+            ("sky_dso_galaxy",          toggles.dso_galaxy.get()),
+            ("sky_dso_open_cluster",    toggles.dso_open_cluster.get()),
+            ("sky_dso_globular",        toggles.dso_globular.get()),
+            ("sky_dso_nebula",          toggles.dso_nebula.get()),
+            ("sky_dso_planetary",       toggles.dso_planetary.get()),
+            ("sky_dso_snr",             toggles.dso_snr.get()),
+            ("sky_dso_galaxy_cluster",  toggles.dso_galaxy_cluster.get()),
         ];
-        let mag = dso_mag_limit.get();
+        let mag = toggles.dso_mag_limit.get();
         if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
             for (k, v) in bools {
                 let _ = ls.set_item(k, if *v { "true" } else { "false" });
@@ -173,9 +241,38 @@ pub fn SkyTab(
             .unwrap_or(true)
     });
 
-    // Drag state
+    // Drag state. `drag_dist` tracks total movement so a short drag still
+    // fires a click (hit-test) on mouseup, while a real pan suppresses it.
     let dragging = StoredValue::new(false);
     let drag_last = StoredValue::new((0.0_f64, 0.0_f64));
+    let drag_dist = StoredValue::new(0.0_f64);
+    let mousedown_pos = StoredValue::new((0.0_f64, 0.0_f64));
+
+    // Current pointer position (CSS px relative to overlay canvas), for the
+    // hover Alt/Az/RA/Dec readout. None when the pointer is off-canvas.
+    let mouse_pos = RwSignal::new(None::<(f64, f64)>);
+
+    // Hit-test targets — populated per frame by render::render_overlay, read
+    // by on_mouseup to map a click to the nearest hovered object.
+    let hit_items: Rc<RefCell<Vec<HitItem>>> = Rc::new(RefCell::new(Vec::new()));
+
+    // Slew trail: ring buffer of recent mount positions sampled once per
+    // render tick when RA/Dec changes. Each entry is (jd, ra_jnow_deg, dec_deg).
+    let slew_trail: Rc<RefCell<VecDeque<(f64, f64, f64)>>> =
+        Rc::new(RefCell::new(VecDeque::with_capacity(128)));
+    let last_trail_sample = StoredValue::new((f64::NAN, f64::NAN));
+
+    // Click-to-info popup target (or None for closed).
+    let (info_popup, set_info_popup) = signal(None::<HitItem>);
+
+    // Goto-and-align coordination: the context menu / confirm popup set this
+    // to `true` after dispatching a goto. An Effect below watches the mount's
+    // slewing status and fires `align_solve` once the slew completes. Firing
+    // align_solve immediately (what we used to do) caused the solver to run
+    // on the pre-slew image and place the solve marker at the mount's old
+    // position.
+    let pending_solve_after_slew = RwSignal::new(false);
+    let was_slewing = StoredValue::new(false);
 
     // Pinch-to-zoom state
     let pinch_start_dist = StoredValue::new(0.0_f64);
@@ -243,6 +340,9 @@ pub fn SkyTab(
     // ── Render function ────────────────────────────────────────────────────
     let gpu_for_render = Rc::clone(&gpu_renderer);
     let nebulae_for_render = Rc::clone(&nebulae_images);
+    let hit_items_for_render = Rc::clone(&hit_items);
+    let trail_for_render = Rc::clone(&slew_trail);
+    let trail_for_sample = Rc::clone(&slew_trail);
     let _render_handle = Effect::new(move || {
         // Read all reactive deps to subscribe
         let m = mount.get();
@@ -258,6 +358,11 @@ pub fn SkyTab(
         let grid_on = show_grid.get();
         let eq_grid_on = show_eq_grid.get();
         let meridian_on = show_meridian.get();
+        let ecliptic_on = show_ecliptic.get();
+        let zenith_on = show_zenith.get();
+        let solar_system_on = show_solar_system.get();
+        let solve_marker_on = show_solve_marker.get();
+        let slew_trail_on = show_slew_trail.get();
         let fov_on = show_fov.get();
         let dso_on = show_dso.get();
         let dso_gx  = dso_filter_galaxy.get();
@@ -387,6 +492,37 @@ pub fn SkyTab(
             }
         }
 
+        // ── Slew trail: sample mount position when it moves meaningfully.
+        if m.connected {
+            if let (Some(ra_h), Some(dec)) = (m.ra_h, m.dec_deg) {
+                let (last_ra, last_dec) = last_trail_sample.get_value();
+                let ra_deg = ra_h * 15.0;
+                // Threshold: 2 arcmin (~0.033°) of angular change.
+                let moved = last_ra.is_nan()
+                    || ((ra_deg - last_ra).abs() * s.latitude.to_radians().cos().abs()
+                        + (dec - last_dec).abs()) > 0.033;
+                if moved {
+                    last_trail_sample.set_value((ra_deg, dec));
+                    let mut buf = trail_for_sample.borrow_mut();
+                    buf.push_back((jd, ra_deg, dec));
+                    while buf.len() > 120 { buf.pop_front(); }
+                }
+            }
+        }
+
+        // ── Cursor-to-world conversion for the HUD readout.
+        let (cursor_altaz, cursor_radec) = if let Some((mx, my)) = mouse_pos.get() {
+            // (mx, my) are in CSS px relative to the canvas. Convert to the
+            // normalised [-1, 1] disk coords that astro::unproject expects.
+            let nx = (mx - wf / 2.0) / (hf.min(wf) / 2.0);
+            let ny = -(my - hf / 2.0) / (hf.min(wf) / 2.0);
+            let (alt, az) = astro::unproject(nx, ny, c_alt, c_az, fov);
+            let (ra, dec) = astro::altaz_to_eq(alt, az, lst, s.latitude);
+            (Some((alt, az)), Some((ra, dec)))
+        } else {
+            (None, None)
+        };
+
         // ── Overlay rendering (delegated to render module) ─────────────
         let params = RenderParams {
             wf,
@@ -407,6 +543,11 @@ pub fn SkyTab(
             grid_on,
             eq_grid_on,
             meridian_on,
+            ecliptic_on,
+            zenith_on,
+            solar_system_on,
+            solve_marker_on,
+            slew_trail_on,
             fov_on,
             dso_on,
             dso_gx,
@@ -425,6 +566,12 @@ pub fn SkyTab(
             cam_sensor_width: cam.sensor_width,
             cam_sensor_height: cam.sensor_height,
             rotation_deg: sv.rotation_deg,
+            solve_ra_jnow_deg: sv.ra_jnow_deg,
+            solve_dec_jnow_deg: sv.dec_jnow_deg,
+            solve_pixscale_arcsec: sv.pixscale_arcsec,
+            solve_age_ms: sv.solved_at_ms.map(|t| js_sys::Date::now() - t),
+            cursor_altaz,
+            cursor_radec,
             t_off,
             jd,
             cur_lang,
@@ -432,11 +579,37 @@ pub fn SkyTab(
 
         let nb_idx = nebulae_index.get_untracked();
         let mut nebulae_cache = nebulae_for_render.borrow_mut();
+        let mut hits = hit_items_for_render.borrow_mut();
+        hits.clear();
+        let trail = trail_for_render.borrow();
+        let trail_slice: Vec<(f64, f64, f64)> = trail.iter().copied().collect();
+        drop(trail);
         render::render_overlay(
             &ctx, &params, &cat, &dso_cat,
             nb_idx.as_deref(),
             &mut nebulae_cache,
+            &mut hits,
+            &trail_slice,
         );
+    });
+
+    // ── Slew-complete watcher: fire deferred align_solve when mount stops ─
+    let send_for_align_after_slew = Arc::clone(&send);
+    Effect::new(move || {
+        let m = mount.get();
+        let is_slewing = m.slewing;
+        let was = was_slewing.get_value();
+        was_slewing.set_value(is_slewing);
+
+        // Fire only on the slewing → idle transition, and only if a pending
+        // request exists. Guard against spurious triggers when the mount
+        // arrives without ever reporting slewing (e.g. pre-existing idle state).
+        if was && !is_slewing && pending_solve_after_slew.get() {
+            pending_solve_after_slew.set(false);
+            send_for_align_after_slew(
+                serde_json::json!({"type":"align_solve","payload":{}}).to_string(),
+            );
+        }
     });
 
     // ── Animation loop (throttled: skip every other frame for smoother mobile perf) ──
@@ -470,21 +643,42 @@ pub fn SkyTab(
     });
 
     // ── Mouse handlers ─────────────────────────────────────────────────────
+    let hit_items_for_click = Rc::clone(&hit_items);
     let on_mousedown = move |ev: MouseEvent| {
         if ev.button() == 0 {
-            set_follow_mount.set(false);
             set_ctx_menu.set(None);
+            set_info_popup.set(None);
             dragging.set_value(true);
             drag_last.set_value((ev.client_x() as f64, ev.client_y() as f64));
+            mousedown_pos.set_value((ev.client_x() as f64, ev.client_y() as f64));
+            drag_dist.set_value(0.0);
         }
     };
 
+    // Helper: convert a MouseEvent into (canvas CSS x, canvas CSS y).
+    let to_canvas_xy = move |ev: &MouseEvent| -> Option<(f64, f64)> {
+        let el = overlay_ref.get()?;
+        let rect = el.get_bounding_client_rect();
+        Some((ev.client_x() as f64 - rect.left(), ev.client_y() as f64 - rect.top()))
+    };
+
     let on_mousemove = move |ev: MouseEvent| {
+        // Always update hover position for the Alt/Az/RA/Dec readout.
+        if let Some((cx, cy)) = to_canvas_xy(&ev) {
+            mouse_pos.set(Some((cx, cy)));
+        }
+
         if !dragging.get_value() { return; }
         let (lx, ly) = drag_last.get_value();
         let dx = ev.client_x() as f64 - lx;
         let dy = ev.client_y() as f64 - ly;
         drag_last.set_value((ev.client_x() as f64, ev.client_y() as f64));
+        drag_dist.update_value(|d| *d += (dx * dx + dy * dy).sqrt());
+
+        // Only pan if the drag has exceeded a small threshold — otherwise
+        // the mouseup below still triggers a hit-test (click-to-info).
+        if drag_dist.get_value() < 4.0 { return; }
+        set_follow_mount.set(false);
 
         let fov = fov_radius.get_untracked();
         let deg_per_px = fov * 2.0 / 500.0;
@@ -492,8 +686,32 @@ pub fn SkyTab(
         set_center_alt.update(|alt| *alt = (*alt + dy * deg_per_px).clamp(-90.0, 90.0));
     };
 
-    let on_mouseup = move |_ev: MouseEvent| {
+    let on_mouseup = move |ev: MouseEvent| {
         dragging.set_value(false);
+        // If the pointer barely moved, treat this as a click → hit-test.
+        if drag_dist.get_value() >= 4.0 || ev.button() != 0 { return; }
+        let Some((cx, cy)) = to_canvas_xy(&ev) else { return };
+        let items = hit_items_for_click.borrow();
+        let mut best: Option<(f64, HitItem)> = None;
+        for it in items.iter() {
+            let dx = cx - it.sx;
+            let dy = cy - it.sy;
+            let d2 = dx * dx + dy * dy;
+            let r = it.radius.max(12.0);
+            if d2 > r * r { continue; }
+            if best.as_ref().map(|(bd, _)| d2 < *bd).unwrap_or(true) {
+                best = Some((d2, it.clone()));
+            }
+        }
+        drop(items);
+        if let Some((_, hit)) = best {
+            set_info_popup.set(Some(hit));
+        }
+    };
+
+    let on_mouseleave = move |_: MouseEvent| {
+        dragging.set_value(false);
+        mouse_pos.set(None);
     };
 
     let on_wheel = move |ev: WheelEvent| {
@@ -504,7 +722,7 @@ pub fn SkyTab(
         });
         let fov = fov_radius.get_untracked();
         let auto_mag = (11.0 + 3.0 * (10.0_f64 / fov).log10()).clamp(4.0, 20.0);
-        set_dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
+        dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
     };
 
     // ── Touch handlers ─────────────────────────────────────────────────────
@@ -555,7 +773,7 @@ pub fn SkyTab(
                 let new_fov = (start_fov * start_dist / dist).clamp(0.1, 90.0);
                 set_fov_radius.set(new_fov);
                 let auto_mag = (11.0 + 3.0 * (10.0_f64 / new_fov).log10()).clamp(4.0, 20.0);
-                set_dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
+                dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
             }
         }
     };
@@ -604,7 +822,11 @@ pub fn SkyTab(
     view! {
         <div class="sky-pane"
              style="position:relative; width:100%; overflow:hidden;"
-             on:click=move |_| { set_ctx_menu.set(None); set_pending_action.set(None); }>
+             on:click=move |_| {
+                 set_ctx_menu.set(None);
+                 set_pending_action.set(None);
+                 set_info_popup.set(None);
+             }>
 
             // WebGPU canvas (bottom layer)
             <canvas
@@ -619,7 +841,7 @@ pub fn SkyTab(
                 on:mousedown=on_mousedown
                 on:mousemove=on_mousemove
                 on:mouseup=on_mouseup
-                on:mouseleave=move |_| dragging.set_value(false)
+                on:mouseleave=on_mouseleave
                 on:wheel=on_wheel
                 on:contextmenu=on_contextmenu
                 on:touchstart=on_touchstart
@@ -640,7 +862,7 @@ pub fn SkyTab(
                 set_center_az=set_center_az
                 set_follow_mount=set_follow_mount
                 set_fov_radius=set_fov_radius
-                set_dso_mag_limit=set_dso_mag_limit
+                dso_mag_limit=dso_mag_limit
             />
 
             // ── Controls panel ─────────────────────────────────────────────
@@ -653,40 +875,7 @@ pub fn SkyTab(
                 set_show_objects_section=set_show_objects_section
                 show_settings_section=show_settings_section
                 set_show_settings_section=set_show_settings_section
-                show_stars=show_stars
-                set_show_stars=set_show_stars
-                show_names=show_names
-                set_show_names=set_show_names
-                show_constellations=show_constellations
-                set_show_constellations=set_show_constellations
-                show_con_names=show_con_names
-                set_show_con_names=set_show_con_names
-                show_grid=show_grid
-                set_show_grid=set_show_grid
-                show_eq_grid=show_eq_grid
-                set_show_eq_grid=set_show_eq_grid
-                show_meridian=show_meridian
-                set_show_meridian=set_show_meridian
-                show_fov=show_fov
-                set_show_fov=set_show_fov
-                show_dso=show_dso
-                set_show_dso=set_show_dso
-                dso_filter_galaxy=dso_filter_galaxy
-                set_dso_filter_galaxy=set_dso_filter_galaxy
-                dso_filter_open_cluster=dso_filter_open_cluster
-                set_dso_filter_open_cluster=set_dso_filter_open_cluster
-                dso_filter_globular=dso_filter_globular
-                set_dso_filter_globular=set_dso_filter_globular
-                dso_filter_nebula=dso_filter_nebula
-                set_dso_filter_nebula=set_dso_filter_nebula
-                dso_filter_planetary=dso_filter_planetary
-                set_dso_filter_planetary=set_dso_filter_planetary
-                dso_filter_snr=dso_filter_snr
-                set_dso_filter_snr=set_dso_filter_snr
-                dso_filter_galaxy_cluster=dso_filter_galaxy_cluster
-                set_dso_filter_galaxy_cluster=set_dso_filter_galaxy_cluster
-                dso_mag_limit=dso_mag_limit
-                set_dso_mag_limit=set_dso_mag_limit
+                toggles=toggles
                 focal_override=focal_override
                 set_focal_override=set_focal_override
                 focal_length_mm=focal_length_mm
@@ -763,7 +952,7 @@ pub fn SkyTab(
                                let new_fov = 10_f64.powf(v / 1000.0).clamp(0.1, 90.0);
                                set_fov_radius.set(new_fov);
                                let auto_mag = (11.0 + 3.0 * (10.0_f64 / new_fov).log10()).clamp(4.0, 20.0);
-                               set_dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
+                               dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
                            }
                        }
                 />
@@ -773,6 +962,7 @@ pub fn SkyTab(
             <SkyContextMenu
                 ctx_menu=ctx_menu
                 set_ctx_menu=set_ctx_menu
+                pending_solve_after_slew=pending_solve_after_slew
                 send=send_for_ctx
             />
 
@@ -780,7 +970,14 @@ pub fn SkyTab(
             <SkyConfirmPopup
                 pending_action=pending_action
                 set_pending_action=set_pending_action
+                pending_solve_after_slew=pending_solve_after_slew
                 send=send_for_confirm
+            />
+
+            // ── Click-to-info popup (left-click on object) ───────────────────
+            <SkyInfoPopup
+                info_popup=info_popup
+                set_info_popup=set_info_popup
             />
         </div>
     }

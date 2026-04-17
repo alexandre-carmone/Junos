@@ -5,7 +5,9 @@
 
 use leptos::prelude::*;
 
-use crate::ws::{DeviceStore, GuideDriftSample, GuideStateSample, HfrSample, PolarVectorData};
+use crate::ws::{
+    DeviceStore, GuideDriftSample, GuideStateSample, HfrSample, PolarVectorData,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct MountSnapshot {
@@ -55,7 +57,25 @@ pub struct SiteSnapshot {
 
 #[derive(Debug, Clone, Default)]
 pub struct SolveSnapshot {
-    pub rotation_deg: Option<f64>,
+    pub rotation_deg:    Option<f64>,
+    pub ra_jnow_deg:     Option<f64>,
+    pub dec_jnow_deg:    Option<f64>,
+    pub pixscale_arcsec: Option<f64>,
+    pub solved_at_ms:    Option<f64>,
+}
+
+pub fn derive_solve(store: &DeviceStore) -> Signal<SolveSnapshot> {
+    let sig = store.align_solution;
+    Signal::derive(move || {
+        let a = sig.get();
+        SolveSnapshot {
+            rotation_deg:    a.orientation_deg,
+            ra_jnow_deg:     a.ra_jnow_deg,
+            dec_jnow_deg:    a.dec_jnow_deg,
+            pixscale_arcsec: a.pixscale_arcsec,
+            solved_at_ms:    a.solved_at_ms,
+        }
+    })
 }
 
 #[derive(Debug, Clone, Default)]

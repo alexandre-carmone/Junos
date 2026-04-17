@@ -26,7 +26,7 @@ pub fn SkySearch(
     set_center_az: WriteSignal<f64>,
     set_follow_mount: WriteSignal<bool>,
     set_fov_radius: WriteSignal<f64>,
-    set_dso_mag_limit: WriteSignal<f64>,
+    dso_mag_limit: RwSignal<f64>,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
@@ -117,7 +117,7 @@ pub fn SkySearch(
                                 };
                                 set_fov_radius.set(fov);
                                 let auto_mag = (11.0 + 3.0 * (10.0_f64 / fov).log10()).clamp(4.0, 20.0);
-                                set_dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
+                                dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
 
                                 set_sky_search.set(String::new());
                             }

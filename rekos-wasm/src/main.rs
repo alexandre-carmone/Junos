@@ -6,6 +6,7 @@ mod compat;
 mod coords;
 mod components;
 mod dso_catalog;
+mod ephemeris;
 mod gpu;
 mod i18n;
 mod nebulae;
@@ -119,7 +120,7 @@ fn App() -> impl IntoView {
     // ── Derived signals for SkyTab ────────────────────────────────────────
     let mount  = compat::derive_mount(&store);
     let camera = compat::derive_camera(&store);
-    let solve  = Signal::derive(|| compat::SolveSnapshot::default());
+    let solve  = compat::derive_solve(&store);
     let focal_length_mm = {
         let ts = store.telescope_settings;
         Signal::derive(move || ts.get().focal_length_mm)

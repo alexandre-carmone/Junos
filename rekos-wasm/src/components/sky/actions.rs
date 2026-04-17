@@ -41,6 +41,12 @@ fn goto_rade_msg(ra_deg_jnow: f64, dec_deg_jnow: f64) -> String {
 pub fn SkyContextMenu(
     ctx_menu: ReadSignal<Option<(f64, f64, f64, f64)>>,
     set_ctx_menu: WriteSignal<Option<(f64, f64, f64, f64)>>,
+    /// Set to `true` when the user picks "Goto & Align" — consumed by an
+    /// Effect in `mod.rs` that waits for the mount to finish slewing before
+    /// actually firing `align_solve`. Prevents the solver from running on
+    /// the pre-slew image (which would make the solve marker appear at the
+    /// mount's *previous* position instead of the actual solved one).
+    pending_solve_after_slew: RwSignal<bool>,
     send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -69,9 +75,13 @@ pub fn SkyContextMenu(
 
     let on_align = move |_| {
         if let Some((_sx, _sy, ra_deg, dec_deg)) = ctx_menu.get_untracked() {
-            // First slew then solve
+            // Send the goto now, then mark a pending request. An Effect in
+            // mod.rs watches the mount-slewing signal and fires `align_solve`
+            // only after the mount reports idle — firing it immediately would
+            // capture+solve the pre-slew image and put the marker at the
+            // mount's old position.
             send_for_align(goto_rade_msg(ra_deg, dec_deg));
-            send_for_align(serde_json::json!({"type":"align_solve","payload":{}}).to_string());
+            pending_solve_after_slew.set(true);
             set_ctx_menu.set(None);
         }
     };
@@ -159,6 +169,7 @@ pub fn SkyContextMenu(
 pub fn SkyConfirmPopup(
     pending_action: ReadSignal<Option<(bool, f64, f64)>>,
     set_pending_action: WriteSignal<Option<(bool, f64, f64)>>,
+    pending_solve_after_slew: RwSignal<bool>,
     send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -238,8 +249,12 @@ pub fn SkyConfirmPopup(
                                 disabled=move || align_disabled.get()
                                 on:click=move |_| {
                                     if align_disabled.get_untracked() { return; }
+                                    // Kick off the slew; `align_solve` fires
+                                    // once the mount stops moving — see the
+                                    // Effect in mod.rs that watches
+                                    // pending_solve_after_slew + mount.slewing.
                                     send_align(goto_rade_msg(ra_deg, dec_deg));
-                                    send_align(serde_json::json!({"type":"align_solve","payload":{}}).to_string());
+                                    pending_solve_after_slew.set(true);
                                     set_pending_action.set(None);
                                 }
                                 style=move || if align_disabled.get() {

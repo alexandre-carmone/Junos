@@ -4,12 +4,13 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use web_sys::{CanvasGradient, CanvasRenderingContext2d, HtmlImageElement};
+use web_sys::{CanvasRenderingContext2d, HtmlImageElement};
 
 use crate::astro;
 use crate::catalog::CatalogData;
 use crate::coords::J2000;
 use crate::dso_catalog::{DsoCatalogData, DsoType};
+use crate::ephemeris;
 use crate::i18n::{Lang, constellation_name};
 use crate::nebulae::NebulaeIndex;
 
@@ -21,6 +22,34 @@ use super::utils::bv_to_rgb;
 const STAR_SIZE_BASE:      f64 = 3.5;
 const STAR_SIZE_MAG_SCALE: f64 = 0.35;
 const STAR_SIZE_MIN:       f64 = 0.5;
+
+// ---------------------------------------------------------------------------
+// Hit-test items (collected during render, consumed by mouseup handler)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub enum HitKind {
+    Star,
+    Dso(DsoType),
+    Sun,
+    Moon,
+    Planet,
+}
+
+#[derive(Clone)]
+pub struct HitItem {
+    pub sx: f64,
+    pub sy: f64,
+    pub radius: f64,           // hit radius in CSS px
+    pub kind: HitKind,
+    pub name: String,
+    pub mag: Option<f32>,
+    pub ra_jnow_deg: f64,
+    pub dec_jnow_deg: f64,
+    /// Optional extra info (apparent diameter for Sun/Moon, size for DSO, …).
+    pub size_arcmin: Option<f64>,
+    pub phase: Option<f64>,
+}
 
 /// All values needed to render a single frame (no reactive signals).
 pub struct RenderParams {
@@ -42,6 +71,11 @@ pub struct RenderParams {
     pub grid_on: bool,
     pub eq_grid_on: bool,
     pub meridian_on: bool,
+    pub ecliptic_on: bool,
+    pub zenith_on: bool,
+    pub solar_system_on: bool,
+    pub solve_marker_on: bool,
+    pub slew_trail_on: bool,
     pub fov_on: bool,
     pub dso_on: bool,
     pub dso_gx: bool,
@@ -60,12 +94,26 @@ pub struct RenderParams {
     pub cam_sensor_width: Option<u32>,
     pub cam_sensor_height: Option<u32>,
     pub rotation_deg: Option<f64>,
+    /// Latest plate-solve result (JNow). All fields optional — populated only
+    /// once the user actually runs a solve.
+    pub solve_ra_jnow_deg: Option<f64>,
+    pub solve_dec_jnow_deg: Option<f64>,
+    pub solve_pixscale_arcsec: Option<f64>,
+    pub solve_age_ms: Option<f64>,
+    /// Cursor position in world coords (Alt, Az) and (RA, Dec). None when the
+    /// pointer is off-canvas.
+    pub cursor_altaz: Option<(f64, f64)>,
+    pub cursor_radec: Option<(f64, f64)>,
     pub t_off: f64,
     pub jd: f64,
     pub cur_lang: Lang,
 }
 
 /// Render the full sky overlay on a Canvas2D context.
+///
+/// `hit_items` is appended-to during render (cleared by the caller before each
+/// frame). The mouse-up handler in `mod.rs` walks the resulting list to map a
+/// click to the nearest hovered object.
 pub fn render_overlay(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
@@ -73,6 +121,8 @@ pub fn render_overlay(
     dso_cat: &Option<Arc<DsoCatalogData>>,
     nebulae_index: Option<&NebulaeIndex>,
     nebulae_cache: &mut HashMap<String, HtmlImageElement>,
+    hit_items: &mut Vec<HitItem>,
+    slew_trail: &[(f64, f64, f64)],
 ) {
     let cx = p.wf / 2.0;
     let cy = p.hf / 2.0;
@@ -90,7 +140,7 @@ pub fn render_overlay(
         // Full Canvas2D fallback rendering
         ctx.set_fill_style_str("#0a0a14");
         ctx.fill_rect(0.0, 0.0, p.wf, p.hf);
-        render_fallback_stars(ctx, p, cat, &project, cx, cy, scale);
+        render_fallback_stars(ctx, p, cat, &project, cx, cy, scale, hit_items);
     }
 
     // Everything below renders on the Canvas2D overlay (both GPU and fallback)
@@ -104,16 +154,34 @@ pub fn render_overlay(
     if p.eq_grid_on {
         render_eq_grid(ctx, p, &project);
     }
+    if p.ecliptic_on {
+        render_ecliptic(ctx, p, &project);
+    }
+    if p.zenith_on {
+        render_zenith(ctx, p, &project);
+    }
     if p.has_gpu && p.names_on && p.stars_on {
-        render_star_names_gpu(ctx, p, cat, &project);
+        render_star_names_gpu(ctx, p, cat, &project, hit_items);
+    } else if p.has_gpu && p.stars_on {
+        // Stars are drawn by the GPU but we still need named-star hit items.
+        push_star_hit_items(p, cat, &project, hit_items);
     }
     if p.has_gpu && p.const_on && p.con_names_on {
         render_constellation_names_gpu(ctx, p, cat, &project);
     }
     if p.dso_on {
-        render_dso(ctx, p, dso_cat, &project, scale, nebulae_index, nebulae_cache);
+        render_dso(ctx, p, dso_cat, &project, scale, nebulae_index, nebulae_cache, hit_items);
+    }
+    if p.solar_system_on {
+        render_solar_system(ctx, p, &project, hit_items);
+    }
+    if p.slew_trail_on {
+        render_slew_trail(ctx, p, &project, slew_trail);
     }
     render_mount_crosshair(ctx, p, &project);
+    if p.solve_marker_on {
+        render_solve_marker(ctx, p, &project);
+    }
     render_center_crosshair(ctx, cx, cy);
     if p.fov_on {
         render_center_fov(ctx, p, &project, cx, cy);
@@ -134,6 +202,7 @@ fn render_fallback_stars(
     _cx: f64,
     _cy: f64,
     _scale: f64,
+    hit_items: &mut Vec<HitItem>,
 ) {
     let Some(ref cat) = cat else { return };
 
@@ -203,18 +272,28 @@ fn render_fallback_stars(
         }
     }
 
-    // Star names
-    if p.names_on && p.stars_on {
-        ctx.set_fill_style_str("#8899aa");
-        ctx.set_font("10px monospace");
-        ctx.set_text_align("left");
+    // Star names + hit items for named stars.
+    if p.stars_on {
         for (i, star) in cat.stars.iter().enumerate() {
-            if let (Some(name), Some(Some((sx, sy, mag, _)))) =
-                (star.name.as_deref(), idx_screen.get(i))
-            {
-                if *mag < 3.0 {
-                    let _ = ctx.fill_text(name, sx + 6.0, sy - 4.0);
-                }
+            let Some(Some((sx, sy, mag, _))) = idx_screen.get(i) else { continue };
+            let Some(name) = star.name.as_deref() else { continue };
+            let jnow = J2000::new(star.ra_deg as f64, star.dec_deg as f64).to_jnow(p.jd);
+            hit_items.push(HitItem {
+                sx: *sx, sy: *sy,
+                radius: ((STAR_SIZE_BASE - *mag as f64 * STAR_SIZE_MAG_SCALE).max(4.0)),
+                kind: HitKind::Star,
+                name: name.to_string(),
+                mag: Some(*mag),
+                ra_jnow_deg: jnow.ra_deg,
+                dec_jnow_deg: jnow.dec_deg,
+                size_arcmin: None,
+                phase: None,
+            });
+            if p.names_on && *mag < 3.0 {
+                ctx.set_fill_style_str("#8899aa");
+                ctx.set_font("10px monospace");
+                ctx.set_text_align("left");
+                let _ = ctx.fill_text(name, sx + 6.0, sy - 4.0);
             }
         }
     }
@@ -427,6 +506,7 @@ fn render_star_names_gpu(
     p: &RenderParams,
     cat: &Option<Arc<CatalogData>>,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    hit_items: &mut Vec<HitItem>,
 ) {
     let Some(ref cat) = cat else { return };
     ctx.set_fill_style_str("#8899aa");
@@ -450,6 +530,58 @@ fn render_star_names_gpu(
         if ha.sin() > 0.0 { az = 360.0 - az; }
         if let Some((sx, sy)) = project(alt, az) {
             let _ = ctx.fill_text(name, sx + 6.0, sy - 4.0);
+            hit_items.push(HitItem {
+                sx, sy,
+                radius: 8.0,
+                kind: HitKind::Star,
+                name: name.to_string(),
+                mag: Some(star.mag),
+                ra_jnow_deg: jnow.ra_deg,
+                dec_jnow_deg: jnow.dec_deg,
+                size_arcmin: None,
+                phase: None,
+            });
+        }
+    }
+}
+
+/// Push hit items for named stars *without* drawing labels (GPU path when
+/// the user turned labels off but still expects stars to be clickable).
+fn push_star_hit_items(
+    p: &RenderParams,
+    cat: &Option<Arc<CatalogData>>,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    hit_items: &mut Vec<HitItem>,
+) {
+    let Some(ref cat) = cat else { return };
+    let lst_rad = p.lst.to_radians();
+    for star in cat.stars.iter() {
+        let Some(name) = star.name.as_deref() else { continue };
+        if star.mag >= 3.0 { continue; }
+        let jnow = J2000::new(star.ra_deg as f64, star.dec_deg as f64).to_jnow(p.jd);
+        let ha = lst_rad - jnow.ra_deg.to_radians();
+        let dec = jnow.dec_deg.to_radians();
+        let sin_dec = dec.sin();
+        let cos_dec = dec.cos();
+        let sin_alt = sin_dec * p.sin_lat + cos_dec * p.cos_lat * ha.cos();
+        let alt_rad = sin_alt.asin();
+        let alt = alt_rad.to_degrees();
+        if alt < -5.0 { continue; }
+        let cos_az = (sin_dec - alt_rad.sin() * p.sin_lat) / (alt_rad.cos() * p.cos_lat);
+        let mut az = cos_az.clamp(-1.0, 1.0).acos().to_degrees();
+        if ha.sin() > 0.0 { az = 360.0 - az; }
+        if let Some((sx, sy)) = project(alt, az) {
+            hit_items.push(HitItem {
+                sx, sy,
+                radius: 8.0,
+                kind: HitKind::Star,
+                name: name.to_string(),
+                mag: Some(star.mag),
+                ra_jnow_deg: jnow.ra_deg,
+                dec_jnow_deg: jnow.dec_deg,
+                size_arcmin: None,
+                phase: None,
+            });
         }
     }
 }
@@ -501,6 +633,7 @@ fn render_dso(
     scale: f64,
     nebulae_index: Option<&NebulaeIndex>,
     nebulae_cache: &mut HashMap<String, HtmlImageElement>,
+    hit_items: &mut Vec<HitItem>,
 ) {
     let Some(ref dso_cat) = dso_cat else { return };
     let lst_rad = p.lst.to_radians();
@@ -687,6 +820,18 @@ fn render_dso(
                 }
             }
         }
+
+        hit_items.push(HitItem {
+            sx, sy,
+            radius: r.max(8.0),
+            kind: HitKind::Dso(dso.kind),
+            name: dso.name.to_string(),
+            mag: Some(dso.mag),
+            ra_jnow_deg: dso_jnow.ra_deg,
+            dec_jnow_deg: dso_jnow.dec_deg,
+            size_arcmin: Some(dso.size_arcmin as f64),
+            phase: None,
+        });
 
         // Label (always, image or symbol)
         if p.names_on && p.fov < 50.0 {
@@ -940,4 +1085,336 @@ fn render_info_overlay(ctx: &CanvasRenderingContext2d, p: &RenderParams) {
             8.0, p.hf - 44.0,
         );
     }
+    if let (Some((alt, az)), Some((ra, dec))) = (p.cursor_altaz, p.cursor_radec) {
+        let ra_h = ra / 15.0;
+        let rah = ra_h as u32;
+        let ram = ((ra_h - rah as f64) * 60.0) as u32;
+        let _ = ctx.fill_text(
+            &format!(
+                "Cursor: Alt {:+.1}\u{00b0} Az {:.1}\u{00b0}  {:02}h{:02}m {:+.1}\u{00b0}",
+                alt, az, rah, ram, dec,
+            ),
+            8.0, p.hf - 28.0,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ecliptic + zenith
+// ---------------------------------------------------------------------------
+
+fn render_ecliptic(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    // Mean obliquity of date (arcsec → deg is implicit in the constant).
+    let t = (p.jd - 2_451_545.0) / 36525.0;
+    let ecl_deg = 23.4393 - 0.0130042 * t; // sufficient for our purposes
+
+    let sin_eps = ecl_deg.to_radians().sin();
+    let cos_eps = ecl_deg.to_radians().cos();
+
+    ctx.set_stroke_style_str("rgba(220,180,80,0.7)");
+    ctx.set_line_width(1.2);
+    ctx.set_line_dash(&js_sys::Array::of2(&5.0_f64.into(), &4.0_f64.into())).unwrap();
+    ctx.begin_path();
+    let mut first = true;
+    for deg_i in (0..=360).step_by(2) {
+        let lam = (deg_i as f64).to_radians();
+        // Ecliptic (lon, lat=0) → equatorial via the standard rotation.
+        let x = lam.cos();
+        let y = lam.sin() * cos_eps;
+        let z = lam.sin() * sin_eps;
+        let ra  = y.atan2(x).to_degrees().rem_euclid(360.0);
+        let dec = z.asin().to_degrees();
+        let (alt, az) = astro::eq_to_altaz(ra, dec, p.lst, p.latitude);
+        if let Some((sx, sy)) = project(alt, az) {
+            if first { ctx.move_to(sx, sy); first = false; }
+            else { ctx.line_to(sx, sy); }
+        } else {
+            first = true;
+        }
+    }
+    ctx.stroke();
+    ctx.set_line_dash(&js_sys::Array::new()).unwrap();
+}
+
+fn render_zenith(
+    ctx: &CanvasRenderingContext2d,
+    _p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    if let Some((sx, sy)) = project(90.0, 0.0) {
+        ctx.set_stroke_style_str("rgba(180,220,255,0.85)");
+        ctx.set_line_width(1.2);
+        ctx.begin_path();
+        let _ = ctx.arc(sx, sy, 6.0, 0.0, 2.0 * PI);
+        ctx.stroke();
+        ctx.set_fill_style_str("rgba(180,220,255,0.85)");
+        ctx.set_font("bold 10px monospace");
+        ctx.set_text_align("left");
+        let _ = ctx.fill_text("Z", sx + 9.0, sy + 4.0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Slew trail — fading polyline of recent mount positions.
+// ---------------------------------------------------------------------------
+
+fn render_slew_trail(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    trail: &[(f64, f64, f64)],
+) {
+    if trail.is_empty() { return; }
+    let now_jd = p.jd;
+    // Fade over 60s of wall-clock; older samples vanish.
+    const FADE_DAYS: f64 = 60.0 / 86400.0;
+
+    ctx.set_line_width(1.5);
+    ctx.set_line_cap("round");
+    // Draw each segment with its own alpha so the tail fades.
+    for w in trail.windows(2) {
+        let (jd0, ra0, de0) = w[0];
+        let (_jd1, ra1, de1) = w[1];
+        let age = (now_jd - jd0).max(0.0);
+        let alpha = (1.0 - (age / FADE_DAYS).min(1.0)) * 0.9;
+        if alpha < 0.05 { continue; }
+        let (a0, az0) = astro::eq_to_altaz(ra0, de0, p.lst, p.latitude);
+        let (a1, az1) = astro::eq_to_altaz(ra1, de1, p.lst, p.latitude);
+        let (Some(s0), Some(s1)) = (project(a0, az0), project(a1, az1)) else { continue };
+        ctx.set_stroke_style_str(&format!("rgba(255,170,60,{:.3})", alpha));
+        ctx.begin_path();
+        ctx.move_to(s0.0, s0.1);
+        ctx.line_to(s1.0, s1.1);
+        ctx.stroke();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Plate-solve result marker
+// ---------------------------------------------------------------------------
+
+fn render_solve_marker(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    let (Some(ra), Some(dec)) = (p.solve_ra_jnow_deg, p.solve_dec_jnow_deg)
+        else { return };
+
+    // Fade after 10 minutes so stale solves aren't visually shouting.
+    let alpha = p.solve_age_ms
+        .map(|age| (1.0 - (age / 600_000.0).min(1.0)) * 0.95 + 0.05)
+        .unwrap_or(1.0);
+    if alpha < 0.1 { return; }
+
+    let (alt, az) = astro::eq_to_altaz(ra, dec, p.lst, p.latitude);
+    let Some((sx, sy)) = project(alt, az) else { return };
+
+    let green = format!("rgba(60,230,120,{:.3})", alpha);
+    ctx.set_stroke_style_str(&green);
+    ctx.set_line_width(1.2);
+    ctx.begin_path();
+    let _ = ctx.arc(sx, sy, 10.0, 0.0, 2.0 * PI);
+    ctx.stroke();
+    // Small gap crosshair
+    ctx.begin_path();
+    ctx.move_to(sx - 16.0, sy); ctx.line_to(sx - 4.0, sy);
+    ctx.move_to(sx + 4.0, sy);  ctx.line_to(sx + 16.0, sy);
+    ctx.move_to(sx, sy - 16.0); ctx.line_to(sx, sy - 4.0);
+    ctx.move_to(sx, sy + 4.0);  ctx.line_to(sx, sy + 16.0);
+    ctx.stroke();
+
+    // Draw a translucent FOV rectangle using pixscale × camera sensor (if known).
+    if let (Some(pix), Some(sw), Some(sh)) =
+        (p.solve_pixscale_arcsec, p.cam_sensor_width, p.cam_sensor_height)
+    {
+        let fov_w = pix * sw as f64 / 3600.0; // deg
+        let fov_h = pix * sh as f64 / 3600.0;
+        let half_w = fov_w / 2.0;
+        let half_h = fov_h / 2.0;
+        let cos_dec = dec.to_radians().cos().abs().max(0.01);
+        let corners_eq = [
+            (ra - half_w / cos_dec, dec - half_h),
+            (ra + half_w / cos_dec, dec - half_h),
+            (ra + half_w / cos_dec, dec + half_h),
+            (ra - half_w / cos_dec, dec + half_h),
+        ];
+        let rot_rad = p.rotation_deg.unwrap_or(0.0).to_radians();
+        let sin_r = rot_rad.sin();
+        let cos_r = rot_rad.cos();
+        ctx.set_line_width(1.0);
+        ctx.begin_path();
+        let mut first = true;
+        for (cra, cdec) in &corners_eq {
+            let (calt, caz) = astro::eq_to_altaz(*cra, *cdec, p.lst, p.latitude);
+            if let Some((px, py)) = project(calt, caz) {
+                let dx = px - sx;
+                let dy = py - sy;
+                let rx = sx + dx * cos_r - dy * sin_r;
+                let ry = sy + dx * sin_r + dy * cos_r;
+                if first { ctx.move_to(rx, ry); first = false; }
+                else { ctx.line_to(rx, ry); }
+            }
+        }
+        ctx.close_path();
+        ctx.stroke();
+    }
+
+    ctx.set_fill_style_str(&green);
+    ctx.set_font("10px monospace");
+    ctx.set_text_align("center");
+    let _ = ctx.fill_text("SOLVED", sx, sy - 18.0);
+}
+
+// ---------------------------------------------------------------------------
+// Solar system — Sun, Moon, planets via the ephemeris module.
+// ---------------------------------------------------------------------------
+
+fn render_solar_system(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    hit_items: &mut Vec<HitItem>,
+) {
+    // ── Sun ──────────────────────────────────────────────────────────
+    let sun = ephemeris::sun(p.jd);
+    if let Some((sx, sy)) = altaz_project(p, project, sun.jnow.ra_deg, sun.jnow.dec_deg) {
+        let r = 10.0;
+        ctx.set_fill_style_str("rgba(255,220,80,0.95)");
+        ctx.begin_path();
+        let _ = ctx.arc(sx, sy, r, 0.0, 2.0 * PI);
+        ctx.fill();
+        ctx.set_stroke_style_str("rgba(255,160,40,0.9)");
+        ctx.set_line_width(1.0);
+        ctx.begin_path();
+        let _ = ctx.arc(sx, sy, r + 2.0, 0.0, 2.0 * PI);
+        ctx.stroke();
+        if p.names_on && p.fov < 60.0 {
+            ctx.set_fill_style_str("rgba(255,220,80,0.95)");
+            ctx.set_font("11px monospace");
+            ctx.set_text_align("left");
+            let _ = ctx.fill_text("Sun", sx + r + 4.0, sy + 4.0);
+        }
+        hit_items.push(HitItem {
+            sx, sy,
+            radius: r + 4.0,
+            kind: HitKind::Sun,
+            name: "Sun".to_string(),
+            mag: Some(sun.mag),
+            ra_jnow_deg: sun.jnow.ra_deg,
+            dec_jnow_deg: sun.jnow.dec_deg,
+            size_arcmin: sun.angular_diameter_arcmin,
+            phase: None,
+        });
+    }
+
+    // ── Moon ─────────────────────────────────────────────────────────
+    let moon = ephemeris::moon(p.jd);
+    if let Some((sx, sy)) = altaz_project(p, project, moon.jnow.ra_deg, moon.jnow.dec_deg) {
+        let r = 9.0;
+        // Base disk (illuminated side)
+        ctx.set_fill_style_str("rgba(220,220,230,0.95)");
+        ctx.begin_path();
+        let _ = ctx.arc(sx, sy, r, 0.0, 2.0 * PI);
+        ctx.fill();
+
+        // Simple terminator: draw a dark half-disc sized by (1 - illuminated fraction).
+        if let Some(illum) = moon.phase {
+            let dark = 1.0 - illum;
+            ctx.set_fill_style_str("rgba(20,20,30,0.85)");
+            if dark > 0.05 {
+                // Crude: shade a vertical slice from -r to (-r + 2*r*dark).
+                ctx.save();
+                ctx.begin_path();
+                let _ = ctx.arc(sx, sy, r, 0.0, 2.0 * PI);
+                ctx.clip();
+                let w = 2.0 * r * dark;
+                ctx.fill_rect(sx - r, sy - r, w, 2.0 * r);
+                ctx.restore();
+            }
+        }
+
+        ctx.set_stroke_style_str("rgba(160,160,200,0.8)");
+        ctx.set_line_width(1.0);
+        ctx.begin_path();
+        let _ = ctx.arc(sx, sy, r, 0.0, 2.0 * PI);
+        ctx.stroke();
+
+        if p.names_on && p.fov < 60.0 {
+            ctx.set_fill_style_str("rgba(220,220,230,0.95)");
+            ctx.set_font("11px monospace");
+            ctx.set_text_align("left");
+            let _ = ctx.fill_text("Moon", sx + r + 4.0, sy + 4.0);
+        }
+        hit_items.push(HitItem {
+            sx, sy,
+            radius: r + 4.0,
+            kind: HitKind::Moon,
+            name: "Moon".to_string(),
+            mag: Some(moon.mag),
+            ra_jnow_deg: moon.jnow.ra_deg,
+            dec_jnow_deg: moon.jnow.dec_deg,
+            size_arcmin: moon.angular_diameter_arcmin,
+            phase: moon.phase,
+        });
+    }
+
+    // ── Planets ──────────────────────────────────────────────────────
+    let planets = ephemeris::all_planets(p.jd);
+    for (planet, pos) in &planets {
+        let Some((sx, sy)) = altaz_project(p, project, pos.jnow.ra_deg, pos.jnow.dec_deg)
+            else { continue };
+        let (color, r) = planet_style(*planet, pos.mag);
+        ctx.set_fill_style_str(color);
+        ctx.begin_path();
+        let _ = ctx.arc(sx, sy, r, 0.0, 2.0 * PI);
+        ctx.fill();
+        if p.names_on && p.fov < 40.0 {
+            ctx.set_fill_style_str(color);
+            ctx.set_font("10px monospace");
+            ctx.set_text_align("left");
+            let _ = ctx.fill_text(planet.name(), sx + r + 3.0, sy + 4.0);
+        }
+        hit_items.push(HitItem {
+            sx, sy,
+            radius: (r + 3.0).max(8.0),
+            kind: HitKind::Planet,
+            name: planet.name().to_string(),
+            mag: Some(pos.mag),
+            ra_jnow_deg: pos.jnow.ra_deg,
+            dec_jnow_deg: pos.jnow.dec_deg,
+            size_arcmin: None,
+            phase: pos.phase,
+        });
+    }
+}
+
+fn altaz_project(
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    ra_deg: f64,
+    dec_deg: f64,
+) -> Option<(f64, f64)> {
+    let (alt, az) = astro::eq_to_altaz(ra_deg, dec_deg, p.lst, p.latitude);
+    if alt < -3.0 { return None; }
+    project(alt, az)
+}
+
+fn planet_style(p: ephemeris::Planet, mag: f32) -> (&'static str, f64) {
+    // Size scales with magnitude (brighter = bigger).
+    let r = ((4.0 - mag as f64).clamp(2.5, 6.0)).max(2.5);
+    let color = match p {
+        ephemeris::Planet::Mercury => "rgba(200,200,180,0.95)",
+        ephemeris::Planet::Venus   => "rgba(240,240,200,0.98)",
+        ephemeris::Planet::Mars    => "rgba(240,120,80,0.95)",
+        ephemeris::Planet::Jupiter => "rgba(240,210,160,0.95)",
+        ephemeris::Planet::Saturn  => "rgba(220,200,140,0.95)",
+        ephemeris::Planet::Uranus  => "rgba(160,220,230,0.9)",
+        ephemeris::Planet::Neptune => "rgba(120,160,240,0.9)",
+    };
+    (color, r)
 }

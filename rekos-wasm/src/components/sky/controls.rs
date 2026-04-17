@@ -10,6 +10,7 @@ use crate::compat::SiteSnapshot;
 
 use crate::i18n::{Lang, t};
 
+use super::SkyToggles;
 use super::utils::{event_target_checked, event_target_value};
 
 #[component]
@@ -22,40 +23,7 @@ pub fn SkyControls(
     set_show_objects_section: WriteSignal<bool>,
     show_settings_section: ReadSignal<bool>,
     set_show_settings_section: WriteSignal<bool>,
-    show_stars: ReadSignal<bool>,
-    set_show_stars: WriteSignal<bool>,
-    show_names: ReadSignal<bool>,
-    set_show_names: WriteSignal<bool>,
-    show_constellations: ReadSignal<bool>,
-    set_show_constellations: WriteSignal<bool>,
-    show_con_names: ReadSignal<bool>,
-    set_show_con_names: WriteSignal<bool>,
-    show_grid: ReadSignal<bool>,
-    set_show_grid: WriteSignal<bool>,
-    show_eq_grid: ReadSignal<bool>,
-    set_show_eq_grid: WriteSignal<bool>,
-    show_meridian: ReadSignal<bool>,
-    set_show_meridian: WriteSignal<bool>,
-    show_fov: ReadSignal<bool>,
-    set_show_fov: WriteSignal<bool>,
-    show_dso: ReadSignal<bool>,
-    set_show_dso: WriteSignal<bool>,
-    dso_filter_galaxy: ReadSignal<bool>,
-    set_dso_filter_galaxy: WriteSignal<bool>,
-    dso_filter_open_cluster: ReadSignal<bool>,
-    set_dso_filter_open_cluster: WriteSignal<bool>,
-    dso_filter_globular: ReadSignal<bool>,
-    set_dso_filter_globular: WriteSignal<bool>,
-    dso_filter_nebula: ReadSignal<bool>,
-    set_dso_filter_nebula: WriteSignal<bool>,
-    dso_filter_planetary: ReadSignal<bool>,
-    set_dso_filter_planetary: WriteSignal<bool>,
-    dso_filter_snr: ReadSignal<bool>,
-    set_dso_filter_snr: WriteSignal<bool>,
-    dso_filter_galaxy_cluster: ReadSignal<bool>,
-    set_dso_filter_galaxy_cluster: WriteSignal<bool>,
-    dso_mag_limit: ReadSignal<f64>,
-    set_dso_mag_limit: WriteSignal<f64>,
+    toggles: SkyToggles,
     focal_override: ReadSignal<String>,
     set_focal_override: WriteSignal<String>,
     focal_length_mm: Signal<Option<f64>>,
@@ -112,44 +80,64 @@ pub fn SkyControls(
                         <div style="display:flex; flex-direction:column; gap:4px; padding:6px 10px; \
                                      border-bottom:1px solid #2a2a3a;">
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || show_stars.get()
-                                       on:change=move |ev| set_show_stars.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.stars.get()
+                                       on:change=move |ev| toggles.stars.set(event_target_checked(&ev)) />
                                 {move || tr().stars_checkbox}
                             </label>
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || show_names.get()
-                                       on:change=move |ev| set_show_names.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.names.get()
+                                       on:change=move |ev| toggles.names.set(event_target_checked(&ev)) />
                                 {move || tr().names_checkbox}
                             </label>
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || show_constellations.get()
-                                       on:change=move |ev| set_show_constellations.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.constellations.get()
+                                       on:change=move |ev| toggles.constellations.set(event_target_checked(&ev)) />
                                 {move || tr().constellations}
                             </label>
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer; padding-left:16px;">
-                                <input type="checkbox" prop:checked=move || show_con_names.get()
-                                       on:change=move |ev| set_show_con_names.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.con_names.get()
+                                       on:change=move |ev| toggles.con_names.set(event_target_checked(&ev)) />
                                 {move || tr().names_checkbox}
                             </label>
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || show_grid.get()
-                                       on:change=move |ev| set_show_grid.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.grid.get()
+                                       on:change=move |ev| toggles.grid.set(event_target_checked(&ev)) />
                                 {move || tr().grid}
                             </label>
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || show_eq_grid.get()
-                                       on:change=move |ev| set_show_eq_grid.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.eq_grid.get()
+                                       on:change=move |ev| toggles.eq_grid.set(event_target_checked(&ev)) />
                                 {move || tr().eq_grid}
                             </label>
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || show_meridian.get()
-                                       on:change=move |ev| set_show_meridian.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.meridian.get()
+                                       on:change=move |ev| toggles.meridian.set(event_target_checked(&ev)) />
                                 {move || tr().meridian}
                             </label>
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || show_fov.get()
-                                       on:change=move |ev| set_show_fov.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.ecliptic.get()
+                                       on:change=move |ev| toggles.ecliptic.set(event_target_checked(&ev)) />
+                                {move || tr().ecliptic}
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="checkbox" prop:checked=move || toggles.zenith.get()
+                                       on:change=move |ev| toggles.zenith.set(event_target_checked(&ev)) />
+                                {move || tr().zenith}
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="checkbox" prop:checked=move || toggles.fov.get()
+                                       on:change=move |ev| toggles.fov.set(event_target_checked(&ev)) />
                                 {move || tr().fov}
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="checkbox" prop:checked=move || toggles.solve_marker.get()
+                                       on:change=move |ev| toggles.solve_marker.set(event_target_checked(&ev)) />
+                                {move || tr().solve_marker}
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="checkbox" prop:checked=move || toggles.slew_trail.get()
+                                       on:change=move |ev| toggles.slew_trail.set(event_target_checked(&ev)) />
+                                {move || tr().slew_trail}
                             </label>
                         </div>
                     })}
@@ -164,13 +152,18 @@ pub fn SkyControls(
                         <div style="display:flex; flex-direction:column; gap:4px; padding:6px 10px; \
                                      border-bottom:1px solid #2a2a3a;">
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || show_dso.get()
-                                       on:change=move |ev| set_show_dso.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.dso.get()
+                                       on:change=move |ev| toggles.dso.set(event_target_checked(&ev)) />
                                 {move || tr().all_dso}
                             </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="checkbox" prop:checked=move || toggles.solar_system.get()
+                                       on:change=move |ev| toggles.solar_system.set(event_target_checked(&ev)) />
+                                {move || tr().solar_system}
+                            </label>
                             <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || dso_filter_galaxy.get()
-                                       on:change=move |ev| set_dso_filter_galaxy.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.dso_galaxy.get()
+                                       on:change=move |ev| toggles.dso_galaxy.set(event_target_checked(&ev)) />
                                 <svg width="14" height="10" style="flex-shrink:0;">
                                     <ellipse cx="7" cy="5" rx="6" ry="2.5"
                                              fill="none" stroke="rgba(0,200,220,0.85)" stroke-width="1.2"/>
@@ -178,8 +171,8 @@ pub fn SkyControls(
                                 {move || tr().galaxies}
                             </label>
                             <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || dso_filter_open_cluster.get()
-                                       on:change=move |ev| set_dso_filter_open_cluster.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.dso_open_cluster.get()
+                                       on:change=move |ev| toggles.dso_open_cluster.set(event_target_checked(&ev)) />
                                 <svg width="14" height="14" style="flex-shrink:0;">
                                     <circle cx="7" cy="7" r="5.5"
                                             fill="none" stroke="rgba(255,220,50,0.85)" stroke-width="1.2"
@@ -188,8 +181,8 @@ pub fn SkyControls(
                                 {move || tr().open_clusters}
                             </label>
                             <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || dso_filter_globular.get()
-                                       on:change=move |ev| set_dso_filter_globular.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.dso_globular.get()
+                                       on:change=move |ev| toggles.dso_globular.set(event_target_checked(&ev)) />
                                 <svg width="14" height="14" style="flex-shrink:0;">
                                     <circle cx="7" cy="7" r="5.5"
                                             fill="none" stroke="rgba(255,160,60,0.85)" stroke-width="1.2"/>
@@ -201,8 +194,8 @@ pub fn SkyControls(
                                 {move || tr().globular_clusters}
                             </label>
                             <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || dso_filter_nebula.get()
-                                       on:change=move |ev| set_dso_filter_nebula.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.dso_nebula.get()
+                                       on:change=move |ev| toggles.dso_nebula.set(event_target_checked(&ev)) />
                                 <svg width="14" height="14" style="flex-shrink:0;">
                                     <rect x="1.5" y="1.5" width="11" height="11"
                                           fill="none" stroke="rgba(60,220,100,0.85)" stroke-width="1.2"/>
@@ -210,8 +203,8 @@ pub fn SkyControls(
                                 {move || tr().nebulae}
                             </label>
                             <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || dso_filter_planetary.get()
-                                       on:change=move |ev| set_dso_filter_planetary.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.dso_planetary.get()
+                                       on:change=move |ev| toggles.dso_planetary.set(event_target_checked(&ev)) />
                                 <svg width="18" height="14" style="flex-shrink:0;">
                                     <circle cx="9" cy="7" r="4"
                                             fill="none" stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
@@ -227,8 +220,8 @@ pub fn SkyControls(
                                 {move || tr().planetary_nebulae}
                             </label>
                             <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || dso_filter_snr.get()
-                                       on:change=move |ev| set_dso_filter_snr.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.dso_snr.get()
+                                       on:change=move |ev| toggles.dso_snr.set(event_target_checked(&ev)) />
                                 <svg width="14" height="14" style="flex-shrink:0;">
                                     <rect x="1.5" y="1.5" width="11" height="11"
                                           fill="none" stroke="rgba(60,220,100,0.65)" stroke-width="1.2"
@@ -237,8 +230,8 @@ pub fn SkyControls(
                                 {move || tr().supernova_remnants}
                             </label>
                             <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
-                                <input type="checkbox" prop:checked=move || dso_filter_galaxy_cluster.get()
-                                       on:change=move |ev| set_dso_filter_galaxy_cluster.set(event_target_checked(&ev)) />
+                                <input type="checkbox" prop:checked=move || toggles.dso_galaxy_cluster.get()
+                                       on:change=move |ev| toggles.dso_galaxy_cluster.set(event_target_checked(&ev)) />
                                 <svg width="14" height="14" style="flex-shrink:0;">
                                     <circle cx="7" cy="7" r="5.5"
                                             fill="none" stroke="rgba(220,100,220,0.85)" stroke-width="1.2"
@@ -251,10 +244,10 @@ pub fn SkyControls(
                                 <input type="number" min="1" max="20" step="0.5"
                                        style="width:52px; background:#111; color:#ccc; border:1px solid #444; \
                                               font-family:monospace; font-size:11px; padding:2px;"
-                                       prop:value=move || format!("{:.1}", dso_mag_limit.get())
+                                       prop:value=move || format!("{:.1}", toggles.dso_mag_limit.get())
                                        on:input=move |ev| {
                                            if let Ok(v) = event_target_value(&ev).parse::<f64>() {
-                                               set_dso_mag_limit.set(v);
+                                               toggles.dso_mag_limit.set(v);
                                            }
                                        } />
                             </label>
