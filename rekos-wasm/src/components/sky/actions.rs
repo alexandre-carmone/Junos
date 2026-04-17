@@ -5,7 +5,6 @@ use std::sync::Arc;
 use leptos::prelude::*;
 
 use crate::astro;
-use crate::coords::JNow;
 use crate::i18n::{Lang, t};
 
 use crate::compat::SiteSnapshot;
@@ -17,16 +16,21 @@ use crate::{AlignDefaultsCtx, AlignSolveRadiusCtx, MountDeviceCtx};
 ///
 /// KStars parses `ra`/`de` via `dms::fromString(payload["ra"].toString(), …)`,
 /// so the values must be JSON strings (decimal hours / decimal degrees).
-/// Coords arriving here have already been precessed to J2000 by `open_confirm`,
-/// so `isJ2000` is true.
-fn goto_rade_msg(ra_deg_j2000: f64, dec_deg_j2000: f64) -> String {
-    let ra_h = ra_deg_j2000 / 15.0;
+///
+/// Despite the `isJ2000` flag in the Ekos Live protocol, `Ekos::Mount::slew`
+/// (`kstars/ekos/mount/mount.cpp:985`) always treats the incoming RA/Dec as
+/// JNow — it constructs a `SkyPoint` and sends `ScopeTarget->ra()` straight
+/// to the mount's `EQUATORIAL_EOD_COORD` property. `setJ2000Enabled(true)`
+/// only changes the UI display. So we send JNow and set `isJ2000: false`
+/// to keep KStars' UI consistent.
+fn goto_rade_msg(ra_deg_jnow: f64, dec_deg_jnow: f64) -> String {
+    let ra_h = ra_deg_jnow / 15.0;
     serde_json::json!({
         "type": "mount_goto_rade",
         "payload": {
             "ra": format!("{:.8}", ra_h),
-            "de": format!("{:.8}", dec_deg_j2000),
-            "isJ2000": true,
+            "de": format!("{:.8}", dec_deg_jnow),
+            "isJ2000": false,
         }
     })
     .to_string()
@@ -280,14 +284,14 @@ pub fn open_confirm(
     let gmst = astro::gmst_deg(jd);
     let s    = site.get_untracked();
     let lst  = astro::lst_deg(gmst, s.longitude);
+    // altaz_to_eq returns JNow — send it as-is; KStars' mount_goto_rade
+    // handler treats the input as JNow regardless of the isJ2000 flag.
     let (ra_jnow, dec_jnow) = astro::altaz_to_eq(
         center_alt.get_untracked(),
         center_az.get_untracked(),
         lst,
         s.latitude,
     );
-    // altaz_to_eq returns JNow; convert to J2000 for MountGoto / AlignStart
-    let j2000 = JNow::new(ra_jnow, dec_jnow).to_j2000(jd);
     set_ctx_menu.set(None);
-    set_pending_action.set(Some((is_align, j2000.ra_deg, j2000.dec_deg)));
+    set_pending_action.set(Some((is_align, ra_jnow, dec_jnow)));
 }

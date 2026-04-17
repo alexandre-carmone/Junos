@@ -6,6 +6,7 @@ use leptos::prelude::*;
 
 use crate::astro;
 use crate::catalog::CatalogData;
+use crate::coords::J2000;
 use crate::dso_catalog::DsoCatalogData;
 use crate::i18n::{Lang, t};
 
@@ -102,7 +103,9 @@ pub fn SkySearch(
                                 let gmst = astro::gmst_deg(jd);
                                 let s = site.get_untracked();
                                 let lst = astro::lst_deg(gmst, s.longitude);
-                                let (alt, az) = astro::eq_to_altaz(ra_deg, dec_deg, lst, s.latitude);
+                                // Catalog coords are J2000 — precess to JNow before alt/az conversion.
+                                let jnow = J2000::new(ra_deg, dec_deg).to_jnow(jd);
+                                let (alt, az) = astro::eq_to_altaz(jnow.ra_deg, jnow.dec_deg, lst, s.latitude);
                                 set_center_alt.set(alt);
                                 set_center_az.set(az);
                                 set_follow_mount.set(false);

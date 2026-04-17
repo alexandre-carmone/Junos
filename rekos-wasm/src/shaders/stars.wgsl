@@ -13,6 +13,11 @@ struct Uniforms {
     mag_limit:  f32,
     canvas_w:   f32,
     canvas_h:   f32,
+    dpr:        f32,
+    // IAU 1976 Lieske precession angles (radians), J2000 → epoch-of-date.
+    zeta_rad:   f32,
+    z_rad:      f32,
+    theta_rad:  f32,
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -33,14 +38,30 @@ fn project_stars(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let star = star_catalog[idx];
-    let ra_rad = star.x * 0.017453292519943295;
-    let dec_rad = star.y * 0.017453292519943295;
+    let ra_j2000 = star.x * 0.017453292519943295;
+    let dec_j2000 = star.y * 0.017453292519943295;
     let mag = star.z;
 
     if mag > u.mag_limit {
         projected[idx] = vec4<f32>(0.0, 0.0, mag, -1.0);
         return;
     }
+
+    // Precess J2000 → epoch-of-date (IAU 1976 Lieske) so RA/Dec match
+    // the current-epoch LST used below. Without this, stars are drawn
+    // ~0.3° off their true JNow positions (in 2026).
+    let cos_dec0 = cos(dec_j2000);
+    let sin_dec0 = sin(dec_j2000);
+    let cos_theta = cos(u.theta_rad);
+    let sin_theta = sin(u.theta_rad);
+    let ang = ra_j2000 + u.zeta_rad;
+    let sin_ang = sin(ang);
+    let cos_ang = cos(ang);
+    let pa_x = cos_dec0 * sin_ang;
+    let pa_y = cos_theta * cos_dec0 * cos_ang - sin_theta * sin_dec0;
+    let pc = clamp(sin_theta * cos_dec0 * cos_ang + cos_theta * sin_dec0, -1.0, 1.0);
+    let ra_rad = atan2(pa_x, pa_y) + u.z_rad;
+    let dec_rad = asin(pc);
 
     // eq_to_altaz
     let ha = u.lst_rad - ra_rad;

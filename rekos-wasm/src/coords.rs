@@ -67,18 +67,24 @@ impl JNow {
 // IAU 1976 Lieske precession
 // ---------------------------------------------------------------------------
 
-/// Precess J2000 RA/Dec to epoch of date using the IAU 1976 Lieske precession model.
-fn precess_j2000_to_jnow(ra_deg: f64, dec_deg: f64, jd: f64) -> (f64, f64) {
+/// IAU 1976 Lieske precession rotation angles in radians.
+/// Returns (zeta, z, theta) for rotating J2000 RA/Dec to epoch-of-date.
+/// Exposed so the GPU shader can receive them as uniforms.
+pub fn precession_angles_j2000_to_jnow(jd: f64) -> (f64, f64, f64) {
     let t = (jd - 2_451_545.0) / 36525.0;
-
-    // IAU 1976 precession angles in arcseconds
     let zeta_a = (0.017998 * t + 0.30188) * t * t + 2306.2181 * t;
     let z_a = (0.018203 * t + 1.09468) * t * t + 2306.2181 * t;
     let theta_a = (-0.041833 * t - 0.42665) * t * t + 2004.3109 * t;
+    (
+        zeta_a.to_radians() / 3600.0,
+        z_a.to_radians() / 3600.0,
+        theta_a.to_radians() / 3600.0,
+    )
+}
 
-    let zeta = zeta_a.to_radians() / 3600.0;
-    let z = z_a.to_radians() / 3600.0;
-    let theta = theta_a.to_radians() / 3600.0;
+/// Precess J2000 RA/Dec to epoch of date using the IAU 1976 Lieske precession model.
+fn precess_j2000_to_jnow(ra_deg: f64, dec_deg: f64, jd: f64) -> (f64, f64) {
+    let (zeta, z, theta) = precession_angles_j2000_to_jnow(jd);
 
     let ra0 = ra_deg.to_radians();
     let dec0 = dec_deg.to_radians();

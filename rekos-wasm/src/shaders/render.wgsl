@@ -14,6 +14,11 @@ struct Uniforms {
     canvas_w:   f32,
     canvas_h:   f32,
     dpr:        f32,
+    // IAU 1976 Lieske precession angles (radians), J2000 → epoch-of-date.
+    // Unused here but must match the compute-shader layout.
+    zeta_rad:   f32,
+    z_rad:      f32,
+    theta_rad:  f32,
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;

@@ -29,7 +29,6 @@ use crate::ws::SendCmd;
 use crate::{ActiveTabCtx, Tab};
 
 use crate::astro;
-use crate::coords::JNow;
 use crate::catalog::CatalogData;
 use crate::dso_catalog::DsoCatalogData;
 use crate::gpu::{GpuSkyRenderer, Uniforms};
@@ -358,6 +357,12 @@ pub fn SkyTab(
                         renderer.resize(w_phys, h_phys);
                     }
 
+                    // Precession angles for J2000 → JNow; shader applies them to
+                    // catalog RA/Dec before eq_to_altaz so stars match the
+                    // Canvas2D overlay and the mount crosshair.
+                    let (zeta_rad, z_rad, theta_rad) =
+                        crate::coords::precession_angles_j2000_to_jnow(jd);
+
                     let uniforms = Uniforms {
                         sin_lat: sin_lat as f32,
                         cos_lat: cos_lat as f32,
@@ -372,6 +377,9 @@ pub fn SkyTab(
                         canvas_w: (wf * dpr) as f32,
                         canvas_h: (hf * dpr) as f32,
                         dpr: dpr as f32,
+                        zeta_rad: zeta_rad as f32,
+                        z_rad: z_rad as f32,
+                        theta_rad: theta_rad as f32,
                     };
 
                     renderer.render_frame(&uniforms, stars_on, const_on);
@@ -575,15 +583,15 @@ pub fn SkyTab(
         let s = site.get_untracked();
         let lst = astro::lst_deg(gmst, s.longitude);
 
+        // altaz_to_eq returns JNow — send it as-is; KStars' mount_goto_rade
+        // handler treats the input as JNow regardless of the isJ2000 flag.
         let (ra_jnow, dec_jnow) = astro::altaz_to_eq(
             center_alt.get_untracked(),
             center_az.get_untracked(),
             lst,
             s.latitude,
         );
-        // altaz_to_eq returns JNow; convert to J2000 for MountGoto / AlignStart
-        let j2000 = JNow::new(ra_jnow, dec_jnow).to_j2000(jd);
-        set_ctx_menu.set(Some((ev.client_x() as f64, ev.client_y() as f64, j2000.ra_deg, j2000.dec_deg)));
+        set_ctx_menu.set(Some((ev.client_x() as f64, ev.client_y() as f64, ra_jnow, dec_jnow)));
     };
 
     let send_for_ctx = Arc::clone(&send);

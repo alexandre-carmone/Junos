@@ -26,6 +26,11 @@ pub struct Uniforms {
     pub canvas_w: f32,
     pub canvas_h: f32,
     pub dpr: f32,
+    // IAU 1976 Lieske precession angles (radians), J2000 → epoch-of-date.
+    // Applied in stars.wgsl to catalog RA/Dec before projection.
+    pub zeta_rad: f32,
+    pub z_rad: f32,
+    pub theta_rad: f32,
 }
 
 // ── GpuSkyRenderer ──────────────────────────────────────────────────────────
