@@ -9,7 +9,7 @@ use clap::Parser;
 #[command(name = "rekos-server", about = "Ekos Live server + WASM frontend host")]
 pub struct Config {
     /// Address to bind the HTTP/WebSocket server on
-    #[arg(long, default_value = "0.0.0.0:8080", env = "BIND_ADDR")]
+    #[arg(long, default_value = "0.0.0.0:3000", env = "BIND_ADDR")]
     pub bind_addr: String,
 
     /// Path to the rekos-wasm dist directory to serve
