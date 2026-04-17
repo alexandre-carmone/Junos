@@ -4,7 +4,9 @@
 //!   [u32] n_objects
 //!   Objects: ra_deg(f32), dec_deg(f32), mag(f32), size_arcmin(f32),
 //!            size_minor_arcmin(f32), pa_deg(f32), kind(u8),
-//!            name_len(u8), name(utf8)
+//!            name_len(u8), name(utf8),
+//!            aliases_count(u8),
+//!            [ alias_len(u8), alias(utf8) ] × aliases_count
 //!
 //! kind codes: 0=Galaxy 1=OpenCluster 2=GlobularCluster 3=Nebula
 //!             4=PlanetaryNebula 5=SupernovaRemnant 6=GalaxyCluster
@@ -37,6 +39,21 @@ pub struct Dso {
     pub pa_deg: f32,
     pub kind: DsoType,
     pub name: String,
+    /// Human-readable aliases from OpenNGC's "Common names" column
+    /// (e.g. `["Andromeda Galaxy"]` for M31). Empty when none are known.
+    pub common_names: Vec<String>,
+}
+
+impl Dso {
+    /// "M31 · Andromeda Galaxy" when a common name exists, "M31" otherwise.
+    /// Used for on-canvas labels, hit-item titles, and search results so they
+    /// all agree on a single display form.
+    pub fn display_label(&self) -> String {
+        match self.common_names.first() {
+            Some(c) => format!("{} · {}", self.name, c),
+            None    => self.name.clone(),
+        }
+    }
 }
 
 pub struct DsoCatalogData {
@@ -67,7 +84,12 @@ impl DsoCatalogData {
                 _ => DsoType::Galaxy,
             };
             let name = rd_str(data, &mut pos)?;
-            dsos.push(Dso { ra_deg, dec_deg, mag, size_arcmin, size_minor_arcmin, pa_deg, kind, name });
+            let aliases_count = *data.get(pos)? as usize; pos += 1;
+            let mut common_names = Vec::with_capacity(aliases_count);
+            for _ in 0..aliases_count {
+                common_names.push(rd_str(data, &mut pos)?);
+            }
+            dsos.push(Dso { ra_deg, dec_deg, mag, size_arcmin, size_minor_arcmin, pa_deg, kind, name, common_names });
         }
         Some(DsoCatalogData { dsos })
     }

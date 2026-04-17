@@ -821,11 +821,13 @@ fn render_dso(
             }
         }
 
+        let label = dso.display_label();
+
         hit_items.push(HitItem {
             sx, sy,
             radius: r.max(8.0),
             kind: HitKind::Dso(dso.kind),
-            name: dso.name.to_string(),
+            name: label.clone(),
             mag: Some(dso.mag),
             ra_jnow_deg: dso_jnow.ra_deg,
             dec_jnow_deg: dso_jnow.dec_deg,
@@ -844,7 +846,7 @@ fn render_dso(
                 _                         => "rgba(60,220,100,0.85)",
             });
             ctx.set_text_align("left");
-            let _ = ctx.fill_text(&dso.name, sx + r + 3.0, sy + 4.0);
+            let _ = ctx.fill_text(&label, sx + r + 3.0, sy + 4.0);
         }
     }
 }

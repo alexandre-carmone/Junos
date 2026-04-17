@@ -56,10 +56,21 @@ pub fn search_objects(
     }
 
     for dso in dsos {
-        let (n_spaced, n_compact) = normalize(&dso.name);
-        if let Some(s) = score(&matcher, &q_spaced, &q_compact, &n_spaced, &n_compact) {
+        // Score the designation plus every common name, keep the best. A DSO
+        // must only surface once — otherwise "orion" would list M42 twice,
+        // one row per alias.
+        let mut best: Option<i64> = None;
+        let candidates = std::iter::once(dso.name.as_str())
+            .chain(dso.common_names.iter().map(String::as_str));
+        for cand in candidates {
+            let (n_spaced, n_compact) = normalize(cand);
+            if let Some(s) = score(&matcher, &q_spaced, &q_compact, &n_spaced, &n_compact) {
+                best = Some(best.map_or(s, |b| b.max(s)));
+            }
+        }
+        if let Some(s) = best {
             scored.push((s, SearchHit {
-                name: dso.name.clone(),
+                name: dso.display_label(),
                 ra_deg: dso.ra_deg as f64,
                 dec_deg: dso.dec_deg as f64,
                 size_arcmin: dso.size_arcmin,
