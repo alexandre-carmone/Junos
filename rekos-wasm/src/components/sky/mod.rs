@@ -842,6 +842,11 @@ pub fn SkyTabSwitcher() -> impl IntoView {
                     on:click=move |_| active.set(Tab::Imaging)>
                 {gear(20)}
             </button>
+            <button title="Polar Align"
+                    style=move || btn_style(Tab::PolarAlign)
+                    on:click=move |_| active.set(Tab::PolarAlign)>
+                {gear(20)}
+            </button>
         </div>
     }
 }

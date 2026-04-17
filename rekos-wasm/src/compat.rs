@@ -5,7 +5,7 @@
 
 use leptos::prelude::*;
 
-use crate::ws::{DeviceStore, HfrSample};
+use crate::ws::{DeviceStore, HfrSample, PolarVectorData};
 
 #[derive(Debug, Clone, Default)]
 pub struct MountSnapshot {
@@ -16,6 +16,8 @@ pub struct MountSnapshot {
     pub parked: bool,
     pub ra_h: Option<f64>,
     pub dec_deg: Option<f64>,
+    pub ha_deg: Option<f64>,
+    pub pier_side: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -82,6 +84,8 @@ pub fn derive_mount(store: &DeviceStore) -> Signal<MountSnapshot> {
                 parked: ms.parked,
                 ra_h: ms.ra_h,
                 dec_deg: ms.dec_deg,
+                ha_deg: ms.ha_deg,
+                pier_side: ms.pier_side,
             },
             None => MountSnapshot::default(),
         }
@@ -152,6 +156,39 @@ pub fn derive_capture(store: &DeviceStore) -> Signal<CaptureSnapshot> {
             preview_url: preview_sig.get(),
             settings: settings_sig.get(),
             sequence: seq_sig.get(),
+        }
+    })
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PolarAlignSnapshot {
+    pub enabled:           bool,
+    pub stage:             String,
+    pub message:           String,
+    pub vector:            Option<PolarVectorData>,
+    pub updated_error:     Option<f64>,
+    pub updated_az_error:  Option<f64>,
+    pub updated_alt_error: Option<f64>,
+    pub settings:          serde_json::Value,
+    pub preview_url:       Option<String>,
+}
+
+pub fn derive_polar_align(store: &DeviceStore) -> Signal<PolarAlignSnapshot> {
+    let state       = store.polar_state;
+    let settings    = store.align_settings;
+    let preview_sig = store.align_preview_url;
+    Signal::derive(move || {
+        let p = state.get();
+        PolarAlignSnapshot {
+            enabled:           p.enabled,
+            stage:             p.stage,
+            message:           p.message,
+            vector:            p.vector,
+            updated_error:     p.updated_error,
+            updated_az_error:  p.updated_az_error,
+            updated_alt_error: p.updated_alt_error,
+            settings:          settings.get(),
+            preview_url:       preview_sig.get(),
         }
     })
 }

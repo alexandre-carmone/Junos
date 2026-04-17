@@ -50,6 +50,10 @@ pub struct MountStatusData {
     pub parked: bool,
     pub ra_h: Option<f64>,
     pub dec_deg: Option<f64>,
+    pub ha_deg: Option<f64>,
+    /// INDI pier side (kstars/indi/indimount.h:39).
+    /// -1 = PIER_UNKNOWN, 0 = PIER_WEST, 1 = PIER_EAST.
+    pub pier_side: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -122,6 +126,30 @@ pub struct ScopeInfo {
     pub aperture_mm: f64,
 }
 
+// Polar alignment state (PAA). See kstars/ekos/align/polaralignmentassistant.*
+// and the `new_polar_state` arms in message.cpp:1157-1263.
+#[derive(Debug, Clone, Default)]
+pub struct PolarVectorData {
+    pub center_x:  f64,
+    pub center_y:  f64,
+    pub mag:       f64,
+    pub pa:        f64,
+    pub error:     f64,  // total polar error, degrees
+    pub az_error:  f64,  // degrees
+    pub alt_error: f64,  // degrees
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PolarStateData {
+    pub enabled:           bool,
+    pub stage:             String,
+    pub message:           String,
+    pub vector:            Option<PolarVectorData>,
+    pub updated_error:     Option<f64>,  // -1 on solver failure
+    pub updated_az_error:  Option<f64>,
+    pub updated_alt_error: Option<f64>,
+}
+
 // ---------------------------------------------------------------------------
 // Stub types still referenced by sky/actions.rs via crate-level contexts.
 // ---------------------------------------------------------------------------
@@ -167,6 +195,9 @@ pub struct DeviceStore {
     pub capture_settings:   RwSignal<serde_json::Value>,
     pub capture_sequence:   RwSignal<serde_json::Value>,
     pub capture_preview_url:RwSignal<Option<String>>,
+    pub polar_state:        RwSignal<PolarStateData>,
+    pub align_settings:     RwSignal<serde_json::Value>,
+    pub align_preview_url:  RwSignal<Option<String>>,
 }
 
 impl DeviceStore {
@@ -187,6 +218,9 @@ impl DeviceStore {
             capture_settings:   RwSignal::new(serde_json::Value::Null),
             capture_sequence:   RwSignal::new(serde_json::Value::Null),
             capture_preview_url:RwSignal::new(None),
+            polar_state:        RwSignal::new(PolarStateData::default()),
+            align_settings:     RwSignal::new(serde_json::Value::Null),
+            align_preview_url:  RwSignal::new(None),
         }
     }
 
@@ -203,6 +237,9 @@ impl DeviceStore {
                     self.focus_status.set(None);
                     self.focus_preview_url.set(None);
                     self.focus_hfr_history.set(Vec::new());
+                    self.polar_state.set(PolarStateData::default());
+                    self.align_settings.set(serde_json::Value::Null);
+                    self.align_preview_url.set(None);
                 }
             }
 
@@ -222,6 +259,14 @@ impl DeviceStore {
                     // KStars sends RA and Dec in degrees.
                     if let Some(ra_deg) = payload["ra"].as_f64() { ms.ra_h = Some(ra_deg / 15.0); }
                     if let Some(dec)    = payload["de"].as_f64() { ms.dec_deg = Some(dec); }
+                    // HA in degrees (manager.cpp:3189). Sent with the coord
+                    // payload and throttled to 1 s (message.cpp:2552).
+                    if let Some(ha) = payload["ha"].as_f64() { ms.ha_deg = Some(ha); }
+                    // Pier side: -1/0/1 per kstars/indi/indimount.h:39.
+                    // Emitted standalone on pierSideChanged (manager.cpp:2698).
+                    if let Some(p) = payload["pierSide"].as_i64() {
+                        ms.pier_side = Some(p as i32);
+                    }
                 });
             }
 
@@ -496,6 +541,38 @@ impl DeviceStore {
                 self.capture_sequence.set(payload.clone());
             }
 
+            // Polar alignment state (PAA). Partial payloads: any subset of
+            // {stage, message, enabled, vector, updatedError*}. See
+            // kstars/ekos/ekoslive/message.cpp:1157-1263.
+            "new_polar_state" => {
+                self.polar_state.update(|p| {
+                    if let Some(s) = payload["stage"].as_str()    { p.stage   = s.to_string(); }
+                    if let Some(m) = payload["message"].as_str()  { p.message = m.to_string(); }
+                    if let Some(e) = payload["enabled"].as_bool() { p.enabled = e; }
+                    if let Some(obj) = payload.get("vector").and_then(|v| v.as_object()) {
+                        p.vector = Some(PolarVectorData {
+                            center_x:  obj.get("center_x").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                            center_y:  obj.get("center_y").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                            mag:       obj.get("mag").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                            pa:        obj.get("pa").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                            error:     obj.get("error").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                            az_error:  obj.get("azError").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                            alt_error: obj.get("altError").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                        });
+                    }
+                    if let Some(v) = payload.get("updatedError").and_then(|x| x.as_f64())    { p.updated_error = Some(v); }
+                    if let Some(v) = payload.get("updatedAZError").and_then(|x| x.as_f64())  { p.updated_az_error = Some(v); }
+                    if let Some(v) = payload.get("updatedALTError").and_then(|x| x.as_f64()) { p.updated_alt_error = Some(v); }
+                });
+            }
+
+            // Align module settings snapshot (reply to align_get_all_settings
+            // and echoed after align_set_all_settings). See message.cpp:576-580.
+            // Payload is the settings map directly.
+            "align_get_all_settings" => {
+                self.align_settings.set(payload.clone());
+            }
+
             // Binary media frames come through as JSON after server-side
             // decoding (rekos-server/src/kstars_ws.rs:169-198). Metadata is the
             // parsed header; we only consume focus frames (uuid starts with
@@ -506,10 +583,14 @@ impl DeviceStore {
                     let ext = payload["metadata"]["ext"].as_str().unwrap_or("jpg");
                     let mime = if ext == "jpg" { "image/jpeg" } else { "image/png" };
                     let url = format!("data:{};base64,{}", mime, b64);
-                    // Focus frames are uuid-prefixed "+F" (kstars media.cpp:752).
+                    // Frame uuid prefixes come from kstars/ekos/ekoslive/media.cpp:
+                    //   "+F" focus (line 752)
+                    //   "+A" align / polar align (line 587, 640 — sendUpdatedFrame)
                     // Everything else → capture preview target.
                     if uuid.starts_with("+F") {
                         self.focus_preview_url.set(Some(url));
+                    } else if uuid.starts_with("+A") {
+                        self.align_preview_url.set(Some(url));
                     } else {
                         self.capture_preview_url.set(Some(url));
                     }
@@ -557,6 +638,7 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                 prime_send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"capture_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"align_get_all_settings","payload":{}}"#.to_string());
             }
         });
     }
@@ -786,6 +868,7 @@ fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             send(r#"{"type":"capture_get_all_settings","payload":{}}"#.to_string());
             send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
             send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
+            send(r#"{"type":"align_get_all_settings","payload":{}}"#.to_string());
 
             // ── Camera INDI properties ───────────────────────────────
             if !train.camera.is_empty() && train.camera != "--" {
