@@ -150,6 +150,34 @@ pub struct PolarStateData {
     pub updated_alt_error: Option<f64>,
 }
 
+// Guide module state. `new_guide_state` carries a *partial* payload per
+// emission: either {status}, {drift_ra, drift_de}, {rarms, derms}, or
+// {log}. See kstars/ekos/manager.cpp:2769-2786 for the four distinct
+// senders. We merge them all into one struct.
+#[derive(Debug, Clone)]
+pub struct GuideStateSample {
+    pub t_ms:   f64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GuideDriftSample {
+    pub t_ms: f64,
+    pub ra:   f64,  // arcsec drift on RA axis
+    pub de:   f64,  // arcsec drift on DEC axis
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GuideStatusData {
+    pub connected: bool,
+    pub status:    String,
+    pub history:   Vec<GuideStateSample>,
+    pub drift:     Vec<GuideDriftSample>,
+    pub ra_rms:    Option<f64>,
+    pub de_rms:    Option<f64>,
+    pub log:       String,
+}
+
 // ---------------------------------------------------------------------------
 // Stub types still referenced by sky/actions.rs via crate-level contexts.
 // ---------------------------------------------------------------------------
@@ -198,6 +226,12 @@ pub struct DeviceStore {
     pub polar_state:        RwSignal<PolarStateData>,
     pub align_settings:     RwSignal<serde_json::Value>,
     pub align_preview_url:  RwSignal<Option<String>>,
+    pub guide_status:       RwSignal<Option<GuideStatusData>>,
+    pub guide_settings:     RwSignal<serde_json::Value>,
+    /// Flattened `{name: value, ...}` map of global KStars `Options::`
+    /// entries we care about (GuiderType, PHD2Host/Port, LinGuiderHost/Port).
+    pub guide_options:      RwSignal<serde_json::Value>,
+    pub guide_preview_url:  RwSignal<Option<String>>,
 }
 
 impl DeviceStore {
@@ -221,6 +255,10 @@ impl DeviceStore {
             polar_state:        RwSignal::new(PolarStateData::default()),
             align_settings:     RwSignal::new(serde_json::Value::Null),
             align_preview_url:  RwSignal::new(None),
+            guide_status:       RwSignal::new(None),
+            guide_settings:     RwSignal::new(serde_json::Value::Null),
+            guide_options:      RwSignal::new(serde_json::Value::Null),
+            guide_preview_url:  RwSignal::new(None),
         }
     }
 
@@ -240,6 +278,11 @@ impl DeviceStore {
                     self.polar_state.set(PolarStateData::default());
                     self.align_settings.set(serde_json::Value::Null);
                     self.align_preview_url.set(None);
+                    self.guide_status.set(None);
+                    self.guide_preview_url.set(None);
+                    // guide_settings / guide_options left intact so the
+                    // Guide tab doesn't flicker between blank and populated
+                    // on transient disconnects.
                 }
             }
 
@@ -573,6 +616,95 @@ impl DeviceStore {
                 self.align_settings.set(payload.clone());
             }
 
+            // Guide module status. KStars emits `new_guide_state` from
+            // multiple sites (see manager.cpp:2769-2786) with **partial
+            // payloads**. Only `setStatus`/`updateGuideStatus` include a
+            // `status` field; the other emissions carry just {rarms,derms},
+            // {drift_ra,drift_de}, or {log}. So we must treat every field
+            // as optional and never reset state from a missing field.
+            "new_guide_state" => {
+                self.guide_status.update(|opt| {
+                    let gs = opt.get_or_insert_with(GuideStatusData::default);
+                    gs.connected = true;
+
+                    if let Some(status) = payload["status"].as_str() {
+                        if gs.status != status {
+                            let t_ms = web_sys::js_sys::Date::now();
+                            gs.history.push(GuideStateSample {
+                                t_ms,
+                                status: status.to_string(),
+                            });
+                            if gs.history.len() > 256 {
+                                let drop = gs.history.len() - 256;
+                                gs.history.drain(..drop);
+                            }
+                            gs.status = status.to_string();
+                        }
+                    }
+
+                    // Drift + RMS samples — pushed per-frame from
+                    // manager.cpp:2664 (updateSigmas) and the
+                    // newAxisDelta lambda at :2772-2776.
+                    let drift_ra = payload["drift_ra"].as_f64();
+                    let drift_de = payload["drift_de"].as_f64();
+                    if drift_ra.is_some() || drift_de.is_some() {
+                        let t_ms = web_sys::js_sys::Date::now();
+                        gs.drift.push(GuideDriftSample {
+                            t_ms,
+                            ra: drift_ra.unwrap_or(f64::NAN),
+                            de: drift_de.unwrap_or(f64::NAN),
+                        });
+                        if gs.drift.len() > 600 {
+                            let drop = gs.drift.len() - 600;
+                            gs.drift.drain(..drop);
+                        }
+                    }
+                    if let Some(v) = payload["rarms"].as_f64() { gs.ra_rms = Some(v); }
+                    if let Some(v) = payload["derms"].as_f64() { gs.de_rms = Some(v); }
+
+                    if let Some(l) = payload["log"].as_str() {
+                        if !l.is_empty() { gs.log = l.to_string(); }
+                    }
+                });
+            }
+
+            // Guide settings snapshot — debounced reply to
+            // guide_get_all_settings (message.cpp:585-590). Flat widget map.
+            "guide_get_all_settings" => {
+                self.guide_settings.set(payload.clone());
+            }
+
+            // Reply to option_get — array of {name, value}. Walk it and
+            // cache any guide-relevant keys. Ignore other keys so we don't
+            // stomp on future consumers that request their own options.
+            "option_get" => {
+                const GUIDE_KEYS: &[&str] = &[
+                    "GuiderType",
+                    "PHD2Host",
+                    "PHD2Port",
+                    "LinGuiderHost",
+                    "LinGuiderPort",
+                ];
+                if let Some(arr) = payload.as_array() {
+                    self.guide_options.update(|opt| {
+                        let map = match opt {
+                            serde_json::Value::Object(m) => m,
+                            _ => {
+                                *opt = serde_json::Value::Object(serde_json::Map::new());
+                                opt.as_object_mut().unwrap()
+                            }
+                        };
+                        for el in arr {
+                            let Some(name) = el["name"].as_str() else { continue };
+                            if !GUIDE_KEYS.contains(&name) { continue; }
+                            if let Some(v) = el.get("value") {
+                                map.insert(name.to_string(), v.clone());
+                            }
+                        }
+                    });
+                }
+            }
+
             // Binary media frames come through as JSON after server-side
             // decoding (rekos-server/src/kstars_ws.rs:169-198). Metadata is the
             // parsed header; we only consume focus frames (uuid starts with
@@ -586,11 +718,14 @@ impl DeviceStore {
                     // Frame uuid prefixes come from kstars/ekos/ekoslive/media.cpp:
                     //   "+F" focus (line 752)
                     //   "+A" align / polar align (line 587, 640 — sendUpdatedFrame)
+                    //   "+G" guide (line 753)
                     // Everything else → capture preview target.
                     if uuid.starts_with("+F") {
                         self.focus_preview_url.set(Some(url));
                     } else if uuid.starts_with("+A") {
                         self.align_preview_url.set(Some(url));
+                    } else if uuid.starts_with("+G") {
+                        self.guide_preview_url.set(Some(url));
                     } else {
                         self.capture_preview_url.set(Some(url));
                     }
@@ -639,6 +774,10 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                 prime_send(r#"{"type":"capture_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"align_get_all_settings","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"guide_get_all_settings","payload":{}}"#.to_string());
+                // Guider-backend settings live in global KStars Options::,
+                // not in guide_get_all_settings. See message.cpp:1418.
+                prime_send(r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#.to_string());
             }
         });
     }
@@ -869,6 +1008,8 @@ fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
             send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
             send(r#"{"type":"align_get_all_settings","payload":{}}"#.to_string());
+            send(r#"{"type":"guide_get_all_settings","payload":{}}"#.to_string());
+            send(r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#.to_string());
 
             // ── Camera INDI properties ───────────────────────────────
             if !train.camera.is_empty() && train.camera != "--" {

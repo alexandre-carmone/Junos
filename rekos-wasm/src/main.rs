@@ -18,6 +18,7 @@ use leptos::prelude::*;
 use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
 use components::focus::FocusTab;
+use components::guide::GuideTab;
 use components::imaging::ImagingTab;
 use components::polar_align::PolarAlignTab;
 use components::sky::{SkyTab, SkyTabSwitcher};
@@ -25,7 +26,7 @@ use i18n::Lang;
 use ws::{AlignDefaultsData, SolveRadius};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tab { Sky, Focus, Imaging, PolarAlign }
+pub enum Tab { Sky, Focus, Imaging, PolarAlign, Guide }
 
 #[derive(Clone, Copy)]
 pub struct ActiveTabCtx(pub RwSignal<Tab>);
@@ -157,14 +158,17 @@ fn App() -> impl IntoView {
     let focus_visible   = move || active_tab.get() == Tab::Focus;
     let imaging_visible = move || active_tab.get() == Tab::Imaging;
     let polar_visible   = move || active_tab.get() == Tab::PolarAlign;
+    let guide_visible   = move || active_tab.get() == Tab::Guide;
 
-    // ── Focus + Imaging + Polar align tab wiring ──────────────────────────
+    // ── Focus + Imaging + Polar align + Guide tab wiring ──────────────────
     let focus_snapshot   = compat::derive_focus(&store);
     let capture_snapshot = compat::derive_capture(&store);
     let polar_snapshot   = compat::derive_polar_align(&store);
+    let guide_snapshot   = compat::derive_guide(&store);
     let send_focus   = Arc::clone(&send);
     let send_imaging = Arc::clone(&send);
     let send_polar   = Arc::clone(&send);
+    let send_guide   = Arc::clone(&send);
 
     view! {
         <div id="rekos-app" style="position:fixed; inset:0; background:#0a0a0f; color:#c0c0d0; font-family:monospace; overflow:hidden;">
@@ -209,6 +213,14 @@ fn App() -> impl IntoView {
                         polar=polar_snapshot
                         mount=mount
                         send=Arc::clone(&send_polar)
+                    />
+                </div>
+            </Show>
+            <Show when=guide_visible>
+                <div style="position:absolute; inset:0; z-index:40;">
+                    <GuideTab
+                        guide=guide_snapshot
+                        send=Arc::clone(&send_guide)
                     />
                 </div>
             </Show>

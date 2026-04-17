@@ -5,7 +5,7 @@
 
 use leptos::prelude::*;
 
-use crate::ws::{DeviceStore, HfrSample, PolarVectorData};
+use crate::ws::{DeviceStore, GuideDriftSample, GuideStateSample, HfrSample, PolarVectorData};
 
 #[derive(Debug, Clone, Default)]
 pub struct MountSnapshot {
@@ -189,6 +189,49 @@ pub fn derive_polar_align(store: &DeviceStore) -> Signal<PolarAlignSnapshot> {
             updated_alt_error: p.updated_alt_error,
             settings:          settings.get(),
             preview_url:       preview_sig.get(),
+        }
+    })
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GuideSnapshot {
+    pub connected:   bool,
+    pub status:      String,
+    pub history:     Vec<GuideStateSample>,
+    pub drift:       Vec<GuideDriftSample>,
+    pub ra_rms:      Option<f64>,
+    pub de_rms:      Option<f64>,
+    pub log:         String,
+    pub preview_url: Option<String>,
+    pub settings:    serde_json::Value,
+    pub options:     serde_json::Value,
+}
+
+pub fn derive_guide(store: &DeviceStore) -> Signal<GuideSnapshot> {
+    let status_sig   = store.guide_status;
+    let settings_sig = store.guide_settings;
+    let options_sig  = store.guide_options;
+    let preview_sig  = store.guide_preview_url;
+    Signal::derive(move || {
+        match status_sig.get() {
+            Some(gs) => GuideSnapshot {
+                connected:   gs.connected,
+                status:      gs.status,
+                history:     gs.history,
+                drift:       gs.drift,
+                ra_rms:      gs.ra_rms,
+                de_rms:      gs.de_rms,
+                log:         gs.log,
+                preview_url: preview_sig.get(),
+                settings:    settings_sig.get(),
+                options:     options_sig.get(),
+            },
+            None => GuideSnapshot {
+                preview_url: preview_sig.get(),
+                settings:    settings_sig.get(),
+                options:     options_sig.get(),
+                ..GuideSnapshot::default()
+            },
         }
     })
 }
