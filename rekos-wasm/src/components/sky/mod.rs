@@ -802,6 +802,22 @@ pub fn SkyTabSwitcher() -> impl IntoView {
     let active = use_context::<ActiveTabCtx>()
         .map(|c| c.0)
         .unwrap_or_else(|| RwSignal::new(Tab::Sky));
+    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let tr = move || t(lang.get());
+
+    // Collapsed/expanded state, persisted under `tab_bar_expanded`.
+    let initial_expanded = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item("tab_bar_expanded").ok().flatten())
+        .map(|v| v != "false")
+        .unwrap_or(true);
+    let expanded = RwSignal::new(initial_expanded);
+    Effect::new(move |_| {
+        let e = expanded.get();
+        if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            let _ = ls.set_item("tab_bar_expanded", if e { "true" } else { "false" });
+        }
+    });
 
     let btn_style = move |tab: Tab| {
         let on = active.get() == tab;
@@ -811,55 +827,55 @@ pub fn SkyTabSwitcher() -> impl IntoView {
             ("rgba(12,14,24,0.85)", "#2a2a35", "#88aaff")
         };
         format!(
-            "width:48px; height:48px; border-radius:50%; border:1px solid {border}; \
-             background:{bg}; color:{color}; display:flex; align-items:center; \
-             justify-content:center; cursor:pointer; padding:0; \
-             touch-action:manipulation; -webkit-tap-highlight-color:transparent; \
+            "min-width:38px; height:26px; padding:0 6px; border-radius:6px; \
+             border:1px solid {border}; background:{bg}; color:{color}; \
+             font:600 11px/1 ui-monospace,monospace; letter-spacing:0.05em; \
+             cursor:pointer; touch-action:manipulation; \
+             -webkit-tap-highlight-color:transparent; \
              transition:background 0.15s, border-color 0.15s;"
         )
     };
 
-    let gear = |size: i32| view! {
-        <svg width=size height=size viewBox="0 0 24 24" fill="none"
-             stroke="currentColor" stroke-width="1.8"
-             stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-        </svg>
+    // Toggle border color mirrors the active-tab accent so the collapsed pill
+    // still signals that a tab is active.
+    let toggle_style = move || {
+        format!(
+            "width:22px; height:26px; padding:0; border-radius:6px; \
+             border:1px solid #88aaff; background:rgba(12,14,24,0.85); \
+             color:#88aaff; font:11px/1 monospace; cursor:pointer; \
+             touch-action:manipulation; -webkit-tap-highlight-color:transparent;"
+        )
     };
 
     view! {
         <div class="sky-tab-switcher"
-             style="position:absolute; bottom:48px; left:50%; transform:translateX(-50%); \
-                    z-index:60; display:flex; gap:10px; padding:6px 10px; \
-                    background:rgba(6,6,15,0.75); border:1px solid #222; \
-                    border-radius:24px; pointer-events:auto;"
+             style="position:absolute; bottom:40px; left:50%; transform:translateX(-50%); \
+                    z-index:60; display:flex; align-items:center; gap:6px; \
+                    padding:4px 6px; background:rgba(6,6,15,0.75); \
+                    border:1px solid #222; border-radius:18px; pointer-events:auto;"
              on:click=|ev: MouseEvent| ev.stop_propagation()>
-            <button title="Sky"
-                    style=move || btn_style(Tab::Sky)
-                    on:click=move |_| active.set(Tab::Sky)>
-                {gear(20)}
+            <button style=toggle_style
+                    title=move || if expanded.get() { "Hide tabs" } else { "Show tabs" }
+                    on:click=move |_| expanded.update(|v| *v = !*v)>
+                {move || if expanded.get() { "\u{25be}" } else { "\u{25b4}" }}
             </button>
-            <button title="Focus"
-                    style=move || btn_style(Tab::Focus)
-                    on:click=move |_| active.set(Tab::Focus)>
-                {gear(20)}
-            </button>
-            <button title="Imaging"
-                    style=move || btn_style(Tab::Imaging)
-                    on:click=move |_| active.set(Tab::Imaging)>
-                {gear(20)}
-            </button>
-            <button title="Polar Align"
-                    style=move || btn_style(Tab::PolarAlign)
-                    on:click=move |_| active.set(Tab::PolarAlign)>
-                {gear(20)}
-            </button>
-            <button title="Guide"
-                    style=move || btn_style(Tab::Guide)
-                    on:click=move |_| active.set(Tab::Guide)>
-                {gear(20)}
-            </button>
+            {move || expanded.get().then(|| view! {
+                <button title=move || tr().tab_sky
+                        style=move || btn_style(Tab::Sky)
+                        on:click=move |_| active.set(Tab::Sky)>"SKY"</button>
+                <button title=move || tr().tab_focus
+                        style=move || btn_style(Tab::Focus)
+                        on:click=move |_| active.set(Tab::Focus)>"FOC"</button>
+                <button title="Imaging"
+                        style=move || btn_style(Tab::Imaging)
+                        on:click=move |_| active.set(Tab::Imaging)>"IMG"</button>
+                <button title=move || tr().tab_polar_align
+                        style=move || btn_style(Tab::PolarAlign)
+                        on:click=move |_| active.set(Tab::PolarAlign)>"POL"</button>
+                <button title=move || tr().tab_guide
+                        style=move || btn_style(Tab::Guide)
+                        on:click=move |_| active.set(Tab::Guide)>"GD"</button>
+            })}
         </div>
     }
 }
