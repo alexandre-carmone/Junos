@@ -408,6 +408,17 @@ pub fn ImagingTab(
     let s_clear = send.clone();
     let on_clear_seq = move |_| send_cmd(&s_clear, "capture_clear_sequences", serde_json::json!({}));
 
+    // ── Save / Load sequence file ─────────────────────────────────────────
+    // StoredValue is Copy, so these can be captured by on:click closures inside
+    // a <Show> children-closure without turning it FnOnce.
+    let save_open = RwSignal::new(false);
+    let save_path = RwSignal::new(String::new());
+    let sv_save   = StoredValue::new(send.clone());
+
+    let load_open = RwSignal::new(false);
+    let load_path = RwSignal::new(String::new());
+    let sv_load   = StoredValue::new(send.clone());
+
     // ── Cooling → INDI device_property_set on the active camera ───────────
     let s_cool_on = send.clone();
     let cam_cool_on = camera;
@@ -733,8 +744,63 @@ pub fn ImagingTab(
                         <div style="display:flex; gap:6px;">
                             <button on:click=on_add_job   style=action_btn("#88aaff")>{move || tr().imaging_add_job}</button>
                             <button on:click=on_clear_seq style=action_btn("#ff6a6a")>{move || tr().seq_clear}</button>
+                            <button
+                                style=action_btn("#aaffcc")
+                                on:click=move |_| { save_open.update(|v| *v = !*v); load_open.set(false); }>
+                                {move || tr().save_profile}
+                            </button>
+                            <button
+                                style=action_btn("#ffcc88")
+                                on:click=move |_| { load_open.update(|v| *v = !*v); save_open.set(false); }>
+                                {move || tr().load_profile}
+                            </button>
                         </div>
                     </div>
+                    // Save inline row
+                    <Show when=move || save_open.get()>
+                        <div style="display:flex; gap:6px; padding:6px 8px; background:#0d1a12; border-bottom:1px solid #224433;">
+                            <input
+                                type="text"
+                                placeholder="/home/user/seq.esq"
+                                prop:value=move || save_path.get()
+                                on:input=move |ev| save_path.set(event_target_value(&ev))
+                                style="flex:1; background:#111; color:#c0ffd0; border:1px solid #335544; padding:4px 8px; font-family:monospace; font-size:12px;"
+                            />
+                            <button style=action_btn("#aaffcc") on:click=move |_| {
+                                let path = save_path.get_untracked();
+                                if !path.is_empty() {
+                                    sv_save.with_value(|s| send_cmd(s, "capture_save_sequence_file", serde_json::json!({"filepath": path})));
+                                    save_open.set(false);
+                                }
+                            }>"✓"</button>
+                            <button style=action_btn("#555") on:click=move |_| save_open.set(false)>"✕"</button>
+                        </div>
+                    </Show>
+                    // Load inline row
+                    <Show when=move || load_open.get()>
+                        <div style="display:flex; gap:6px; padding:6px 8px; background:#1a1200; border-bottom:1px solid #443322;">
+                            <input
+                                type="text"
+                                placeholder="/home/user/seq.esq"
+                                prop:value=move || load_path.get()
+                                on:input=move |ev| load_path.set(event_target_value(&ev))
+                                style="flex:1; background:#111; color:#ffd0aa; border:1px solid #554433; padding:4px 8px; font-family:monospace; font-size:12px;"
+                            />
+                            <button style=action_btn("#ffcc88") on:click=move |_| {
+                                let path = load_path.get_untracked();
+                                if !path.is_empty() {
+                                    sv_load.with_value(|s| send_cmd(s, "capture_load_sequence_file", serde_json::json!({"filepath": path})));
+                                    load_open.set(false);
+                                    let s2 = sv_load.get_value();
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        gloo_timers::future::TimeoutFuture::new(500).await;
+                                        send_cmd(&s2, "capture_get_sequences", serde_json::json!({}));
+                                    });
+                                }
+                            }>"✓"</button>
+                            <button style=action_btn("#555") on:click=move |_| load_open.set(false)>"✕"</button>
+                        </div>
+                    </Show>
                     <div class="imaging-sequence-list">
                         {move || {
                             let rows = sequence_rows();

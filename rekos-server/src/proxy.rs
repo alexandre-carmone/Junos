@@ -34,9 +34,10 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
         Some(state) => state,
         None => {
             let connected = hub.kstars_msg_tx.lock().await.is_some();
+            let home = std::env::var("HOME").unwrap_or_default();
             format!(
-                r#"{{"type":"new_connection_state","payload":{{"connected":{}}}}}"#,
-                connected
+                r#"{{"type":"new_connection_state","payload":{{"connected":{},"home_dir":"{}"}}}}"#,
+                connected, home
             )
         }
     };

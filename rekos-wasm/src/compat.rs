@@ -227,6 +227,32 @@ pub struct GuideSnapshot {
     pub options:     serde_json::Value,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SchedulerSnapshot {
+    pub status:   i64,
+    pub log:      String,
+    pub jobs:     Vec<serde_json::Value>,
+    pub settings: serde_json::Value,
+    pub home_dir: String,
+}
+
+pub fn derive_scheduler(store: &DeviceStore) -> Signal<SchedulerSnapshot> {
+    let status_sig   = store.scheduler_status;
+    let settings_sig = store.scheduler_settings;
+    let jobs_sig     = store.scheduler_jobs;
+    let home_sig     = store.home_dir;
+    Signal::derive(move || {
+        let s = status_sig.get();
+        SchedulerSnapshot {
+            status:   s.status,
+            log:      s.log,
+            jobs:     jobs_sig.get(),
+            settings: settings_sig.get(),
+            home_dir: home_sig.get(),
+        }
+    })
+}
+
 pub fn derive_guide(store: &DeviceStore) -> Signal<GuideSnapshot> {
     let status_sig   = store.guide_status;
     let settings_sig = store.guide_settings;

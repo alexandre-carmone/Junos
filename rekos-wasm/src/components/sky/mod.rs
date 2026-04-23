@@ -1081,6 +1081,9 @@ pub fn SkyTabSwitcher() -> impl IntoView {
                 <button title=move || tr().tab_guide
                         style=move || btn_style(Tab::Guide)
                         on:click=move |_| active.set(Tab::Guide)>"GD"</button>
+                <button title=move || tr().tab_scheduler
+                        style=move || btn_style(Tab::Scheduler)
+                        on:click=move |_| active.set(Tab::Scheduler)>"SCH"</button>
             })}
             <button style=lang_style
                     title=move || lang.get().toggle().label()

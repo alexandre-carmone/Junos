@@ -150,6 +150,15 @@ pub struct PolarStateData {
     pub updated_alt_error: Option<f64>,
 }
 
+// Scheduler module state. Two push shapes from manager.cpp:
+//   {:417} {log: string}
+//   {:427} {status: int}  — SchedulerState enum: 0=IDLE 1=RUNNING 2=PAUSED
+#[derive(Debug, Clone, Default)]
+pub struct SchedulerStatusData {
+    pub status: i64,
+    pub log: String,
+}
+
 // Guide module state. `new_guide_state` carries a *partial* payload per
 // emission: either {status}, {drift_ra, drift_de}, {rarms, derms}, or
 // {log}. See kstars/ekos/manager.cpp:2769-2786 for the four distinct
@@ -222,6 +231,9 @@ pub struct DeviceStore {
     /// Ekos::Success, i.e. a profile is running and requests that gate on it
     /// will actually be handled. Driven by `new_connection_state.online`.
     pub online:             RwSignal<bool>,
+    /// Server's $HOME, injected by rekos-server/proxy.rs on connect.
+    /// Used to predict .esq file paths written via scheduler_save_sequence_file.
+    pub home_dir:           RwSignal<String>,
     pub mount_status:       RwSignal<Option<MountStatusData>>,
     pub camera_status:      RwSignal<Option<CameraStatusData>>,
     pub telescope_settings: RwSignal<TelescopeSettingsData>,
@@ -245,6 +257,9 @@ pub struct DeviceStore {
     /// entries we care about (GuiderType, PHD2Host/Port, LinGuiderHost/Port).
     pub guide_options:      RwSignal<serde_json::Value>,
     pub guide_preview_url:  RwSignal<Option<String>>,
+    pub scheduler_status:   RwSignal<SchedulerStatusData>,
+    pub scheduler_settings: RwSignal<serde_json::Value>,
+    pub scheduler_jobs:     RwSignal<Vec<serde_json::Value>>,
 }
 
 impl DeviceStore {
@@ -252,6 +267,7 @@ impl DeviceStore {
         Self {
             connected:          RwSignal::new(false),
             online:             RwSignal::new(false),
+            home_dir:           RwSignal::new(String::new()),
             mount_status:       RwSignal::new(None),
             camera_status:      RwSignal::new(None),
             telescope_settings: RwSignal::new(TelescopeSettingsData::default()),
@@ -273,6 +289,9 @@ impl DeviceStore {
             guide_settings:     RwSignal::new(serde_json::Value::Null),
             guide_options:      RwSignal::new(serde_json::Value::Null),
             guide_preview_url:  RwSignal::new(None),
+            scheduler_status:   RwSignal::new(SchedulerStatusData::default()),
+            scheduler_settings: RwSignal::new(serde_json::Value::Null),
+            scheduler_jobs:     RwSignal::new(Vec::new()),
         }
     }
 
@@ -283,6 +302,9 @@ impl DeviceStore {
                 let online = payload["online"].as_bool().unwrap_or(false);
                 self.connected.set(connected);
                 self.online.set(connected && online);
+                if let Some(h) = payload["home_dir"].as_str() {
+                    if !h.is_empty() { self.home_dir.set(h.to_string()); }
+                }
                 if !connected {
                     self.mount_status.set(None);
                     self.camera_status.set(None);
@@ -298,6 +320,8 @@ impl DeviceStore {
                     // guide_settings / guide_options left intact so the
                     // Guide tab doesn't flicker between blank and populated
                     // on transient disconnects.
+                    self.scheduler_status.set(SchedulerStatusData::default());
+                    self.scheduler_jobs.set(Vec::new());
                 }
             }
 
@@ -772,6 +796,29 @@ impl DeviceStore {
                 }
             }
 
+            // Scheduler status push: {status: int} or {log: string}.
+            // Both emitted from manager.cpp:417 and :427 via sendSchedulerStatus.
+            "new_scheduler_state" => {
+                self.scheduler_status.update(|s| {
+                    if let Some(v) = payload["status"].as_i64() { s.status = v; }
+                    if let Some(l) = payload["log"].as_str() {
+                        if !l.is_empty() { s.log = l.to_string(); }
+                    }
+                });
+            }
+
+            // Reply to scheduler_get_jobs — {"jobs": [...]}
+            "scheduler_get_jobs" => {
+                if let Some(arr) = payload["jobs"].as_array() {
+                    self.scheduler_jobs.set(arr.clone());
+                }
+            }
+
+            // Debounced settings reply (message.cpp:623).
+            "scheduler_get_all_settings" => {
+                self.scheduler_settings.set(payload.clone());
+            }
+
             _ => {}
         }
     }
@@ -815,6 +862,8 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                 prime_send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"align_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"guide_get_all_settings","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"scheduler_get_all_settings","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"scheduler_get_jobs","payload":{}}"#.to_string());
                 // Guider-backend settings live in global KStars Options::,
                 // not in guide_get_all_settings. See message.cpp:1418.
                 prime_send(r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#.to_string());
@@ -1049,6 +1098,8 @@ fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
             send(r#"{"type":"align_get_all_settings","payload":{}}"#.to_string());
             send(r#"{"type":"guide_get_all_settings","payload":{}}"#.to_string());
+            send(r#"{"type":"scheduler_get_all_settings","payload":{}}"#.to_string());
+            send(r#"{"type":"scheduler_get_jobs","payload":{}}"#.to_string());
             send(r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#.to_string());
 
             // ── Camera INDI properties ───────────────────────────────
