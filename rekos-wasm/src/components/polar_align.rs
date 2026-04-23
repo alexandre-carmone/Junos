@@ -22,17 +22,38 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::compat::{MountSnapshot, PolarAlignSnapshot};
+use crate::i18n::{Lang, Translations, t};
 use crate::ws::{PolarVectorData, SendCmd};
 
-const DIRECTION_OPTIONS: &[&str] = &["West", "East"];
-const ALGORITHM_OPTIONS: &[&str] = &[
+/// Wire values for the direction dropdown (sent to KStars as-is).
+const DIRECTION_WIRE: &[&str] = &["West", "East"];
+fn direction_label(wire: &str, tr: &Translations) -> &'static str {
+    match wire {
+        "East" => tr.pa_east,
+        _      => tr.pa_west,
+    }
+}
+
+/// Wire values for the refresh-algorithm dropdown.
+const ALGORITHM_WIRE: &[&str] = &[
     "Plate Solve",
     "Move Star",
     "Move Star & Calc Error",
 ];
+fn algorithm_label(wire: &str, tr: &Translations) -> &'static str {
+    match wire {
+        "Move Star"              => tr.pa_algo_move_star,
+        "Move Star & Calc Error" => tr.pa_algo_move_star_calc,
+        _                        => tr.pa_algo_plate_solve,
+    }
+}
+
 const DEFAULT_SPEED_OPTIONS: &[&str] = &[
     "1x", "2x", "4x", "8x", "16x", "32x", "64x", "128x", "256x", "Max",
 ];
+fn speed_label(wire: &str, tr: &Translations) -> String {
+    if wire == "Max" { tr.pa_speed_max.to_string() } else { wire.to_string() }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -215,6 +236,9 @@ pub fn PolarAlignTab(
     #[prop(into)] mount: Signal<MountSnapshot>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
+    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let tr = move || t(lang.get());
+
     // Local exposure field, seeded from `pAHExposure` when settings first
     // arrive. Kept local so user edits aren't thrashed by the 5 s refresh.
     let exposure = RwSignal::new(2.0_f64);
@@ -370,11 +394,11 @@ pub fn PolarAlignTab(
                 )>
                     {move || {
                         let s = polar.with(|p| p.stage.clone());
-                        if s.is_empty() { "Idle".to_string() } else { s }
+                        if s.is_empty() { tr().pa_idle.to_string() } else { s }
                     }}
                 </span>
-                <span style="color:#88aaff;">"Enabled:"</span>
-                <span>{move || if polar.with(|p| p.enabled) { "yes" } else { "no" }}</span>
+                <span style="color:#88aaff;">{move || tr().pa_enabled_label}</span>
+                <span>{move || if polar.with(|p| p.enabled) { tr().yes } else { tr().no }}</span>
                 <span style="flex:1; color:#c0c0d0; overflow:hidden; \
                              white-space:nowrap; text-overflow:ellipsis;"
                       title=move || polar.with(|p| p.message.clone())>
@@ -409,13 +433,13 @@ pub fn PolarAlignTab(
                 <Show when=intro_visible>
                     <fieldset style="border:1px solid #222; padding:12px 14px;">
                         <legend style="color:#88aaff; padding:0 6px; font-size:11px;">
-                            "Pre-start options"
+                            {move || tr().pa_pre_start}
                         </legend>
                         <div style="display:flex; flex-direction:column; gap:8px;">
 
                             // Direction
                             <div style="display:flex; align-items:center; gap:8px;">
-                                <span style=field_label_style()>"Direction"</span>
+                                <span style=field_label_style()>{move || tr().pa_direction}</span>
                                 <select
                                     on:change=on_direction_change.clone()
                                     style=input_style()
@@ -423,15 +447,19 @@ pub fn PolarAlignTab(
                                         settings_str(&p.settings, "pAHDirection")
                                             .unwrap_or_else(|| "West".into()))
                                 >
-                                    {DIRECTION_OPTIONS.iter().map(|o| view! {
-                                        <option value=*o>{*o}</option>
-                                    }).collect::<Vec<_>>()}
+                                    {move || {
+                                        let tr_ = tr();
+                                        DIRECTION_WIRE.iter().map(|wire| {
+                                            let label = direction_label(wire, tr_);
+                                            view! { <option value=*wire>{label}</option> }
+                                        }).collect::<Vec<_>>()
+                                    }}
                                 </select>
                             </div>
 
                             // Rotation
                             <div style="display:flex; align-items:center; gap:8px;">
-                                <span style=field_label_style()>"Rotation °"</span>
+                                <span style=field_label_style()>{move || tr().pa_rotation_deg_label}</span>
                                 <input
                                     type="number"
                                     min="15"
@@ -447,7 +475,7 @@ pub fn PolarAlignTab(
 
                             // Mount speed
                             <div style="display:flex; align-items:center; gap:8px;">
-                                <span style=field_label_style()>"Mount speed"</span>
+                                <span style=field_label_style()>{move || tr().pa_mount_speed_label}</span>
                                 <select
                                     on:change=on_speed_change.clone()
                                     style=input_style()
@@ -456,6 +484,7 @@ pub fn PolarAlignTab(
                                             .unwrap_or_default())
                                 >
                                     {move || {
+                                        let tr_ = tr();
                                         let current = polar.with(|p|
                                             settings_str(&p.settings, "pAHMountSpeed")
                                                 .unwrap_or_default());
@@ -466,9 +495,9 @@ pub fn PolarAlignTab(
                                         {
                                             opts.insert(0, current);
                                         }
-                                        opts.into_iter().map(|o| {
-                                            let label = o.clone();
-                                            view! { <option value=o>{label}</option> }
+                                        opts.into_iter().map(|wire| {
+                                            let label = speed_label(&wire, tr_);
+                                            view! { <option value=wire>{label}</option> }
                                         }).collect::<Vec<_>>()
                                     }}
                                 </select>
@@ -476,7 +505,7 @@ pub fn PolarAlignTab(
 
                             // Manual slew
                             <div style="display:flex; align-items:center; gap:8px;">
-                                <span style=field_label_style()>"Manual slew"</span>
+                                <span style=field_label_style()>{move || tr().pa_manual_slew_label}</span>
                                 <input
                                     type="checkbox"
                                     on:change=on_manual_change.clone()
@@ -500,7 +529,7 @@ pub fn PolarAlignTab(
 
                             <div style="margin-top:6px;">
                                 <button on:click=on_start.clone() style=action_btn("#7affa0")>
-                                    "Start polar alignment"
+                                    {move || tr().pa_start_btn_long}
                                 </button>
                             </div>
                         </div>
@@ -511,17 +540,17 @@ pub fn PolarAlignTab(
                 <Show when=progress_visible>
                     <fieldset style="border:1px solid #222; padding:12px 14px;">
                         <legend style="color:#88aaff; padding:0 6px; font-size:11px;">
-                            "Capture / Solve"
+                            {move || tr().pa_capture_solve}
                         </legend>
                         <div style="padding:8px 0; color:#cfe0ff;">
                             {move || {
                                 let m = polar.with(|p| p.message.clone());
-                                if m.is_empty() { "Running…".to_string() } else { m }
+                                if m.is_empty() { tr().pa_running.to_string() } else { m }
                             }}
                         </div>
                         <div>
                             <button on:click=on_stop_abort.clone() style=action_btn("#ff6a6a")>
-                                "Abort"
+                                {move || tr().pa_abort_short}
                             </button>
                         </div>
                     </fieldset>
@@ -531,14 +560,14 @@ pub fn PolarAlignTab(
                 <Show when=rotation_visible>
                     <fieldset style="border:1px solid #222; padding:12px 14px;">
                         <legend style="color:#ffd060; padding:0 6px; font-size:11px;">
-                            "Manual rotation"
+                            {move || tr().pa_manual_rotation_section}
                         </legend>
                         <div style="padding:4px 0 10px; color:#cfe0ff;">
-                            "Rotate the mount by the configured angle, then click Done."
+                            {move || tr().pa_manual_rotate_instr}
                         </div>
                         <div>
                             <button on:click=on_slew_done.clone() style=action_btn("#ffd060")>
-                                "Rotation done"
+                                {move || tr().pa_rotation_done}
                             </button>
                         </div>
                     </fieldset>
@@ -548,14 +577,14 @@ pub fn PolarAlignTab(
                 <Show when=refresh_visible>
                     <fieldset style="border:1px solid #222; padding:12px 14px;">
                         <legend style="color:#7affa0; padding:0 6px; font-size:11px;">
-                            "Refresh / Correct"
+                            {move || tr().pa_refresh_correct}
                         </legend>
                         <div style="display:grid; grid-template-columns:1fr 140px; gap:14px;">
                             <div style="display:flex; flex-direction:column; gap:8px;">
 
                                 // Exposure
                                 <div style="display:flex; align-items:center; gap:8px;">
-                                    <span style=field_label_style()>"Exposure s"</span>
+                                    <span style=field_label_style()>{move || tr().pa_exposure_s_label}</span>
                                     <input
                                         type="number"
                                         min="0.1"
@@ -569,7 +598,7 @@ pub fn PolarAlignTab(
 
                                 // Algorithm
                                 <div style="display:flex; align-items:center; gap:8px;">
-                                    <span style=field_label_style()>"Algorithm"</span>
+                                    <span style=field_label_style()>{move || tr().pa_algorithm_label}</span>
                                     <select
                                         on:change=on_algo_change.clone()
                                         style=input_style()
@@ -577,9 +606,13 @@ pub fn PolarAlignTab(
                                             settings_str(&p.settings, "pAHRefreshAlgorithm")
                                                 .unwrap_or_else(|| "Plate Solve".into()))
                                     >
-                                        {ALGORITHM_OPTIONS.iter().map(|o| view! {
-                                            <option value=*o>{*o}</option>
-                                        }).collect::<Vec<_>>()}
+                                        {move || {
+                                            let tr_ = tr();
+                                            ALGORITHM_WIRE.iter().map(|wire| {
+                                                let label = algorithm_label(wire, tr_);
+                                                view! { <option value=*wire>{label}</option> }
+                                            }).collect::<Vec<_>>()
+                                        }}
                                     </select>
                                 </div>
 
@@ -587,8 +620,9 @@ pub fn PolarAlignTab(
                                 <div style="display:grid; grid-template-columns:1fr 1fr; \
                                             gap:8px; margin-top:6px;">
                                     <div style="border:1px solid #222; padding:6px 8px;">
-                                        <div style="color:#88aaff; font-size:11px;">"Original"</div>
+                                        <div style="color:#88aaff; font-size:11px;">{move || tr().pa_original}</div>
                                         {move || {
+                                            let tr_ = tr();
                                             let v = polar.with(|p| p.vector.clone());
                                             let (err, az, alt) = match v {
                                                 Some(v) => (v.error, v.az_error, v.alt_error),
@@ -596,20 +630,21 @@ pub fn PolarAlignTab(
                                             };
                                             view! {
                                                 <div style="font-size:12px;">
-                                                    "Total: " {format_deg_as_dms_small(err)}
+                                                    {tr_.pa_total_label} {format_deg_as_dms_small(err)}
                                                 </div>
                                                 <div style="font-size:12px;">
-                                                    "Az:    " {format_deg_as_dms_small(az)}
+                                                    {tr_.pa_az_label_long} {format_deg_as_dms_small(az)}
                                                 </div>
                                                 <div style="font-size:12px;">
-                                                    "Alt:   " {format_deg_as_dms_small(alt)}
+                                                    {tr_.pa_alt_label_long} {format_deg_as_dms_small(alt)}
                                                 </div>
                                             }
                                         }}
                                     </div>
                                     <div style="border:1px solid #222; padding:6px 8px;">
-                                        <div style="color:#7affa0; font-size:11px;">"Updated"</div>
+                                        <div style="color:#7affa0; font-size:11px;">{move || tr().pa_updated}</div>
                                         {move || {
+                                            let tr_ = tr();
                                             let (e, az, al) = polar.with(|p| (
                                                 p.updated_error,
                                                 p.updated_az_error,
@@ -620,9 +655,9 @@ pub fn PolarAlignTab(
                                                 None => "—".to_string(),
                                             };
                                             view! {
-                                                <div style="font-size:12px;">"Total: " {fmt(e)}</div>
-                                                <div style="font-size:12px;">"Az:    " {fmt(az)}</div>
-                                                <div style="font-size:12px;">"Alt:   " {fmt(al)}</div>
+                                                <div style="font-size:12px;">{tr_.pa_total_label} {fmt(e)}</div>
+                                                <div style="font-size:12px;">{tr_.pa_az_label_long} {fmt(az)}</div>
+                                                <div style="font-size:12px;">{tr_.pa_alt_label_long} {fmt(al)}</div>
                                             }
                                         }}
                                     </div>
@@ -631,10 +666,10 @@ pub fn PolarAlignTab(
                                 // Refresh controls
                                 <div style="display:flex; gap:8px; margin-top:8px;">
                                     <button on:click=on_start_refresh.clone() style=action_btn("#7affa0")>
-                                        "Start refresh"
+                                        {move || tr().pa_start_refresh}
                                     </button>
                                     <button on:click=on_stop_refresh.clone() style=action_btn("#ffd060")>
-                                        "Stop refresh"
+                                        {move || tr().pa_stop_refresh}
                                     </button>
                                 </div>
                             </div>
@@ -650,7 +685,7 @@ pub fn PolarAlignTab(
                 // Footer — always-visible global Stop
                 <div style="display:flex; gap:8px;">
                     <button on:click=on_stop_footer style=action_btn("#ff6a6a")>
-                        "Stop polar alignment"
+                        {move || tr().pa_stop_btn_long}
                     </button>
                 </div>
             </div>

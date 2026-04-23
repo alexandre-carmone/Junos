@@ -46,6 +46,19 @@ impl Planet {
             Planet::Neptune => "Neptune",
         }
     }
+
+    pub fn name_i18n(self, lang: crate::i18n::Lang) -> &'static str {
+        let s = crate::i18n::t(lang);
+        match self {
+            Planet::Mercury => s.body_mercury,
+            Planet::Venus   => s.body_venus,
+            Planet::Mars    => s.body_mars,
+            Planet::Jupiter => s.body_jupiter,
+            Planet::Saturn  => s.body_saturn,
+            Planet::Uranus  => s.body_uranus,
+            Planet::Neptune => s.body_neptune,
+        }
+    }
 }
 
 pub const ALL_PLANETS: [Planet; 7] = [

@@ -110,10 +110,10 @@ pub fn SkyContextMenu(
                     on:click=move |ev| ev.stop_propagation()
                     >
                         <div style="color:#aaa; margin-bottom:6px;">
-                            {format!("RA {:02}h{:02}m{:04.1}s", rah, ram, ras)}
+                            {format!("{} {:02}h{:02}m{:04.1}s", tr().ra_label, rah, ram, ras)}
                         </div>
                         <div style="color:#aaa; margin-bottom:8px;">
-                            {format!("Dec {}{}\u{00b0}{:02}'{:02}\"", dec_sign, decd, decm,
+                            {format!("{} {}{}\u{00b0}{:02}'{:02}\"", tr().dec_label, dec_sign, decd, decm,
                                 ((dec_abs - decd as f64) * 3600.0 - decm as f64 * 60.0) as u32)}
                         </div>
                         <button
@@ -212,10 +212,10 @@ pub fn SkyConfirmPopup(
                     >
                         <div style="display:flex; flex-direction:column; gap:4px; font-family:monospace; font-size:13px;">
                             <span style="color:#88aaff; font-weight:bold;">
-                                {format!("RA  {:02}h {:02}m {:04.1}s", rah, ram, ras)}
+                                {format!("{}  {:02}h {:02}m {:04.1}s", tr().ra_label, rah, ram, ras)}
                             </span>
                             <span style="color:#88aaff; font-weight:bold;">
-                                {format!("Dec {}{}\u{00b0} {:02}' {:02}\"", dec_sign, decd, decm, decs)}
+                                {format!("{} {}{}\u{00b0} {:02}' {:02}\"", tr().dec_label, dec_sign, decd, decm, decs)}
                             </span>
                         </div>
                         <div style="display:flex; gap:10px; flex-shrink:0;">

@@ -116,6 +116,12 @@ fn App() -> impl IntoView {
         .unwrap_or_default();
     let lang = RwSignal::new(saved_lang);
     provide_context(lang);
+    Effect::new(move |_| {
+        let v = match lang.get() { Lang::Fr => "fr", Lang::En => "en" };
+        if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            let _ = s.set_item("rekos_lang", v);
+        }
+    });
 
     // ── Derived signals for SkyTab ────────────────────────────────────────
     let mount  = compat::derive_mount(&store);

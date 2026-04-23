@@ -14,6 +14,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::compat::{CameraSnapshot, CaptureSnapshot};
+use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
 
 /// Responsive layout for the Imaging tab. Three breakpoints:
@@ -315,42 +316,42 @@ enum Kind { Number, Text, Combo, Bool }
 #[derive(Clone, Copy)]
 struct Field {
     key:   &'static str,
-    label: &'static str,
+    label: fn(&Translations) -> &'static str,
     kind:  Kind,
 }
 
 const EXPOSURE_FIELDS: &[Field] = &[
-    Field { key: "captureExposureN", label: "Exposure (s)", kind: Kind::Number },
-    Field { key: "captureTypeS",     label: "Frame type",   kind: Kind::Combo  },
-    Field { key: "captureCountN",    label: "Count",        kind: Kind::Number },
-    Field { key: "captureDelayN",    label: "Delay (s)",    kind: Kind::Number },
+    Field { key: "captureExposureN", label: |t| t.field_exposure_s, kind: Kind::Number },
+    Field { key: "captureTypeS",     label: |t| t.field_frame_type, kind: Kind::Combo  },
+    Field { key: "captureCountN",    label: |t| t.field_count,      kind: Kind::Number },
+    Field { key: "captureDelayN",    label: |t| t.field_delay_s,    kind: Kind::Number },
 ];
 
 const FRAME_FIELDS: &[Field] = &[
-    Field { key: "captureBinHN",    label: "Bin X",   kind: Kind::Number },
-    Field { key: "captureBinVN",    label: "Bin Y",   kind: Kind::Number },
-    Field { key: "captureFormatS",  label: "Format",  kind: Kind::Combo  },
-    Field { key: "captureEncodingS",label: "Encoding",kind: Kind::Combo  },
+    Field { key: "captureBinHN",    label: |t| t.field_bin_x,    kind: Kind::Number },
+    Field { key: "captureBinVN",    label: |t| t.field_bin_y,    kind: Kind::Number },
+    Field { key: "captureFormatS",  label: |t| t.field_format,   kind: Kind::Combo  },
+    Field { key: "captureEncodingS",label: |t| t.field_encoding, kind: Kind::Combo  },
 ];
 
 const GAIN_FIELDS: &[Field] = &[
-    Field { key: "captureGainN",   label: "Gain",    kind: Kind::Number },
-    Field { key: "captureOffsetN", label: "Offset",  kind: Kind::Number },
-    Field { key: "captureISOS",    label: "ISO",     kind: Kind::Combo  },
+    Field { key: "captureGainN",   label: |t| t.field_gain,   kind: Kind::Number },
+    Field { key: "captureOffsetN", label: |t| t.field_offset, kind: Kind::Number },
+    Field { key: "captureISOS",    label: |t| t.field_iso,    kind: Kind::Combo  },
 ];
 
 const FILTER_FIELDS: &[Field] = &[
-    Field { key: "FilterPosCombo", label: "Filter", kind: Kind::Combo },
+    Field { key: "FilterPosCombo", label: |t| t.field_filter, kind: Kind::Combo },
 ];
 
 const TARGET_FIELDS: &[Field] = &[
-    Field { key: "targetNameT",   label: "Target",    kind: Kind::Text },
-    Field { key: "fileDirectoryT",label: "Directory", kind: Kind::Text },
+    Field { key: "targetNameT",   label: |t| t.field_target_name, kind: Kind::Text },
+    Field { key: "fileDirectoryT",label: |t| t.field_directory,   kind: Kind::Text },
 ];
 
 const ENFORCE_TEMP_FIELDS: &[Field] = &[
-    Field { key: "cameraTemperatureS", label: "Enforce target temperature", kind: Kind::Bool   },
-    Field { key: "cameraTemperatureN", label: "Job target °C",              kind: Kind::Number },
+    Field { key: "cameraTemperatureS", label: |t| t.field_enforce_temp, kind: Kind::Bool   },
+    Field { key: "cameraTemperatureN", label: |t| t.field_job_temp_c,   kind: Kind::Number },
 ];
 
 #[component]
@@ -359,6 +360,9 @@ pub fn ImagingTab(
     #[prop(into)] camera:  Signal<CameraSnapshot>,
     #[prop(into)] send:    SendCmd,
 ) -> impl IntoView {
+    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let tr = move || t(lang.get());
+
     let target_temp = RwSignal::new(-10.0_f64);
 
     // ── Collapsible-panel state ──────────────────────────────────────────
@@ -514,42 +518,42 @@ pub fn ImagingTab(
                 )>
                     {move || {
                         let s = capture.with(|c| c.status.clone());
-                        if s.is_empty() { "Idle".to_string() } else { s }
+                        if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
                 <span class="imaging-stat">
-                    <span class="imaging-stat-label">"Camera"</span>
+                    <span class="imaging-stat-label">{move || tr().imaging_camera}</span>
                     <span>{move || {
                         let d = camera.with(|c| c.device.clone());
                         if d.is_empty() { "—".to_string() } else { d }
                     }}</span>
                 </span>
                 <span class="imaging-stat">
-                    <span class="imaging-stat-label">"Temp"</span>
+                    <span class="imaging-stat-label">{move || tr().imaging_temp}</span>
                     <span>{move || camera.with(|c| c.temperature
                         .map(|v| format!("{:.1}°C", v))
                         .unwrap_or_else(|| "—".into()))}</span>
                 </span>
                 <span class="imaging-stat">
-                    <span class="imaging-stat-label">"Cooler"</span>
+                    <span class="imaging-stat-label">{move || tr().imaging_cooler}</span>
                     <span style=move || {
                         let on = camera.with(|c| c.cooler_on).unwrap_or(false);
                         format!("color:{};", if on { "#7affa0" } else { "#808090" })
                     }>{move || match camera.with(|c| c.cooler_on) {
-                        Some(true) => "ON",
-                        Some(false) => "OFF",
-                        None => "—",
+                        Some(true)  => tr().imaging_cooler_on_val.to_string(),
+                        Some(false) => tr().imaging_cooler_off_val.to_string(),
+                        None        => "—".to_string(),
                     }}</span>
                 </span>
                 <span class="imaging-stat">
-                    <span class="imaging-stat-label">"Sensor"</span>
+                    <span class="imaging-stat-label">{move || tr().imaging_sensor}</span>
                     <span>{move || camera.with(|c| match (c.sensor_width, c.sensor_height) {
                         (Some(w), Some(h)) => format!("{}×{}", w, h),
                         _ => "—".into(),
                     })}</span>
                 </span>
                 <span class="imaging-stat">
-                    <span class="imaging-stat-label">"Progress"</span>
+                    <span class="imaging-stat-label">{move || tr().imaging_progress}</span>
                     <span>{move || capture.with(|c| match (c.seq_current, c.seq_total) {
                         (Some(a), Some(b)) => format!("{} / {}", a, b),
                         _ => "—".into(),
@@ -559,8 +563,8 @@ pub fn ImagingTab(
                     class="imaging-ghost-btn"
                     style="margin-left:auto;"
                     on:click=on_toggle_preview
-                    title="Show or hide the last captured frame">
-                    {move || if preview_visible.get() { "Hide preview" } else { "Show preview" }}
+                    title=move || tr().imaging_toggle_preview_title>
+                    {move || if preview_visible.get() { tr().imaging_hide_preview } else { tr().imaging_show_preview }}
                 </button>
             </div>
 
@@ -574,7 +578,7 @@ pub fn ImagingTab(
                         }.into_any(),
                         None => view! {
                             <div class="imaging-preview-empty">
-                                "No capture frame yet — click Preview or Start a sequence"
+                                {move || tr().imaging_no_frame}
                             </div>
                         }.into_any(),
                     }}
@@ -585,21 +589,21 @@ pub fn ImagingTab(
 
                     // Toolbar: collapse / expand all panels
                     <div class="imaging-settings-toolbar">
-                        <span class="imaging-settings-toolbar-title">"Capture controls"</span>
+                        <span class="imaging-settings-toolbar-title">{move || tr().imaging_capture_controls}</span>
                         <div style="display:flex; gap:6px;">
-                            <button class="imaging-ghost-btn" on:click=on_collapse_all>"Collapse all"</button>
-                            <button class="imaging-ghost-btn" on:click=on_expand_all>"Expand all"</button>
+                            <button class="imaging-ghost-btn" on:click=on_collapse_all>{move || tr().imaging_collapse_all}</button>
+                            <button class="imaging-ghost-btn" on:click=on_expand_all>{move || tr().imaging_expand_all}</button>
                         </div>
                     </div>
 
                     // Actions — always visible, not foldable
                     <fieldset style=card_style()>
-                        <legend style=legend_style()>"Actions"</legend>
+                        <legend style=legend_style()>{move || tr().imaging_actions}</legend>
                         <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                            <button on:click=on_start   style=action_btn("#7affa0")>"Start"</button>
-                            <button on:click=on_stop    style=action_btn("#ff6a6a")>"Stop"</button>
-                            <button on:click=on_preview style=action_btn("#88aaff")>"Preview"</button>
-                            <button on:click=on_loop    style=action_btn("#88aaff")>"Loop"</button>
+                            <button on:click=on_start   style=action_btn("#7affa0")>{move || tr().start}</button>
+                            <button on:click=on_stop    style=action_btn("#ff6a6a")>{move || tr().stop}</button>
+                            <button on:click=on_preview style=action_btn("#88aaff")>{move || tr().preview}</button>
+                            <button on:click=on_loop    style=action_btn("#88aaff")>{move || tr().focus_loop_btn}</button>
                         </div>
                     </fieldset>
 
@@ -614,10 +618,10 @@ pub fn ImagingTab(
                                 cooling_open.set(el.open());
                             }
                         }>
-                        <summary>"Cooling"</summary>
+                        <summary>{move || tr().imaging_cooling}</summary>
                         <div class="imaging-panel-body">
                             <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                                <span style=label_style()>"Target °C"</span>
+                                <span style=label_style()>{move || tr().imaging_target_c}</span>
                                 <input
                                     type="number"
                                     step="0.5"
@@ -628,11 +632,11 @@ pub fn ImagingTab(
                                     }
                                     style=input_style()
                                 />
-                                <button on:click=on_set_temp style=action_btn("#88aaff")>"Set"</button>
+                                <button on:click=on_set_temp style=action_btn("#88aaff")>{move || tr().imaging_set}</button>
                             </div>
                             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                                <button on:click=on_cooler_on  style=action_btn("#7affa0")>"Cooler ON"</button>
-                                <button on:click=on_cooler_off style=action_btn("#ff6a6a")>"Cooler OFF"</button>
+                                <button on:click=on_cooler_on  style=action_btn("#7affa0")>{move || tr().cooler_on}</button>
+                                <button on:click=on_cooler_off style=action_btn("#ff6a6a")>{move || tr().cooler_off}</button>
                             </div>
                         </div>
                     </details>
@@ -645,9 +649,9 @@ pub fn ImagingTab(
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { exposure_open.set(el.open()); }
                         }>
-                        <summary>"Exposure"</summary>
+                        <summary>{move || tr().imaging_exposure}</summary>
                         <div class="imaging-panel-body">
-                            {render_group(EXPOSURE_FIELDS, get_setting, dispatch_setting.clone())}
+                            {render_group(EXPOSURE_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
@@ -659,9 +663,9 @@ pub fn ImagingTab(
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { frame_open.set(el.open()); }
                         }>
-                        <summary>"Frame"</summary>
+                        <summary>{move || tr().imaging_frame}</summary>
                         <div class="imaging-panel-body">
-                            {render_group(FRAME_FIELDS, get_setting, dispatch_setting.clone())}
+                            {render_group(FRAME_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
@@ -673,9 +677,9 @@ pub fn ImagingTab(
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { gain_open.set(el.open()); }
                         }>
-                        <summary>"Gain / ISO"</summary>
+                        <summary>{move || tr().imaging_gain_iso}</summary>
                         <div class="imaging-panel-body">
-                            {render_group(GAIN_FIELDS, get_setting, dispatch_setting.clone())}
+                            {render_group(GAIN_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
@@ -687,9 +691,9 @@ pub fn ImagingTab(
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { filter_open.set(el.open()); }
                         }>
-                        <summary>"Filter"</summary>
+                        <summary>{move || tr().imaging_filter}</summary>
                         <div class="imaging-panel-body">
-                            {render_group(FILTER_FIELDS, get_setting, dispatch_setting.clone())}
+                            {render_group(FILTER_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
@@ -701,9 +705,9 @@ pub fn ImagingTab(
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { target_open.set(el.open()); }
                         }>
-                        <summary>"Target"</summary>
+                        <summary>{move || tr().imaging_target}</summary>
                         <div class="imaging-panel-body">
-                            {render_group(TARGET_FIELDS, get_setting, dispatch_setting.clone())}
+                            {render_group(TARGET_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
@@ -715,9 +719,9 @@ pub fn ImagingTab(
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { jobtemp_open.set(el.open()); }
                         }>
-                        <summary>"Job temperature"</summary>
+                        <summary>{move || tr().imaging_job_temperature}</summary>
                         <div class="imaging-panel-body">
-                            {render_group(ENFORCE_TEMP_FIELDS, get_setting, dispatch_setting.clone())}
+                            {render_group(ENFORCE_TEMP_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
                 </div>
@@ -725,10 +729,10 @@ pub fn ImagingTab(
                 // ─ Sequence queue ────────────────────────────────────────
                 <div class="imaging-sequence">
                     <div class="imaging-sequence-head">
-                        <span class="imaging-sequence-title">"Sequence queue"</span>
+                        <span class="imaging-sequence-title">{move || tr().imaging_sequence_queue}</span>
                         <div style="display:flex; gap:6px;">
-                            <button on:click=on_add_job   style=action_btn("#88aaff")>"+ Add job"</button>
-                            <button on:click=on_clear_seq style=action_btn("#ff6a6a")>"Clear"</button>
+                            <button on:click=on_add_job   style=action_btn("#88aaff")>{move || tr().imaging_add_job}</button>
+                            <button on:click=on_clear_seq style=action_btn("#ff6a6a")>{move || tr().seq_clear}</button>
                         </div>
                     </div>
                     <div class="imaging-sequence-list">
@@ -737,7 +741,7 @@ pub fn ImagingTab(
                             if rows.is_empty() {
                                 return view! {
                                     <div style="color:#555; font-size:11px; padding:12px 6px;">
-                                        "Empty queue. Set exposure/filter/count, then click “Add job”."
+                                        {tr().imaging_empty_queue}
                                     </div>
                                 }.into_any();
                             }
@@ -757,7 +761,7 @@ pub fn ImagingTab(
                                             </span>
                                             <button
                                                 class="imaging-job-remove"
-                                                title="Remove job"
+                                                title=tr().imaging_remove_job
                                                 on:click=move |_| on_remove(idx)>
                                                 "×"
                                             </button>
@@ -808,6 +812,7 @@ fn job_status_color(s: &str) -> &'static str {
 
 fn render_group(
     fields: &'static [Field],
+    lang: RwSignal<Lang>,
     get_value: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
     dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
 ) -> leptos::prelude::AnyView {
@@ -815,7 +820,7 @@ fn render_group(
         <div style="display:flex; flex-direction:column; gap:6px;">
             {fields.iter().map(|f| {
                 let d = dispatch.clone();
-                render_field(*f, get_value, d)
+                render_field(*f, lang, get_value, d)
             }).collect::<Vec<_>>()}
         </div>
     }.into_any()
@@ -823,6 +828,7 @@ fn render_group(
 
 fn render_field(
     field: Field,
+    lang: RwSignal<Lang>,
     get_value: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
     dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
 ) -> leptos::prelude::AnyView {
@@ -875,9 +881,10 @@ fn render_field(
         }
     };
 
+    let label_fn = field.label;
     view! {
         <div style="display:flex; align-items:center; gap:8px; font-size:11px;">
-            <span style=label_style()>{field.label}</span>
+            <span style=label_style()>{move || label_fn(t(lang.get()))}</span>
             {editor}
         </div>
     }.into_any()

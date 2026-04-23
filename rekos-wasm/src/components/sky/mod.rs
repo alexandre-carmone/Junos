@@ -1045,6 +1045,14 @@ pub fn SkyTabSwitcher() -> impl IntoView {
         )
     };
 
+    let lang_style = move || {
+        "min-width:32px; height:26px; padding:0 8px; border-radius:6px; \
+         border:1px solid #88aaff; background:rgba(12,14,24,0.85); \
+         color:#88aaff; font:600 11px/1 ui-monospace,monospace; cursor:pointer; \
+         touch-action:manipulation; -webkit-tap-highlight-color:transparent; \
+         letter-spacing:0.05em;"
+    };
+
     view! {
         <div class="sky-tab-switcher"
              style="position:absolute; bottom:40px; left:50%; transform:translateX(-50%); \
@@ -1053,7 +1061,7 @@ pub fn SkyTabSwitcher() -> impl IntoView {
                     border:1px solid #222; border-radius:18px; pointer-events:auto;"
              on:click=|ev: MouseEvent| ev.stop_propagation()>
             <button style=toggle_style
-                    title=move || if expanded.get() { "Hide tabs" } else { "Show tabs" }
+                    title=move || if expanded.get() { tr().hide_tabs } else { tr().show_tabs }
                     on:click=move |_| expanded.update(|v| *v = !*v)>
                 {move || if expanded.get() { "\u{25be}" } else { "\u{25b4}" }}
             </button>
@@ -1064,7 +1072,7 @@ pub fn SkyTabSwitcher() -> impl IntoView {
                 <button title=move || tr().tab_focus
                         style=move || btn_style(Tab::Focus)
                         on:click=move |_| active.set(Tab::Focus)>"FOC"</button>
-                <button title="Imaging"
+                <button title=move || tr().tab_imaging
                         style=move || btn_style(Tab::Imaging)
                         on:click=move |_| active.set(Tab::Imaging)>"IMG"</button>
                 <button title=move || tr().tab_polar_align
@@ -1074,6 +1082,11 @@ pub fn SkyTabSwitcher() -> impl IntoView {
                         style=move || btn_style(Tab::Guide)
                         on:click=move |_| active.set(Tab::Guide)>"GD"</button>
             })}
+            <button style=lang_style
+                    title=move || lang.get().toggle().label()
+                    on:click=move |_| lang.update(|l| *l = l.toggle())>
+                {move || lang.get().label()}
+            </button>
         </div>
     }
 }

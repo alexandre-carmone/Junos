@@ -16,6 +16,7 @@ use wasm_bindgen::{closure::Closure, JsCast};
 use web_sys::{HtmlCanvasElement, CanvasRenderingContext2d, MouseEvent};
 
 use crate::compat::{CameraSnapshot, FocusSnapshot};
+use crate::i18n::{Lang, t};
 use crate::ws::SendCmd;
 
 fn send_cmd(send: &SendCmd, t: &str, payload: serde_json::Value) {
@@ -60,6 +61,9 @@ pub fn FocusTab(
     #[prop(into)] send:   SendCmd,
 ) -> impl IntoView {
     let _ = camera; // Reserved for future use (CCD_INFO-driven frame sizing).
+
+    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let tr = move || t(lang.get());
 
     let step_size = RwSignal::new(100_i64);
 
@@ -181,23 +185,23 @@ pub fn FocusTab(
                 )>
                     {move || {
                         let s = focus.with(|f| f.status.clone());
-                        if s.is_empty() { "Idle".to_string() } else { s }
+                        if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
-                <span style="color:#88aaff;">"Focuser:"</span>
+                <span style="color:#88aaff;">{move || tr().focus_header_focuser}</span>
                 <span>{move || {
                     let d = focus.with(|f| f.device.clone());
                     if d.is_empty() { "—".to_string() } else { d }
                 }}</span>
-                <span style="color:#88aaff;">"HFR:"</span>
+                <span style="color:#88aaff;">{move || tr().focus_header_hfr}</span>
                 <span>{move || focus.with(|f| f.hfr
                     .map(|v| format!("{:.3}", v))
                     .unwrap_or_else(|| "—".into()))}</span>
-                <span style="color:#88aaff;">"Pos:"</span>
+                <span style="color:#88aaff;">{move || tr().focus_header_position}</span>
                 <span>{move || focus.with(|f| f.position
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into()))}</span>
-                <span style="color:#88aaff;">"Temp:"</span>
+                <span style="color:#88aaff;">{move || tr().focus_header_temperature}</span>
                 <span>{move || focus.with(|f| f.temperature
                     .map(|v| format!("{:.1}°C", v))
                     .unwrap_or_else(|| "—".into()))}</span>
@@ -225,7 +229,7 @@ pub fn FocusTab(
                             }.into_any(),
                             None => view! {
                                 <div style="color:#444; font-size:12px; text-align:center; padding:0 12px;">
-                                    "No focus frame yet — click Capture or Loop"
+                                    {move || tr().focus_no_frame}
                                 </div>
                             }.into_any(),
                         }}
@@ -247,23 +251,23 @@ pub fn FocusTab(
 
                     // Actions
                     <fieldset style="border:1px solid #222; padding:10px 12px;">
-                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">"Actions"</legend>
+                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">{move || tr().focus_actions_section}</legend>
                         <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                            <button on:click=on_start style=action_btn("#7affa0")>"Start"</button>
-                            <button on:click=on_stop style=action_btn("#ff6a6a")>"Stop"</button>
-                            <button on:click=on_capture style=action_btn("#88aaff")>"Capture"</button>
-                            <button on:click=on_loop style=action_btn("#88aaff")>"Loop"</button>
+                            <button on:click=on_start style=action_btn("#7affa0")>{move || tr().start}</button>
+                            <button on:click=on_stop style=action_btn("#ff6a6a")>{move || tr().stop}</button>
+                            <button on:click=on_capture style=action_btn("#88aaff")>{move || tr().focus_capture_btn}</button>
+                            <button on:click=on_loop style=action_btn("#88aaff")>{move || tr().focus_loop_btn}</button>
                             <button on:click=on_reset style="grid-column:1 / span 2;">{
-                                view! { <span>{reset_label()}</span> }
+                                view! { <span>{move || tr().focus_reset_frame}</span> }
                             }</button>
                         </div>
                     </fieldset>
 
                     // Manual
                     <fieldset style="border:1px solid #222; padding:10px 12px;">
-                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">"Manual"</legend>
+                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">{move || tr().focus_manual_section}</legend>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                            <span style="font-size:11px; color:#88aaff;">"Step"</span>
+                            <span style="font-size:11px; color:#88aaff;">{move || tr().focus_step_label}</span>
                             <input
                                 type="number"
                                 min="1"
@@ -276,21 +280,21 @@ pub fn FocusTab(
                             />
                         </div>
                         <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                            <button on:click=on_in style=action_btn("#88aaff")>"◂ In"</button>
-                            <button on:click=on_out style=action_btn("#88aaff")>"Out ▸"</button>
+                            <button on:click=on_in style=action_btn("#88aaff")>{move || tr().focus_in_btn}</button>
+                            <button on:click=on_out style=action_btn("#88aaff")>{move || tr().focus_out_btn}</button>
                         </div>
                     </fieldset>
 
                     // Settings
                     <fieldset style="border:1px solid #222; padding:10px 12px;">
-                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">"Settings"</legend>
+                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">{move || tr().focus_settings_section}</legend>
                         <div style="display:flex; flex-direction:column; gap:6px;">
                             {move || {
                                 let rows = settings_rows();
                                 if rows.is_empty() {
                                     return view! {
                                         <div style="color:#555; font-size:11px;">
-                                            "Settings not loaded yet"
+                                            {tr().focus_settings_not_loaded}
                                         </div>
                                     }.into_any();
                                 }
@@ -306,8 +310,6 @@ pub fn FocusTab(
         </div>
     }
 }
-
-fn reset_label() -> &'static str { "Reset frame" }
 
 fn action_btn(color: &str) -> String {
     format!(

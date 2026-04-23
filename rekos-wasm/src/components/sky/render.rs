@@ -11,7 +11,7 @@ use crate::catalog::CatalogData;
 use crate::coords::J2000;
 use crate::dso_catalog::{DsoCatalogData, DsoType};
 use crate::ephemeris;
-use crate::i18n::{Lang, constellation_name};
+use crate::i18n::{Lang, constellation_name, t};
 use crate::nebulae::NebulaeIndex;
 
 use super::utils::bv_to_rgb;
@@ -331,7 +331,7 @@ fn render_fallback_stars(
 
 fn render_ground(
     ctx: &CanvasRenderingContext2d,
-    _p: &RenderParams,
+    p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
 ) {
     // Horizon line
@@ -353,7 +353,13 @@ fn render_ground(
     // Cardinal labels
     ctx.set_font("bold 14px monospace");
     ctx.set_text_align("center");
-    for (label, az) in &[("N", 0.0), ("E", 90.0), ("S", 180.0), ("W", 270.0)] {
+    let tr = t(p.cur_lang);
+    for (label, az) in &[
+        (tr.cardinal_n, 0.0_f64),
+        (tr.cardinal_e, 90.0),
+        (tr.cardinal_s, 180.0),
+        (tr.cardinal_w, 270.0),
+    ] {
         if let Some((sx, sy)) = project(-2.0, *az) {
             ctx.set_fill_style_str("#000");
             let _ = ctx.fill_text(label, sx + 1.0, sy + 15.0);
@@ -1054,36 +1060,37 @@ fn render_info_overlay(ctx: &CanvasRenderingContext2d, p: &RenderParams) {
     ctx.set_font("11px monospace");
     ctx.set_text_align("left");
 
+    let tr = t(p.cur_lang);
     let lst_h = p.lst / 15.0;
     let lst_hh = lst_h as u32;
     let lst_mm = ((lst_h - lst_hh as f64) * 60.0) as u32;
     let _ = ctx.fill_text(
-        &format!("LST: {:02}h{:02}m  FOV: {:.0}\u{00b0}", lst_hh, lst_mm, p.fov),
+        &format!("{}: {:02}h{:02}m  {}: {:.0}\u{00b0}", tr.overlay_lst, lst_hh, lst_mm, tr.overlay_fov, p.fov),
         8.0, p.hf - 108.0,
     );
     let _ = ctx.fill_text(
-        &format!("Center: Alt {:.1}\u{00b0}  Az {:.1}\u{00b0}", p.c_alt, p.c_az),
+        &format!("{}: {} {:.1}\u{00b0}  {} {:.1}\u{00b0}", tr.overlay_center, tr.overlay_alt, p.c_alt, tr.overlay_az, p.c_az),
         8.0, p.hf - 92.0,
     );
     if let (Some(ra_h), Some(dec)) = (p.mount_ra_h, p.mount_dec_deg) {
         let rah = ra_h as u32;
         let ram = ((ra_h - rah as f64) * 60.0) as u32;
         let _ = ctx.fill_text(
-            &format!("Mount: {:02}h{:02}m  {:+.1}\u{00b0}", rah, ram, dec),
+            &format!("{}: {:02}h{:02}m  {:+.1}\u{00b0}", tr.overlay_mount, rah, ram, dec),
             8.0, p.hf - 76.0,
         );
     } else {
-        let _ = ctx.fill_text("Mount: --", 8.0, p.hf - 76.0);
+        let _ = ctx.fill_text(tr.overlay_mount_none, 8.0, p.hf - 76.0);
     }
     if let Some(rot) = p.rotation_deg {
         let _ = ctx.fill_text(
-            &format!("Camera angle: {:.1}\u{00b0}", rot),
+            &format!("{}: {:.1}\u{00b0}", tr.overlay_camera_angle, rot),
             8.0, p.hf - 60.0,
         );
     }
     if p.t_off.abs() > 0.5 {
         let _ = ctx.fill_text(
-            &format!("Time offset: {:+.0}s", p.t_off),
+            &format!("{}: {:+.0}s", tr.overlay_time_offset, p.t_off),
             8.0, p.hf - 44.0,
         );
     }
@@ -1093,8 +1100,8 @@ fn render_info_overlay(ctx: &CanvasRenderingContext2d, p: &RenderParams) {
         let ram = ((ra_h - rah as f64) * 60.0) as u32;
         let _ = ctx.fill_text(
             &format!(
-                "Cursor: Alt {:+.1}\u{00b0} Az {:.1}\u{00b0}  {:02}h{:02}m {:+.1}\u{00b0}",
-                alt, az, rah, ram, dec,
+                "{}: {} {:+.1}\u{00b0} {} {:.1}\u{00b0}  {:02}h{:02}m {:+.1}\u{00b0}",
+                tr.overlay_cursor, tr.overlay_alt, alt, tr.overlay_az, az, rah, ram, dec,
             ),
             8.0, p.hf - 28.0,
         );
@@ -1144,7 +1151,7 @@ fn render_ecliptic(
 
 fn render_zenith(
     ctx: &CanvasRenderingContext2d,
-    _p: &RenderParams,
+    p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
 ) {
     if let Some((sx, sy)) = project(90.0, 0.0) {
@@ -1156,7 +1163,7 @@ fn render_zenith(
         ctx.set_fill_style_str("rgba(180,220,255,0.85)");
         ctx.set_font("bold 10px monospace");
         ctx.set_text_align("left");
-        let _ = ctx.fill_text("Z", sx + 9.0, sy + 4.0);
+        let _ = ctx.fill_text(t(p.cur_lang).zenith_mark, sx + 9.0, sy + 4.0);
     }
 }
 
@@ -1269,7 +1276,7 @@ fn render_solve_marker(
     ctx.set_fill_style_str(&green);
     ctx.set_font("10px monospace");
     ctx.set_text_align("center");
-    let _ = ctx.fill_text("SOLVED", sx, sy - 18.0);
+    let _ = ctx.fill_text(t(p.cur_lang).solved_mark, sx, sy - 18.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1299,13 +1306,13 @@ fn render_solar_system(
             ctx.set_fill_style_str("rgba(255,220,80,0.95)");
             ctx.set_font("11px monospace");
             ctx.set_text_align("left");
-            let _ = ctx.fill_text("Sun", sx + r + 4.0, sy + 4.0);
+            let _ = ctx.fill_text(t(p.cur_lang).body_sun, sx + r + 4.0, sy + 4.0);
         }
         hit_items.push(HitItem {
             sx, sy,
             radius: r + 4.0,
             kind: HitKind::Sun,
-            name: "Sun".to_string(),
+            name: t(p.cur_lang).body_sun.to_string(),
             mag: Some(sun.mag),
             ra_jnow_deg: sun.jnow.ra_deg,
             dec_jnow_deg: sun.jnow.dec_deg,
@@ -1350,13 +1357,13 @@ fn render_solar_system(
             ctx.set_fill_style_str("rgba(220,220,230,0.95)");
             ctx.set_font("11px monospace");
             ctx.set_text_align("left");
-            let _ = ctx.fill_text("Moon", sx + r + 4.0, sy + 4.0);
+            let _ = ctx.fill_text(t(p.cur_lang).body_moon, sx + r + 4.0, sy + 4.0);
         }
         hit_items.push(HitItem {
             sx, sy,
             radius: r + 4.0,
             kind: HitKind::Moon,
-            name: "Moon".to_string(),
+            name: t(p.cur_lang).body_moon.to_string(),
             mag: Some(moon.mag),
             ra_jnow_deg: moon.jnow.ra_deg,
             dec_jnow_deg: moon.jnow.dec_deg,
@@ -1379,13 +1386,13 @@ fn render_solar_system(
             ctx.set_fill_style_str(color);
             ctx.set_font("10px monospace");
             ctx.set_text_align("left");
-            let _ = ctx.fill_text(planet.name(), sx + r + 3.0, sy + 4.0);
+            let _ = ctx.fill_text(planet.name_i18n(p.cur_lang), sx + r + 3.0, sy + 4.0);
         }
         hit_items.push(HitItem {
             sx, sy,
             radius: (r + 3.0).max(8.0),
             kind: HitKind::Planet,
-            name: planet.name().to_string(),
+            name: planet.name_i18n(p.cur_lang).to_string(),
             mag: Some(pos.mag),
             ra_jnow_deg: pos.jnow.ra_deg,
             dec_jnow_deg: pos.jnow.dec_deg,

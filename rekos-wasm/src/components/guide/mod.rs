@@ -29,7 +29,10 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::compat::GuideSnapshot;
+use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
+
+type LabelFn = fn(&Translations) -> &'static str;
 
 mod timeline;
 use timeline::drift_plot;
@@ -219,8 +222,12 @@ fn can_clear(status: &str) -> bool {
     !matches!(status, "Calibrating" | "Guiding" | "Dithering")
 }
 
-fn guider_type_label(v: i64) -> &'static str {
-    match v { 1 => "PHD2", 2 => "LinGuider", _ => "Internal" }
+fn guider_type_label(v: i64, tr: &Translations) -> &'static str {
+    match v {
+        1 => tr.guide_phd2_label,
+        2 => tr.guide_linguider_label,
+        _ => tr.guide_internal,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -231,8 +238,9 @@ fn guider_type_label(v: i64) -> &'static str {
 fn bool_row(
     send: &SendCmd,
     guide: Signal<GuideSnapshot>,
+    lang: RwSignal<Lang>,
     key: &'static str,
-    label: &'static str,
+    label: LabelFn,
 ) -> impl IntoView {
     let s = send.clone();
     let on_change = move |ev: web_sys::Event| {
@@ -240,7 +248,7 @@ fn bool_row(
     };
     view! {
         <div style=row_style()>
-            <span style=field_label_style()>{label}</span>
+            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
             <input type="checkbox"
                    on:change=on_change
                    prop:checked=move || guide.with(|g|
@@ -253,8 +261,9 @@ fn bool_row(
 fn int_row(
     send: &SendCmd,
     guide: Signal<GuideSnapshot>,
+    lang: RwSignal<Lang>,
     key: &'static str,
-    label: &'static str,
+    label: LabelFn,
     min: i64,
     max: i64,
     step: i64,
@@ -269,7 +278,7 @@ fn int_row(
     };
     view! {
         <div style=row_style()>
-            <span style=field_label_style()>{label}</span>
+            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
             <input type="number"
                    min=min.to_string()
                    max=max.to_string()
@@ -287,8 +296,9 @@ fn int_row(
 fn float_row(
     send: &SendCmd,
     guide: Signal<GuideSnapshot>,
+    lang: RwSignal<Lang>,
     key: &'static str,
-    label: &'static str,
+    label: LabelFn,
     min: f64,
     max: f64,
     step: f64,
@@ -305,7 +315,7 @@ fn float_row(
     };
     view! {
         <div style=row_style()>
-            <span style=field_label_style()>{label}</span>
+            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
             <input type="number"
                    min=min.to_string()
                    max=max.to_string()
@@ -324,8 +334,9 @@ fn float_row(
 fn select_row(
     send: &SendCmd,
     guide: Signal<GuideSnapshot>,
+    lang: RwSignal<Lang>,
     key: &'static str,
-    label: &'static str,
+    label: LabelFn,
     options: &'static [&'static str],
 ) -> impl IntoView {
     let s = send.clone();
@@ -338,7 +349,7 @@ fn select_row(
     };
     view! {
         <div style=row_style()>
-            <span style=field_label_style()>{label}</span>
+            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
             <select on:change=on_change
                     style=input_style()
                     prop:value=move || guide.with(|g|
@@ -364,8 +375,9 @@ fn select_row(
 fn text_option_row(
     send: &SendCmd,
     guide: Signal<GuideSnapshot>,
+    lang: RwSignal<Lang>,
     option: &'static str,
-    label: &'static str,
+    label: LabelFn,
 ) -> impl IntoView {
     let s = send.clone();
     let on_change = move |ev: web_sys::Event| {
@@ -373,7 +385,7 @@ fn text_option_row(
     };
     view! {
         <div style=row_style()>
-            <span style=field_label_style()>{label}</span>
+            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
             <input type="text"
                    on:change=on_change
                    prop:value=move || guide.with(|g|
@@ -387,8 +399,9 @@ fn text_option_row(
 fn int_option_row(
     send: &SendCmd,
     guide: Signal<GuideSnapshot>,
+    lang: RwSignal<Lang>,
     option: &'static str,
-    label: &'static str,
+    label: LabelFn,
     min: i64,
     max: i64,
 ) -> impl IntoView {
@@ -402,7 +415,7 @@ fn int_option_row(
     };
     view! {
         <div style=row_style()>
-            <span style=field_label_style()>{label}</span>
+            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
             <input type="number"
                    min=min.to_string()
                    max=max.to_string()
@@ -425,6 +438,9 @@ pub fn GuideTab(
     #[prop(into)] guide: Signal<GuideSnapshot>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
+    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let tr = move || t(lang.get());
+
     // Action-button dispatchers (one Arc clone each — matches polar_align).
     let s_start = send.clone();
     let on_start = move |_| send_cmd(&s_start, "guide_start", serde_json::json!({}));
@@ -480,22 +496,25 @@ pub fn GuideTab(
                 )>
                     {move || {
                         let s = status();
-                        if s.is_empty() { "Idle".to_string() } else { s }
+                        if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
-                <span style="color:#88aaff;">"Guider:"</span>
-                <span>{move || guider_type_label(guider_type())}</span>
-                <span style="color:#88aaff; margin-left:8px;">"RMS:"</span>
+                <span style="color:#88aaff;">{move || tr().guide_guider_label}</span>
+                <span>{move || guider_type_label(guider_type(), t(lang.get()))}</span>
+                <span style="color:#88aaff; margin-left:8px;">{move || tr().guide_rms}</span>
                 <span style="font-size:12px;">
-                    {move || guide.with(|g| {
-                        let ra = g.ra_rms.map(|v| format!("{v:.2}\"")).unwrap_or_else(|| "—".into());
-                        let de = g.de_rms.map(|v| format!("{v:.2}\"")).unwrap_or_else(|| "—".into());
-                        format!("RA {ra}  DEC {de}")
-                    })}
+                    {move || {
+                        let tr_ = tr();
+                        guide.with(|g| {
+                            let ra = g.ra_rms.map(|v| format!("{v:.2}\"")).unwrap_or_else(|| "—".into());
+                            let de = g.de_rms.map(|v| format!("{v:.2}\"")).unwrap_or_else(|| "—".into());
+                            format!("{} {ra}  DEC {de}", tr_.ra_label)
+                        })
+                    }}
                 </span>
                 <span style="flex:1;"></span>
-                <span style="color:#88aaff;">"Connected:"</span>
-                <span>{move || if guide.with(|g| g.connected) { "yes" } else { "no" }}</span>
+                <span style="color:#88aaff;">{move || tr().guide_connected}</span>
+                <span>{move || if guide.with(|g| g.connected) { tr().yes } else { tr().no }}</span>
             </div>
 
             // ── Body ─────────────────────────────────────────────────────
@@ -527,206 +546,203 @@ pub fn GuideTab(
 
                 // ── Action row ──────────────────────────────────────────
                 <fieldset style=fieldset_style()>
-                    <legend style=legend_style()>"Actions"</legend>
+                    <legend style=legend_style()>{move || tr().guide_actions}</legend>
                     <div style="display:flex; flex-wrap:wrap; gap:8px;">
                         <button
                             on:click=on_start.clone()
                             disabled=move || !btn_start()
                             style=move || action_btn("#7affa0", btn_start())>
-                            "Start guiding"
+                            {move || tr().guide_start}
                         </button>
                         <button
                             on:click=on_stop.clone()
                             disabled=move || !btn_stop()
                             style=move || action_btn("#ff6a6a", btn_stop())>
-                            "Stop"
+                            {move || tr().stop}
                         </button>
                         <button
                             on:click=on_capture.clone()
                             disabled=move || !btn_capture()
                             style=move || action_btn("#88aaff", btn_capture())>
-                            "Capture"
+                            {move || tr().guide_capture}
                         </button>
                         <button
                             on:click=on_loop.clone()
                             disabled=move || !btn_loop()
                             style=move || action_btn("#88aaff", btn_loop())>
-                            "Loop"
+                            {move || tr().guide_loop}
                         </button>
                         <button
                             on:click=on_clear.clone()
                             disabled=move || !btn_clear()
                             style=move || action_btn("#ffd060", btn_clear())>
-                            "Clear calibration"
+                            {move || tr().guide_clear_cal}
                         </button>
                     </div>
                     <div style="margin-top:6px; font-size:11px; color:#667;">
-                        "Capture / Loop require the Internal guider. \
-                         PHD2 handles framing itself."
+                        {move || tr().guide_capture_loop_note}
                     </div>
                 </fieldset>
 
                 // ── Essentials ──────────────────────────────────────────
                 <fieldset style=fieldset_style()>
-                    <legend style=legend_style()>"Essentials"</legend>
+                    <legend style=legend_style()>{move || tr().guide_essentials}</legend>
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                        {float_row (&send, guide, "guideExposure",    "Exposure (s)",     0.1, 60.0, 0.1)}
-                        {float_row (&send, guide, "guideDelay",       "Delay (s)",        0.0, 60.0, 0.1)}
-                        {float_row (&send, guide, "guideGain",        "Gain",             0.0, 1000.0, 1.0)}
-                        {select_row(&send, guide, "guideBinning",     "Binning",          BINNING_OPTIONS)}
-                        {select_row(&send, guide, "guideSquareSize",  "Tracking box (px)", SQUARE_OPTIONS)}
-                        {bool_row  (&send, guide, "guideDarkFrame",   "Dark frame")}
-                        {bool_row  (&send, guide, "guideSubframe",    "Subframe")}
-                        {bool_row  (&send, guide, "guideAutoStar",    "Auto select star")}
-                        {bool_row  (&send, guide, "guideStreamingEnabled", "Stream guide frames")}
+                        {float_row (&send, guide, lang, "guideExposure",    |t| t.guide_f_exposure,     0.1, 60.0, 0.1)}
+                        {float_row (&send, guide, lang, "guideDelay",       |t| t.guide_f_delay,        0.0, 60.0, 0.1)}
+                        {float_row (&send, guide, lang, "guideGain",        |t| t.guide_f_gain,         0.0, 1000.0, 1.0)}
+                        {select_row(&send, guide, lang, "guideBinning",     |t| t.guide_f_binning,      BINNING_OPTIONS)}
+                        {select_row(&send, guide, lang, "guideSquareSize",  |t| t.guide_f_tracking_box, SQUARE_OPTIONS)}
+                        {bool_row  (&send, guide, lang, "guideDarkFrame",   |t| t.guide_f_dark_frame)}
+                        {bool_row  (&send, guide, lang, "guideSubframe",    |t| t.guide_f_subframe)}
+                        {bool_row  (&send, guide, lang, "guideAutoStar",    |t| t.guide_f_auto_star)}
+                        {bool_row  (&send, guide, lang, "guideStreamingEnabled", |t| t.guide_f_stream)}
                     </div>
                 </fieldset>
 
                 // ── RA/DEC enable ───────────────────────────────────────
                 <fieldset style=fieldset_style()>
-                    <legend style=legend_style()>"RA / DEC corrections"</legend>
+                    <legend style=legend_style()>{move || tr().guide_ra_dec_corrections}</legend>
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                        {bool_row(&send, guide, "rAGuideEnabled",      "RA guiding")}
-                        {bool_row(&send, guide, "eastRAGuideEnabled",  "  \u{2514} East pulses")}
-                        {bool_row(&send, guide, "westRAGuideEnabled",  "  \u{2514} West pulses")}
-                        {bool_row(&send, guide, "dECGuideEnabled",     "DEC guiding")}
-                        {bool_row(&send, guide, "northDECGuideEnabled","  \u{2514} North pulses")}
-                        {bool_row(&send, guide, "southDECGuideEnabled","  \u{2514} South pulses")}
+                        {bool_row(&send, guide, lang, "rAGuideEnabled",      |t| t.guide_f_ra_guiding)}
+                        {bool_row(&send, guide, lang, "eastRAGuideEnabled",  |t| t.guide_f_east_pulses)}
+                        {bool_row(&send, guide, lang, "westRAGuideEnabled",  |t| t.guide_f_west_pulses)}
+                        {bool_row(&send, guide, lang, "dECGuideEnabled",     |t| t.guide_f_dec_guiding)}
+                        {bool_row(&send, guide, lang, "northDECGuideEnabled",|t| t.guide_f_north_pulses)}
+                        {bool_row(&send, guide, lang, "southDECGuideEnabled",|t| t.guide_f_south_pulses)}
                     </div>
                 </fieldset>
 
                 // ── Calibration (collapsible) ───────────────────────────
                 <details style="border:1px solid #222;">
-                    <summary style=legend_style()>"Calibration"</summary>
+                    <summary style=legend_style()>{move || tr().guide_calibration}</summary>
                     <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
-                        {int_row  (&send, guide, "kcfg_AutoModeIterations",         "Iterations",          1, 100, 1)}
-                        {int_row  (&send, guide, "kcfg_CalibrationPulseDuration",   "Pulse duration (ms)", 100, 10000, 100)}
-                        {int_row  (&send, guide, "kcfg_CalibrationMaxMove",         "Max move (px)",       1, 200, 1)}
-                        {bool_row (&send, guide, "kcfg_TwoAxisEnabled",             "Two-axis")}
-                        {bool_row (&send, guide, "kcfg_GuideAutoSquareSizeEnabled", "Auto tracking-box size")}
-                        {bool_row (&send, guide, "kcfg_GuideCalibrationBacklash",   "Account for DEC backlash")}
-                        {bool_row (&send, guide, "kcfg_ResetGuideCalibration",      "Reset calibration each start")}
-                        {bool_row (&send, guide, "kcfg_ReuseGuideCalibration",      "Reuse calibration when possible")}
-                        {bool_row (&send, guide, "kcfg_ReverseDecOnPierSideChange", "Reverse DEC on pier flip")}
+                        {int_row  (&send, guide, lang, "kcfg_AutoModeIterations",         |t| t.guide_f_iterations,          1, 100, 1)}
+                        {int_row  (&send, guide, lang, "kcfg_CalibrationPulseDuration",   |t| t.guide_f_pulse_duration,      100, 10000, 100)}
+                        {int_row  (&send, guide, lang, "kcfg_CalibrationMaxMove",         |t| t.guide_f_max_move,            1, 200, 1)}
+                        {bool_row (&send, guide, lang, "kcfg_TwoAxisEnabled",             |t| t.guide_f_two_axis)}
+                        {bool_row (&send, guide, lang, "kcfg_GuideAutoSquareSizeEnabled", |t| t.guide_f_auto_box_size)}
+                        {bool_row (&send, guide, lang, "kcfg_GuideCalibrationBacklash",   |t| t.guide_f_dec_backlash)}
+                        {bool_row (&send, guide, lang, "kcfg_ResetGuideCalibration",      |t| t.guide_f_reset_each_start)}
+                        {bool_row (&send, guide, lang, "kcfg_ReuseGuideCalibration",      |t| t.guide_f_reuse_cal)}
+                        {bool_row (&send, guide, lang, "kcfg_ReverseDecOnPierSideChange", |t| t.guide_f_reverse_dec_flip)}
                     </div>
                 </details>
 
                 // ── Dither (collapsible) ────────────────────────────────
                 <details style="border:1px solid #222;">
-                    <summary style=legend_style()>"Dither"</summary>
+                    <summary style=legend_style()>{move || tr().guide_dither}</summary>
                     <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
                         <div style="font-size:11px; color:#667; margin-bottom:4px;">
-                            "No \"dither now\" button — the Ekos Live protocol \
-                             only exposes dither as an auto-trigger during \
-                             capture sequences via these settings."
+                            {move || tr().guide_dither_note}
                         </div>
-                        {bool_row (&send, guide, "kcfg_DitherEnabled",             "Enable dithering")}
-                        {float_row(&send, guide, "kcfg_DitherPixels",              "Amount (px)",        0.1, 30.0, 0.1)}
-                        {int_row  (&send, guide, "kcfg_DitherFrames",              "Frames between",     1, 100, 1)}
-                        {float_row(&send, guide, "kcfg_DitherThreshold",           "Settle threshold (px)", 0.1, 10.0, 0.1)}
-                        {int_row  (&send, guide, "kcfg_DitherSettle",              "Settle time (s)",    0, 300, 1)}
-                        {int_row  (&send, guide, "kcfg_DitherTimeout",             "Dither timeout (s)", 1, 600, 1)}
-                        {int_row  (&send, guide, "kcfg_DitherMaxIterations",       "Max iterations",     1, 100, 1)}
-                        {bool_row (&send, guide, "kcfg_DitherWithOnePulse",        "Dither with one pulse")}
-                        {bool_row (&send, guide, "kcfg_DitherFailAbortsAutoGuide", "Failure aborts auto-guide")}
-                        {bool_row (&send, guide, "kcfg_DitherNoGuiding",           "Dither without guiding")}
-                        {int_row  (&send, guide, "kcfg_DitherNoGuidingPulse",      "No-guide dither pulse (ms)", 100, 10000, 100)}
+                        {bool_row (&send, guide, lang, "kcfg_DitherEnabled",             |t| t.guide_f_dither_enabled)}
+                        {float_row(&send, guide, lang, "kcfg_DitherPixels",              |t| t.guide_f_dither_amount,         0.1, 30.0, 0.1)}
+                        {int_row  (&send, guide, lang, "kcfg_DitherFrames",              |t| t.guide_f_dither_frames,         1, 100, 1)}
+                        {float_row(&send, guide, lang, "kcfg_DitherThreshold",           |t| t.guide_f_dither_settle_thr,     0.1, 10.0, 0.1)}
+                        {int_row  (&send, guide, lang, "kcfg_DitherSettle",              |t| t.guide_f_dither_settle_t,       0, 300, 1)}
+                        {int_row  (&send, guide, lang, "kcfg_DitherTimeout",             |t| t.guide_f_dither_timeout,        1, 600, 1)}
+                        {int_row  (&send, guide, lang, "kcfg_DitherMaxIterations",       |t| t.guide_f_dither_max_iter,       1, 100, 1)}
+                        {bool_row (&send, guide, lang, "kcfg_DitherWithOnePulse",        |t| t.guide_f_dither_one_pulse)}
+                        {bool_row (&send, guide, lang, "kcfg_DitherFailAbortsAutoGuide", |t| t.guide_f_dither_fail_abort)}
+                        {bool_row (&send, guide, lang, "kcfg_DitherNoGuiding",           |t| t.guide_f_dither_no_guiding)}
+                        {int_row  (&send, guide, lang, "kcfg_DitherNoGuidingPulse",      |t| t.guide_f_dither_no_guide_pulse, 100, 10000, 100)}
                     </div>
                 </details>
 
                 // ── Algorithms (collapsible) ────────────────────────────
                 <details style="border:1px solid #222;">
-                    <summary style=legend_style()>"Guiding algorithms"</summary>
+                    <summary style=legend_style()>{move || tr().guide_algorithms}</summary>
                     <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
-                        {select_row(&send, guide, "kcfg_GuideAlgorithm",           "Detection",       GUIDE_ALGO_OPTS)}
-                        {select_row(&send, guide, "kcfg_RAGuidePulseAlgorithm",    "RA pulse algo",   PULSE_ALGO_OPTS)}
-                        {select_row(&send, guide, "kcfg_DECGuidePulseAlgorithm",   "DEC pulse algo",  PULSE_ALGO_OPTS)}
-                        {float_row (&send, guide, "kcfg_RAProportionalGain",       "RA Proportional gain", 0.0, 1.0, 0.01)}
-                        {float_row (&send, guide, "kcfg_RAIntegralGain",           "RA Integral gain",     0.0, 1.0, 0.01)}
-                        {float_row (&send, guide, "kcfg_RAMinimumPulseArcSec",     "RA min pulse (arcsec)", 0.0, 10.0, 0.01)}
-                        {float_row (&send, guide, "kcfg_RAMaximumPulseArcSec",     "RA max pulse (arcsec)", 0.0, 30.0, 0.1)}
-                        {float_row (&send, guide, "kcfg_RAHysteresis",             "RA hysteresis",    0.0, 1.0, 0.01)}
-                        {float_row (&send, guide, "kcfg_DECProportionalGain",      "DEC Proportional gain", 0.0, 1.0, 0.01)}
-                        {float_row (&send, guide, "kcfg_DECIntegralGain",          "DEC Integral gain",     0.0, 1.0, 0.01)}
-                        {float_row (&send, guide, "kcfg_DECMinimumPulseArcSec",    "DEC min pulse (arcsec)", 0.0, 10.0, 0.01)}
-                        {float_row (&send, guide, "kcfg_DECMaximumPulseArcSec",    "DEC max pulse (arcsec)", 0.0, 30.0, 0.1)}
-                        {float_row (&send, guide, "kcfg_DECHysteresis",            "DEC hysteresis",   0.0, 1.0, 0.01)}
-                        {float_row (&send, guide, "kcfg_GuideMaxDeltaRMS",         "Max ΔRMS (arcsec)",     0.0, 30.0, 0.1)}
-                        {float_row (&send, guide, "kcfg_GuideMaxHFR",              "Max HFR",          0.0, 30.0, 0.1)}
-                        {int_row   (&send, guide, "kcfg_GuideLostStarTimeout",     "Lost-star timeout (s)", 1, 600, 1)}
-                        {int_row   (&send, guide, "kcfg_GuideCalibrationTimeout",  "Calibration timeout (s)", 1, 600, 1)}
-                        {int_row   (&send, guide, "kcfg_MinDetectionsSEPMultistar","SEP min detections", 1, 200, 1)}
-                        {int_row   (&send, guide, "kcfg_MaxMultistarReferenceStars","SEP max reference stars", 1, 200, 1)}
+                        {select_row(&send, guide, lang, "kcfg_GuideAlgorithm",           |t| t.guide_f_detection,      GUIDE_ALGO_OPTS)}
+                        {select_row(&send, guide, lang, "kcfg_RAGuidePulseAlgorithm",    |t| t.guide_f_ra_pulse_algo,  PULSE_ALGO_OPTS)}
+                        {select_row(&send, guide, lang, "kcfg_DECGuidePulseAlgorithm",   |t| t.guide_f_dec_pulse_algo, PULSE_ALGO_OPTS)}
+                        {float_row (&send, guide, lang, "kcfg_RAProportionalGain",       |t| t.guide_f_ra_kp,          0.0, 1.0, 0.01)}
+                        {float_row (&send, guide, lang, "kcfg_RAIntegralGain",           |t| t.guide_f_ra_ki,          0.0, 1.0, 0.01)}
+                        {float_row (&send, guide, lang, "kcfg_RAMinimumPulseArcSec",     |t| t.guide_f_ra_min_pulse,   0.0, 10.0, 0.01)}
+                        {float_row (&send, guide, lang, "kcfg_RAMaximumPulseArcSec",     |t| t.guide_f_ra_max_pulse,   0.0, 30.0, 0.1)}
+                        {float_row (&send, guide, lang, "kcfg_RAHysteresis",             |t| t.guide_f_ra_hysteresis,  0.0, 1.0, 0.01)}
+                        {float_row (&send, guide, lang, "kcfg_DECProportionalGain",      |t| t.guide_f_dec_kp,         0.0, 1.0, 0.01)}
+                        {float_row (&send, guide, lang, "kcfg_DECIntegralGain",          |t| t.guide_f_dec_ki,         0.0, 1.0, 0.01)}
+                        {float_row (&send, guide, lang, "kcfg_DECMinimumPulseArcSec",    |t| t.guide_f_dec_min_pulse,  0.0, 10.0, 0.01)}
+                        {float_row (&send, guide, lang, "kcfg_DECMaximumPulseArcSec",    |t| t.guide_f_dec_max_pulse,  0.0, 30.0, 0.1)}
+                        {float_row (&send, guide, lang, "kcfg_DECHysteresis",            |t| t.guide_f_dec_hysteresis, 0.0, 1.0, 0.01)}
+                        {float_row (&send, guide, lang, "kcfg_GuideMaxDeltaRMS",         |t| t.guide_f_max_drms,       0.0, 30.0, 0.1)}
+                        {float_row (&send, guide, lang, "kcfg_GuideMaxHFR",              |t| t.guide_f_max_hfr,        0.0, 30.0, 0.1)}
+                        {int_row   (&send, guide, lang, "kcfg_GuideLostStarTimeout",     |t| t.guide_f_lost_star_to,   1, 600, 1)}
+                        {int_row   (&send, guide, lang, "kcfg_GuideCalibrationTimeout",  |t| t.guide_f_cal_timeout,    1, 600, 1)}
+                        {int_row   (&send, guide, lang, "kcfg_MinDetectionsSEPMultistar",|t| t.guide_f_sep_min,        1, 200, 1)}
+                        {int_row   (&send, guide, lang, "kcfg_MaxMultistarReferenceStars",|t| t.guide_f_sep_max_ref,   1, 200, 1)}
                     </div>
                 </details>
 
                 // ── Guider backend (default open) ───────────────────────
                 <details open=true style="border:1px solid #222;">
-                    <summary style=legend_style()>"Guider backend"</summary>
+                    <summary style=legend_style()>{move || tr().guide_backend}</summary>
                     <div style="padding:10px 14px; display:flex; flex-direction:column; gap:10px;">
                         <div style="display:flex; gap:14px; flex-wrap:wrap;">
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
                                 <input type="radio" name="guider-type"
                                        on:change=on_internal
                                        prop:checked=move || guider_type() == 0 />
-                                "Internal"
+                                {move || tr().guide_internal}
                             </label>
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
                                 <input type="radio" name="guider-type"
                                        on:change=on_phd2
                                        prop:checked=move || guider_type() == 1 />
-                                "PHD2"
+                                {move || tr().guide_phd2_label}
                             </label>
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
                                 <input type="radio" name="guider-type"
                                        on:change=on_linguider
                                        prop:checked=move || guider_type() == 2 />
-                                "LinGuider"
+                                {move || tr().guide_linguider_label}
                             </label>
                         </div>
 
                         // PHD2 host/port — always shown (they remain editable
                         // even when Internal is active, matching KStars UI).
                         <div style="border-top:1px solid #1a1a20; padding-top:8px;">
-                            <div style="font-size:11px; color:#88aaff; margin-bottom:6px;">"PHD2"</div>
-                            {text_option_row(&send, guide, "PHD2Host", "Host")}
-                            {int_option_row (&send, guide, "PHD2Port", "Port", 1, 65535)}
+                            <div style="font-size:11px; color:#88aaff; margin-bottom:6px;">{move || tr().guide_phd2}</div>
+                            {text_option_row(&send, guide, lang, "PHD2Host", |t| t.guide_host)}
+                            {int_option_row (&send, guide, lang, "PHD2Port", |t| t.guide_port, 1, 65535)}
                         </div>
 
                         <div style="border-top:1px solid #1a1a20; padding-top:8px;">
-                            <div style="font-size:11px; color:#88aaff; margin-bottom:6px;">"LinGuider"</div>
-                            {text_option_row(&send, guide, "LinGuiderHost", "Host")}
-                            {int_option_row (&send, guide, "LinGuiderPort", "Port", 1, 65535)}
+                            <div style="font-size:11px; color:#88aaff; margin-bottom:6px;">{move || tr().guide_linguider}</div>
+                            {text_option_row(&send, guide, lang, "LinGuiderHost", |t| t.guide_host)}
+                            {int_option_row (&send, guide, lang, "LinGuiderPort", |t| t.guide_port, 1, 65535)}
                         </div>
                     </div>
                 </details>
 
                 // ── Advanced / GPG (collapsed by default) ───────────────
                 <details style="border:1px solid #222;">
-                    <summary style=legend_style()>"Advanced"</summary>
+                    <summary style=legend_style()>{move || tr().guide_advanced}</summary>
                     <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
-                        {bool_row (&send, guide, "kcfg_SaveGuideLog",              "Save guide log")}
-                        {bool_row (&send, guide, "kcfg_UseGuideHead",              "Use guide head")}
-                        {bool_row (&send, guide, "kcfg_AlwaysInventGuideStar",     "Always invent guide star")}
-                        {bool_row (&send, guide, "latestCheck",                    "Show latest checks")}
-                        {float_row(&send, guide, "guiderAccuracyThreshold",        "Accuracy threshold",   0.0, 10.0, 0.1)}
+                        {bool_row (&send, guide, lang, "kcfg_SaveGuideLog",              |t| t.guide_f_save_log)}
+                        {bool_row (&send, guide, lang, "kcfg_UseGuideHead",              |t| t.guide_f_use_guide_head)}
+                        {bool_row (&send, guide, lang, "kcfg_AlwaysInventGuideStar",     |t| t.guide_f_invent_star)}
+                        {bool_row (&send, guide, lang, "latestCheck",                    |t| t.guide_f_latest_checks)}
+                        {float_row(&send, guide, lang, "guiderAccuracyThreshold",        |t| t.guide_f_accuracy_thr,     0.0, 10.0, 0.1)}
 
                         <div style="border-top:1px solid #1a1a20; padding-top:8px; margin-top:6px;">
-                            <div style="font-size:11px; color:#88aaff; margin-bottom:6px;">"GPG guider"</div>
-                            {int_row  (&send, guide, "kcfg_GPGPeriod",                    "Period (s)",              1, 3600, 1)}
-                            {bool_row (&send, guide, "kcfg_GPGEstimatePeriod",            "Estimate period")}
-                            {bool_row (&send, guide, "kcfg_GPGDarkGuiding",               "Dark guiding")}
-                            {int_row  (&send, guide, "kcfg_GPGDarkGuidingInterval",       "Dark-guiding interval",   1, 600, 1)}
-                            {float_row(&send, guide, "kcfg_GPGpWeight",                   "Prediction weight",       0.0, 1.0, 0.01)}
-                            {float_row(&send, guide, "kcfg_GPGSE0KLengthScale",           "SE0 length scale",        0.0, 1000.0, 1.0)}
-                            {float_row(&send, guide, "kcfg_GPGSE0KSignalVariance",        "SE0 signal variance",     0.0, 10.0, 0.01)}
-                            {float_row(&send, guide, "kcfg_GPGPKLengthScale",             "PK length scale",         0.0, 1000.0, 1.0)}
-                            {float_row(&send, guide, "kcfg_GPGPKSignalVariance",          "PK signal variance",      0.0, 10.0, 0.01)}
-                            {float_row(&send, guide, "kcfg_GPGSE1KLengthScale",           "SE1 length scale",        0.0, 1000.0, 1.0)}
-                            {float_row(&send, guide, "kcfg_GPGSE1KSignalVariance",        "SE1 signal variance",     0.0, 10.0, 0.01)}
-                            {int_row  (&send, guide, "kcfg_GPGPointsForApproximation",    "Points for approximation", 1, 10000, 10)}
-                            {int_row  (&send, guide, "kcfg_GPGMinPeriodsForInference",    "Min periods for inference", 1, 100, 1)}
-                            {int_row  (&send, guide, "kcfg_GPGMinPeriodsForPeriodEstimate","Min periods for period estimate", 1, 100, 1)}
+                            <div style="font-size:11px; color:#88aaff; margin-bottom:6px;">{move || tr().guide_gpg}</div>
+                            {int_row  (&send, guide, lang, "kcfg_GPGPeriod",                    |t| t.guide_f_gpg_period,             1, 3600, 1)}
+                            {bool_row (&send, guide, lang, "kcfg_GPGEstimatePeriod",            |t| t.guide_f_gpg_estimate_period)}
+                            {bool_row (&send, guide, lang, "kcfg_GPGDarkGuiding",               |t| t.guide_f_gpg_dark)}
+                            {int_row  (&send, guide, lang, "kcfg_GPGDarkGuidingInterval",       |t| t.guide_f_gpg_dark_interval,      1, 600, 1)}
+                            {float_row(&send, guide, lang, "kcfg_GPGpWeight",                   |t| t.guide_f_gpg_p_weight,           0.0, 1.0, 0.01)}
+                            {float_row(&send, guide, lang, "kcfg_GPGSE0KLengthScale",           |t| t.guide_f_gpg_se0_length,         0.0, 1000.0, 1.0)}
+                            {float_row(&send, guide, lang, "kcfg_GPGSE0KSignalVariance",        |t| t.guide_f_gpg_se0_signal,         0.0, 10.0, 0.01)}
+                            {float_row(&send, guide, lang, "kcfg_GPGPKLengthScale",             |t| t.guide_f_gpg_pk_length,          0.0, 1000.0, 1.0)}
+                            {float_row(&send, guide, lang, "kcfg_GPGPKSignalVariance",          |t| t.guide_f_gpg_pk_signal,          0.0, 10.0, 0.01)}
+                            {float_row(&send, guide, lang, "kcfg_GPGSE1KLengthScale",           |t| t.guide_f_gpg_se1_length,         0.0, 1000.0, 1.0)}
+                            {float_row(&send, guide, lang, "kcfg_GPGSE1KSignalVariance",        |t| t.guide_f_gpg_se1_signal,         0.0, 10.0, 0.01)}
+                            {int_row  (&send, guide, lang, "kcfg_GPGPointsForApproximation",    |t| t.guide_f_gpg_points_approx,      1, 10000, 10)}
+                            {int_row  (&send, guide, lang, "kcfg_GPGMinPeriodsForInference",    |t| t.guide_f_gpg_min_periods_inf,    1, 100, 1)}
+                            {int_row  (&send, guide, lang, "kcfg_GPGMinPeriodsForPeriodEstimate",|t| t.guide_f_gpg_min_periods_period, 1, 100, 1)}
                         </div>
                     </div>
                 </details>

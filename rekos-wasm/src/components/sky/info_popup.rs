@@ -81,12 +81,14 @@ pub fn SkyInfoPopup(
                             </div>
                         })}
                         <div style="margin-top:6px; color:#88aaff;">
-                            {format!("JNow  RA {:02}h{:02}m{:04.1}s  Dec {}{}\u{00b0}{:02}'{:02}\"",
-                                rah, ram, ras, dec_sign, decd, decm, decs)}
+                            {format!("{}  {} {:02}h{:02}m{:04.1}s  {} {}{}\u{00b0}{:02}'{:02}\"",
+                                tr_.jnow_label, tr_.ra_label, rah, ram, ras,
+                                tr_.dec_label, dec_sign, decd, decm, decs)}
                         </div>
                         <div style="color:#668;">
-                            {format!("J2000 RA {:02}h{:02}m    Dec {}{}\u{00b0}{:02}'",
-                                j_rah, j_ram, j_dec_sign, j_decd, j_decm)}
+                            {format!("{} {} {:02}h{:02}m    {} {}{}\u{00b0}{:02}'",
+                                tr_.j2000_label, tr_.ra_label, j_rah, j_ram,
+                                tr_.dec_label, j_dec_sign, j_decd, j_decm)}
                         </div>
                     </div>
                 }
