@@ -29,6 +29,20 @@ const SCHED_CSS: &str = r#"
     border-bottom: 1px solid #222; background: rgba(6,6,15,0.85);
     font-size: 13px; min-height: 44px; flex-shrink: 0;
 }
+.sched-settings-row {
+    display: flex; flex-wrap: wrap; gap: 6px 20px;
+    padding: 6px 20px; border-bottom: 1px solid #1a1a2a;
+    background: rgba(6,6,10,0.8); font-size: 11px;
+    align-items: center; flex-shrink: 0;
+}
+.sched-settings-sep {
+    color: #2a2a3a; user-select: none;
+}
+.sched-toggle-label {
+    display: flex; align-items: center; gap: 5px; cursor: pointer;
+    color: #aab; user-select: none; font-size: 11px;
+}
+.sched-toggle-label input[type=checkbox] { accent-color: #88aaff; cursor: pointer; }
 .sched-badge {
     display: inline-block; padding: 3px 10px; border-radius: 14px;
     font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
@@ -52,6 +66,13 @@ const SCHED_CSS: &str = r#"
     border-color: #5a2a2a; background: #1a0a0a; color: #ee4444;
 }
 .sched-btn-stop:hover { background: #2a0a0a; }
+.sched-btn-apply {
+    border-color: #3a4a6a; background: #0a0f1a; color: #88aaff;
+    padding: 4px 12px; border-radius: 6px; font-family: monospace;
+    font-size: 11px; font-weight: 600; cursor: pointer;
+    touch-action: manipulation; border-style: solid;
+}
+.sched-btn-apply:hover { background: #0f1a2a; }
 .sched-body {
     flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding: 0 0 80px;
@@ -125,6 +146,14 @@ const SCHED_CSS: &str = r#"
 .sched-search-result {
     color: #44ee88; font-size: 11px; padding: 3px 8px;
     background: #0a1a0a; border-radius: 4px; border: 1px solid #1a3a1a;
+}
+.sched-fieldset {
+    border: 1px solid #1e1e30; border-radius: 6px;
+    padding: 8px 12px 10px; margin: 0;
+}
+.sched-fieldset legend {
+    color: #667; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.05em; padding: 0 6px;
 }
 /* Sequence builder */
 .sched-seq-section {
@@ -265,15 +294,60 @@ pub fn SchedulerTab(
 
     let dso_catalog = use_context::<RwSignal<Option<std::sync::Arc<DsoCatalogData>>>>();
 
+    // ── Observatory scripts ─────────────────────────────────────────────────
+    let startup_enabled  = RwSignal::new(false);
+    let pre_startup      = RwSignal::new(String::new());
+    let post_startup     = RwSignal::new(String::new());
+    let shutdown_enabled = RwSignal::new(false);
+    let pre_shutdown     = RwSignal::new(String::new());
+    let post_shutdown    = RwSignal::new(String::new());
+
+    // ── Global scheduler settings ───────────────────────────────────────────
+    let greedy         = RwSignal::new(false);
+    let remember_prog  = RwSignal::new(true);
+    let reschedule_err = RwSignal::new(false);
+
+    // Pre-populate from KStars settings once they arrive
+    let settings_populated = RwSignal::new(false);
+    Effect::new(move |_| {
+        if settings_populated.get_untracked() { return; }
+        let s = scheduler.get().settings;
+        if !s.is_object() { return; }
+        if let Some(v) = s["schedulerStartupEnabled"].as_bool()           { startup_enabled.set(v); }
+        if let Some(v) = s["schedulerPreStartupScript"].as_str()          { pre_startup.set(v.to_string()); }
+        if let Some(v) = s["schedulerPostStartupScript"].as_str()         { post_startup.set(v.to_string()); }
+        if let Some(v) = s["schedulerShutdownEnabled"].as_bool()          { shutdown_enabled.set(v); }
+        if let Some(v) = s["schedulerPreShutdownScript"].as_str()         { pre_shutdown.set(v.to_string()); }
+        if let Some(v) = s["schedulerPostShutdownScript"].as_str()        { post_shutdown.set(v.to_string()); }
+        if let Some(v) = s["kcfg_GreedyScheduling"].as_bool()            { greedy.set(v); }
+        if let Some(v) = s["kcfg_RememberJobProgress"].as_bool()         { remember_prog.set(v); }
+        if let Some(v) = s["errorHandlingRescheduleErrorsCB"].as_bool()   { reschedule_err.set(v); }
+        settings_populated.set(true);
+    });
+
     // ── Add-job form state ──────────────────────────────────────────────────
     let f_target_name = RwSignal::new(String::new());
     let f_ra_h        = RwSignal::new(String::new());
     let f_dec_deg     = RwSignal::new(String::new());
     let f_min_alt     = RwSignal::new("30".to_string());
     let f_min_moon    = RwSignal::new("0".to_string());
-    let f_repeats     = RwSignal::new("1".to_string());
     let f_pa          = RwSignal::new("0".to_string());
     let search_result = RwSignal::new(Option::<String>::None);
+
+    // Per-job step pipeline (default: Track + Guide)
+    let step_track = RwSignal::new(true);
+    let step_focus = RwSignal::new(false);
+    let step_align = RwSignal::new(false);
+    let step_guide = RwSignal::new(true);
+
+    // Per-job startup condition: "asap" | "at"
+    let startup_cond = RwSignal::new("asap".to_string());
+    let startup_at   = RwSignal::new(String::new());
+
+    // Per-job completion condition: "sequence" | "repeat" | "loop" | "at"
+    let completion_cond  = RwSignal::new("sequence".to_string());
+    let completion_count = RwSignal::new("1".to_string());
+    let completion_at    = RwSignal::new(String::new());
 
     // Sequence frames — start with one default Light row
     let seq_frames: RwSignal<Vec<SeqFrame>> = RwSignal::new(vec![SeqFrame::default()]);
@@ -310,6 +384,19 @@ pub fn SchedulerTab(
         }
     };
 
+    // ── Apply observatory scripts ───────────────────────────────────────────
+    let send_for_scripts = Arc::clone(&send);
+    let on_apply_scripts = move |_| {
+        send_cmd(&send_for_scripts, "scheduler_set_all_settings", serde_json::json!({
+            "schedulerStartupEnabled":    startup_enabled.get_untracked(),
+            "schedulerPreStartupScript":  pre_startup.get_untracked(),
+            "schedulerPostStartupScript": post_startup.get_untracked(),
+            "schedulerShutdownEnabled":   shutdown_enabled.get_untracked(),
+            "schedulerPreShutdownScript": pre_shutdown.get_untracked(),
+            "schedulerPostShutdownScript":post_shutdown.get_untracked(),
+        }));
+    };
+
     // ── Submit new job ──────────────────────────────────────────────────────
     let send_for_add = Arc::clone(&send);
     let on_add_job = move |_| {
@@ -317,7 +404,6 @@ pub fn SchedulerTab(
         let home      = scheduler.get_untracked().home_dir;
         let frames_raw = seq_frames.get_untracked();
 
-        // Convert raw string fields to typed values for XML generation
         let frames: Vec<SeqFrame> = frames_raw.iter().filter(|f| {
             f.exposure.parse::<f64>().is_ok() && f.count.parse::<u32>().is_ok()
         }).cloned().collect();
@@ -336,6 +422,23 @@ pub fn SchedulerTab(
         let ra_f  = f_ra_h.get_untracked().parse::<f64>().unwrap_or(0.0);
         let dec_f = f_dec_deg.get_untracked().parse::<f64>().unwrap_or(0.0);
 
+        // Resolve completion condition fields
+        let cond = completion_cond.get_untracked();
+        let (seq_r, rep_r, rep_lim, loop_r, until_r, until_val) = match cond.as_str() {
+            "repeat" => (false, true,  completion_count.get_untracked().parse::<i64>().unwrap_or(1), false, false, String::new()),
+            "loop"   => (false, false, 1,  true,  false, String::new()),
+            "at"     => (false, false, 1,  false, true,  completion_at.get_untracked()),
+            _        => (true,  false, 1,  false, false, String::new()),
+        };
+
+        // Resolve startup condition fields
+        let sc = startup_cond.get_untracked();
+        let (asap_r, start_time_r, start_time_val) = if sc == "at" {
+            (false, true, startup_at.get_untracked())
+        } else {
+            (true, false, String::new())
+        };
+
         // 1. Save the ESQ file to the KStars machine
         send_cmd(&send_for_add, "scheduler_save_sequence_file",
             serde_json::json!({"path": rel_path, "filedata": xml}));
@@ -348,11 +451,26 @@ pub fn SchedulerTab(
             "sequenceEdit":      abs_path,
             "minAltitude":       f_min_alt.get_untracked().parse::<f64>().unwrap_or(30.0),
             "minMoonSeparation": f_min_moon.get_untracked().parse::<f64>().unwrap_or(0.0),
-            "repeatsSpin":       f_repeats.get_untracked().parse::<i64>().unwrap_or(1),
             "positionAngleSpin": f_pa.get_untracked().parse::<f64>().unwrap_or(0.0),
+            // Steps pipeline
+            "schedulerTrackStep": step_track.get_untracked(),
+            "schedulerFocusStep": step_focus.get_untracked(),
+            "schedulerAlignStep": step_align.get_untracked(),
+            "schedulerGuideStep": step_guide.get_untracked(),
+            // Startup condition
+            "asapConditionR":        asap_r,
+            "startupTimeConditionR": start_time_r,
+            "startupTimeEdit":       start_time_val,
+            // Completion condition
+            "schedulerCompleteSequences":    seq_r,
+            "schedulerRepeatSequences":      rep_r,
+            "schedulerRepeatSequencesLimit": rep_lim,
+            "schedulerUntilTerminated":      loop_r,
+            "schedulerUntil":                until_r,
+            "schedulerUntilValue":           until_val,
         }));
 
-        // 3. Add job (file is written before this arrives at KStars)
+        // 3. Add job
         send_cmd(&send_for_add, "scheduler_add_jobs", serde_json::json!({}));
 
         // 4. Refresh job list
@@ -400,8 +518,169 @@ pub fn SchedulerTab(
                 </span>
             </div>
 
+            // ── Global settings row ──────────────────────────────────────────
+            <div class="sched-settings-row">
+                <span style="color:#445; font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">
+                    "Settings"
+                </span>
+                <label class="sched-toggle-label">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || greedy.get()
+                        on:change={
+                            let s = Arc::clone(&send);
+                            move |ev| {
+                                let checked = ev.target().unwrap()
+                                    .unchecked_into::<web_sys::HtmlInputElement>().checked();
+                                greedy.set(checked);
+                                send_cmd(&s, "scheduler_set_all_settings",
+                                    serde_json::json!({"kcfg_GreedyScheduling": checked}));
+                            }
+                        }
+                    />
+                    "Greedy scheduling"
+                </label>
+                <span class="sched-settings-sep">"|"</span>
+                <label class="sched-toggle-label">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || remember_prog.get()
+                        on:change={
+                            let s = Arc::clone(&send);
+                            move |ev| {
+                                let checked = ev.target().unwrap()
+                                    .unchecked_into::<web_sys::HtmlInputElement>().checked();
+                                remember_prog.set(checked);
+                                send_cmd(&s, "scheduler_set_all_settings",
+                                    serde_json::json!({"kcfg_RememberJobProgress": checked}));
+                            }
+                        }
+                    />
+                    "Remember progress"
+                </label>
+                <span class="sched-settings-sep">"|"</span>
+                <label class="sched-toggle-label">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || reschedule_err.get()
+                        on:change={
+                            let s = Arc::clone(&send);
+                            move |ev| {
+                                let checked = ev.target().unwrap()
+                                    .unchecked_into::<web_sys::HtmlInputElement>().checked();
+                                reschedule_err.set(checked);
+                                send_cmd(&s, "scheduler_set_all_settings",
+                                    serde_json::json!({"errorHandlingRescheduleErrorsCB": checked}));
+                            }
+                        }
+                    />
+                    "Reschedule on error"
+                </label>
+            </div>
+
             // ── Body ─────────────────────────────────────────────────────────
             <div class="sched-body">
+
+                // ── Observatory scripts panel ────────────────────────────────
+                <div class="sched-add-section" style="padding-bottom:8px;">
+                    <details class="sched-add-details">
+                        <summary class="sched-add-summary">"▸ Scripts & Procedures"</summary>
+                        <div class="sched-add-body">
+                            // Startup
+                            <fieldset class="sched-fieldset">
+                                <legend>"Startup"</legend>
+                                <div class="sched-field-row" style="margin-bottom:8px;">
+                                    <label class="sched-toggle-label">
+                                        <input
+                                            type="checkbox"
+                                            prop:checked=move || startup_enabled.get()
+                                            on:change=move |ev| {
+                                                startup_enabled.set(ev.target().unwrap()
+                                                    .unchecked_into::<web_sys::HtmlInputElement>().checked());
+                                            }
+                                        />
+                                        "Enable startup procedure"
+                                    </label>
+                                </div>
+                                <div class="sched-field-row">
+                                    <span class="sched-field-label">"Pre-script"</span>
+                                    <input
+                                        class="sched-input"
+                                        style="flex:1; min-width:200px;"
+                                        placeholder="/path/to/pre_startup.sh"
+                                        prop:value=move || pre_startup.get()
+                                        on:input=move |ev| {
+                                            pre_startup.set(ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlInputElement>().value());
+                                        }
+                                    />
+                                </div>
+                                <div class="sched-field-row" style="margin-top:6px;">
+                                    <span class="sched-field-label">"Post-script"</span>
+                                    <input
+                                        class="sched-input"
+                                        style="flex:1; min-width:200px;"
+                                        placeholder="/path/to/post_startup.sh"
+                                        prop:value=move || post_startup.get()
+                                        on:input=move |ev| {
+                                            post_startup.set(ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlInputElement>().value());
+                                        }
+                                    />
+                                </div>
+                            </fieldset>
+
+                            // Shutdown
+                            <fieldset class="sched-fieldset">
+                                <legend>"Shutdown"</legend>
+                                <div class="sched-field-row" style="margin-bottom:8px;">
+                                    <label class="sched-toggle-label">
+                                        <input
+                                            type="checkbox"
+                                            prop:checked=move || shutdown_enabled.get()
+                                            on:change=move |ev| {
+                                                shutdown_enabled.set(ev.target().unwrap()
+                                                    .unchecked_into::<web_sys::HtmlInputElement>().checked());
+                                            }
+                                        />
+                                        "Enable shutdown procedure"
+                                    </label>
+                                </div>
+                                <div class="sched-field-row">
+                                    <span class="sched-field-label">"Pre-script"</span>
+                                    <input
+                                        class="sched-input"
+                                        style="flex:1; min-width:200px;"
+                                        placeholder="/path/to/pre_shutdown.sh"
+                                        prop:value=move || pre_shutdown.get()
+                                        on:input=move |ev| {
+                                            pre_shutdown.set(ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlInputElement>().value());
+                                        }
+                                    />
+                                </div>
+                                <div class="sched-field-row" style="margin-top:6px;">
+                                    <span class="sched-field-label">"Post-script"</span>
+                                    <input
+                                        class="sched-input"
+                                        style="flex:1; min-width:200px;"
+                                        placeholder="/path/to/post_shutdown.sh"
+                                        prop:value=move || post_shutdown.get()
+                                        on:input=move |ev| {
+                                            post_shutdown.set(ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlInputElement>().value());
+                                        }
+                                    />
+                                </div>
+                            </fieldset>
+
+                            <button class="sched-btn-apply" on:click=on_apply_scripts.clone()>
+                                "Apply scripts"
+                            </button>
+                        </div>
+                    </details>
+                </div>
+
                 // ── Job list ─────────────────────────────────────────────────
                 <div class="sched-table-wrap">
                     {move || {
@@ -585,19 +864,6 @@ pub fn SchedulerTab(
                                     }
                                 />
                                 <span style="color:#445; font-size:11px;">"°"</span>
-                                <span class="sched-field-label" style="margin-left:8px;">"Repeats"</span>
-                                <input
-                                    class="sched-input"
-                                    style="width:52px;"
-                                    prop:value=move || f_repeats.get()
-                                    on:input=move |ev| {
-                                        f_repeats.set(
-                                            ev.target().unwrap()
-                                                .unchecked_into::<web_sys::HtmlInputElement>()
-                                                .value()
-                                        );
-                                    }
-                                />
                                 <span class="sched-field-label" style="margin-left:8px;">"PA (°)"</span>
                                 <input
                                     class="sched-input"
@@ -612,6 +878,126 @@ pub fn SchedulerTab(
                                     }
                                 />
                             </div>
+
+                            // ── Step pipeline ────────────────────────────────
+                            <fieldset class="sched-fieldset">
+                                <legend>"Steps"</legend>
+                                <div class="sched-field-row" style="gap:16px;">
+                                    <label class="sched-toggle-label">
+                                        <input type="checkbox"
+                                            prop:checked=move || step_track.get()
+                                            on:change=move |ev| {
+                                                step_track.set(ev.target().unwrap()
+                                                    .unchecked_into::<web_sys::HtmlInputElement>().checked());
+                                            }
+                                        />
+                                        "Track"
+                                    </label>
+                                    <label class="sched-toggle-label">
+                                        <input type="checkbox"
+                                            prop:checked=move || step_focus.get()
+                                            on:change=move |ev| {
+                                                step_focus.set(ev.target().unwrap()
+                                                    .unchecked_into::<web_sys::HtmlInputElement>().checked());
+                                            }
+                                        />
+                                        "Focus"
+                                    </label>
+                                    <label class="sched-toggle-label">
+                                        <input type="checkbox"
+                                            prop:checked=move || step_align.get()
+                                            on:change=move |ev| {
+                                                step_align.set(ev.target().unwrap()
+                                                    .unchecked_into::<web_sys::HtmlInputElement>().checked());
+                                            }
+                                        />
+                                        "Align"
+                                    </label>
+                                    <label class="sched-toggle-label">
+                                        <input type="checkbox"
+                                            prop:checked=move || step_guide.get()
+                                            on:change=move |ev| {
+                                                step_guide.set(ev.target().unwrap()
+                                                    .unchecked_into::<web_sys::HtmlInputElement>().checked());
+                                            }
+                                        />
+                                        "Guide"
+                                    </label>
+                                </div>
+                            </fieldset>
+
+                            // ── Startup condition ────────────────────────────
+                            <fieldset class="sched-fieldset">
+                                <legend>"Start when"</legend>
+                                <div class="sched-field-row">
+                                    <select
+                                        class="sched-select"
+                                        on:change=move |ev| {
+                                            startup_cond.set(ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlSelectElement>().value());
+                                        }>
+                                        <option value="asap">"ASAP"</option>
+                                        <option value="at">"At specific time"</option>
+                                    </select>
+                                    {move || (startup_cond.get() == "at").then(|| view! {
+                                        <input
+                                            type="datetime-local"
+                                            class="sched-input"
+                                            prop:value=move || startup_at.get()
+                                            on:input=move |ev| {
+                                                startup_at.set(ev.target().unwrap()
+                                                    .unchecked_into::<web_sys::HtmlInputElement>().value());
+                                            }
+                                        />
+                                    })}
+                                </div>
+                            </fieldset>
+
+                            // ── Completion condition ─────────────────────────
+                            <fieldset class="sched-fieldset">
+                                <legend>"Complete when"</legend>
+                                <div class="sched-field-row">
+                                    <select
+                                        class="sched-select"
+                                        on:change=move |ev| {
+                                            completion_cond.set(ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlSelectElement>().value());
+                                        }>
+                                        <option value="sequence">"Sequence complete"</option>
+                                        <option value="repeat">"Repeat N times"</option>
+                                        <option value="loop">"Loop indefinitely"</option>
+                                        <option value="at">"Finish at time"</option>
+                                    </select>
+                                    {move || match completion_cond.get().as_str() {
+                                        "repeat" => view! {
+                                            <input
+                                                type="number"
+                                                class="sched-input"
+                                                style="width:60px;"
+                                                min="1"
+                                                prop:value=move || completion_count.get()
+                                                on:input=move |ev| {
+                                                    completion_count.set(ev.target().unwrap()
+                                                        .unchecked_into::<web_sys::HtmlInputElement>().value());
+                                                }
+                                            />
+                                            <span style="color:#667; font-size:11px;">"times"</span>
+                                        }.into_any(),
+                                        "at" => view! {
+                                            <input
+                                                type="datetime-local"
+                                                class="sched-input"
+                                                prop:value=move || completion_at.get()
+                                                on:input=move |ev| {
+                                                    completion_at.set(ev.target().unwrap()
+                                                        .unchecked_into::<web_sys::HtmlInputElement>().value());
+                                                }
+                                            />
+                                        }.into_any(),
+                                        _ => view! { <span></span> }.into_any(),
+                                    }}
+                                </div>
+                            </fieldset>
 
                             // ── Sequence builder ────────────────────────────
                             <div class="sched-seq-section">
