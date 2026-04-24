@@ -50,6 +50,12 @@ pub struct AlignSolveRadiusCtx(pub RwSignal<SolveRadius>);
 #[derive(Clone, Copy)]
 pub struct AlignDefaultsCtx(pub RwSignal<AlignDefaultsData>);
 
+/// Prefill data passed from the sky right-click menu to the scheduler job builder.
+/// Set to Some((name, ra_deg, dec_deg)) when the user clicks "Add to Scheduler".
+/// Consumed (and cleared) by SchedulerTab when it opens the job builder.
+#[derive(Clone, Copy)]
+pub struct SchedulerPrefillCtx(pub RwSignal<Option<(String, f64, f64)>>);
+
 #[derive(Clone, Copy)]
 pub struct ServiceBusyCtx {
     pub camera_busy:      Signal<Option<&'static str>>,
@@ -128,10 +134,15 @@ fn App() -> impl IntoView {
     let mount  = compat::derive_mount(&store);
     let camera = compat::derive_camera(&store);
     let solve  = compat::derive_solve(&store);
+    let mosaic = compat::derive_mosaic(&store);
     let focal_length_mm = {
         let ts = store.telescope_settings;
         Signal::derive(move || ts.get().focal_length_mm)
     };
+
+    // ── Scheduler prefill context (sky right-click → Add to Scheduler) ───
+    let prefill_ctx = RwSignal::new(None::<(String, f64, f64)>);
+    provide_context(SchedulerPrefillCtx(prefill_ctx));
 
     // ── Stub contexts for sky/actions.rs ──────────────────────────────────
     provide_context(MountDeviceCtx(RwSignal::new(None::<String>)));
@@ -193,6 +204,8 @@ fn App() -> impl IntoView {
                     site=site
                     solve=solve
                     focal_length_mm=focal_length_mm
+                    scheduler=scheduler_snapshot
+                    mosaic=mosaic
                     send=Arc::clone(&send)
                     center_alt=sky_center_alt
                     center_az=sky_center_az

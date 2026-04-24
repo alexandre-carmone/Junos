@@ -51,6 +51,35 @@ pub struct HitItem {
     pub phase: Option<f64>,
 }
 
+/// Lightweight per-job data extracted from SchedulerSnapshot for rendering.
+#[derive(Clone)]
+pub struct SchedulerJobRender {
+    pub name:    String,
+    pub ra_h:    f64,
+    pub dec_deg: f64,
+    pub state:   i64,
+}
+
+/// A single mosaic tile to render on the sky.
+#[derive(Clone)]
+pub struct MosaicTileRender {
+    pub ra_deg:  f64,
+    pub dec_deg: f64,
+    /// PA of this individual tile (usually 0; additional rotation added via plan.pa_deg).
+    pub rotation: f64,
+}
+
+/// A complete mosaic plan (either from KStars new_mosaic_tiles or from the in-app planner).
+#[derive(Clone)]
+pub struct MosaicPlanRender {
+    pub target_name: String,
+    pub tiles:       Vec<MosaicTileRender>,
+    pub fov_w_deg:   f64,
+    pub fov_h_deg:   f64,
+    pub overlap_pct: f64,
+    pub pa_deg:      f64,
+}
+
 /// All values needed to render a single frame (no reactive signals).
 pub struct RenderParams {
     pub wf: f64,
@@ -107,6 +136,12 @@ pub struct RenderParams {
     pub t_off: f64,
     pub jd: f64,
     pub cur_lang: Lang,
+    pub scheduler_jobs_on: bool,
+    pub scheduler_jobs:    Vec<SchedulerJobRender>,
+    /// Mosaic received from KStars via new_mosaic_tiles.
+    pub mosaic_kstars: Option<MosaicPlanRender>,
+    /// Live mosaic preview from the in-app planner (shown while planning mode is active).
+    pub mosaic_plan: Option<MosaicPlanRender>,
 }
 
 /// Render the full sky overlay on a Canvas2D context.
@@ -186,6 +221,15 @@ pub fn render_overlay(
     if p.fov_on {
         render_center_fov(ctx, p, &project, cx, cy);
         render_mount_fov(ctx, p, &project, cx, cy);
+    }
+    if let Some(ref plan) = p.mosaic_kstars.clone() {
+        render_mosaic_plan(ctx, p, plan, &project, false);
+    }
+    if let Some(ref plan) = p.mosaic_plan.clone() {
+        render_mosaic_plan(ctx, p, plan, &project, true);
+    }
+    if p.scheduler_jobs_on {
+        render_scheduler_jobs(ctx, p, &project);
     }
     render_info_overlay(ctx, p);
 }
@@ -1046,6 +1090,166 @@ fn render_mount_fov(
             &format!("{:.0}x{:.0}'", fov_w * 60.0, fov_h * 60.0),
             rlx, rly + 12.0,
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared helper: project and draw one equatorial FOV rectangle.
+// ---------------------------------------------------------------------------
+
+fn draw_fov_box(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    ra_deg: f64,
+    dec_deg: f64,
+    fov_w: f64,
+    fov_h: f64,
+    rot_deg: f64,
+    stroke_color: &str,
+    fill_color: &str,
+    line_width: f64,
+    label: Option<&str>,
+) {
+    let cos_dec = dec_deg.to_radians().cos().abs().max(0.01);
+    let half_w = fov_w / 2.0;
+    let half_h = fov_h / 2.0;
+    let corners_eq = [
+        (ra_deg - half_w / cos_dec, dec_deg - half_h),
+        (ra_deg + half_w / cos_dec, dec_deg - half_h),
+        (ra_deg + half_w / cos_dec, dec_deg + half_h),
+        (ra_deg - half_w / cos_dec, dec_deg + half_h),
+    ];
+    let (pcx, pcy) = {
+        let (alt, az) = astro::eq_to_altaz(ra_deg, dec_deg, p.lst, p.latitude);
+        project(alt, az).unwrap_or((p.wf / 2.0, p.hf / 2.0))
+    };
+    let rot_rad = rot_deg.to_radians();
+    let sin_r = rot_rad.sin();
+    let cos_r = rot_rad.cos();
+
+    let mut pts: Vec<(f64, f64)> = Vec::with_capacity(4);
+    for (cra, cdec) in &corners_eq {
+        let (calt, caz) = astro::eq_to_altaz(*cra, *cdec, p.lst, p.latitude);
+        if let Some((sx, sy)) = project(calt, caz) {
+            let dx = sx - pcx;
+            let dy = sy - pcy;
+            pts.push((pcx + dx * cos_r - dy * sin_r, pcy + dx * sin_r + dy * cos_r));
+        }
+    }
+    if pts.len() < 4 { return; }
+
+    // Filled background
+    ctx.begin_path();
+    ctx.move_to(pts[0].0, pts[0].1);
+    for pt in &pts[1..] { ctx.line_to(pt.0, pt.1); }
+    ctx.close_path();
+    ctx.set_fill_style_str(fill_color);
+    ctx.fill();
+
+    // Border stroke
+    ctx.set_stroke_style_str(stroke_color);
+    ctx.set_line_width(line_width);
+    ctx.begin_path();
+    ctx.move_to(pts[0].0, pts[0].1);
+    for pt in &pts[1..] { ctx.line_to(pt.0, pt.1); }
+    ctx.close_path();
+    ctx.stroke();
+
+    // Optional label above the box
+    if let Some(lbl) = label {
+        if !lbl.is_empty() {
+            let top_y = pts.iter().map(|pt| pt.1).fold(f64::INFINITY, f64::min);
+            let cx_lbl = pts.iter().map(|pt| pt.0).sum::<f64>() / pts.len() as f64;
+            ctx.set_fill_style_str(stroke_color);
+            ctx.set_font("10px monospace");
+            ctx.set_text_align("center");
+            let _ = ctx.fill_text(lbl, cx_lbl, top_y - 3.0);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler job FOV overlay
+// ---------------------------------------------------------------------------
+
+fn render_scheduler_jobs(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+) {
+    if p.scheduler_jobs.is_empty() { return; }
+    let (Some(fl_mm), Some(px_um), Some(sw), Some(sh)) = (
+        p.fl, p.cam_pixel_size_um, p.cam_sensor_width, p.cam_sensor_height,
+    ) else { return };
+
+    let fov_w = astro::fov_deg(fl_mm, sw as f64, px_um);
+    let fov_h = astro::fov_deg(fl_mm, sh as f64, px_um);
+
+    for job in &p.scheduler_jobs {
+        let (stroke, fill) = match job.state {
+            0 => ("rgba(160,160,160,0.80)", "rgba(160,160,160,0.05)"),
+            1 => ("rgba(200,200,80,0.80)",  "rgba(200,200,80,0.05)"),
+            2 => ("rgba(80,200,255,0.85)",  "rgba(80,200,255,0.06)"),
+            3 => ("rgba(80,220,80,0.90)",   "rgba(80,220,80,0.08)"),
+            4 => ("rgba(220,80,80,0.90)",   "rgba(220,80,80,0.08)"),
+            5 => ("rgba(220,140,80,0.80)",  "rgba(220,140,80,0.05)"),
+            7 => ("rgba(200,200,200,0.50)", "rgba(200,200,200,0.03)"),
+            _ => ("rgba(160,160,160,0.80)", "rgba(160,160,160,0.05)"),
+        };
+        draw_fov_box(ctx, p, project, job.ra_h * 15.0, job.dec_deg,
+            fov_w, fov_h, p.rotation_deg.unwrap_or(0.0), stroke, fill, 1.0, Some(&job.name));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mosaic tile grid rendering (shared for KStars mosaic and in-app planner)
+// ---------------------------------------------------------------------------
+
+fn render_mosaic_plan(
+    ctx: &CanvasRenderingContext2d,
+    p: &RenderParams,
+    plan: &MosaicPlanRender,
+    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+    is_preview: bool,
+) {
+    if plan.tiles.is_empty() { return; }
+
+    let (tile_stroke, margin_stroke, fill_color, bbox_stroke) = if is_preview {
+        ("rgba(80,180,255,0.85)", "rgba(80,180,255,0.35)", "rgba(80,180,255,0.06)", "rgba(80,180,255,0.60)")
+    } else {
+        ("rgba(255,180,60,0.85)", "rgba(255,180,60,0.35)", "rgba(255,180,60,0.06)", "rgba(255,220,100,0.60)")
+    };
+
+    for tile in &plan.tiles {
+        let total_rot = tile.rotation + plan.pa_deg;
+        draw_fov_box(ctx, p, project, tile.ra_deg, tile.dec_deg,
+            plan.fov_w_deg, plan.fov_h_deg, total_rot,
+            tile_stroke, fill_color, 1.5, None);
+
+        // Overlap margin: inner inset box
+        if plan.overlap_pct > 0.0 {
+            let margin = plan.overlap_pct / 100.0;
+            draw_fov_box(ctx, p, project, tile.ra_deg, tile.dec_deg,
+                plan.fov_w_deg * (1.0 - margin), plan.fov_h_deg * (1.0 - margin),
+                total_rot, margin_stroke, "rgba(0,0,0,0)", 0.8, None);
+        }
+    }
+
+    // Mosaic bounding box + target label
+    if plan.tiles.len() > 1 || !plan.target_name.is_empty() {
+        let min_ra  = plan.tiles.iter().map(|t| t.ra_deg).fold(f64::INFINITY, f64::min);
+        let max_ra  = plan.tiles.iter().map(|t| t.ra_deg).fold(f64::NEG_INFINITY, f64::max);
+        let min_dec = plan.tiles.iter().map(|t| t.dec_deg).fold(f64::INFINITY, f64::min);
+        let max_dec = plan.tiles.iter().map(|t| t.dec_deg).fold(f64::NEG_INFINITY, f64::max);
+        let center_ra  = (min_ra + max_ra) / 2.0;
+        let center_dec = (min_dec + max_dec) / 2.0;
+        let bbox_w = (max_ra - min_ra) + plan.fov_w_deg;
+        let bbox_h = (max_dec - min_dec) + plan.fov_h_deg;
+        let lbl = if plan.target_name.is_empty() { None } else { Some(plan.target_name.as_str()) };
+        draw_fov_box(ctx, p, project, center_ra, center_dec,
+            bbox_w, bbox_h, plan.pa_deg,
+            bbox_stroke, "rgba(0,0,0,0)", 2.0, lbl);
     }
 }
 

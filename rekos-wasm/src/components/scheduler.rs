@@ -16,6 +16,7 @@ use crate::compat::SchedulerSnapshot;
 use crate::dso_catalog::DsoCatalogData;
 use crate::i18n::{Lang, t};
 use crate::ws::SendCmd;
+use crate::SchedulerPrefillCtx;
 
 const SCHED_CSS: &str = r#"
 :root {
@@ -436,6 +437,18 @@ pub fn SchedulerTab(
     let f_pa          = RwSignal::new("0".to_string());
     let search_result = RwSignal::new(Option::<String>::None);
     let form_error    = RwSignal::new(Option::<String>::None);
+
+    // Pre-fill from sky right-click "Add to Scheduler" action.
+    let prefill_ctx = use_context::<SchedulerPrefillCtx>();
+    Effect::new(move |_| {
+        let Some(pctx) = prefill_ctx else { return };
+        let Some((name, ra_deg, dec_deg)) = pctx.0.get() else { return };
+        let ra_h = ra_deg / 15.0;
+        f_target_name.set(name);
+        f_ra_h.set(format!("{:.6}", ra_h));
+        f_dec_deg.set(format!("{:.6}", dec_deg));
+        pctx.0.set(None);  // consume
+    });
 
     // Derived HMS/DMS hint shown after RA/Dec are populated
     let coords_hint = Signal::derive(move || {

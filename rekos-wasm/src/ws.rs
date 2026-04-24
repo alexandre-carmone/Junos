@@ -260,6 +260,7 @@ pub struct DeviceStore {
     pub scheduler_status:   RwSignal<SchedulerStatusData>,
     pub scheduler_settings: RwSignal<serde_json::Value>,
     pub scheduler_jobs:     RwSignal<Vec<serde_json::Value>>,
+    pub mosaic_tiles:       RwSignal<Option<serde_json::Value>>,
 }
 
 impl DeviceStore {
@@ -292,6 +293,7 @@ impl DeviceStore {
             scheduler_status:   RwSignal::new(SchedulerStatusData::default()),
             scheduler_settings: RwSignal::new(serde_json::Value::Null),
             scheduler_jobs:     RwSignal::new(Vec::new()),
+            mosaic_tiles:       RwSignal::new(None),
         }
     }
 
@@ -322,6 +324,7 @@ impl DeviceStore {
                     // on transient disconnects.
                     self.scheduler_status.set(SchedulerStatusData::default());
                     self.scheduler_jobs.set(Vec::new());
+                    self.mosaic_tiles.set(None);
                 }
             }
 
@@ -817,6 +820,11 @@ impl DeviceStore {
             // Debounced settings reply (message.cpp:623).
             "scheduler_get_all_settings" => {
                 self.scheduler_settings.set(payload.clone());
+            }
+
+            // Mosaic tile grid pushed by KStars Framing Assistant.
+            "new_mosaic_tiles" => {
+                self.mosaic_tiles.set(Some(payload.clone()));
             }
 
             _ => {}

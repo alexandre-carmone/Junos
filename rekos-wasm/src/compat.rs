@@ -253,6 +253,60 @@ pub fn derive_scheduler(store: &DeviceStore) -> Signal<SchedulerSnapshot> {
     })
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct MosaicTileData {
+    pub ra_deg:   f64,
+    pub dec_deg:  f64,
+    pub index:    u32,
+    pub rotation: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MosaicSnapshot {
+    pub target_name:     Option<String>,
+    pub center_ra_deg:   Option<f64>,
+    pub center_dec_deg:  Option<f64>,
+    pub grid_w:          Option<u32>,
+    pub grid_h:          Option<u32>,
+    pub overlap:         Option<f64>,
+    pub camera_fov_w_deg: Option<f64>,
+    pub camera_fov_h_deg: Option<f64>,
+    pub pa:              Option<f64>,
+    pub tiles:           Vec<MosaicTileData>,
+}
+
+pub fn derive_mosaic(store: &DeviceStore) -> Signal<MosaicSnapshot> {
+    let mosaic_tiles = store.mosaic_tiles;
+    Signal::derive(move || {
+        let Some(v) = mosaic_tiles.get() else {
+            return MosaicSnapshot::default();
+        };
+        let tiles = v["tiles"].as_array().map(|arr| {
+            arr.iter().filter_map(|t| {
+                let sc = &t["skyCenter"];
+                let ra_deg  = sc["ra0"].as_f64()?;
+                let dec_deg = sc["dec0"].as_f64()?;
+                let index    = t["index"].as_u64().unwrap_or(0) as u32;
+                let rotation = t["rotation"].as_f64().unwrap_or(0.0);
+                Some(MosaicTileData { ra_deg, dec_deg, index, rotation })
+            }).collect()
+        }).unwrap_or_default();
+        MosaicSnapshot {
+            target_name:     v["targetName"].as_str().map(|s| s.to_string()),
+            center_ra_deg:   v["ra0"].as_f64(),
+            center_dec_deg:  v["dec0"].as_f64(),
+            grid_w:          v["gridSize"]["width"].as_u64().map(|x| x as u32),
+            grid_h:          v["gridSize"]["height"].as_u64().map(|x| x as u32),
+            overlap:         v["overlap"].as_f64(),
+            // cameraFOV is in arcmin → convert to degrees
+            camera_fov_w_deg: v["cameraFOV"]["width"].as_f64().map(|x| x / 60.0),
+            camera_fov_h_deg: v["cameraFOV"]["height"].as_f64().map(|x| x / 60.0),
+            pa:              v["positionAngle"].as_f64(),
+            tiles,
+        }
+    })
+}
+
 pub fn derive_guide(store: &DeviceStore) -> Signal<GuideSnapshot> {
     let status_sig   = store.guide_status;
     let settings_sig = store.guide_settings;

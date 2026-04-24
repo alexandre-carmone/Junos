@@ -10,7 +10,7 @@ use crate::i18n::{Lang, t};
 use crate::compat::SiteSnapshot;
 use crate::CameraDeviceCtx;
 use crate::ws::SendCmd;
-use crate::{AlignDefaultsCtx, AlignSolveRadiusCtx, MountDeviceCtx};
+use crate::{ActiveTabCtx, AlignDefaultsCtx, AlignSolveRadiusCtx, MountDeviceCtx, SchedulerPrefillCtx, Tab};
 
 /// Build a `mount_goto_rade` message.
 ///
@@ -57,6 +57,8 @@ pub fn SkyContextMenu(
     let camera_ctx = use_context::<CameraDeviceCtx>();
     let solve_radius_ctx = use_context::<AlignSolveRadiusCtx>();
     let align_defaults_ctx = use_context::<AlignDefaultsCtx>();
+    let prefill_ctx = use_context::<SchedulerPrefillCtx>();
+    let active_tab_ctx = use_context::<ActiveTabCtx>();
 
     let busy_ctx = use_context::<crate::ServiceBusyCtx>();
     let mount_busy = Signal::derive(move || busy_ctx.and_then(|c| c.mount_busy.get()));
@@ -86,6 +88,17 @@ pub fn SkyContextMenu(
         }
     };
     let _ = (mount_ctx, camera_ctx, solve_radius_ctx, align_defaults_ctx);
+    let on_add_scheduler = move |_| {
+        if let Some((_sx, _sy, ra_deg, dec_deg)) = ctx_menu.get_untracked() {
+            if let Some(pctx) = prefill_ctx {
+                pctx.0.set(Some((String::new(), ra_deg, dec_deg)));
+            }
+            if let Some(atctx) = active_tab_ctx {
+                atctx.0.set(Tab::Scheduler);
+            }
+            set_ctx_menu.set(None);
+        }
+    };
 
     view! {
         {move || {
@@ -156,6 +169,13 @@ pub fn SkyContextMenu(
                                     tr().goto_and_align.to_string()
                                 }
                             }}
+                        </button>
+                        <button
+                            style="width:100%; background:#1a1a3a; color:#88aaff; border:1px solid #446; \
+                                   padding:4px 8px; cursor:pointer; font-family:monospace; font-size:12px; \
+                                   border-radius:2px; margin-top:6px;"
+                            on:click=on_add_scheduler.clone()>
+                            {"Add to Scheduler"}
                         </button>
                     </div>
                 }

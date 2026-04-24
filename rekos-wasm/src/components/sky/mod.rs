@@ -26,7 +26,7 @@ use web_sys::{
     WheelEvent,
 };
 
-use crate::compat::{CameraSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot};
+use crate::compat::{CameraSnapshot, MountSnapshot, MosaicSnapshot, SchedulerSnapshot, SiteSnapshot, SolveSnapshot};
 use crate::ws::SendCmd;
 use crate::{ActiveTabCtx, Tab};
 
@@ -40,7 +40,7 @@ use crate::nebulae::NebulaeIndex;
 use actions::{SkyConfirmPopup, SkyContextMenu, open_confirm};
 use controls::SkyControls;
 use info_popup::SkyInfoPopup;
-use render::{HitItem, RenderParams};
+use render::{HitItem, MosaicPlanRender, MosaicTileRender, RenderParams, SchedulerJobRender};
 use search::SkySearch;
 use utils::event_target_value;
 
@@ -73,6 +73,21 @@ pub struct SkyToggles {
     pub dso_snr:            RwSignal<bool>,
     pub dso_galaxy_cluster: RwSignal<bool>,
     pub dso_mag_limit:      RwSignal<f64>,
+    pub scheduler_jobs:     RwSignal<bool>,
+}
+
+/// Signals for the in-app Mosaic Planner panel (bundled like SkyToggles).
+#[derive(Clone, Copy)]
+pub struct MosaicPlannerState {
+    pub planning:  RwSignal<bool>,
+    pub center:    RwSignal<Option<(f64, f64)>>,  // (ra_deg, dec_deg)
+    pub grid_w:    RwSignal<u32>,
+    pub grid_h:    RwSignal<u32>,
+    pub overlap:   RwSignal<f64>,
+    pub pa:        RwSignal<f64>,
+    pub seq_file:  RwSignal<String>,
+    pub target:    RwSignal<String>,
+    pub dir:       RwSignal<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +101,8 @@ pub fn SkyTab(
     #[prop(into)] site: Signal<SiteSnapshot>,
     #[prop(into)] solve: Signal<SolveSnapshot>,
     #[prop(into)] focal_length_mm: Signal<Option<f64>>,
+    #[prop(into)] scheduler: Signal<SchedulerSnapshot>,
+    #[prop(into)] mosaic: Signal<MosaicSnapshot>,
     #[prop(into)] send: SendCmd,
     center_alt: RwSignal<f64>,
     center_az: RwSignal<f64>,
@@ -165,6 +182,7 @@ pub fn SkyTab(
     let dso_filter_snr            = RwSignal::new(ls_bool("sky_dso_snr", true));
     let dso_filter_galaxy_cluster = RwSignal::new(ls_bool("sky_dso_galaxy_cluster", true));
     let dso_mag_limit             = RwSignal::new(ls_f64_init("sky_dso_mag_limit", 11.0));
+    let show_scheduler_jobs       = RwSignal::new(ls_bool("sky_show_scheduler_jobs", true));
 
     let toggles = SkyToggles {
         stars:               show_stars,
@@ -189,6 +207,20 @@ pub fn SkyTab(
         dso_snr:             dso_filter_snr,
         dso_galaxy_cluster:  dso_filter_galaxy_cluster,
         dso_mag_limit,
+        scheduler_jobs:      show_scheduler_jobs,
+    };
+
+    // Mosaic planner signals
+    let planner = MosaicPlannerState {
+        planning: RwSignal::new(false),
+        center:   RwSignal::new(None::<(f64, f64)>),
+        grid_w:   RwSignal::new(3u32),
+        grid_h:   RwSignal::new(3u32),
+        overlap:  RwSignal::new(10.0f64),
+        pa:       RwSignal::new(0.0f64),
+        seq_file: RwSignal::new(String::new()),
+        target:   RwSignal::new(String::new()),
+        dir:      RwSignal::new(String::new()),
     };
 
     // Persist checkbox state to localStorage on change
@@ -215,6 +247,7 @@ pub fn SkyTab(
             ("sky_dso_planetary",       toggles.dso_planetary.get()),
             ("sky_dso_snr",             toggles.dso_snr.get()),
             ("sky_dso_galaxy_cluster",  toggles.dso_galaxy_cluster.get()),
+            ("sky_show_scheduler_jobs", toggles.scheduler_jobs.get()),
         ];
         let mag = toggles.dso_mag_limit.get();
         if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
@@ -232,6 +265,7 @@ pub fn SkyTab(
     let (show_sky_section,      set_show_sky_section)      = signal(false);
     let (show_objects_section,  set_show_objects_section)  = signal(false);
     let (show_settings_section, set_show_settings_section) = signal(false);
+    let (show_mosaic_section,   set_show_mosaic_section)   = signal(false);
 
     // Controls panel visibility (collapsed by default on narrow screens)
     let (show_controls, set_show_controls) = signal({
@@ -350,6 +384,8 @@ pub fn SkyTab(
         let cam = camera.get();
         let s = site.get();
         let sv = solve.get();
+        let sched = scheduler.get();
+        let mos = mosaic.get();
         let fov = fov_radius.get();
         let t_off = time_offset_s.get();
         let stars_on = show_stars.get();
@@ -374,11 +410,19 @@ pub fn SkyTab(
         let dso_snr = dso_filter_snr.get();
         let dso_gal = dso_filter_galaxy_cluster.get();
         let dso_mag = dso_mag_limit.get();
+        let scheduler_jobs_on = show_scheduler_jobs.get();
         let fl = effective_focal.get();
         let follow = follow_mount.get();
         let has_gpu = gpu_ready.get();
         let cur_lang = lang.get();
         let _frame = tick.get();
+        let mosaic_planning_on = planner.planning.get();
+        let mosaic_center_val = planner.center.get();
+        let mosaic_gw = planner.grid_w.get();
+        let mosaic_gh = planner.grid_h.get();
+        let mosaic_overlap_pct = planner.overlap.get();
+        let mosaic_pa_val = planner.pa.get();
+        let mosaic_target_name = planner.target.get();
 
         let cat = catalog_sig.get_untracked();
         let dso_cat = dso_catalog_sig.get_untracked();
@@ -524,6 +568,62 @@ pub fn SkyTab(
             (None, None)
         };
 
+        // ── Derive scheduler job render list ───────────────────────────
+        let scheduler_jobs_data: Vec<SchedulerJobRender> = sched.jobs.iter().filter_map(|j| {
+            let name    = j["name"].as_str()?.to_string();
+            let ra_h    = j["targetRA"].as_f64()?;
+            let dec_deg = j["targetDEC"].as_f64()?;
+            let state   = j["state"].as_i64().unwrap_or(0);
+            Some(SchedulerJobRender { name, ra_h, dec_deg, state })
+        }).collect();
+
+        // ── KStars mosaic tiles → MosaicPlanRender ─────────────────────
+        let mosaic_kstars_render = if !mos.tiles.is_empty() {
+            let tiles = mos.tiles.iter().map(|t| MosaicTileRender {
+                ra_deg: t.ra_deg, dec_deg: t.dec_deg, rotation: t.rotation,
+            }).collect::<Vec<_>>();
+            Some(MosaicPlanRender {
+                target_name: mos.target_name.clone().unwrap_or_default(),
+                tiles,
+                fov_w_deg:   mos.camera_fov_w_deg.unwrap_or(0.5),
+                fov_h_deg:   mos.camera_fov_h_deg.unwrap_or(0.5),
+                overlap_pct: mos.overlap.unwrap_or(10.0),
+                pa_deg:      mos.pa.unwrap_or(0.0),
+            })
+        } else {
+            None
+        };
+
+        // ── In-app mosaic planner preview ──────────────────────────────
+        let mosaic_plan_render: Option<MosaicPlanRender> = (|| {
+            if !mosaic_planning_on { return None; }
+            let (center_ra_deg, center_dec_deg) = mosaic_center_val?;
+            let fl_mm = fl?;
+            let px_um = cam.pixel_size_um?;
+            let sw    = cam.sensor_width?;
+            let sh    = cam.sensor_height?;
+            let fov_w = astro::fov_deg(fl_mm, sw as f64, px_um);
+            let fov_h = astro::fov_deg(fl_mm, sh as f64, px_um);
+            let cos_dec = center_dec_deg.to_radians().cos().abs().max(0.01);
+            let step_ra  = fov_w * (1.0 - mosaic_overlap_pct / 100.0) / cos_dec;
+            let step_dec = fov_h * (1.0 - mosaic_overlap_pct / 100.0);
+            let tiles = (0..mosaic_gh).flat_map(|row| {
+                (0..mosaic_gw).map(move |col| MosaicTileRender {
+                    ra_deg:  center_ra_deg + (col as f64 - (mosaic_gw as f64 - 1.0) / 2.0) * step_ra,
+                    dec_deg: center_dec_deg + (row as f64 - (mosaic_gh as f64 - 1.0) / 2.0) * step_dec,
+                    rotation: 0.0,
+                })
+            }).collect::<Vec<_>>();
+            Some(MosaicPlanRender {
+                target_name: mosaic_target_name.clone(),
+                tiles,
+                fov_w_deg:   fov_w,
+                fov_h_deg:   fov_h,
+                overlap_pct: mosaic_overlap_pct,
+                pa_deg:      mosaic_pa_val,
+            })
+        })();
+
         // ── Overlay rendering (delegated to render module) ─────────────
         let params = RenderParams {
             wf,
@@ -576,6 +676,10 @@ pub fn SkyTab(
             t_off,
             jd,
             cur_lang,
+            scheduler_jobs_on,
+            scheduler_jobs: scheduler_jobs_data,
+            mosaic_kstars: mosaic_kstars_render,
+            mosaic_plan: mosaic_plan_render,
         };
 
         let nb_idx = nebulae_index.get_untracked();
@@ -692,6 +796,36 @@ pub fn SkyTab(
         // If the pointer barely moved, treat this as a click → hit-test.
         if drag_dist.get_value() >= 4.0 || ev.button() != 0 { return; }
         let Some((cx, cy)) = to_canvas_xy(&ev) else { return };
+
+        // Mosaic planning mode: left-click sets the mosaic center.
+        if planner.planning.get_untracked() {
+            let s = site.get_untracked();
+            let fov = fov_radius.get_untracked();
+            let alt_s = center_alt.get_untracked();
+            let az_s  = center_az.get_untracked();
+            let now = js_sys::Date::new_0();
+            let jd_now = astro::julian_date(
+                now.get_utc_full_year() as i32, now.get_utc_month() + 1, now.get_utc_date(),
+                now.get_utc_hours(), now.get_utc_minutes(),
+                now.get_utc_seconds() as f64 + now.get_utc_milliseconds() as f64 / 1000.0,
+            );
+            let gmst = astro::gmst_deg(jd_now);
+            let lst  = astro::lst_deg(gmst, s.longitude);
+            // Map CSS pixels → normalised disk coords → Alt/Az → RA/Dec
+            if let Some(overlay_canvas) = overlay_ref.get_untracked() {
+                let overlay_el: web_sys::HtmlCanvasElement = overlay_canvas.into();
+                let w = overlay_el.parent_element().map(|p| p.client_width() as f64).unwrap_or(800.0);
+                let h = overlay_el.parent_element().map(|p| p.client_height() as f64).unwrap_or(600.0);
+                let nx = (cx - w / 2.0) / (h.min(w) / 2.0);
+                let ny = -(cy - h / 2.0) / (h.min(w) / 2.0);
+                let (alt, az) = astro::unproject(nx, ny, alt_s, az_s, fov);
+                let (ra_deg, dec_deg) = astro::altaz_to_eq(alt, az, lst, s.latitude);
+                planner.center.set(Some((ra_deg, dec_deg)));
+                // Pre-fill target name if empty and a DSO is nearby (best-effort via hit items)
+            }
+            return;
+        }
+
         let items = hit_items_for_click.borrow();
         let mut best: Option<(f64, HitItem)> = None;
         for it in items.iter() {
@@ -876,6 +1010,8 @@ pub fn SkyTab(
                 set_show_objects_section=set_show_objects_section
                 show_settings_section=show_settings_section
                 set_show_settings_section=set_show_settings_section
+                show_mosaic_section=show_mosaic_section
+                set_show_mosaic_section=set_show_mosaic_section
                 toggles=toggles
                 focal_override=focal_override
                 set_focal_override=set_focal_override
@@ -883,6 +1019,9 @@ pub fn SkyTab(
                 set_follow_mount=set_follow_mount
                 site=site
                 set_site_location=set_site_location_fn.clone()
+                planner=planner
+                camera=camera
+                send=Arc::clone(&send)
             />
 
             // ── Slew action button (bottom-left) ───────────────────────────
