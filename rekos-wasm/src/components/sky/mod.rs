@@ -1068,22 +1068,22 @@ pub fn SkyTabSwitcher() -> impl IntoView {
             {move || expanded.get().then(|| view! {
                 <button title=move || tr().tab_sky
                         style=move || btn_style(Tab::Sky)
-                        on:click=move |_| active.set(Tab::Sky)>"SKY"</button>
+                        on:click=move |_| active.set(Tab::Sky)>{move || tr().tab_sky_abbr}</button>
                 <button title=move || tr().tab_focus
                         style=move || btn_style(Tab::Focus)
-                        on:click=move |_| active.set(Tab::Focus)>"FOC"</button>
+                        on:click=move |_| active.set(Tab::Focus)>{move || tr().tab_focus_abbr}</button>
                 <button title=move || tr().tab_imaging
                         style=move || btn_style(Tab::Imaging)
-                        on:click=move |_| active.set(Tab::Imaging)>"IMG"</button>
+                        on:click=move |_| active.set(Tab::Imaging)>{move || tr().tab_imaging_abbr}</button>
                 <button title=move || tr().tab_polar_align
                         style=move || btn_style(Tab::PolarAlign)
-                        on:click=move |_| active.set(Tab::PolarAlign)>"POL"</button>
+                        on:click=move |_| active.set(Tab::PolarAlign)>{move || tr().tab_polar_abbr}</button>
                 <button title=move || tr().tab_guide
                         style=move || btn_style(Tab::Guide)
-                        on:click=move |_| active.set(Tab::Guide)>"GD"</button>
+                        on:click=move |_| active.set(Tab::Guide)>{move || tr().tab_guide_abbr}</button>
                 <button title=move || tr().tab_scheduler
                         style=move || btn_style(Tab::Scheduler)
-                        on:click=move |_| active.set(Tab::Scheduler)>"SCH"</button>
+                        on:click=move |_| active.set(Tab::Scheduler)>{move || tr().tab_scheduler_abbr}</button>
             })}
             <button style=lang_style
                     title=move || lang.get().toggle().label()

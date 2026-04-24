@@ -43,6 +43,13 @@ pub struct Translations {
     pub tab_devices:    &'static str,
     pub tab_indiserver: &'static str,
     pub tab_log:        &'static str,
+    // Abbreviated labels for the compact tab switcher pill
+    pub tab_sky_abbr:        &'static str,
+    pub tab_focus_abbr:      &'static str,
+    pub tab_imaging_abbr:    &'static str,
+    pub tab_polar_abbr:      &'static str,
+    pub tab_guide_abbr:      &'static str,
+    pub tab_scheduler_abbr:  &'static str,
 
     // ── Devices ──────────────────────────────────────────────────────────
     pub no_devices: &'static str,
@@ -573,6 +580,12 @@ static EN: Translations = Translations {
     tab_devices:    "Devices",
     tab_indiserver: "Indiserver",
     tab_log:        "Log",
+    tab_sky_abbr:        "SKY",
+    tab_focus_abbr:      "FOC",
+    tab_imaging_abbr:    "IMG",
+    tab_polar_abbr:      "POL",
+    tab_guide_abbr:      "GD",
+    tab_scheduler_abbr:  "SCH",
 
     no_devices: "No INDI devices connected.",
     role_grid_title: "Device Roles",
@@ -1079,6 +1092,12 @@ static FR: Translations = Translations {
     tab_devices:    "Appareils",
     tab_indiserver: "Indiserver",
     tab_log:        "Journal",
+    tab_sky_abbr:        "CIEL",
+    tab_focus_abbr:      "MAP",
+    tab_imaging_abbr:    "IMG",
+    tab_polar_abbr:      "POL",
+    tab_guide_abbr:      "GD",
+    tab_scheduler_abbr:  "PLAN",
 
     no_devices: "Aucun appareil INDI connect\u{e9}.",
     role_grid_title: "R\u{f4}les des appareils",
