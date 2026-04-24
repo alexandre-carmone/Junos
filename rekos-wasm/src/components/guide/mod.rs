@@ -130,7 +130,7 @@ fn input_style() -> &'static str {
 }
 
 fn field_label_style() -> &'static str {
-    "flex:0 0 200px; color:#88aaff; font-size:11px;"
+    "flex:0 0 clamp(100px,25%,200px); color:#88aaff; font-size:11px;"
 }
 
 fn row_style() -> &'static str {
@@ -482,12 +482,13 @@ pub fn GuideTab(
         <div class="guide-tab-root"
              style="position:absolute; inset:0; background:#0a0a0f; color:#c0c0d0; \
                     font-family:monospace; display:grid; \
-                    grid-template-rows:56px 1fr; overflow:hidden;">
+                    grid-template-rows:auto 1fr; overflow:hidden;">
 
             // ── Header ───────────────────────────────────────────────────
             <div class="guide-header"
-                 style="display:flex; align-items:center; gap:14px; \
-                        padding:0 20px 0 80px; border-bottom:1px solid #222; \
+                 style="display:flex; align-items:center; gap:8px 14px; \
+                        flex-wrap:wrap; min-height:48px; \
+                        padding:8px 20px 8px 80px; border-bottom:1px solid #222; \
                         background:rgba(6,6,15,0.85); font-size:13px;">
                 <span style=move || format!(
                     "display:inline-block; padding:4px 10px; border-radius:14px; \

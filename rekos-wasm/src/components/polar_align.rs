@@ -223,7 +223,7 @@ fn input_style() -> &'static str {
 }
 
 fn field_label_style() -> &'static str {
-    "flex:0 0 120px; color:#88aaff; font-size:11px;"
+    "flex:0 0 clamp(80px,22%,120px); color:#88aaff; font-size:11px;"
 }
 
 // ---------------------------------------------------------------------------
@@ -380,12 +380,13 @@ pub fn PolarAlignTab(
         <div class="polar-tab-root"
              style="position:absolute; inset:0; background:#0a0a0f; color:#c0c0d0; \
                     font-family:monospace; display:grid; \
-                    grid-template-rows:56px 1fr; overflow:hidden;">
+                    grid-template-rows:auto 1fr; overflow:hidden;">
 
             // ── Header ────────────────────────────────────────────────
             <div class="polar-header"
-                 style="display:flex; align-items:center; gap:14px; \
-                        padding:0 20px 0 80px; border-bottom:1px solid #222; \
+                 style="display:flex; align-items:center; gap:8px 14px; \
+                        flex-wrap:wrap; min-height:48px; \
+                        padding:8px 20px 8px 80px; border-bottom:1px solid #222; \
                         background:rgba(6,6,15,0.85); font-size:13px;">
                 <span style=move || format!(
                     "display:inline-block; padding:4px 10px; border-radius:14px; \
@@ -579,8 +580,8 @@ pub fn PolarAlignTab(
                         <legend style="color:#7affa0; padding:0 6px; font-size:11px;">
                             {move || tr().pa_refresh_correct}
                         </legend>
-                        <div style="display:grid; grid-template-columns:1fr 140px; gap:14px;">
-                            <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
+                            <div style="display:flex; flex-direction:column; gap:8px; flex:1 1 260px; min-width:0;">
 
                                 // Exposure
                                 <div style="display:flex; align-items:center; gap:8px;">
@@ -675,7 +676,7 @@ pub fn PolarAlignTab(
                             </div>
 
                             // Correction vector preview
-                            <div>
+                            <div style="flex:0 0 140px;">
                                 {move || correction_svg(polar.with(|p| p.vector.clone()))}
                             </div>
                         </div>
