@@ -251,6 +251,28 @@ const SCHED_CSS: &str = r#"
     border: 1px solid #3a5a3a; background: #0a1a0a; color: var(--sched-green);
 }
 .sched-add-btn:hover { background: #0f2a0f; }
+/* ── Mobile (≤ 767 px) ──────────────────────────────────────────────── */
+@media (max-width: 767px) {
+    .sched-header {
+        padding: 8px 16px 8px 16px;
+    }
+    .sched-table {
+        min-width: 360px;
+        font-size: 11px;
+    }
+    .sched-table th,
+    .sched-table td {
+        padding: 4px 5px;
+    }
+    .sched-col-start,
+    .sched-col-end { display: none; }
+    .sched-btn {
+        padding: 6px 10px;
+    }
+    .sched-section-bar {
+        padding: 8px 12px 4px;
+    }
+}
 "#;
 
 fn scheduler_status_label(status: i64) -> (&'static str, &'static str) {
@@ -755,8 +777,8 @@ pub fn SchedulerTab(
                                                     <th>"State"</th>
                                                     <th>"Alt"</th>
                                                     <th>"Progress"</th>
-                                                    <th>"Start"</th>
-                                                    <th>"End"</th>
+                                                    <th class="sched-col-start">"Start"</th>
+                                                    <th class="sched-col-end">"End"</th>
                                                     <th></th>
                                                 </tr>
                                             </thead>
@@ -816,8 +838,8 @@ pub fn SchedulerTab(
                                                                     </span>
                                                                 </div>
                                                             </td>
-                                                            <td style="color:#667; font-size:11px;">{start_s}</td>
-                                                            <td style="color:#667; font-size:11px;">{end_s}</td>
+                                                            <td class="sched-col-start" style="color:#667; font-size:11px;">{start_s}</td>
+                                                            <td class="sched-col-end" style="color:#667; font-size:11px;">{end_s}</td>
                                                             <td style="width:36px;">
                                                                 <button
                                                                     class="sched-remove-btn"

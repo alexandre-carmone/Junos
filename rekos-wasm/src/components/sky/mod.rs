@@ -305,6 +305,10 @@ pub fn SkyTab(
     let pinch_start_dist = StoredValue::new(0.0_f64);
     let pinch_start_fov  = StoredValue::new(0.0_f64);
 
+    // Long-press timer for touch-triggered context menu (drop = cancel)
+    let longpress_timer: Rc<RefCell<Option<gloo_timers::callback::Timeout>>> =
+        Rc::new(RefCell::new(None));
+
     // Canvas refs
     let overlay_ref = NodeRef::<leptos::html::Canvas>::new();
     let gpu_canvas_ref = NodeRef::<leptos::html::Canvas>::new();
@@ -857,6 +861,10 @@ pub fn SkyTab(
     };
 
     // ── Touch handlers ─────────────────────────────────────────────────────
+    let lp_timer_start = Rc::clone(&longpress_timer);
+    let lp_timer_move  = Rc::clone(&longpress_timer);
+    let lp_timer_end   = Rc::clone(&longpress_timer);
+
     let on_touchstart = move |ev: TouchEvent| {
         ev.prevent_default();
         let touches = ev.touches();
@@ -867,7 +875,30 @@ pub fn SkyTab(
             dragging.set_value(true);
             drag_last.set_value((t.client_x() as f64, t.client_y() as f64));
             pinch_start_dist.set_value(0.0);
+
+            // Snapshot sky-center coords for the long-press callback
+            let tx = t.client_x() as f64;
+            let ty = t.client_y() as f64;
+            let lp_site = site.get_untracked();
+            let lp_alt  = center_alt.get_untracked();
+            let lp_az   = center_az.get_untracked();
+            let now = js_sys::Date::new_0();
+            let lp_jd = astro::julian_date(
+                now.get_utc_full_year() as i32,
+                now.get_utc_month() + 1,
+                now.get_utc_date(),
+                now.get_utc_hours(),
+                now.get_utc_minutes(),
+                now.get_utc_seconds() as f64 + time_offset_s.get_untracked(),
+            );
+            let lst = astro::lst_deg(astro::gmst_deg(lp_jd), lp_site.longitude);
+            let (ra_jnow, dec_jnow) = astro::altaz_to_eq(lp_alt, lp_az, lst, lp_site.latitude);
+            let timer_ref = Rc::clone(&lp_timer_start);
+            *timer_ref.borrow_mut() = Some(gloo_timers::callback::Timeout::new(500, move || {
+                set_ctx_menu.set(Some((tx, ty, ra_jnow, dec_jnow)));
+            }));
         } else if touches.length() == 2 {
+            *lp_timer_start.borrow_mut() = None;
             dragging.set_value(false);
             let t0 = touches.get(0).unwrap();
             let t1 = touches.get(1).unwrap();
@@ -881,6 +912,7 @@ pub fn SkyTab(
 
     let on_touchmove = move |ev: TouchEvent| {
         ev.prevent_default();
+        *lp_timer_move.borrow_mut() = None; // any movement cancels the long-press
         let touches = ev.touches();
         if touches.length() == 1 && dragging.get_value() {
             let t = touches.get(0).unwrap();
@@ -911,6 +943,7 @@ pub fn SkyTab(
 
     let on_touchend = move |ev: TouchEvent| {
         ev.prevent_default();
+        *lp_timer_end.borrow_mut() = None; // lifted before 500ms — not a long-press
         dragging.set_value(false);
         pinch_start_dist.set_value(0.0);
     };
@@ -978,7 +1011,7 @@ pub fn SkyTab(
                 on:touchstart=on_touchstart
                 on:touchmove=on_touchmove
                 on:touchend=on_touchend
-                on:touchcancel=move |_: TouchEvent| { dragging.set_value(false); pinch_start_dist.set_value(0.0); }
+                on:touchcancel=move |_: TouchEvent| { *longpress_timer.borrow_mut() = None; dragging.set_value(false); pinch_start_dist.set_value(0.0); }
             />
 
             // ── Mosaic center-pick banner ──────────────────────────────────
@@ -1125,8 +1158,8 @@ pub fn SkyTab(
             // ── Floating mosaic editor (shown while planning == true) ──────────
             {move || planner.planning.get().then(|| view! {
                 <div
-                    style="position:absolute; bottom:80px; right:36px; z-index:110; \
-                           width:240px; background:rgba(8,8,20,0.94); \
+                    style="position:absolute; bottom:80px; right:max(6px,env(safe-area-inset-right)); z-index:110; \
+                           width:min(240px,calc(100vw - 12px)); background:rgba(8,8,20,0.94); \
                            border:1px solid #0a6060; border-radius:6px; \
                            padding:10px 12px; font-family:monospace; font-size:12px; \
                            color:#c0c0d0; display:flex; flex-direction:column; gap:7px;"
