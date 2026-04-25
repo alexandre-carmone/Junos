@@ -59,10 +59,15 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
         return;
     }
 
-    // Notify browsers that a KStars session is live.
-    let _ = hub.browser_tx.send(
-        r#"{"type":"new_connection_state","payload":{"connected":true}}"#.to_string(),
+    // Notify browsers that a KStars session is live, including the server-side
+    // home directory so the WASM client can construct absolute paths for files
+    // it saves via scheduler_save_sequence_file (which prepends homePath on the
+    // KStars side).
+    let home = std::env::var("HOME").unwrap_or_default();
+    let connect_msg = format!(
+        r#"{{"type":"new_connection_state","payload":{{"connected":true,"home_dir":"{home}"}}}}"#
     );
+    let _ = hub.browser_tx.send(connect_msg);
 
     loop {
         tokio::select! {

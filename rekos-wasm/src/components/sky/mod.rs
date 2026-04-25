@@ -789,8 +789,8 @@ pub fn SkyTab(
         if drag_dist.get_value() >= 4.0 || ev.button() != 0 { return; }
         let Some((cx, cy)) = to_canvas_xy(&ev) else { return };
 
-        // Mosaic planning mode or center-pick: left-click sets the mosaic center.
-        if planner.planning.get_untracked() || planner.picking_center.get_untracked() {
+        // Center-pick mode (from "Pick on Sky" in Mosaic tab): left-click sets the mosaic center.
+        if planner.picking_center.get_untracked() {
             let s = site.get_untracked();
             let fov = fov_radius.get_untracked();
             let alt_s = center_alt.get_untracked();
@@ -813,13 +813,10 @@ pub fn SkyTab(
                 let (alt, az) = astro::unproject(nx, ny, alt_s, az_s, fov);
                 let (ra_deg, dec_deg) = astro::altaz_to_eq(alt, az, lst, s.latitude);
                 planner.center.set(Some((ra_deg, dec_deg)));
-                // After picking center from Mosaic tab, return to Mosaic tab.
-                if planner.picking_center.get_untracked() {
-                    planner.picking_center.set(false);
-                    planner.planning.set(true);
-                    if let Some(ctx) = tab_ctx {
-                        ctx.0.set(Tab::Mosaic);
-                    }
+                planner.picking_center.set(false);
+                planner.planning.set(true);
+                if let Some(ctx) = tab_ctx {
+                    ctx.0.set(Tab::Mosaic);
                 }
             }
             return;
@@ -1124,6 +1121,132 @@ pub fn SkyTab(
                 info_popup=info_popup
                 set_info_popup=set_info_popup
             />
+
+            // ── Floating mosaic editor (shown while planning == true) ──────────
+            {move || planner.planning.get().then(|| view! {
+                <div
+                    style="position:absolute; bottom:80px; right:36px; z-index:110; \
+                           width:240px; background:rgba(8,8,20,0.94); \
+                           border:1px solid #0a6060; border-radius:6px; \
+                           padding:10px 12px; font-family:monospace; font-size:12px; \
+                           color:#c0c0d0; display:flex; flex-direction:column; gap:7px;"
+                    on:click=move |ev| ev.stop_propagation()
+                    on:mousedown=move |ev| ev.stop_propagation()
+                >
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="color:#00cccc; font-weight:bold;">{"Mosaic Setup"}</span>
+                        <button
+                            style="background:none; border:none; color:#888; cursor:pointer; \
+                                   font-size:14px; line-height:1; padding:0 2px;"
+                            on:click=move |_| {
+                                planner.planning.set(false);
+                                planner.center.set(None);
+                            }>
+                            {"\u{00d7}"}
+                        </button>
+                    </div>
+
+                    {move || planner.center.get().map(|(ra_deg, dec_deg)| {
+                        let ra_h = ra_deg / 15.0;
+                        let rah  = ra_h as u32;
+                        let ram  = ((ra_h - rah as f64) * 60.0).abs() as u32;
+                        let ds   = if dec_deg < 0.0 { "\u{2212}" } else { "+" };
+                        let da   = dec_deg.abs();
+                        let decd = da as u32;
+                        let decm = ((da - decd as f64) * 60.0) as u32;
+                        view! {
+                            <div style="font-size:11px; color:#88aaff;">
+                                {format!("Center  {:02}h{:02}m  {}{}\u{00b0}{:02}\u{2019}", rah, ram, ds, decd, decm)}
+                            </div>
+                        }
+                    })}
+
+                    <label style="display:flex; align-items:center; gap:5px;">
+                        <span style="color:#aaa; min-width:52px;">{"Target:"}</span>
+                        <input type="text" placeholder="e.g. M31"
+                               style="flex:1; background:#111; color:#ccc; border:1px solid #444; \
+                                      font-family:monospace; font-size:12px; padding:2px 5px;"
+                               prop:value=move || planner.target.get()
+                               on:input=move |ev| {
+                                   planner.target.set(
+                                       ev.target().unwrap()
+                                         .unchecked_into::<web_sys::HtmlInputElement>().value()
+                                   );
+                               } />
+                    </label>
+
+                    <div style="display:flex; align-items:center; gap:4px;">
+                        <span style="color:#aaa; min-width:52px;">{"Grid:"}</span>
+                        <input type="number" min="1" max="10"
+                               style="width:40px; background:#111; color:#ccc; border:1px solid #444; \
+                                      font-family:monospace; font-size:12px; padding:2px 4px; text-align:center;"
+                               prop:value=move || planner.grid_w.get().to_string()
+                               on:input=move |ev| {
+                                   if let Ok(n) = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().value()
+                                       .parse::<u32>() {
+                                       planner.grid_w.set(n.clamp(1, 10));
+                                   }
+                               } />
+                        <span style="color:#888;">{"\u{00d7}"}</span>
+                        <input type="number" min="1" max="10"
+                               style="width:40px; background:#111; color:#ccc; border:1px solid #444; \
+                                      font-family:monospace; font-size:12px; padding:2px 4px; text-align:center;"
+                               prop:value=move || planner.grid_h.get().to_string()
+                               on:input=move |ev| {
+                                   if let Ok(n) = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().value()
+                                       .parse::<u32>() {
+                                       planner.grid_h.set(n.clamp(1, 10));
+                                   }
+                               } />
+                    </div>
+
+                    <label style="display:flex; align-items:center; gap:4px;">
+                        <span style="color:#aaa; min-width:52px;">{"Overlap:"}</span>
+                        <input type="number" min="0" max="50" step="1"
+                               style="width:48px; background:#111; color:#ccc; border:1px solid #444; \
+                                      font-family:monospace; font-size:12px; padding:2px 4px;"
+                               prop:value=move || format!("{:.0}", planner.overlap.get())
+                               on:input=move |ev| {
+                                   if let Ok(n) = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().value()
+                                       .parse::<f64>() {
+                                       planner.overlap.set(n.clamp(0.0, 50.0));
+                                   }
+                               } />
+                        <span style="color:#888;">{"%"}</span>
+                    </label>
+
+                    <label style="display:flex; align-items:center; gap:4px;">
+                        <span style="color:#aaa; min-width:52px;">{"PA:"}</span>
+                        <input type="number" min="-180" max="180" step="1"
+                               style="width:54px; background:#111; color:#ccc; border:1px solid #444; \
+                                      font-family:monospace; font-size:12px; padding:2px 4px;"
+                               prop:value=move || format!("{:.0}", planner.pa.get())
+                               on:input=move |ev| {
+                                   if let Ok(n) = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().value()
+                                       .parse::<f64>() {
+                                       planner.pa.set(n);
+                                   }
+                               } />
+                        <span style="color:#888;">{"\u{00b0}"}</span>
+                    </label>
+
+                    <button
+                        style="margin-top:4px; padding:6px 0; background:#0a1a2a; color:#88aaff; \
+                               border:1px solid #446; cursor:pointer; font-family:monospace; \
+                               font-size:12px; border-radius:3px; text-align:center;"
+                        on:click=move |_| {
+                            if let Some(ctx) = tab_ctx {
+                                ctx.0.set(Tab::Mosaic);
+                            }
+                        }>
+                        {"Open Mosaic Planner \u{2192}"}
+                    </button>
+                </div>
+            })}
         </div>
     }
 }

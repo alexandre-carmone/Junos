@@ -35,6 +35,13 @@ async fn main() {
 
     let config = Arc::new(Config::parse());
 
+    // Ensure the sequences directory exists so scheduler_save_sequence_file can
+    // write to it — QFile::open(WriteOnly) won't create intermediate directories.
+    if let Ok(home) = std::env::var("HOME") {
+        let seq_dir = std::path::Path::new(&home).join(".rekos-sequences");
+        let _ = std::fs::create_dir_all(&seq_dir);
+    }
+
     info!("Serving frontend from: {}", config.dist_dir);
     info!("Listening on:          {}", config.bind_addr);
     info!("Point KStars Ekos Live 'offline' or 'online' server at: http://<this-host>:<port>");

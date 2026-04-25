@@ -10,7 +10,7 @@ use crate::i18n::{Lang, t};
 use crate::compat::SiteSnapshot;
 use crate::CameraDeviceCtx;
 use crate::ws::SendCmd;
-use crate::{ActiveTabCtx, AlignDefaultsCtx, AlignSolveRadiusCtx, MountDeviceCtx, SchedulerPrefillCtx, Tab};
+use crate::{ActiveTabCtx, AlignDefaultsCtx, AlignSolveRadiusCtx, MosaicPlannerCtx, MountDeviceCtx, SchedulerPrefillCtx, Tab};
 
 /// Build a `mount_goto_rade` message.
 ///
@@ -59,6 +59,7 @@ pub fn SkyContextMenu(
     let align_defaults_ctx = use_context::<AlignDefaultsCtx>();
     let prefill_ctx = use_context::<SchedulerPrefillCtx>();
     let active_tab_ctx = use_context::<ActiveTabCtx>();
+    let planner_ctx = use_context::<MosaicPlannerCtx>();
 
     let busy_ctx = use_context::<crate::ServiceBusyCtx>();
     let mount_busy = Signal::derive(move || busy_ctx.and_then(|c| c.mount_busy.get()));
@@ -95,6 +96,17 @@ pub fn SkyContextMenu(
             }
             if let Some(atctx) = active_tab_ctx {
                 atctx.0.set(Tab::Scheduler);
+            }
+            set_ctx_menu.set(None);
+        }
+    };
+
+    let on_create_mosaic = move |_| {
+        if let Some((_sx, _sy, ra_deg, dec_deg)) = ctx_menu.get_untracked() {
+            if let Some(pctx) = planner_ctx {
+                pctx.0.center.set(Some((ra_deg, dec_deg)));
+                pctx.0.picking_center.set(false);
+                pctx.0.planning.set(true);
             }
             set_ctx_menu.set(None);
         }
@@ -176,6 +188,13 @@ pub fn SkyContextMenu(
                                    border-radius:2px; margin-top:6px;"
                             on:click=on_add_scheduler.clone()>
                             {"Add to Scheduler"}
+                        </button>
+                        <button
+                            style="width:100%; background:#0a1a2a; color:#00cccc; border:1px solid #0a6060; \
+                                   padding:4px 8px; cursor:pointer; font-family:monospace; font-size:12px; \
+                                   border-radius:2px; margin-top:4px;"
+                            on:click=on_create_mosaic.clone()>
+                            {"Create Mosaic"}
                         </button>
                     </div>
                 }

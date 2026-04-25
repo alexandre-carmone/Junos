@@ -29,6 +29,27 @@ fn sanitize_name(name: &str) -> String {
         .collect()
 }
 
+/// RA degrees → "HH MM SS.SS" (space-separated, for KStars dmsBox)
+fn fmt_hms(ra_deg: f64) -> String {
+    let ra_h = ((ra_deg % 360.0) + 360.0) % 360.0 / 15.0;
+    let h = ra_h.floor() as u32;
+    let rem = (ra_h - h as f64) * 60.0;
+    let m = rem.floor() as u32;
+    let s = (rem - m as f64) * 60.0;
+    format!("{:02} {:02} {:05.2}", h, m, s)
+}
+
+/// Dec degrees → "+DD MM SS.SS" (space-separated, for KStars dmsBox)
+fn fmt_dms(dec_deg: f64) -> String {
+    let sign = if dec_deg < 0.0 { "-" } else { "+" };
+    let a = dec_deg.abs();
+    let d = a.floor() as u32;
+    let rem = (a - d as f64) * 60.0;
+    let m = rem.floor() as u32;
+    let s = (rem - m as f64) * 60.0;
+    format!("{}{:02} {:02} {:05.2}", sign, d, m, s)
+}
+
 #[component]
 pub fn MosaicTab(
     #[prop(into)] camera: Signal<CameraSnapshot>,
@@ -96,18 +117,35 @@ pub fn MosaicTab(
             }
         };
 
-        // Build tile CSV (PA,RA,DEC)
+        // Build Telescopius-format mosaic CSV for scheduler_import_mosaic.
+        // KStars' parseMosaicCSV reads: Center row sets RA/DEC/PA/FOV/overlap;
+        // tile rows are only counted for grid W×H (Row→W axis, Column→H axis).
         let fov_w = astro::fov_deg(fl_mm, sw as f64, px_um);
         let fov_h = astro::fov_deg(fl_mm, sh as f64, px_um);
-        let cos_dec = center_dec_deg.to_radians().cos().abs().max(0.01);
-        let step_ra  = fov_w * (1.0 - overlap / 100.0) / cos_dec;
-        let step_dec = fov_h * (1.0 - overlap / 100.0);
-        let mut csv = String::from("PA,RA,DEC\n");
+        let fov_w_arcmin = fov_w * 60.0;
+        let fov_h_arcmin = fov_h * 60.0;
+        let center_ra_hms  = fmt_hms(center_ra_deg);
+        let center_dec_dms = fmt_dms(center_dec_deg);
+        let overlap_str = format!("{:.0}%", overlap);
+
+        let mut csv = String::from(
+            "Pane,RA,DEC,Position Angle (East),Pane width (arcmins),Pane height (arcmins),Overlap,Row,Column\n"
+        );
+        csv.push_str(&format!(
+            "Center,{},{},{:.1},{:.2},{:.2},{},0,0\n",
+            center_ra_hms, center_dec_dms, pa, fov_w_arcmin, fov_h_arcmin, overlap_str
+        ));
+        let mut pane_num = 1u32;
         for row in 0..gh {
             for col in 0..gw {
-                let ra  = center_ra_deg + (col as f64 - (gw as f64 - 1.0) / 2.0) * step_ra;
-                let dec = center_dec_deg + (row as f64 - (gh as f64 - 1.0) / 2.0) * step_dec;
-                csv.push_str(&format!("{pa:.2},{ra:.6},{dec:.6}\n"));
+                // Row index maps to mosaic W axis, Column index to H axis.
+                csv.push_str(&format!(
+                    "Panel {},{},{},{:.1},{:.2},{:.2},{},{},{}\n",
+                    pane_num, center_ra_hms, center_dec_dms, pa,
+                    fov_w_arcmin, fov_h_arcmin, overlap_str,
+                    col + 1, row + 1
+                ));
+                pane_num += 1;
             }
         }
 
@@ -119,14 +157,14 @@ pub fn MosaicTab(
             format!("{}/.rekos-sequences/{}.esq", home, safe_name)
         };
 
-        let xml = build_esq_xml(&target, &valid_frames);
+        let xml = build_esq_xml(&safe_name, &valid_frames);
         send_cmd(&send_s, "scheduler_save_sequence_file",
             serde_json::json!({"path": rel_path, "filedata": xml}));
 
         send_cmd(&send_s, "scheduler_import_mosaic", serde_json::json!({
             "csv":      csv,
             "sequence": abs_path,
-            "target":   target,
+            "target":   safe_name,
             "directory": dir,
             "track":    step_track.get_untracked(),
             "focus":    step_focus.get_untracked(),
@@ -138,6 +176,12 @@ pub fn MosaicTab(
 
         form_error.set(None);
         if let Some(ctx) = tab_ctx { ctx.0.set(Tab::Scheduler); }
+
+        let send_refresh = Arc::clone(&send_s);
+        wasm_bindgen_futures::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(1500).await;
+            send_cmd(&send_refresh, "scheduler_get_jobs", serde_json::json!({}));
+        });
     };
 
     // ── Common styles ──────────────────────────────────────────────────────
@@ -188,7 +232,15 @@ pub fn MosaicTab(
                             }
                         }
                         on:click=on_pick_sky>
-                        {move || if planner.picking_center.get() { "Picking\u{2026}" } else { "Pick on Sky" }}
+                        {move || {
+                            if planner.picking_center.get() {
+                                "Picking\u{2026}"
+                            } else if planner.center.get().is_some() {
+                                "Re-pick on Sky"
+                            } else {
+                                "Pick on Sky"
+                            }
+                        }}
                     </button>
                 </div>
 
