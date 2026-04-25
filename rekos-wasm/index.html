@@ -219,19 +219,10 @@
             }
         }
 
-        /* ── Tab switcher: clear inline height conflict, safe-area bottom ── */
-        @media (max-width: 767px) {
-            .sky-tab-switcher {
-                bottom: max(8px, env(safe-area-inset-bottom)) !important;
-                gap: 4px !important;
-                padding: 5px 6px !important;
-            }
-            .sky-tab-switcher button {
-                height: 44px !important;
-                min-width: 36px !important;
-                font-size: 12px !important;
-                padding: 0 6px !important;
-            }
+        /* ── Gear nav spin animation ── */
+        @keyframes gear-spin-slow {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
         }
 
         /* ── Very small phones  ≤ 374 px  (iPhone SE 1st gen) ───────────── */
@@ -242,8 +233,6 @@
             }
             .sky-search { width: calc(100vw - 72px) !important; }
             .status-strip { font-size: 9px !important; }
-            .sky-tab-switcher button { height: 40px !important; min-width: 32px !important; }
-            .sky-tab-switcher { gap: 2px !important; }
         }
     </style>
     <!-- Trunk replaces this with the built WASM entry point -->

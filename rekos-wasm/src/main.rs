@@ -18,7 +18,8 @@ use leptos::prelude::*;
 
 use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
-use components::sky::{MosaicPlannerState, SkyTabSwitcher};
+use components::sky::MosaicPlannerState;
+use components::tab_wheel::TabWheel;
 use components::tabs::TabContent;
 use i18n::Lang;
 use ws::{AlignDefaultsData, SolveRadius};
@@ -191,7 +192,7 @@ fn App() -> impl IntoView {
             />
             // Tab switcher lives at the app root so it stays visible on
             // every tab (SkyTab is hidden when another tab is active).
-            <SkyTabSwitcher />
+            <TabWheel />
         </div>
     }
 }
