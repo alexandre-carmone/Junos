@@ -6,3 +6,4 @@ pub mod mosaic_tab;
 pub mod polar_align;
 pub mod scheduler;
 pub mod sky;
+pub mod tabs;

@@ -18,14 +18,8 @@ use leptos::prelude::*;
 
 use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
-use components::focus::FocusTab;
-use components::guide::GuideTab;
-use components::imaging::ImagingTab;
-use components::mount::MountTab;
-use components::polar_align::PolarAlignTab;
-use components::scheduler::SchedulerTab;
-use components::mosaic_tab::MosaicTab;
-use components::sky::{MosaicPlannerState, SkyTab, SkyTabSwitcher};
+use components::sky::{MosaicPlannerState, SkyTabSwitcher};
+use components::tabs::TabContent;
 use i18n::Lang;
 use ws::{AlignDefaultsData, SolveRadius};
 
@@ -136,16 +130,6 @@ fn App() -> impl IntoView {
         }
     });
 
-    // ── Derived signals for SkyTab ────────────────────────────────────────
-    let mount  = compat::derive_mount(&store);
-    let camera = compat::derive_camera(&store);
-    let solve  = compat::derive_solve(&store);
-    let mosaic = compat::derive_mosaic(&store);
-    let focal_length_mm = {
-        let ts = store.telescope_settings;
-        Signal::derive(move || ts.get().focal_length_mm)
-    };
-
     // ── Scheduler prefill context (sky right-click → Add to Scheduler) ───
     let prefill_ctx = RwSignal::new(None::<(String, f64, f64)>);
     provide_context(SchedulerPrefillCtx(prefill_ctx));
@@ -193,112 +177,18 @@ fn App() -> impl IntoView {
 
     let active_tab = RwSignal::new(Tab::Sky);
     provide_context(ActiveTabCtx(active_tab));
-    let sky_visible       = move || active_tab.get() == Tab::Sky;
-    let mount_visible     = move || active_tab.get() == Tab::Mount;
-    let focus_visible     = move || active_tab.get() == Tab::Focus;
-    let imaging_visible   = move || active_tab.get() == Tab::Imaging;
-    let polar_visible     = move || active_tab.get() == Tab::PolarAlign;
-    let guide_visible     = move || active_tab.get() == Tab::Guide;
-    let scheduler_visible = move || active_tab.get() == Tab::Scheduler;
-    let mosaic_visible    = move || active_tab.get() == Tab::Mosaic;
-
-    // ── Focus + Imaging + Polar align + Guide + Scheduler tab wiring ──────
-    let focus_snapshot     = compat::derive_focus(&store);
-    let capture_snapshot   = compat::derive_capture(&store);
-    let polar_snapshot     = compat::derive_polar_align(&store);
-    let guide_snapshot     = compat::derive_guide(&store);
-    let scheduler_snapshot = compat::derive_scheduler(&store);
-    let home_dir = { let hd = store.home_dir; Signal::derive(move || hd.get()) };
-    let send_mount     = Arc::clone(&send);
-    let send_focus     = Arc::clone(&send);
-    let send_imaging   = Arc::clone(&send);
-    let send_polar     = Arc::clone(&send);
-    let send_guide     = Arc::clone(&send);
-    let send_scheduler = Arc::clone(&send);
-    let send_mosaic    = Arc::clone(&send);
 
     view! {
         <div id="rekos-app" style="position:fixed; inset:0; background:#0a0a0f; color:#c0c0d0; font-family:monospace; overflow:hidden;">
-            <div style=move || format!(
-                "position:absolute; inset:0; {}",
-                if sky_visible() { "" } else { "display:none;" }
-            )>
-                <SkyTab
-                    mount=mount
-                    camera=camera
-                    site=site
-                    solve=solve
-                    focal_length_mm=focal_length_mm
-                    scheduler=scheduler_snapshot
-                    mosaic=mosaic
-                    send=Arc::clone(&send)
-                    center_alt=sky_center_alt
-                    center_az=sky_center_az
-                    fov_radius=sky_fov_radius
-                    follow_mount=sky_follow_mount
-                />
-            </div>
-            <Show when=mount_visible>
-                <div style="position:absolute; inset:0; z-index:40;">
-                    <MountTab
-                        mount=mount
-                        send=Arc::clone(&send_mount)
-                    />
-                </div>
-            </Show>
-            <Show when=focus_visible>
-                <div style="position:absolute; inset:0; z-index:40;">
-                    <FocusTab
-                        focus=focus_snapshot
-                        camera=camera
-                        send=Arc::clone(&send_focus)
-                    />
-                </div>
-            </Show>
-            <Show when=imaging_visible>
-                <div style="position:absolute; inset:0; z-index:40;">
-                    <ImagingTab
-                        capture=capture_snapshot
-                        camera=camera
-                        send=Arc::clone(&send_imaging)
-                    />
-                </div>
-            </Show>
-            <Show when=polar_visible>
-                <div style="position:absolute; inset:0; z-index:40;">
-                    <PolarAlignTab
-                        polar=polar_snapshot
-                        mount=mount
-                        send=Arc::clone(&send_polar)
-                    />
-                </div>
-            </Show>
-            <Show when=guide_visible>
-                <div style="position:absolute; inset:0; z-index:40;">
-                    <GuideTab
-                        guide=guide_snapshot
-                        send=Arc::clone(&send_guide)
-                    />
-                </div>
-            </Show>
-            <Show when=scheduler_visible>
-                <div style="position:absolute; inset:0; z-index:40;">
-                    <SchedulerTab
-                        scheduler=scheduler_snapshot
-                        send=Arc::clone(&send_scheduler)
-                    />
-                </div>
-            </Show>
-            <Show when=mosaic_visible>
-                <div style="position:absolute; inset:0; z-index:40;">
-                    <MosaicTab
-                        camera=camera
-                        focal_length_mm=focal_length_mm
-                        home_dir=home_dir
-                        send=Arc::clone(&send_mosaic)
-                    />
-                </div>
-            </Show>
+            <TabContent
+                store=store.clone()
+                send=Arc::clone(&send)
+                site=site
+                sky_center_alt=sky_center_alt
+                sky_center_az=sky_center_az
+                sky_fov_radius=sky_fov_radius
+                sky_follow_mount=sky_follow_mount
+            />
             // Tab switcher lives at the app root so it stays visible on
             // every tab (SkyTab is hidden when another tab is active).
             <SkyTabSwitcher />
