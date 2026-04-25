@@ -337,6 +337,32 @@ pub fn SkyTab(
         });
     });
 
+    // ── Idle-activity tracker ─────────────────────────────────────────────
+    // Bumped whenever an input that affects the rendered scene changes. The
+    // RAF loop reads it to decide whether to re-tick at ~30 fps (recent
+    // activity) or drop to ~1 Hz so a parked mount doesn't keep the phone
+    // busy redrawing identical frames.
+    let last_active_ms: Rc<std::cell::Cell<f64>> =
+        Rc::new(std::cell::Cell::new(js_sys::Date::now()));
+    {
+        let last_active_for_watch = Rc::clone(&last_active_ms);
+        Effect::new(move || {
+            // Subscribe to the high-signal inputs. Toggles and rare changes
+            // are ignored — one slow frame after a toggle flip is fine; we
+            // only care about pan/zoom/mount/cursor staying responsive.
+            let _ = mount.get();
+            let _ = camera.get();
+            let _ = solve.get();
+            let _ = mosaic.get();
+            let _ = scheduler.get();
+            let _ = fov_radius.get();
+            let _ = center_alt.get();
+            let _ = center_az.get();
+            let _ = mouse_pos.get();
+            last_active_for_watch.set(js_sys::Date::now());
+        });
+    }
+
     // ── Effective focal length ─────────────────────────────────────────────
     let effective_focal = Signal::derive(move || {
         let ov = focal_override.get();
@@ -565,13 +591,17 @@ pub fn SkyTab(
         };
 
         // ── Derive scheduler job render list ───────────────────────────
-        let scheduler_jobs_data: Vec<SchedulerJobRender> = sched.jobs.iter().filter_map(|j| {
-            let name    = j["name"].as_str()?.to_string();
-            let ra_h    = j["targetRA"].as_f64()?;
-            let dec_deg = j["targetDEC"].as_f64()?;
-            let state   = j["state"].as_i64().unwrap_or(0);
-            Some(SchedulerJobRender { name, ra_h, dec_deg, state })
-        }).collect();
+        let scheduler_jobs_data: Vec<SchedulerJobRender> = if scheduler_jobs_on {
+            sched.jobs.iter().filter_map(|j| {
+                let name    = j["name"].as_str()?.to_string();
+                let ra_h    = j["targetRA"].as_f64()?;
+                let dec_deg = j["targetDEC"].as_f64()?;
+                let state   = j["state"].as_i64().unwrap_or(0);
+                Some(SchedulerJobRender { name, ra_h, dec_deg, state })
+            }).collect()
+        } else {
+            Vec::new()
+        };
 
         // ── KStars mosaic tiles → MosaicPlanRender ─────────────────────
         let mosaic_kstars_render = if !mos.tiles.is_empty() {
@@ -682,15 +712,17 @@ pub fn SkyTab(
         let mut nebulae_cache = nebulae_for_render.borrow_mut();
         let mut hits = hit_items_for_render.borrow_mut();
         hits.clear();
-        let trail = trail_for_render.borrow();
-        let trail_slice: Vec<(f64, f64, f64)> = trail.iter().copied().collect();
-        drop(trail);
+        // make_contiguous() rotates the ring buffer in place so we can hand
+        // the trail to the renderer as a single slice without copying. The
+        // trail caps at 120 entries, so the rotation is essentially free.
+        let mut trail = trail_for_render.borrow_mut();
+        let trail_slice = trail.make_contiguous();
         render::render_overlay(
             &ctx, &params, &cat, &dso_cat,
             nb_idx.as_deref(),
             &mut nebulae_cache,
             &mut hits,
-            &trail_slice,
+            trail_slice,
         );
     });
 
@@ -713,7 +745,14 @@ pub fn SkyTab(
         }
     });
 
-    // ── Animation loop (throttled: skip every other frame for smoother mobile perf) ──
+    // ── Animation loop ────────────────────────────────────────────────────
+    // Two cadences:
+    //   - Active (any input change in the last 500 ms): tick every other
+    //     RAF frame → ~30 fps on 60 Hz panels, ~60 fps on 120 Hz.
+    //   - Idle: tick at ~1 Hz so sidereal time and planet positions still
+    //     update, but a parked phone stops burning cycles redrawing
+    //     bit-identical frames.
+    let last_active_for_raf = Rc::clone(&last_active_ms);
     let _raf = Effect::new(move || {
         use wasm_bindgen::closure::Closure;
         use wasm_bindgen::JsCast;
@@ -721,13 +760,30 @@ pub fn SkyTab(
         let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
         let g = Rc::clone(&f);
         let frame_counter = Rc::new(std::cell::Cell::new(0u32));
+        let last_idle_tick = Rc::new(std::cell::Cell::new(0.0_f64));
         let fc = Rc::clone(&frame_counter);
+        let lit = Rc::clone(&last_idle_tick);
+        let last_active = Rc::clone(&last_active_for_raf);
 
         *g.borrow_mut() = Some(Closure::<dyn FnMut()>::new(move || {
-            // Only update tick every other frame (~30fps on 60Hz, ~60fps on 120Hz)
+            let now_ms = js_sys::Date::now();
+            let active = (now_ms - last_active.get()) < 500.0;
             let count = fc.get().wrapping_add(1);
             fc.set(count);
-            if count % 2 == 0 {
+
+            let should_tick = if active {
+                count % 2 == 0
+            } else {
+                // Idle: throttle to ~1 Hz.
+                if (now_ms - lit.get()) >= 1000.0 {
+                    lit.set(now_ms);
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if should_tick {
                 set_tick.update(|t| *t = t.wrapping_add(1));
             }
             if let Some(win) = web_sys::window() {

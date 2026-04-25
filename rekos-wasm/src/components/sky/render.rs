@@ -8,7 +8,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlImageElement};
 
 use crate::astro;
 use crate::catalog::CatalogData;
-use crate::coords::J2000;
+use crate::coords::{J2000, JNow};
 use crate::dso_catalog::{DsoCatalogData, DsoType};
 use crate::ephemeris;
 use crate::i18n::{Lang, constellation_name, t};
@@ -695,6 +695,28 @@ fn render_dso(
     ctx.set_line_width(1.0);
     ctx.set_font("9px monospace");
 
+    // ── Cheap angular-distance pre-cull (J2000) ───────────────────────────
+    // Compute the view center in J2000 once, then skip the per-DSO
+    // precession + altaz + projection chain for objects clearly outside the
+    // visible cap. Iteration set is unchanged from the original full scan,
+    // so no DSO can ever be missed by this filter — only the heavy math is
+    // skipped for far-away objects.
+    let (c_ra_jnow, c_dec_jnow) =
+        astro::altaz_to_eq(p.c_alt, p.c_az, p.lst, p.latitude);
+    let view_j2000 = JNow::new(c_ra_jnow, c_dec_jnow).to_j2000(p.jd);
+    let v_ra_rad = view_j2000.ra_deg.to_radians();
+    let v_dec_rad = view_j2000.dec_deg.to_radians();
+    let v_sin_dec = v_dec_rad.sin();
+    let v_cos_dec = v_dec_rad.cos();
+    // Cap radius generously: render rejects beyond fov*1.5; add margin for
+    // wide-field nebulae whose center is just outside but corners are in.
+    let cap_radius_deg = p.fov * 1.5 + 6.0;
+    let cos_cap = if cap_radius_deg >= 180.0 {
+        -1.0
+    } else {
+        cap_radius_deg.to_radians().cos()
+    };
+
     for dso in dso_cat.dsos.iter() {
         let type_ok = match dso.kind {
             DsoType::Galaxy          => p.dso_gx,
@@ -707,6 +729,15 @@ fn render_dso(
         };
         if !type_ok { continue; }
         if (dso.mag as f64) > p.dso_mag { continue; }
+
+        // Cheap great-circle gate in J2000 — skips precession/altaz when
+        // the object is well outside the visible cap.
+        let d_ra_rad = (dso.ra_deg as f64).to_radians();
+        let d_dec_rad = (dso.dec_deg as f64).to_radians();
+        let cos_sep =
+            v_sin_dec * d_dec_rad.sin()
+                + v_cos_dec * d_dec_rad.cos() * (d_ra_rad - v_ra_rad).cos();
+        if cos_sep < cos_cap { continue; }
 
         let dso_jnow = J2000::new(dso.ra_deg as f64, dso.dec_deg as f64).to_jnow(p.jd);
         let ha = lst_rad - dso_jnow.ra_deg.to_radians();
@@ -1131,16 +1162,18 @@ fn draw_fov_box(
     let sin_r = rot_rad.sin();
     let cos_r = rot_rad.cos();
 
-    let mut pts: Vec<(f64, f64)> = Vec::with_capacity(4);
+    let mut pts = [(0.0_f64, 0.0_f64); 4];
+    let mut n = 0usize;
     for (cra, cdec) in &corners_eq {
         let (calt, caz) = astro::eq_to_altaz(*cra, *cdec, p.lst, p.latitude);
         if let Some((sx, sy)) = project(calt, caz) {
             let dx = sx - pcx;
             let dy = sy - pcy;
-            pts.push((pcx + dx * cos_r - dy * sin_r, pcy + dx * sin_r + dy * cos_r));
+            pts[n] = (pcx + dx * cos_r - dy * sin_r, pcy + dx * sin_r + dy * cos_r);
+            n += 1;
         }
     }
-    if pts.len() < 4 { return; }
+    if n < 4 { return; }
 
     // Filled background
     ctx.begin_path();
