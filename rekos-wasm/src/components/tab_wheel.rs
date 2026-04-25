@@ -45,9 +45,9 @@ const TABS: [Tab; 8] = [
 const N: usize = TABS.len();
 const ARC_START_DEG: f32 = 90.0;          // top
 const ARC_END_DEG: f32 = 270.0;           // bottom (going through left = 180°)
-const RADIUS_PX: f32 = 78.0;
-const BOX_PX: f32 = 200.0;
-const KNOB_PX: f32 = 48.0;
+const RADIUS_PX: f32 = 115.0;
+const BOX_PX: f32 = 290.0;
+const KNOB_PX: f32 = 68.0;
 const COLLAPSE_MS: i32 = 2500;
 // Negative `right` offset so the wheel's center sits just inside the right
 // edge — the knob hugs the border and the arc fans into the screen.
@@ -342,8 +342,8 @@ pub fn TabWheel() -> impl IntoView {
                     let ang_rad = base_angle(i).to_radians();
                     let cx = BOX_PX * 0.5 + RADIUS_PX * ang_rad.cos();
                     let cy = BOX_PX * 0.5 + RADIUS_PX * ang_rad.sin();
-                    let btn_w = 44.0_f32;
-                    let btn_h = 28.0_f32;
+                    let btn_w = 62.0_f32;
+                    let btn_h = 38.0_f32;
                     let arm_timer = Rc::clone(&arm_timer);
                     let was_dragging = Rc::clone(&was_dragging);
                     let style = move || {
@@ -359,7 +359,7 @@ pub fn TabWheel() -> impl IntoView {
                              transform:translate(-50%,-50%) rotate({cr}deg); \
                              border-radius:6px; border:1px solid {border}; \
                              background:{bg}; color:{color}; \
-                             font:600 11px/1 ui-monospace,monospace; letter-spacing:0.05em; \
+                             font:600 13px/1 ui-monospace,monospace; letter-spacing:0.05em; \
                              cursor:pointer; touch-action:manipulation; \
                              -webkit-tap-highlight-color:transparent; \
                              padding:0; \
@@ -409,7 +409,7 @@ pub fn TabWheel() -> impl IntoView {
                      border-radius:50%; \
                      border:2px solid #88aaff; background:rgba(12,14,24,0.92); \
                      color:#cfe0ff; \
-                     font:700 12px/1 ui-monospace,monospace; letter-spacing:0.06em; \
+                     font:700 15px/1 ui-monospace,monospace; letter-spacing:0.06em; \
                      cursor:pointer; touch-action:manipulation; \
                      -webkit-tap-highlight-color:transparent; \
                      box-shadow:0 0 10px rgba(0,0,0,0.5); \
