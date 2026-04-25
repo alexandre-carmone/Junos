@@ -14,7 +14,7 @@ use wasm_bindgen::JsCast;
 
 use crate::compat::SchedulerSnapshot;
 use crate::dso_catalog::DsoCatalogData;
-use crate::i18n::{Lang, t};
+use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
 use crate::SchedulerPrefillCtx;
 
@@ -275,45 +275,45 @@ const SCHED_CSS: &str = r#"
 }
 "#;
 
-fn scheduler_status_label(status: i64) -> (&'static str, &'static str) {
+fn scheduler_status_label(tr: &'static Translations, status: i64) -> (&'static str, &'static str) {
     match status {
-        0 => ("Idle",    "sched-badge-idle"),
-        1 => ("Running", "sched-badge-running"),
-        2 => ("Paused",  "sched-badge-paused"),
-        _ => ("Unknown", "sched-badge-idle"),
+        0 => (tr.sched_status_idle,    "sched-badge-idle"),
+        1 => (tr.sched_status_running, "sched-badge-running"),
+        2 => (tr.sched_status_paused,  "sched-badge-paused"),
+        _ => (tr.sched_status_unknown, "sched-badge-idle"),
     }
 }
 
-fn job_state_label(state: i64) -> (&'static str, &'static str) {
+fn job_state_label(tr: &'static Translations, state: i64) -> (&'static str, &'static str) {
     match state {
-        0 => ("Idle",       "sched-state-queued"),
-        1 => ("Evaluating", "sched-state-queued"),
-        2 => ("Scheduled",  "sched-state-queued"),
-        3 => ("Active",     "sched-state-active"),
-        4 => ("Error",      "sched-state-error"),
-        5 => ("Aborted",    "sched-state-aborted"),
-        6 => ("Invalid",    "sched-state-error"),
-        7 => ("Complete",   "sched-state-complete"),
-        _ => ("?",          "sched-state-queued"),
+        0 => (tr.sched_state_idle,       "sched-state-queued"),
+        1 => (tr.sched_state_evaluating, "sched-state-queued"),
+        2 => (tr.sched_state_scheduled,  "sched-state-queued"),
+        3 => (tr.sched_state_active,     "sched-state-active"),
+        4 => (tr.sched_state_error,      "sched-state-error"),
+        5 => (tr.sched_state_aborted,    "sched-state-aborted"),
+        6 => (tr.sched_state_invalid,    "sched-state-error"),
+        7 => (tr.sched_state_complete,   "sched-state-complete"),
+        _ => ("?",                       "sched-state-queued"),
     }
 }
 
-fn job_stage_label(stage: i64) -> &'static str {
+fn job_stage_label(tr: &'static Translations, stage: i64) -> &'static str {
     match stage {
-        1  => "Slewing",
-        2  => "Slew done",
-        3  => "Focusing",
-        4  => "Focus done",
-        5  => "Aligning",
-        6  => "Align done",
-        7  => "Re-slewing",
-        8  => "Re-slew done",
-        9  => "Post-focus",
-        10 => "Post-focus done",
-        11 => "Guiding",
-        12 => "Guide done",
-        13 => "Capturing",
-        14 => "Complete",
+        1  => tr.sched_stage_slewing,
+        2  => tr.sched_stage_slew_done,
+        3  => tr.sched_stage_focusing,
+        4  => tr.sched_stage_focus_done,
+        5  => tr.sched_stage_aligning,
+        6  => tr.sched_stage_align_done,
+        7  => tr.sched_stage_reslewing,
+        8  => tr.sched_stage_reslew_done,
+        9  => tr.sched_stage_post_focus,
+        10 => tr.sched_stage_post_focus_done,
+        11 => tr.sched_stage_guiding,
+        12 => tr.sched_stage_guide_done,
+        13 => tr.sched_stage_capturing,
+        14 => tr.sched_stage_done,
         _  => "",
     }
 }
@@ -415,7 +415,7 @@ pub fn SchedulerTab(
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
-    let _tr = move || t(lang.get());
+    let tr = move || t(lang.get());
 
     let dso_catalog = use_context::<RwSignal<Option<std::sync::Arc<DsoCatalogData>>>>();
 
@@ -545,7 +545,7 @@ pub fn SchedulerTab(
                     )));
                 }
                 None => {
-                    search_result2.set(Some("Not found in catalog".to_string()));
+                    search_result2.set(Some(t(lang.get_untracked()).sched_not_found.to_string()));
                 }
             }
         }
@@ -597,14 +597,14 @@ pub fn SchedulerTab(
         let ra_f = match f_ra_h.get_untracked().parse::<f64>() {
             Ok(v) if (0.0..=24.0).contains(&v) => v,
             _ => {
-                form_error.set(Some("RA must be a number between 0 and 24 (hours).".to_string()));
+                form_error.set(Some(t(lang.get_untracked()).sched_err_ra.to_string()));
                 return;
             }
         };
         let dec_f = match f_dec_deg.get_untracked().parse::<f64>() {
             Ok(v) if (-90.0..=90.0).contains(&v) => v,
             _ => {
-                form_error.set(Some("Dec must be a number between −90 and +90 (degrees).".to_string()));
+                form_error.set(Some(t(lang.get_untracked()).sched_err_dec.to_string()));
                 return;
             }
         };
@@ -614,7 +614,7 @@ pub fn SchedulerTab(
         }).cloned().collect();
 
         if frames.is_empty() {
-            form_error.set(Some("Add at least one valid sequence frame (numeric exposure and count).".to_string()));
+            form_error.set(Some(t(lang.get_untracked()).sched_err_frames.to_string()));
             return;
         }
 
@@ -702,17 +702,18 @@ pub fn SchedulerTab(
             // ── Header ──────────────────────────────────────────────────────
             <div class="sched-header">
                 <div class="sched-header-top">
-                    <span class="sched-title">"SCHEDULER"</span>
+                    <span class="sched-title">{move || tr().sched_title}</span>
                     <span class="sched-job-count">
                         {move || {
                             let n = scheduler.get().jobs.len();
-                            if n == 1 { "(1 job)".to_string() } else { format!("({} jobs)", n) }
+                            let word = if n == 1 { tr().sched_job_singular } else { tr().sched_job_plural };
+                            format!("({} {})", n, word)
                         }}
                     </span>
                     <div class="sched-ctrl-group">
                         {move || {
                             let snap = scheduler.get();
-                            let (label, cls) = scheduler_status_label(snap.status);
+                            let (label, cls) = scheduler_status_label(tr(), snap.status);
                             view! {
                                 <span class={format!("sched-badge {}", cls)}>{label}</span>
                             }
@@ -723,7 +724,7 @@ pub fn SchedulerTab(
                                 else { "sched-btn" }
                             }
                             on:click=on_toggle.clone()>
-                            {move || if scheduler.get().status == 1 { "■ Stop" } else { "▶ Start" }}
+                            {move || if scheduler.get().status == 1 { tr().sched_btn_stop } else { tr().sched_btn_start }}
                         </button>
                     </div>
                 </div>
@@ -748,12 +749,11 @@ pub fn SchedulerTab(
                         <div>
                             <div class="sched-section-bar">
                                 <span class="sched-section-label">
-                                    {if job_count == 1 { "Jobs (1)".to_string() }
-                                     else { format!("Jobs ({})", job_count) }}
+                                    {format!("{} ({})", tr().sched_jobs_section, job_count)}
                                 </span>
                                 <button
                                     class="sched-btn-icon"
-                                    title="Refresh job list"
+                                    title=move || tr().sched_refresh_jobs
                                     on:click=move |_| {
                                         send_cmd(&send_ref, "scheduler_get_jobs", serde_json::json!({}));
                                     }>
@@ -764,7 +764,7 @@ pub fn SchedulerTab(
                                 {if snap.jobs.is_empty() {
                                     view! {
                                         <div class="sched-empty">
-                                            "No scheduled jobs. Add one below or load a schedule in KStars."
+                                            {move || tr().sched_no_jobs}
                                         </div>
                                     }.into_any()
                                 } else {
@@ -772,13 +772,13 @@ pub fn SchedulerTab(
                                         <table class="sched-table">
                                             <thead>
                                                 <tr>
-                                                    <th>"Name"</th>
-                                                    <th>"Coords"</th>
-                                                    <th>"State"</th>
-                                                    <th>"Alt"</th>
-                                                    <th>"Progress"</th>
-                                                    <th class="sched-col-start">"Start"</th>
-                                                    <th class="sched-col-end">"End"</th>
+                                                    <th>{move || tr().sched_col_name}</th>
+                                                    <th>{move || tr().sched_col_coords}</th>
+                                                    <th>{move || tr().sched_col_state}</th>
+                                                    <th>{move || tr().sched_col_alt}</th>
+                                                    <th>{move || tr().sched_col_progress}</th>
+                                                    <th class="sched-col-start">{move || tr().sched_col_start}</th>
+                                                    <th class="sched-col-end">{move || tr().sched_col_end}</th>
                                                     <th></th>
                                                 </tr>
                                             </thead>
@@ -801,8 +801,8 @@ pub fn SchedulerTab(
                                                     let end_s   = job["endFormatted"].as_str()
                                                         .or_else(|| job["completionTime"].as_str())
                                                         .unwrap_or("—").to_string();
-                                                    let (state_label, state_cls) = job_state_label(state);
-                                                    let stage_label = if state == 3 { job_stage_label(stage) } else { "" };
+                                                    let (state_label, state_cls) = job_state_label(tr(), state);
+                                                    let stage_label = if state == 3 { job_stage_label(tr(), stage) } else { "" };
                                                     let alt_cls = if alt_val >= 30.0 { "sched-alt-good" }
                                                                   else if alt_val >= 20.0 { "sched-alt-warn" }
                                                                   else { "sched-alt-bad" };
@@ -843,7 +843,7 @@ pub fn SchedulerTab(
                                                             <td style="width:36px;">
                                                                 <button
                                                                     class="sched-remove-btn"
-                                                                    title="Remove job"
+                                                                    title=move || tr().sched_remove_job
                                                                     on:click=move |_| {
                                                                         send_cmd(&send_rm, "scheduler_remove_jobs",
                                                                             serde_json::json!({"index": i}));
@@ -872,7 +872,7 @@ pub fn SchedulerTab(
                 // ── Settings panel ───────────────────────────────────────────
                 <div class="sched-add-section" style="padding-bottom:8px; padding-top:8px;">
                     <details class="sched-add-details">
-                        <summary class="sched-add-summary">"▸ Scheduler Settings"</summary>
+                        <summary class="sched-add-summary">{move || tr().sched_settings_section}</summary>
                         <div class="sched-add-body">
                             <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:center;">
                                 <label class="sched-toggle-label">
@@ -890,7 +890,7 @@ pub fn SchedulerTab(
                                             }
                                         }
                                     />
-                                    "Greedy scheduling"
+                                    {move || tr().sched_greedy}
                                 </label>
                                 <label class="sched-toggle-label">
                                     <input
@@ -907,7 +907,7 @@ pub fn SchedulerTab(
                                             }
                                         }
                                     />
-                                    "Remember progress"
+                                    {move || tr().sched_remember_progress}
                                 </label>
                                 <label class="sched-toggle-label">
                                     <input
@@ -924,7 +924,7 @@ pub fn SchedulerTab(
                                             }
                                         }
                                     />
-                                    "Reschedule on error"
+                                    {move || tr().sched_reschedule_error}
                                 </label>
                             </div>
                         </div>
@@ -934,10 +934,10 @@ pub fn SchedulerTab(
                 // ── Observatory scripts panel ────────────────────────────────
                 <div class="sched-add-section" style="padding-bottom:8px;">
                     <details class="sched-add-details">
-                        <summary class="sched-add-summary">"▸ Scripts & Procedures"</summary>
+                        <summary class="sched-add-summary">{move || tr().sched_scripts_section}</summary>
                         <div class="sched-add-body">
                             <fieldset class="sched-fieldset">
-                                <legend>"Startup"</legend>
+                                <legend>{move || tr().sched_startup_legend}</legend>
                                 <div class="sched-field-row" style="margin-bottom:8px;">
                                     <label class="sched-toggle-label">
                                         <input
@@ -948,11 +948,11 @@ pub fn SchedulerTab(
                                                     .unchecked_into::<web_sys::HtmlInputElement>().checked());
                                             }
                                         />
-                                        "Enable startup procedure"
+                                        {move || tr().sched_enable_startup}
                                     </label>
                                 </div>
                                 <div class="sched-field-row">
-                                    <span class="sched-field-label">"Pre-script"</span>
+                                    <span class="sched-field-label">{move || tr().sched_pre_script}</span>
                                     <input
                                         class="sched-input"
                                         style="flex:1; min-width:200px;"
@@ -965,7 +965,7 @@ pub fn SchedulerTab(
                                     />
                                 </div>
                                 <div class="sched-field-row" style="margin-top:6px;">
-                                    <span class="sched-field-label">"Post-script"</span>
+                                    <span class="sched-field-label">{move || tr().sched_post_script}</span>
                                     <input
                                         class="sched-input"
                                         style="flex:1; min-width:200px;"
@@ -980,7 +980,7 @@ pub fn SchedulerTab(
                             </fieldset>
 
                             <fieldset class="sched-fieldset">
-                                <legend>"Shutdown"</legend>
+                                <legend>{move || tr().sched_shutdown_legend}</legend>
                                 <div class="sched-field-row" style="margin-bottom:8px;">
                                     <label class="sched-toggle-label">
                                         <input
@@ -991,11 +991,11 @@ pub fn SchedulerTab(
                                                     .unchecked_into::<web_sys::HtmlInputElement>().checked());
                                             }
                                         />
-                                        "Enable shutdown procedure"
+                                        {move || tr().sched_enable_shutdown}
                                     </label>
                                 </div>
                                 <div class="sched-field-row">
-                                    <span class="sched-field-label">"Pre-script"</span>
+                                    <span class="sched-field-label">{move || tr().sched_pre_script}</span>
                                     <input
                                         class="sched-input"
                                         style="flex:1; min-width:200px;"
@@ -1008,7 +1008,7 @@ pub fn SchedulerTab(
                                     />
                                 </div>
                                 <div class="sched-field-row" style="margin-top:6px;">
-                                    <span class="sched-field-label">"Post-script"</span>
+                                    <span class="sched-field-label">{move || tr().sched_post_script}</span>
                                     <input
                                         class="sched-input"
                                         style="flex:1; min-width:200px;"
@@ -1023,7 +1023,7 @@ pub fn SchedulerTab(
                             </fieldset>
 
                             <button class="sched-btn-apply" on:click=on_apply_scripts.clone()>
-                                "Apply scripts"
+                                {move || tr().sched_apply_scripts}
                             </button>
                         </div>
                     </details>
@@ -1032,17 +1032,17 @@ pub fn SchedulerTab(
                 // ── Add Job form ──────────────────────────────────────────────
                 <div class="sched-add-section">
                     <details class="sched-add-details">
-                        <summary class="sched-add-summary">"▸ Add Job"</summary>
+                        <summary class="sched-add-summary">{move || tr().sched_add_job_section}</summary>
                         <div class="sched-add-body">
 
                             // Target name + catalog search
                             <div class="sched-field-row">
-                                <span class="sched-field-label">"Target"</span>
+                                <span class="sched-field-label">{move || tr().sched_target_label}</span>
                                 <div class="sched-search-row">
                                     <input
                                         class="sched-input"
                                         style="width:180px;"
-                                        placeholder="M42 / NGC 1234 / …"
+                                        placeholder=move || tr().sched_target_placeholder
                                         prop:value=move || f_target_name.get()
                                         on:input=move |ev| {
                                             f_target_name.set(
@@ -1056,7 +1056,7 @@ pub fn SchedulerTab(
                                         class="sched-btn"
                                         style="padding:4px 10px;"
                                         on:click=on_catalog_search.clone()>
-                                        "Search catalog"
+                                        {move || tr().sched_search_catalog}
                                     </button>
                                     {move || search_result.get().map(|r| view! {
                                         <span class="sched-search-result">{r}</span>
@@ -1066,7 +1066,7 @@ pub fn SchedulerTab(
 
                             // RA / Dec
                             <div class="sched-field-row">
-                                <span class="sched-field-label">"RA"</span>
+                                <span class="sched-field-label">{move || tr().sched_ra_label}</span>
                                 <input
                                     class="sched-input"
                                     style="width:90px;"
@@ -1081,7 +1081,7 @@ pub fn SchedulerTab(
                                     }
                                 />
                                 <span class="sched-field-unit">"h"</span>
-                                <span class="sched-field-label" style="margin-left:8px;">"Dec"</span>
+                                <span class="sched-field-label" style="margin-left:8px;">{move || tr().sched_dec_label}</span>
                                 <input
                                     class="sched-input"
                                     style="width:90px;"
@@ -1103,7 +1103,7 @@ pub fn SchedulerTab(
 
                             // Constraints
                             <div class="sched-field-row">
-                                <span class="sched-field-label">"Min alt"</span>
+                                <span class="sched-field-label">{move || tr().sched_min_alt}</span>
                                 <input
                                     class="sched-input"
                                     style="width:60px;"
@@ -1117,7 +1117,7 @@ pub fn SchedulerTab(
                                     }
                                 />
                                 <span class="sched-field-unit">"°"</span>
-                                <span class="sched-field-label" style="margin-left:8px;">"Moon sep"</span>
+                                <span class="sched-field-label" style="margin-left:8px;">{move || tr().sched_moon_sep}</span>
                                 <input
                                     class="sched-input"
                                     style="width:60px;"
@@ -1131,7 +1131,7 @@ pub fn SchedulerTab(
                                     }
                                 />
                                 <span class="sched-field-unit">"°"</span>
-                                <span class="sched-field-label" style="margin-left:8px;">"PA"</span>
+                                <span class="sched-field-label" style="margin-left:8px;">{move || tr().sched_pa_label}</span>
                                 <input
                                     class="sched-input"
                                     style="width:60px;"
@@ -1149,7 +1149,7 @@ pub fn SchedulerTab(
 
                             // ── Step pipeline ────────────────────────────────
                             <fieldset class="sched-fieldset">
-                                <legend>"Steps"</legend>
+                                <legend>{move || tr().sched_steps_legend}</legend>
                                 <div class="sched-field-row" style="gap:16px;">
                                     <label class="sched-toggle-label">
                                         <input type="checkbox"
@@ -1159,7 +1159,7 @@ pub fn SchedulerTab(
                                                     .unchecked_into::<web_sys::HtmlInputElement>().checked());
                                             }
                                         />
-                                        "Track"
+                                        {move || tr().sched_step_track}
                                     </label>
                                     <label class="sched-toggle-label">
                                         <input type="checkbox"
@@ -1169,7 +1169,7 @@ pub fn SchedulerTab(
                                                     .unchecked_into::<web_sys::HtmlInputElement>().checked());
                                             }
                                         />
-                                        "Focus"
+                                        {move || tr().sched_step_focus}
                                     </label>
                                     <label class="sched-toggle-label">
                                         <input type="checkbox"
@@ -1179,7 +1179,7 @@ pub fn SchedulerTab(
                                                     .unchecked_into::<web_sys::HtmlInputElement>().checked());
                                             }
                                         />
-                                        "Align"
+                                        {move || tr().sched_step_align}
                                     </label>
                                     <label class="sched-toggle-label">
                                         <input type="checkbox"
@@ -1189,14 +1189,14 @@ pub fn SchedulerTab(
                                                     .unchecked_into::<web_sys::HtmlInputElement>().checked());
                                             }
                                         />
-                                        "Guide"
+                                        {move || tr().sched_step_guide}
                                     </label>
                                 </div>
                             </fieldset>
 
                             // ── Startup condition ────────────────────────────
                             <fieldset class="sched-fieldset">
-                                <legend>"Start when"</legend>
+                                <legend>{move || tr().sched_start_when}</legend>
                                 <div class="sched-field-row">
                                     <select
                                         class="sched-select"
@@ -1204,8 +1204,8 @@ pub fn SchedulerTab(
                                             startup_cond.set(ev.target().unwrap()
                                                 .unchecked_into::<web_sys::HtmlSelectElement>().value());
                                         }>
-                                        <option value="asap">"ASAP"</option>
-                                        <option value="at">"At specific time"</option>
+                                        <option value="asap">{move || tr().sched_cond_asap}</option>
+                                        <option value="at">{move || tr().sched_cond_at_time}</option>
                                     </select>
                                     {move || (startup_cond.get() == "at").then(|| view! {
                                         <input
@@ -1223,7 +1223,7 @@ pub fn SchedulerTab(
 
                             // ── Completion condition ─────────────────────────
                             <fieldset class="sched-fieldset">
-                                <legend>"Complete when"</legend>
+                                <legend>{move || tr().sched_complete_when}</legend>
                                 <div class="sched-field-row">
                                     <select
                                         class="sched-select"
@@ -1231,10 +1231,10 @@ pub fn SchedulerTab(
                                             completion_cond.set(ev.target().unwrap()
                                                 .unchecked_into::<web_sys::HtmlSelectElement>().value());
                                         }>
-                                        <option value="sequence">"Sequence complete"</option>
-                                        <option value="repeat">"Repeat N times"</option>
-                                        <option value="loop">"Loop indefinitely"</option>
-                                        <option value="at">"Finish at time"</option>
+                                        <option value="sequence">{move || tr().sched_cond_seq}</option>
+                                        <option value="repeat">{move || tr().sched_cond_repeat}</option>
+                                        <option value="loop">{move || tr().sched_cond_loop}</option>
+                                        <option value="at">{move || tr().sched_cond_finish_at}</option>
                                     </select>
                                     {move || match completion_cond.get().as_str() {
                                         "repeat" => view! {
@@ -1249,7 +1249,7 @@ pub fn SchedulerTab(
                                                         .unchecked_into::<web_sys::HtmlInputElement>().value());
                                                 }
                                             />
-                                            <span class="sched-field-unit">"times"</span>
+                                            <span class="sched-field-unit">{move || tr().sched_times_unit}</span>
                                         }.into_any(),
                                         "at" => view! {
                                             <input
@@ -1269,15 +1269,15 @@ pub fn SchedulerTab(
 
                             // ── Sequence builder ────────────────────────────
                             <div class="sched-seq-section">
-                                <span class="sched-seq-label">"Sequence"</span>
+                                <span class="sched-seq-label">{move || tr().sched_seq_label}</span>
                                 <table class="sched-seq-table">
                                     <thead>
                                         <tr>
                                             <th style="width:24px;">"#"</th>
-                                            <th>"Type"</th>
-                                            <th>"Filter"</th>
-                                            <th>"Exp (s)"</th>
-                                            <th>"Count"</th>
+                                            <th>{move || tr().sched_seq_col_type}</th>
+                                            <th>{move || tr().sched_seq_col_filter}</th>
+                                            <th>{move || tr().sched_seq_col_exp}</th>
+                                            <th>{move || tr().sched_seq_col_count}</th>
                                             <th></th>
                                         </tr>
                                     </thead>
@@ -1383,7 +1383,7 @@ pub fn SchedulerTab(
                                     on:click=move |_| {
                                         seq_frames.update(|fs| fs.push(SeqFrame::default()));
                                     }>
-                                    "+ Add frame type"
+                                    {move || tr().sched_add_frame}
                                 </button>
                             </div>
 
@@ -1393,10 +1393,10 @@ pub fn SchedulerTab(
                             })}
                             <div class="sched-form-btns">
                                 <button class="sched-add-btn" on:click=on_add_job.clone()>
-                                    "Add Job"
+                                    {move || tr().sched_add_job_btn}
                                 </button>
                                 <button class="sched-btn-clear" on:click=on_clear_form.clone()>
-                                    "Clear"
+                                    {move || tr().sched_clear_btn}
                                 </button>
                             </div>
                         </div>

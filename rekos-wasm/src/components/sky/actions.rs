@@ -187,14 +187,14 @@ pub fn SkyContextMenu(
                                    padding:4px 8px; cursor:pointer; font-family:monospace; font-size:12px; \
                                    border-radius:2px; margin-top:6px;"
                             on:click=on_add_scheduler.clone()>
-                            {"Add to Scheduler"}
+                            {move || tr().sky_add_scheduler}
                         </button>
                         <button
                             style="width:100%; background:#0a1a2a; color:#00cccc; border:1px solid #0a6060; \
                                    padding:4px 8px; cursor:pointer; font-family:monospace; font-size:12px; \
                                    border-radius:2px; margin-top:4px;"
                             on:click=on_create_mosaic.clone()>
-                            {"Create Mosaic"}
+                            {move || tr().sky_create_mosaic}
                         </button>
                     </div>
                 }

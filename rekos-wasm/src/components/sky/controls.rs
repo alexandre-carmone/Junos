@@ -141,7 +141,7 @@ pub fn SkyControls(
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer; border-top:1px solid #2a2a3a; padding-top:4px; margin-top:2px;">
                                 <input type="checkbox" prop:checked=move || toggles.scheduler_jobs.get()
                                        on:change=move |ev| toggles.scheduler_jobs.set(event_target_checked(&ev)) />
-                                {"Scheduler jobs"}
+                                {move || tr().sky_scheduler_jobs}
                             </label>
                         </div>
                     })}
