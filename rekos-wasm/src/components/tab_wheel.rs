@@ -68,16 +68,20 @@ fn tab_icon(tab: Tab) -> &'static str {
     match tab {
         // 4-point star
         Tab::Sky => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 L13.6 10.4 L22 12 L13.6 13.6 L12 22 L10.4 13.6 L2 12 L10.4 10.4 Z"/><circle cx="18" cy="5" r="0.8" fill="currentColor"/><circle cx="5" cy="18" r="0.8" fill="currentColor"/></svg>"##,
-        // Equatorial mount: cross axes + central pivot
-        Tab::Mount => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3 L12 21 M3 12 L21 12"/><path d="M5 5 L8 8 M16 16 L19 19"/></svg>"##,
+        // Equatorial mount: tripod + tilted RA axis with counterweight bar
+        Tab::Mount => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21 L7 14 M12 21 L17 14 M12 21 L12 15"/><path d="M5 6 L19 16" /><circle cx="12" cy="11" r="2.2" fill="currentColor" stroke="none"/><circle cx="5" cy="6" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="16" r="1.6" fill="currentColor" stroke="none"/></svg>"##,
         // Concentric focus rings
         Tab::Focus => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>"##,
         // Camera body
         Tab::Imaging => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8 L8 8 L9.5 5.5 L14.5 5.5 L16 8 L20 8 A1 1 0 0 1 21 9 L21 18 A1 1 0 0 1 20 19 L4 19 A1 1 0 0 1 3 18 L3 9 A1 1 0 0 1 4 8 Z"/><circle cx="12" cy="13" r="4"/></svg>"##,
-        // Polaris / north-pointing arrow inside a circle
-        Tab::PolarAlign => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 5 L15 13 L12 11.5 L9 13 Z" fill="currentColor"/><path d="M12 11.5 L12 19"/></svg>"##,
-        // Guide crosshair
-        Tab::Guide => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><path d="M12 1 L12 5 M12 19 L12 23 M1 12 L5 12 M19 12 L23 12"/></svg>"##,
+        // Ursa Minor (Little Dipper): handle curving from Polaris to a 4-star
+        // bowl. Polaris (top-left) and Kochab (bowl, lower-right) are drawn
+        // larger as the two brightest stars.
+        // Stars: Polaris(4,5) - Yildun(7.5,7.5) - eps(10.5,10.5) - zeta(13.5,12.5)
+        //        bowl: zeta(13.5,12.5) - eta(18,9.5) - Pherkad(21,15) - Kochab(16,19) - back to zeta
+        Tab::PolarAlign => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5 L7.5 7.5 L10.5 10.5 L13.5 12.5"/><path d="M13.5 12.5 L18 9.5 L21 15 L16 19 Z"/><circle cx="4" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="7.5" cy="7.5" r="0.85" fill="currentColor" stroke="none"/><circle cx="10.5" cy="10.5" r="0.85" fill="currentColor" stroke="none"/><circle cx="13.5" cy="12.5" r="0.95" fill="currentColor" stroke="none"/><circle cx="18" cy="9.5" r="0.95" fill="currentColor" stroke="none"/><circle cx="21" cy="15" r="1.0" fill="currentColor" stroke="none"/><circle cx="16" cy="19" r="1.4" fill="currentColor" stroke="none"/></svg>"##,
+        // Guide: locked guide star inside a square tracking reticle (corner brackets)
+        Tab::Guide => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 L3 3 L7 3 M17 3 L21 3 L21 7 M21 17 L21 21 L17 21 M7 21 L3 21 L3 17"/><path d="M12 8.5 L12 15.5 M8.5 12 L15.5 12"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/></svg>"##,
         // Calendar / scheduler
         Tab::Scheduler => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10 L21 10 M8 3 L8 7 M16 3 L16 7"/><circle cx="9" cy="14" r="0.9" fill="currentColor"/><circle cx="13" cy="14" r="0.9" fill="currentColor"/><circle cx="17" cy="14" r="0.9" fill="currentColor"/></svg>"##,
         // 3x3 mosaic grid
