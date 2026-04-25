@@ -54,6 +54,15 @@ pub struct MountStatusData {
     /// INDI pier side (kstars/indi/indimount.h:39).
     /// -1 = PIER_UNKNOWN, 0 = PIER_WEST, 1 = PIER_EAST.
     pub pier_side: Option<i32>,
+    pub az_deg:               Option<f64>,
+    pub alt_deg:              Option<f64>,
+    pub ra0_h:                Option<f64>,
+    pub dec0_deg:             Option<f64>,
+    pub slew_rate:            Option<i32>,
+    pub target:               String,
+    pub status_str:           String,
+    pub meridian_flip_status: String,
+    pub auto_park_countdown:  String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -352,6 +361,17 @@ impl DeviceStore {
                     if let Some(p) = payload["pierSide"].as_i64() {
                         ms.pier_side = Some(p as i32);
                     }
+                    // Az/Alt and J2000 coords come with the throttled coord payload.
+                    if let Some(v) = payload["az"].as_f64()  { ms.az_deg   = Some(v); }
+                    if let Some(v) = payload["at"].as_f64()  { ms.alt_deg  = Some(v); }
+                    if let Some(v) = payload["ra0"].as_f64() { ms.ra0_h    = Some(v / 15.0); }
+                    if let Some(v) = payload["de0"].as_f64() { ms.dec0_deg = Some(v); }
+                    // Slew rate index, target name, and info banners.
+                    if let Some(v) = payload["slewRate"].as_i64() { ms.slew_rate = Some(v as i32); }
+                    if let Some(v) = payload["target"].as_str() { if !v.is_empty() { ms.target = v.to_string(); } }
+                    if let Some(v) = payload["meridianFlipStatus"].as_str() { ms.meridian_flip_status = v.to_string(); }
+                    if let Some(v) = payload["autoParkCountdown"].as_str()  { ms.auto_park_countdown  = v.to_string(); }
+                    if let Some(s) = payload["status"].as_str() { ms.status_str = s.to_string(); }
                 });
             }
 

@@ -21,6 +21,7 @@ use dso_catalog::DsoCatalogData;
 use components::focus::FocusTab;
 use components::guide::GuideTab;
 use components::imaging::ImagingTab;
+use components::mount::MountTab;
 use components::polar_align::PolarAlignTab;
 use components::scheduler::SchedulerTab;
 use components::mosaic_tab::MosaicTab;
@@ -29,7 +30,7 @@ use i18n::Lang;
 use ws::{AlignDefaultsData, SolveRadius};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tab { Sky, Focus, Imaging, PolarAlign, Guide, Scheduler, Mosaic }
+pub enum Tab { Sky, Mount, Focus, Imaging, PolarAlign, Guide, Scheduler, Mosaic }
 
 #[derive(Clone, Copy)]
 pub struct ActiveTabCtx(pub RwSignal<Tab>);
@@ -193,6 +194,7 @@ fn App() -> impl IntoView {
     let active_tab = RwSignal::new(Tab::Sky);
     provide_context(ActiveTabCtx(active_tab));
     let sky_visible       = move || active_tab.get() == Tab::Sky;
+    let mount_visible     = move || active_tab.get() == Tab::Mount;
     let focus_visible     = move || active_tab.get() == Tab::Focus;
     let imaging_visible   = move || active_tab.get() == Tab::Imaging;
     let polar_visible     = move || active_tab.get() == Tab::PolarAlign;
@@ -207,6 +209,7 @@ fn App() -> impl IntoView {
     let guide_snapshot     = compat::derive_guide(&store);
     let scheduler_snapshot = compat::derive_scheduler(&store);
     let home_dir = { let hd = store.home_dir; Signal::derive(move || hd.get()) };
+    let send_mount     = Arc::clone(&send);
     let send_focus     = Arc::clone(&send);
     let send_imaging   = Arc::clone(&send);
     let send_polar     = Arc::clone(&send);
@@ -235,6 +238,14 @@ fn App() -> impl IntoView {
                     follow_mount=sky_follow_mount
                 />
             </div>
+            <Show when=mount_visible>
+                <div style="position:absolute; inset:0; z-index:40;">
+                    <MountTab
+                        mount=mount
+                        send=Arc::clone(&send_mount)
+                    />
+                </div>
+            </Show>
             <Show when=focus_visible>
                 <div style="position:absolute; inset:0; z-index:40;">
                     <FocusTab

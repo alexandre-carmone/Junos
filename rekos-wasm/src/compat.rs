@@ -20,6 +20,15 @@ pub struct MountSnapshot {
     pub dec_deg: Option<f64>,
     pub ha_deg: Option<f64>,
     pub pier_side: Option<i32>,
+    pub az_deg: Option<f64>,
+    pub alt_deg: Option<f64>,
+    pub ra0_h: Option<f64>,
+    pub dec0_deg: Option<f64>,
+    pub slew_rate: Option<i32>,
+    pub target: String,
+    pub status_str: String,
+    pub meridian_flip_status: String,
+    pub auto_park_countdown: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -106,6 +115,15 @@ pub fn derive_mount(store: &DeviceStore) -> Signal<MountSnapshot> {
                 dec_deg: ms.dec_deg,
                 ha_deg: ms.ha_deg,
                 pier_side: ms.pier_side,
+                az_deg: ms.az_deg,
+                alt_deg: ms.alt_deg,
+                ra0_h: ms.ra0_h,
+                dec0_deg: ms.dec0_deg,
+                slew_rate: ms.slew_rate,
+                target: ms.target,
+                status_str: ms.status_str,
+                meridian_flip_status: ms.meridian_flip_status,
+                auto_park_countdown: ms.auto_park_countdown,
             },
             None => MountSnapshot::default(),
         }

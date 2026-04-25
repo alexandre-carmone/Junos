@@ -1369,6 +1369,9 @@ pub fn SkyTabSwitcher() -> impl IntoView {
                 <button title=move || tr().tab_sky
                         style=move || btn_style(Tab::Sky)
                         on:click=move |_| active.set(Tab::Sky)>{move || tr().tab_sky_abbr}</button>
+                <button title=move || tr().tab_mount
+                        style=move || btn_style(Tab::Mount)
+                        on:click=move |_| active.set(Tab::Mount)>{move || tr().tab_mount_abbr}</button>
                 <button title=move || tr().tab_focus
                         style=move || btn_style(Tab::Focus)
                         on:click=move |_| active.set(Tab::Focus)>{move || tr().tab_focus_abbr}</button>
