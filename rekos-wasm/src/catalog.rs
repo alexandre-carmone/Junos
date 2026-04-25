@@ -65,7 +65,12 @@ impl CatalogData {
     }
 
     pub fn packed_star_buffer(&self) -> Vec<[f32; 4]> {
-        self.stars.iter().map(|s| [s.ra_deg, s.dec_deg, s.mag, s.bv]).collect()
+        self.stars.iter().map(|s| {
+            // Sol is the Sun's catalog entry at a fixed epoch position; suppress it
+            // so it doesn't appear as a duplicate of the ephemeris-computed Sun.
+            let mag = if s.name.as_deref() == Some("Sol") { 100.0 } else { s.mag };
+            [s.ra_deg, s.dec_deg, mag, s.bv]
+        }).collect()
     }
 
     pub fn packed_line_buffer(&self) -> Vec<[u32; 2]> {

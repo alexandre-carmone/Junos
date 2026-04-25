@@ -321,6 +321,7 @@ fn render_fallback_stars(
         for (i, star) in cat.stars.iter().enumerate() {
             let Some(Some((sx, sy, mag, _))) = idx_screen.get(i) else { continue };
             let Some(name) = star.name.as_deref() else { continue };
+            if name == "Sol" { continue; } // duplicate of ephemeris Sun, wrong position
             let jnow = J2000::new(star.ra_deg as f64, star.dec_deg as f64).to_jnow(p.jd);
             hit_items.push(HitItem {
                 sx: *sx, sy: *sy,
@@ -565,6 +566,7 @@ fn render_star_names_gpu(
     let lst_rad = p.lst.to_radians();
     for star in cat.stars.iter() {
         let Some(name) = star.name.as_deref() else { continue };
+        if name == "Sol" { continue; }
         if star.mag >= 3.0 { continue; }
         let jnow = J2000::new(star.ra_deg as f64, star.dec_deg as f64).to_jnow(p.jd);
         let ha = lst_rad - jnow.ra_deg.to_radians();
@@ -607,6 +609,7 @@ fn push_star_hit_items(
     let lst_rad = p.lst.to_radians();
     for star in cat.stars.iter() {
         let Some(name) = star.name.as_deref() else { continue };
+        if name == "Sol" { continue; }
         if star.mag >= 3.0 { continue; }
         let jnow = J2000::new(star.ra_deg as f64, star.dec_deg as f64).to_jnow(p.jd);
         let ha = lst_rad - jnow.ra_deg.to_radians();
