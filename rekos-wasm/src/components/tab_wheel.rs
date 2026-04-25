@@ -62,16 +62,26 @@ fn base_angle(i: usize) -> f32 {
     ARC_START_DEG + (i as f32) * step
 }
 
-fn tab_abbr(tab: Tab, s: &crate::i18n::Translations) -> &'static str {
+// Inline SVG icons — `currentColor` so they inherit the button's text color.
+// 24x24 viewBox; sized at the call site via the wrapping <span>.
+fn tab_icon(tab: Tab) -> &'static str {
     match tab {
-        Tab::Sky        => s.tab_sky_abbr,
-        Tab::Mount      => s.tab_mount_abbr,
-        Tab::Focus      => s.tab_focus_abbr,
-        Tab::Imaging    => s.tab_imaging_abbr,
-        Tab::PolarAlign => s.tab_polar_abbr,
-        Tab::Guide      => s.tab_guide_abbr,
-        Tab::Scheduler  => s.tab_scheduler_abbr,
-        Tab::Mosaic     => s.tab_mosaic_abbr,
+        // 4-point star
+        Tab::Sky => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 L13.6 10.4 L22 12 L13.6 13.6 L12 22 L10.4 13.6 L2 12 L10.4 10.4 Z"/><circle cx="18" cy="5" r="0.8" fill="currentColor"/><circle cx="5" cy="18" r="0.8" fill="currentColor"/></svg>"##,
+        // Equatorial mount: cross axes + central pivot
+        Tab::Mount => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3 L12 21 M3 12 L21 12"/><path d="M5 5 L8 8 M16 16 L19 19"/></svg>"##,
+        // Concentric focus rings
+        Tab::Focus => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>"##,
+        // Camera body
+        Tab::Imaging => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8 L8 8 L9.5 5.5 L14.5 5.5 L16 8 L20 8 A1 1 0 0 1 21 9 L21 18 A1 1 0 0 1 20 19 L4 19 A1 1 0 0 1 3 18 L3 9 A1 1 0 0 1 4 8 Z"/><circle cx="12" cy="13" r="4"/></svg>"##,
+        // Polaris / north-pointing arrow inside a circle
+        Tab::PolarAlign => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 5 L15 13 L12 11.5 L9 13 Z" fill="currentColor"/><path d="M12 11.5 L12 19"/></svg>"##,
+        // Guide crosshair
+        Tab::Guide => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><path d="M12 1 L12 5 M12 19 L12 23 M1 12 L5 12 M19 12 L23 12"/></svg>"##,
+        // Calendar / scheduler
+        Tab::Scheduler => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10 L21 10 M8 3 L8 7 M16 3 L16 7"/><circle cx="9" cy="14" r="0.9" fill="currentColor"/><circle cx="13" cy="14" r="0.9" fill="currentColor"/><circle cx="17" cy="14" r="0.9" fill="currentColor"/></svg>"##,
+        // 3x3 mosaic grid
+        Tab::Mosaic => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 9 L21 9 M3 15 L21 15 M9 3 L9 21 M15 3 L15 21"/></svg>"##,
     }
 }
 
@@ -380,7 +390,11 @@ pub fn TabWheel() -> impl IntoView {
                                 arm_timer();
                             }
                         >
-                            {move || tab_abbr(tab, &tr())}
+                            <span
+                                style="display:inline-block; width:60%; height:60%; \
+                                       pointer-events:none;"
+                                inner_html=tab_icon(tab)
+                            />
                         </button>
                     }
                 }).collect_view()}
@@ -419,7 +433,11 @@ pub fn TabWheel() -> impl IntoView {
                 title=move || tab_title(active.get(), &tr())
                 on:click=on_knob_click
             >
-                {move || tab_abbr(active.get(), &tr())}
+                <span
+                    style="display:inline-block; width:60%; height:60%; \
+                           pointer-events:none;"
+                    inner_html=move || tab_icon(active.get())
+                />
             </button>
 
             // Lang toggle — small chip just below the knob, only visible
