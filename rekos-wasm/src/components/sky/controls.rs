@@ -6,12 +6,10 @@ use leptos::prelude::*;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
-use crate::compat::{CameraSnapshot, SiteSnapshot};
-use crate::astro;
+use crate::compat::SiteSnapshot;
 use crate::i18n::{Lang, t};
-use crate::ws::SendCmd;
 
-use super::{MosaicPlannerState, SkyToggles};
+use super::SkyToggles;
 use super::utils::{event_target_checked, event_target_value};
 
 #[component]
@@ -24,8 +22,6 @@ pub fn SkyControls(
     set_show_objects_section: WriteSignal<bool>,
     show_settings_section: ReadSignal<bool>,
     set_show_settings_section: WriteSignal<bool>,
-    show_mosaic_section: ReadSignal<bool>,
-    set_show_mosaic_section: WriteSignal<bool>,
     toggles: SkyToggles,
     focal_override: ReadSignal<String>,
     set_focal_override: WriteSignal<String>,
@@ -33,9 +29,6 @@ pub fn SkyControls(
     set_follow_mount: WriteSignal<bool>,
     #[prop(into)] site: Signal<SiteSnapshot>,
     set_site_location: Arc<dyn Fn(f64, f64) + Send + Sync>,
-    planner: MosaicPlannerState,
-    #[prop(into)] camera: Signal<CameraSnapshot>,
-    #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
@@ -44,7 +37,6 @@ pub fn SkyControls(
     let lat_str = RwSignal::new(format!("{:.4}", s.latitude));
     let lon_str = RwSignal::new(format!("{:.4}", s.longitude));
     let send_location = StoredValue::new(Arc::clone(&set_site_location));
-    let send_mosaic   = StoredValue::new(Arc::clone(&send));
 
     view! {
         <div class="sky-controls"
@@ -366,215 +358,6 @@ pub fn SkyControls(
                         </div>
                     })}
 
-                    // ── Part 4 : Mosaic Planner ────────────────────────
-                    <button style=section_hdr
-                            on:click=move |_| set_show_mosaic_section.update(|v| *v = !*v)>
-                        {"Mosaic Planner"}
-                        {move || if show_mosaic_section.get() { "\u{25be}" } else { "\u{25b8}" }}
-                    </button>
-                    {move || show_mosaic_section.get().then(|| {
-                        let p2 = planner;
-                        let cam2 = camera;
-                        let fl2 = focal_length_mm;
-                        view! {
-                        <div style="display:flex; flex-direction:column; gap:6px; padding:6px 10px; border-bottom:1px solid #2a2a3a;">
-
-                            // Planning mode toggle
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:11px;">
-                                <input type="checkbox" prop:checked=move || p2.planning.get()
-                                       on:change=move |ev| p2.planning.set(event_target_checked(&ev)) />
-                                {move || if p2.planning.get() { "Click sky to set center" } else { "Enable planning mode" }}
-                            </label>
-
-                            // Center display
-                            {move || p2.center.get().map(|(ra_deg, dec_deg)| {
-                                let ra_h = ra_deg / 15.0;
-                                let rah  = ra_h as u32;
-                                let ram  = ((ra_h - rah as f64) * 60.0).abs() as u32;
-                                let dec_s = if dec_deg < 0.0 { "-" } else { "+" };
-                                let dec_abs = dec_deg.abs();
-                                let decd = dec_abs as u32;
-                                let decm = ((dec_abs - decd as f64) * 60.0) as u32;
-                                view! {
-                                    <div style="font-size:10px; color:#88aaff; font-family:monospace;">
-                                        {format!("Center: {:02}h{:02}m  {}{}\u{00b0}{:02}'", rah, ram, dec_s, decd, decm)}
-                                    </div>
-                                }
-                            })}
-
-                            // Target name
-                            <label style="font-size:11px; display:flex; align-items:center; gap:4px;">
-                                {"Target: "}
-                                <input type="text"
-                                       style="flex:1; background:#111; color:#ccc; border:1px solid #444; \
-                                              font-family:monospace; font-size:11px; padding:2px 4px;"
-                                       prop:value=move || p2.target.get()
-                                       on:input=move |ev| p2.target.set(event_target_value(&ev)) />
-                            </label>
-
-                            // Grid size
-                            <div style="font-size:11px; display:flex; align-items:center; gap:4px;">
-                                {"Grid: "}
-                                <input type="number" min="1" max="10"
-                                       style="width:40px; background:#111; color:#ccc; border:1px solid #444; \
-                                              font-family:monospace; font-size:11px; padding:2px; text-align:center;"
-                                       prop:value=move || p2.grid_w.get().to_string()
-                                       on:input=move |ev| {
-                                           if let Ok(v) = event_target_value(&ev).parse::<u32>() {
-                                               p2.grid_w.set(v.clamp(1, 10));
-                                           }
-                                       } />
-                                {" \u{00d7} "}
-                                <input type="number" min="1" max="10"
-                                       style="width:40px; background:#111; color:#ccc; border:1px solid #444; \
-                                              font-family:monospace; font-size:11px; padding:2px; text-align:center;"
-                                       prop:value=move || p2.grid_h.get().to_string()
-                                       on:input=move |ev| {
-                                           if let Ok(v) = event_target_value(&ev).parse::<u32>() {
-                                               p2.grid_h.set(v.clamp(1, 10));
-                                           }
-                                       } />
-                            </div>
-
-                            // Overlap + PA
-                            <div style="font-size:11px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                <label style="display:flex; align-items:center; gap:4px;">
-                                    {"Overlap: "}
-                                    <input type="number" min="0" max="50" step="1"
-                                           style="width:44px; background:#111; color:#ccc; border:1px solid #444; \
-                                                  font-family:monospace; font-size:11px; padding:2px;"
-                                           prop:value=move || format!("{:.0}", p2.overlap.get())
-                                           on:input=move |ev| {
-                                               if let Ok(v) = event_target_value(&ev).parse::<f64>() {
-                                                   p2.overlap.set(v.clamp(0.0, 50.0));
-                                               }
-                                           } />
-                                    {" %"}
-                                </label>
-                                <label style="display:flex; align-items:center; gap:4px;">
-                                    {"PA: "}
-                                    <input type="number" min="-180" max="180" step="1"
-                                           style="width:50px; background:#111; color:#ccc; border:1px solid #444; \
-                                                  font-family:monospace; font-size:11px; padding:2px;"
-                                           prop:value=move || format!("{:.0}", p2.pa.get())
-                                           on:input=move |ev| {
-                                               if let Ok(v) = event_target_value(&ev).parse::<f64>() {
-                                                   p2.pa.set(v);
-                                               }
-                                           } />
-                                    {"\u{00b0}"}
-                                </label>
-                            </div>
-
-                            // Sequence file
-                            <label style="font-size:11px; display:flex; align-items:center; gap:4px;">
-                                {"Sequence: "}
-                                <input type="text"
-                                       style="flex:1; background:#111; color:#ccc; border:1px solid #444; \
-                                              font-family:monospace; font-size:11px; padding:2px 4px; min-width:0;"
-                                       placeholder="/path/to/seq.esq"
-                                       prop:value=move || p2.seq_file.get()
-                                       on:input=move |ev| p2.seq_file.set(event_target_value(&ev)) />
-                            </label>
-
-                            // Output directory
-                            <label style="font-size:11px; display:flex; align-items:center; gap:4px;">
-                                {"Output dir: "}
-                                <input type="text"
-                                       style="flex:1; background:#111; color:#ccc; border:1px solid #444; \
-                                              font-family:monospace; font-size:11px; padding:2px 4px; min-width:0;"
-                                       placeholder="~/observations"
-                                       prop:value=move || p2.dir.get()
-                                       on:input=move |ev| p2.dir.set(event_target_value(&ev)) />
-                            </label>
-
-                            // FOV hint from camera
-                            {move || {
-                                let cam = cam2.get();
-                                let fl  = fl2.get();
-                                if let (Some(fl_mm), Some(px_um), Some(sw), Some(sh)) =
-                                    (fl, cam.pixel_size_um, cam.sensor_width, cam.sensor_height)
-                                {
-                                    let fw = astro::fov_deg(fl_mm, sw as f64, px_um) * 60.0;
-                                    let fh = astro::fov_deg(fl_mm, sh as f64, px_um) * 60.0;
-                                    Some(view! {
-                                        <div style="font-size:10px; color:#556; font-family:monospace;">
-                                            {format!("Tile FOV: {fw:.0}\u{2019}\u{00d7}{fh:.0}\u{2019}")}
-                                        </div>
-                                    })
-                                } else {
-                                    None
-                                }
-                            }}
-
-                            // Import button
-                            <button
-                                style=move || {
-                                    let enabled = p2.center.get().is_some()
-                                        && !p2.seq_file.get().is_empty();
-                                    if enabled {
-                                        "background:#0a1a2a; color:#88aaff; border:1px solid #446; \
-                                         padding:5px 10px; cursor:pointer; font-family:monospace; \
-                                         font-size:11px; font-weight:bold; border-radius:3px; width:100%;"
-                                    } else {
-                                        "background:#111; color:#445; border:1px solid #333; \
-                                         padding:5px 10px; cursor:not-allowed; font-family:monospace; \
-                                         font-size:11px; font-weight:bold; border-radius:3px; width:100%;"
-                                    }
-                                }
-                                disabled=move || p2.center.get().is_none() || p2.seq_file.get().is_empty()
-                                on:click=move |_| {
-                                    let Some((center_ra_deg, center_dec_deg)) = p2.center.get_untracked() else { return };
-                                    let cam = cam2.get_untracked();
-                                    let fl  = fl2.get_untracked();
-                                    let gw  = p2.grid_w.get_untracked();
-                                    let gh  = p2.grid_h.get_untracked();
-                                    let overlap = p2.overlap.get_untracked();
-                                    let pa  = p2.pa.get_untracked();
-                                    let seq = p2.seq_file.get_untracked();
-                                    let dir = p2.dir.get_untracked();
-                                    let target = p2.target.get_untracked();
-
-                                    // Build tile CSV: PA,RA(deg),DEC(deg)
-                                    let mut csv = String::from("PA,RA,DEC\n");
-                                    if let (Some(fl_mm), Some(px_um), Some(sw), Some(sh)) =
-                                        (fl, cam.pixel_size_um, cam.sensor_width, cam.sensor_height)
-                                    {
-                                        let fov_w = astro::fov_deg(fl_mm, sw as f64, px_um);
-                                        let fov_h = astro::fov_deg(fl_mm, sh as f64, px_um);
-                                        let cos_dec = center_dec_deg.to_radians().cos().abs().max(0.01);
-                                        let step_ra  = fov_w * (1.0 - overlap / 100.0) / cos_dec;
-                                        let step_dec = fov_h * (1.0 - overlap / 100.0);
-                                        for row in 0..gh {
-                                            for col in 0..gw {
-                                                let ra  = center_ra_deg + (col as f64 - (gw as f64 - 1.0) / 2.0) * step_ra;
-                                                let dec = center_dec_deg + (row as f64 - (gh as f64 - 1.0) / 2.0) * step_dec;
-                                                csv.push_str(&format!("{pa:.2},{ra:.6},{dec:.6}\n"));
-                                            }
-                                        }
-                                    }
-
-                                    send_mosaic.get_value()(serde_json::json!({
-                                        "type": "scheduler_import_mosaic",
-                                        "payload": {
-                                            "csv":    csv,
-                                            "sequence": seq,
-                                            "target": target,
-                                            "directory": dir,
-                                            "track": true,
-                                            "focus": false,
-                                            "align": false,
-                                            "guide": true,
-                                            "completionCondition": "sequence",
-                                            "completionConditionArg": "1"
-                                        }
-                                    }).to_string());
-                                }>
-                                {"Import to Scheduler"}
-                            </button>
-                        </div>
-                        }
-                    })}
 
                 </div>
                 }

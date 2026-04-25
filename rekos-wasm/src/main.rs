@@ -23,12 +23,13 @@ use components::guide::GuideTab;
 use components::imaging::ImagingTab;
 use components::polar_align::PolarAlignTab;
 use components::scheduler::SchedulerTab;
-use components::sky::{SkyTab, SkyTabSwitcher};
+use components::mosaic_tab::MosaicTab;
+use components::sky::{MosaicPlannerState, SkyTab, SkyTabSwitcher};
 use i18n::Lang;
 use ws::{AlignDefaultsData, SolveRadius};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tab { Sky, Focus, Imaging, PolarAlign, Guide, Scheduler }
+pub enum Tab { Sky, Focus, Imaging, PolarAlign, Guide, Scheduler, Mosaic }
 
 #[derive(Clone, Copy)]
 pub struct ActiveTabCtx(pub RwSignal<Tab>);
@@ -49,6 +50,10 @@ pub struct AlignSolveRadiusCtx(pub RwSignal<SolveRadius>);
 
 #[derive(Clone, Copy)]
 pub struct AlignDefaultsCtx(pub RwSignal<AlignDefaultsData>);
+
+/// App-level context holding the shared mosaic planner signals.
+#[derive(Clone, Copy)]
+pub struct MosaicPlannerCtx(pub MosaicPlannerState);
 
 /// Prefill data passed from the sky right-click menu to the scheduler job builder.
 /// Set to Some((name, ra_deg, dec_deg)) when the user clicks "Add to Scheduler".
@@ -171,6 +176,20 @@ fn App() -> impl IntoView {
     // ── Active tab ────────────────────────────────────────────────────────
     // Provided via context so the in-planetarium gear bar (rendered inside
     // SkyTab) can read/write it without SkyTab carrying a prop for it.
+    // ── Mosaic planner shared state ───────────────────────────────────────
+    let mosaic_planner = MosaicPlannerState {
+        planning:       RwSignal::new(false),
+        picking_center: RwSignal::new(false),
+        center:         RwSignal::new(None::<(f64, f64)>),
+        grid_w:         RwSignal::new(3u32),
+        grid_h:         RwSignal::new(3u32),
+        overlap:        RwSignal::new(10.0f64),
+        pa:             RwSignal::new(0.0f64),
+        target:         RwSignal::new(String::new()),
+        dir:            RwSignal::new(String::new()),
+    };
+    provide_context(MosaicPlannerCtx(mosaic_planner));
+
     let active_tab = RwSignal::new(Tab::Sky);
     provide_context(ActiveTabCtx(active_tab));
     let sky_visible       = move || active_tab.get() == Tab::Sky;
@@ -179,6 +198,7 @@ fn App() -> impl IntoView {
     let polar_visible     = move || active_tab.get() == Tab::PolarAlign;
     let guide_visible     = move || active_tab.get() == Tab::Guide;
     let scheduler_visible = move || active_tab.get() == Tab::Scheduler;
+    let mosaic_visible    = move || active_tab.get() == Tab::Mosaic;
 
     // ── Focus + Imaging + Polar align + Guide + Scheduler tab wiring ──────
     let focus_snapshot     = compat::derive_focus(&store);
@@ -186,11 +206,13 @@ fn App() -> impl IntoView {
     let polar_snapshot     = compat::derive_polar_align(&store);
     let guide_snapshot     = compat::derive_guide(&store);
     let scheduler_snapshot = compat::derive_scheduler(&store);
+    let home_dir = { let hd = store.home_dir; Signal::derive(move || hd.get()) };
     let send_focus     = Arc::clone(&send);
     let send_imaging   = Arc::clone(&send);
     let send_polar     = Arc::clone(&send);
     let send_guide     = Arc::clone(&send);
     let send_scheduler = Arc::clone(&send);
+    let send_mosaic    = Arc::clone(&send);
 
     view! {
         <div id="rekos-app" style="position:fixed; inset:0; background:#0a0a0f; color:#c0c0d0; font-family:monospace; overflow:hidden;">
@@ -253,6 +275,16 @@ fn App() -> impl IntoView {
                     <SchedulerTab
                         scheduler=scheduler_snapshot
                         send=Arc::clone(&send_scheduler)
+                    />
+                </div>
+            </Show>
+            <Show when=mosaic_visible>
+                <div style="position:absolute; inset:0; z-index:40;">
+                    <MosaicTab
+                        camera=camera
+                        focal_length_mm=focal_length_mm
+                        home_dir=home_dir
+                        send=Arc::clone(&send_mosaic)
                     />
                 </div>
             </Show>

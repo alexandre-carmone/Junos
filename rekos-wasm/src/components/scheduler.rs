@@ -326,7 +326,7 @@ fn sanitize_name(name: &str) -> String {
 }
 
 /// Generate a minimal ESQ XML from a list of sequence frames.
-fn build_esq_xml(job_name: &str, frames: &[SeqFrame]) -> String {
+pub(crate) fn build_esq_xml(job_name: &str, frames: &[SeqFrame]) -> String {
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<SequenceQueue version='2.1'>\n");
     xml.push_str("<GuideDeviation enabled='false'>0</GuideDeviation>\n");
@@ -369,11 +369,11 @@ fn build_esq_xml(job_name: &str, frames: &[SeqFrame]) -> String {
 
 /// One row in the sequence builder.
 #[derive(Clone)]
-struct SeqFrame {
-    frame_type: String,
-    filter:     String,
-    exposure:   String,
-    count:      String,
+pub(crate) struct SeqFrame {
+    pub(crate) frame_type: String,
+    pub(crate) filter:     String,
+    pub(crate) exposure:   String,
+    pub(crate) count:      String,
 }
 
 impl Default for SeqFrame {

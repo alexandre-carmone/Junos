@@ -50,6 +50,8 @@ pub struct Translations {
     pub tab_polar_abbr:      &'static str,
     pub tab_guide_abbr:      &'static str,
     pub tab_scheduler_abbr:  &'static str,
+    pub tab_mosaic_abbr:     &'static str,
+    pub tab_mosaic:          &'static str,
 
     // ── Devices ──────────────────────────────────────────────────────────
     pub no_devices: &'static str,
@@ -586,6 +588,8 @@ static EN: Translations = Translations {
     tab_polar_abbr:      "POL",
     tab_guide_abbr:      "GD",
     tab_scheduler_abbr:  "SCH",
+    tab_mosaic_abbr:     "MOS",
+    tab_mosaic:          "Mosaic",
 
     no_devices: "No INDI devices connected.",
     role_grid_title: "Device Roles",
@@ -1098,6 +1102,8 @@ static FR: Translations = Translations {
     tab_polar_abbr:      "POL",
     tab_guide_abbr:      "GD",
     tab_scheduler_abbr:  "PLAN",
+    tab_mosaic_abbr:     "MOS",
+    tab_mosaic:          "Mosa\u{00ef}que",
 
     no_devices: "Aucun appareil INDI connect\u{e9}.",
     role_grid_title: "R\u{f4}les des appareils",

@@ -76,18 +76,18 @@ pub struct SkyToggles {
     pub scheduler_jobs:     RwSignal<bool>,
 }
 
-/// Signals for the in-app Mosaic Planner panel (bundled like SkyToggles).
+/// Signals for the in-app Mosaic Planner (shared via App-level context).
 #[derive(Clone, Copy)]
 pub struct MosaicPlannerState {
-    pub planning:  RwSignal<bool>,
-    pub center:    RwSignal<Option<(f64, f64)>>,  // (ra_deg, dec_deg)
-    pub grid_w:    RwSignal<u32>,
-    pub grid_h:    RwSignal<u32>,
-    pub overlap:   RwSignal<f64>,
-    pub pa:        RwSignal<f64>,
-    pub seq_file:  RwSignal<String>,
-    pub target:    RwSignal<String>,
-    pub dir:       RwSignal<String>,
+    pub planning:       RwSignal<bool>,
+    pub picking_center: RwSignal<bool>,  // true while "Pick on Sky" is active
+    pub center:         RwSignal<Option<(f64, f64)>>,  // (ra_deg, dec_deg)
+    pub grid_w:         RwSignal<u32>,
+    pub grid_h:         RwSignal<u32>,
+    pub overlap:        RwSignal<f64>,
+    pub pa:             RwSignal<f64>,
+    pub target:         RwSignal<String>,
+    pub dir:            RwSignal<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +112,7 @@ pub fn SkyTab(
     // ── Local reactive state ───────────────────────────────────────────────
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
+    let tab_ctx = use_context::<ActiveTabCtx>();
 
     let catalog_sig = use_context::<RwSignal<Option<Arc<CatalogData>>>>()
         .unwrap_or_else(|| RwSignal::new(None));
@@ -210,18 +211,10 @@ pub fn SkyTab(
         scheduler_jobs:      show_scheduler_jobs,
     };
 
-    // Mosaic planner signals
-    let planner = MosaicPlannerState {
-        planning: RwSignal::new(false),
-        center:   RwSignal::new(None::<(f64, f64)>),
-        grid_w:   RwSignal::new(3u32),
-        grid_h:   RwSignal::new(3u32),
-        overlap:  RwSignal::new(10.0f64),
-        pa:       RwSignal::new(0.0f64),
-        seq_file: RwSignal::new(String::new()),
-        target:   RwSignal::new(String::new()),
-        dir:      RwSignal::new(String::new()),
-    };
+    // Mosaic planner state lives at App level; shared with MosaicTab via context.
+    let planner = use_context::<crate::MosaicPlannerCtx>()
+        .expect("MosaicPlannerCtx not provided")
+        .0;
 
     // Persist checkbox state to localStorage on change
     Effect::new(move || {
@@ -265,7 +258,6 @@ pub fn SkyTab(
     let (show_sky_section,      set_show_sky_section)      = signal(false);
     let (show_objects_section,  set_show_objects_section)  = signal(false);
     let (show_settings_section, set_show_settings_section) = signal(false);
-    let (show_mosaic_section,   set_show_mosaic_section)   = signal(false);
 
     // Controls panel visibility (collapsed by default on narrow screens)
     let (show_controls, set_show_controls) = signal({
@@ -797,8 +789,8 @@ pub fn SkyTab(
         if drag_dist.get_value() >= 4.0 || ev.button() != 0 { return; }
         let Some((cx, cy)) = to_canvas_xy(&ev) else { return };
 
-        // Mosaic planning mode: left-click sets the mosaic center.
-        if planner.planning.get_untracked() {
+        // Mosaic planning mode or center-pick: left-click sets the mosaic center.
+        if planner.planning.get_untracked() || planner.picking_center.get_untracked() {
             let s = site.get_untracked();
             let fov = fov_radius.get_untracked();
             let alt_s = center_alt.get_untracked();
@@ -821,7 +813,14 @@ pub fn SkyTab(
                 let (alt, az) = astro::unproject(nx, ny, alt_s, az_s, fov);
                 let (ra_deg, dec_deg) = astro::altaz_to_eq(alt, az, lst, s.latitude);
                 planner.center.set(Some((ra_deg, dec_deg)));
-                // Pre-fill target name if empty and a DSO is nearby (best-effort via hit items)
+                // After picking center from Mosaic tab, return to Mosaic tab.
+                if planner.picking_center.get_untracked() {
+                    planner.picking_center.set(false);
+                    planner.planning.set(true);
+                    if let Some(ctx) = tab_ctx {
+                        ctx.0.set(Tab::Mosaic);
+                    }
+                }
             }
             return;
         }
@@ -985,6 +984,17 @@ pub fn SkyTab(
                 on:touchcancel=move |_: TouchEvent| { dragging.set_value(false); pinch_start_dist.set_value(0.0); }
             />
 
+            // ── Mosaic center-pick banner ──────────────────────────────────
+            {move || planner.picking_center.get().then(|| view! {
+                <div style="position:absolute; top:8px; left:50%; transform:translateX(-50%); \
+                            z-index:100; pointer-events:none; padding:8px 18px; \
+                            background:rgba(0,30,50,0.92); border:1px solid #00cccc; \
+                            color:#00ffff; font-family:monospace; font-size:13px; \
+                            border-radius:6px; white-space:nowrap;">
+                    {"Click on the sky to set mosaic center"}
+                </div>
+            })}
+
             // ── Object search box ──────────────────────────────────────────
             <SkySearch
                 sky_search=sky_search
@@ -1010,8 +1020,6 @@ pub fn SkyTab(
                 set_show_objects_section=set_show_objects_section
                 show_settings_section=show_settings_section
                 set_show_settings_section=set_show_settings_section
-                show_mosaic_section=show_mosaic_section
-                set_show_mosaic_section=set_show_mosaic_section
                 toggles=toggles
                 focal_override=focal_override
                 set_focal_override=set_focal_override
@@ -1019,9 +1027,6 @@ pub fn SkyTab(
                 set_follow_mount=set_follow_mount
                 site=site
                 set_site_location=set_site_location_fn.clone()
-                planner=planner
-                camera=camera
-                send=Arc::clone(&send)
             />
 
             // ── Slew action button (bottom-left) ───────────────────────────
@@ -1223,6 +1228,9 @@ pub fn SkyTabSwitcher() -> impl IntoView {
                 <button title=move || tr().tab_scheduler
                         style=move || btn_style(Tab::Scheduler)
                         on:click=move |_| active.set(Tab::Scheduler)>{move || tr().tab_scheduler_abbr}</button>
+                <button title=move || tr().tab_mosaic
+                        style=move || btn_style(Tab::Mosaic)
+                        on:click=move |_| active.set(Tab::Mosaic)>{move || tr().tab_mosaic_abbr}</button>
             })}
             <button style=lang_style
                     title=move || lang.get().toggle().label()
