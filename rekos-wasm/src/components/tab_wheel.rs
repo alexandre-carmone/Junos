@@ -17,7 +17,7 @@ use leptos::html::Div;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{MouseEvent, PointerEvent, WheelEvent};
+use web_sys::{MouseEvent, PointerEvent};
 
 #[derive(Clone, Copy)]
 struct DragState {
@@ -201,24 +201,7 @@ pub fn TabWheel() -> impl IntoView {
         }
     };
 
-    let on_wheel = {
-        let arm_timer = Rc::clone(&arm_timer);
-        move |ev: WheelEvent| {
-            ev.prevent_default();
-            let delta = ev.delta_y();
-            if delta == 0.0 { return; }
-            let cur = tab_index(active.get_untracked());
-            let next = if delta > 0.0 {
-                (cur + 1) % N
-            } else {
-                (cur + N - 1) % N
-            };
-            active.set(TABS[next]);
-            arm_timer();
-        }
-    };
-
-    // ── Drag-to-rotate ────────────────────────────────────────────────────
+// ── Drag-to-rotate ────────────────────────────────────────────────────
     // Touch users can't fire `wheel` events. While the user drags the disc,
     // the wheel follows the finger continuously (`drag_offset_deg`); on
     // release we snap `active` to the tab whose final position is closest
@@ -313,7 +296,7 @@ pub fn TabWheel() -> impl IntoView {
         <div
             style=move || format!(
                 "position:absolute; right:{r}px; top:50%; transform:translateY(-50%); \
-                 z-index:60; pointer-events:auto; \
+                 z-index:60; pointer-events:none; \
                  width:{w}px; height:{w}px; \
                  display:flex; align-items:center; justify-content:center;",
                 r = RIGHT_OFFSET_PX, w = BOX_PX,
@@ -322,7 +305,6 @@ pub fn TabWheel() -> impl IntoView {
             on:pointerleave=on_pointer_leave
             on:pointerdown=on_pointer_down
             on:pointerup=on_pointer_up
-            on:wheel=on_wheel
             on:click=|ev: MouseEvent| ev.stop_propagation()
         >
             // Rotating arc layer — visible only when expanded.
@@ -427,6 +409,7 @@ pub fn TabWheel() -> impl IntoView {
                      cursor:pointer; touch-action:manipulation; \
                      -webkit-tap-highlight-color:transparent; \
                      box-shadow:0 0 10px rgba(0,0,0,0.5); \
+                     pointer-events:auto; \
                      display:flex; align-items:center; justify-content:center;",
                     k = KNOB_PX,
                 )
