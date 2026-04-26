@@ -7,6 +7,13 @@ use bytemuck::{Pod, Zeroable};
 use web_sys::HtmlCanvasElement;
 use wgpu::util::DeviceExt;
 
+pub mod layers;
+pub mod text;
+
+pub use layers::dso::DsoInstance;
+pub use layers::lines::{LineSegment, LineView};
+pub use text::{FontAtlas, TextInstance};
+
 
 // ── Uniform struct (must match WGSL layout) ─────────────────────────────────
 
@@ -33,9 +40,9 @@ pub struct Uniforms {
     pub theta_rad: f32,
 }
 
-// ── GpuSkyRenderer ──────────────────────────────────────────────────────────
+// ── SkyRenderer ─────────────────────────────────────────────────────────────
 
-pub struct GpuSkyRenderer {
+pub struct SkyRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
@@ -53,13 +60,17 @@ pub struct GpuSkyRenderer {
     compute_bg: wgpu::BindGroup,
     render_bg: wgpu::BindGroup,
 
+    lines: layers::lines::LineLayer,
+    dso:   layers::dso::DsoLayer,
+    text:  Option<text::TextLayer>,
+
     star_count: u32,
     line_count: u32,
     width: u32,
     height: u32,
 }
 
-impl GpuSkyRenderer {
+impl SkyRenderer {
     pub async fn init(canvas: HtmlCanvasElement, star_data: Vec<[f32; 4]>, line_data: Vec<[u32; 2]>) -> Option<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
@@ -81,7 +92,15 @@ impl GpuSkyRenderer {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("stars-gpu"),
-                    required_features: wgpu::Features::INDIRECT_FIRST_INSTANCE,
+                    // No required features. We previously asked for
+                    // INDIRECT_FIRST_INSTANCE, but the shader only increments
+                    // `instance_count` (slot [1]) and always leaves
+                    // `first_instance` (slot [3]) at 0 — so we don't actually
+                    // need it. iOS Safari's WebGPU does not expose
+                    // `indirect-first-instance`, so requiring it caused
+                    // request_device to fail on iPhone and the renderer
+                    // fell back to Canvas2D.
+                    required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default()
                         .using_resolution(adapter.limits()),
                     ..Default::default()
@@ -181,12 +200,12 @@ impl GpuSkyRenderer {
 
         let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("compute.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/stars.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/stars.wgsl").into()),
         });
 
         let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("render.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/render.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/render.wgsl").into()),
         });
 
         // ── Compute bind group layout ────────────────────────────────────────
@@ -355,6 +374,12 @@ impl GpuSkyRenderer {
             cache: None,
         });
 
+        let lines = layers::lines::LineLayer::new(&device, format, &uniform_buf);
+        let dso = layers::dso::DsoLayer::new(&device, format, &uniform_buf);
+        // Text layer is optional: if atlas baking fails (no document, no
+        // canvas, etc.) we degrade gracefully — labels remain on Canvas2D.
+        let text = text::TextLayer::new(&device, &queue, format, &uniform_buf);
+
         Some(Self {
             device,
             queue,
@@ -369,11 +394,46 @@ impl GpuSkyRenderer {
             line_pipeline,
             compute_bg,
             render_bg,
+            lines,
+            dso,
+            text,
             star_count,
             line_count,
             width,
             height,
         })
+    }
+
+    /// Upload the per-frame line list (horizon, grids, crosshairs, etc).
+    /// Empty slice clears the layer.
+    pub fn upload_lines(&mut self, segments: &[LineSegment]) {
+        self.lines
+            .upload(&self.device, &self.queue, &self.uniform_buf, segments);
+    }
+
+    /// Upload the per-frame DSO symbol instances. Empty slice clears.
+    pub fn upload_dso(&mut self, items: &[DsoInstance]) {
+        self.dso
+            .upload(&self.device, &self.queue, &self.uniform_buf, items);
+    }
+
+    /// Upload the per-frame text instance list. Empty slice clears.
+    pub fn upload_text(&mut self, items: &[TextInstance]) {
+        if let Some(text) = self.text.as_mut() {
+            text.upload(&self.device, &self.queue, &self.uniform_buf, items);
+        }
+    }
+
+    /// Whether the GPU font atlas was built successfully. When false the
+    /// caller should keep rendering text on Canvas2D.
+    pub fn has_text(&self) -> bool {
+        self.text.is_some()
+    }
+
+    /// Access the font atlas to build text instances. None when atlas baking
+    /// failed at startup.
+    pub fn font_atlas(&self) -> Option<&FontAtlas> {
+        self.text.as_ref().map(|t| &t.atlas)
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -459,6 +519,15 @@ impl GpuSkyRenderer {
                 occlusion_query_set: None,
             });
 
+            // Generic line layer (horizon, grids, meridian, ecliptic,
+            // crosshairs, slew trail, zenith). Drawn before constellations
+            // and stars so they composite on top.
+            self.lines.draw(&mut rp);
+
+            // DSO symbols — between lines and stars so faint outlines aren't
+            // covered by the constellation polylines.
+            self.dso.draw(&mut rp);
+
             rp.set_bind_group(0, &self.render_bg, &[]);
 
             if show_constellations {
@@ -469,6 +538,11 @@ impl GpuSkyRenderer {
             if show_stars {
                 rp.set_pipeline(&self.star_pipeline);
                 rp.draw_indirect(&self.star_indirect_buf, 0);
+            }
+
+            // Text layer last — labels composite on top of everything.
+            if let Some(text) = self.text.as_ref() {
+                text.draw(&mut rp);
             }
         }
 

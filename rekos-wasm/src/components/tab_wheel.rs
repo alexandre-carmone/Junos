@@ -17,7 +17,7 @@ use leptos::html::Div;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{MouseEvent, PointerEvent};
+use web_sys::{MouseEvent, PointerEvent, WheelEvent};
 
 #[derive(Clone, Copy)]
 struct DragState {
@@ -191,6 +191,38 @@ pub fn TabWheel() -> impl IntoView {
         move |_ev: PointerEvent| arm_timer()
     };
 
+    // ── Wheel: cycle ±1 tab. Trackpads emit many small deltas per swipe so
+    // we accumulate until a notch threshold is crossed; mouse-wheel notches
+    // typically deliver |delta_y| ≈ 100 in one event and trip immediately.
+    let wheel_accum: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+    let on_wheel: Rc<dyn Fn(WheelEvent)> = {
+        let clear_timer = Rc::clone(&clear_timer);
+        let arm_timer = Rc::clone(&arm_timer);
+        let wheel_accum = Rc::clone(&wheel_accum);
+        Rc::new(move |ev: WheelEvent| {
+            ev.prevent_default();
+            ev.stop_propagation();
+            const THRESHOLD: f64 = 50.0;
+            let acc = wheel_accum.get() + ev.delta_y();
+            if acc.abs() < THRESHOLD {
+                wheel_accum.set(acc);
+                return;
+            }
+            wheel_accum.set(0.0);
+            let cur = tab_index(active.get_untracked());
+            let new_idx = if acc > 0.0 {
+                (cur + 1) % N
+            } else {
+                (cur + N - 1) % N
+            };
+            active.set(TABS[new_idx]);
+            // Pop the wheel open briefly so the user sees what changed.
+            expanded.set(true);
+            clear_timer();
+            arm_timer();
+        })
+    };
+
     let on_knob_click = {
         let clear_timer = Rc::clone(&clear_timer);
         let arm_timer = Rc::clone(&arm_timer);
@@ -332,6 +364,7 @@ pub fn TabWheel() -> impl IntoView {
                 on:pointermove=on_disc_pointer_move
                 on:pointerup=on_disc_pointer_up
                 on:pointercancel=on_disc_pointer_cancel
+                on:wheel={ let w = Rc::clone(&on_wheel); move |ev| w(ev) }
             >
                 {(0..N).map(|i| {
                     let tab = TABS[i];
@@ -419,6 +452,7 @@ pub fn TabWheel() -> impl IntoView {
                 )
                 title=move || tab_title(active.get(), &tr())
                 on:click=on_knob_click
+                on:wheel={ let w = Rc::clone(&on_wheel); move |ev| w(ev) }
             >
                 <span
                     style="display:inline-block; width:60%; height:60%; \

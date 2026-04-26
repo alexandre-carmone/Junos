@@ -7,7 +7,6 @@ mod coords;
 mod components;
 mod dso_catalog;
 mod ephemeris;
-mod gpu;
 mod i18n;
 mod nebulae;
 mod ws;
@@ -18,6 +17,7 @@ use leptos::prelude::*;
 
 use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
+use components::sky::dso_index::DsoIndex;
 use components::sky::MosaicPlannerState;
 use components::tab_wheel::TabWheel;
 use components::tabs::TabContent;
@@ -73,6 +73,7 @@ fn App() -> impl IntoView {
     // ── Catalogs ──────────────────────────────────────────────────────────
     let catalog_sig     = RwSignal::new(None::<Arc<CatalogData>>);
     let dso_catalog_sig = RwSignal::new(None::<Arc<DsoCatalogData>>);
+    let dso_index_sig   = RwSignal::new(None::<Arc<DsoIndex>>);
     wasm_bindgen_futures::spawn_local({
         let s = catalog_sig;
         async move {
@@ -80,13 +81,20 @@ fn App() -> impl IntoView {
         }
     });
     wasm_bindgen_futures::spawn_local({
-        let s = dso_catalog_sig;
+        let s   = dso_catalog_sig;
+        let idx = dso_index_sig;
         async move {
-            if let Some(cat) = dso_catalog::fetch_dso_catalog().await { s.set(Some(cat)); }
+            if let Some(cat) = dso_catalog::fetch_dso_catalog().await {
+                // Build the spatial index once at load — lookup cost is
+                // amortised over every subsequent frame.
+                idx.set(Some(components::sky::dso_index::build_arc(&cat)));
+                s.set(Some(cat));
+            }
         }
     });
     provide_context(catalog_sig);
     provide_context(dso_catalog_sig);
+    provide_context(dso_index_sig);
 
     // ── WebSocket ─────────────────────────────────────────────────────────
     let (store, send) = ws::use_rekos_ws();

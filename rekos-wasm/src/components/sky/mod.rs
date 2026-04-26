@@ -8,6 +8,10 @@
 
 mod actions;
 mod controls;
+pub(crate) mod dso_index;
+mod dso_render;
+pub(crate) mod gpu;
+mod hud;
 mod info_popup;
 mod object_search;
 pub(crate) mod render;
@@ -33,7 +37,8 @@ use crate::{ActiveTabCtx, Tab};
 use crate::astro;
 use crate::catalog::CatalogData;
 use crate::dso_catalog::DsoCatalogData;
-use crate::gpu::{GpuSkyRenderer, Uniforms};
+use self::gpu::{DsoInstance, LineSegment, LineView, SkyRenderer, TextInstance, Uniforms};
+use self::gpu::layers::lines as gpu_lines;
 use crate::i18n::{Lang, t};
 use crate::nebulae::NebulaeIndex;
 
@@ -91,6 +96,51 @@ pub struct MosaicPlannerState {
 }
 
 // ---------------------------------------------------------------------------
+// Mobile detection
+// ---------------------------------------------------------------------------
+//
+// Smartphones — even powerful ones — pay disproportionately for Canvas2D fill
+// rate at 3× DPR and for fillText calls in the labels pass. We detect a
+// mobile-class device once at mount and lower DPR + tighten label thresholds
+// accordingly. Heuristic, not UA-sniffing: coarse pointer + small viewport +
+// limited cores. Any two-of-three triggers mobile mode.
+
+#[derive(Clone, Copy)]
+pub struct MobileProfile {
+    pub is_mobile: bool,
+    /// Upper bound for `device_pixel_ratio`. Mobile gets 1.25 (still crisp on
+    /// most LCDs); desktop keeps 2.0 to handle Retina without aliasing.
+    pub dpr_cap: f64,
+}
+
+fn detect_mobile_profile() -> MobileProfile {
+    let Some(win) = web_sys::window() else {
+        return MobileProfile { is_mobile: false, dpr_cap: 2.0 };
+    };
+    // Two votes from three signals trigger mobile mode. Heuristic, never UA.
+    //   - small viewport: phones in either orientation have min-side < 900 CSS px
+    //   - high DPR: any device that reports > 2.0 is almost certainly a phone
+    //   - low core count: hardwareConcurrency ≤ 6 → phone-class CPU
+    // matchMedia(pointer:coarse) would be the cleanest signal but the
+    // MediaQueryList web-sys feature isn't enabled in this crate; we'd rather
+    // keep the dependency footprint small.
+    let small = {
+        let w = win.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1920.0);
+        let h = win.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(1080.0);
+        w.min(h) < 900.0
+    };
+    let high_dpr = win.device_pixel_ratio() > 2.0;
+    let cores = win.navigator().hardware_concurrency() as u32;
+    let low_cores = cores > 0 && cores <= 6;
+    let votes = (small as u8) + (high_dpr as u8) + (low_cores as u8);
+    let is_mobile = votes >= 2;
+    MobileProfile {
+        is_mobile,
+        dpr_cap: if is_mobile { 1.25 } else { 2.0 },
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -109,6 +159,9 @@ pub fn SkyTab(
     fov_radius: RwSignal<f64>,
     follow_mount: RwSignal<bool>,
 ) -> impl IntoView {
+    // ── Mobile profile (one-shot — no signal needed) ──────────────────────
+    let mobile_profile = detect_mobile_profile();
+
     // ── Local reactive state ───────────────────────────────────────────────
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
@@ -117,6 +170,8 @@ pub fn SkyTab(
     let catalog_sig = use_context::<RwSignal<Option<Arc<CatalogData>>>>()
         .unwrap_or_else(|| RwSignal::new(None));
     let dso_catalog_sig = use_context::<RwSignal<Option<Arc<DsoCatalogData>>>>()
+        .unwrap_or_else(|| RwSignal::new(None));
+    let dso_index_sig = use_context::<RwSignal<Option<Arc<dso_index::DsoIndex>>>>()
         .unwrap_or_else(|| RwSignal::new(None));
 
     let (center_alt, set_center_alt) = (center_alt.read_only(), center_alt.write_only());
@@ -279,6 +334,10 @@ pub fn SkyTab(
     // hover Alt/Az/RA/Dec readout. None when the pointer is off-canvas.
     let mouse_pos = RwSignal::new(None::<(f64, f64)>);
 
+    // HUD data snapshot — written each frame by the render Effect, read
+    // reactively by the <SkyHud> DOM component.
+    let (hud_data, set_hud_data) = signal(hud::HudData::default());
+
     // Hit-test targets — populated per frame by render::render_overlay, read
     // by on_mouseup to map a click to the nearest hovered object.
     let hit_items: Rc<RefCell<Vec<HitItem>>> = Rc::new(RefCell::new(Vec::new()));
@@ -320,7 +379,7 @@ pub fn SkyTab(
     let (pending_action, set_pending_action) = signal(None::<(bool, f64, f64)>);
 
     // GPU renderer
-    let gpu_renderer: Rc<RefCell<Option<GpuSkyRenderer>>> = Rc::new(RefCell::new(None));
+    let gpu_renderer: Rc<RefCell<Option<SkyRenderer>>> = Rc::new(RefCell::new(None));
     let (gpu_ready, set_gpu_ready) = signal(false);
 
     // Nebulae image cache: URL path → HtmlImageElement (lazily loaded)
@@ -384,7 +443,7 @@ pub fn SkyTab(
         let line_data = cat.packed_line_buffer();
         let gpu_canvas_el: HtmlCanvasElement = gpu_canvas.clone().into();
         wasm_bindgen_futures::spawn_local(async move {
-            if let Some(renderer) = GpuSkyRenderer::init(gpu_canvas_el, star_data, line_data).await {
+            if let Some(renderer) = SkyRenderer::init(gpu_canvas_el, star_data, line_data).await {
                 *gpu.borrow_mut() = Some(renderer);
                 set_gpu_ready.set(true);
             }
@@ -448,6 +507,7 @@ pub fn SkyTab(
 
         let cat = catalog_sig.get_untracked();
         let dso_cat = dso_catalog_sig.get_untracked();
+        let dso_idx = dso_index_sig.get_untracked();
 
         let Some(overlay_canvas) = overlay_ref.get() else { return; };
         let overlay_el: HtmlCanvasElement = overlay_canvas.into();
@@ -456,8 +516,12 @@ pub fn SkyTab(
         let parent = overlay_el.parent_element().unwrap();
         let w = parent.client_width() as u32;
         let h = parent.client_height().max(500) as u32;
-        // Cap DPR to 2.0 — on 3x mobile screens this cuts pixel count by ~2.25x
-        let dpr = web_sys::window().map(|win| win.device_pixel_ratio().min(2.0)).unwrap_or(1.0);
+        // DPR cap depends on device class. Mobile gets 1.25 (still crisp on
+        // most phone LCDs, but cuts physical pixel count by ~5× vs raw 3×
+        // DPR — by far the biggest single win for Canvas2D fill rate on a
+        // flagship Android). Desktop stays at 2.0.
+        let dpr_cap = mobile_profile.dpr_cap;
+        let dpr = web_sys::window().map(|win| win.device_pixel_ratio().min(dpr_cap)).unwrap_or(1.0);
         let w_phys = (w as f64 * dpr).round() as u32;
         let h_phys = (h as f64 * dpr).round() as u32;
         if overlay_el.width() != w_phys { overlay_el.set_width(w_phys); }
@@ -554,6 +618,207 @@ pub fn SkyTab(
                         theta_rad: theta_rad as f32,
                     };
 
+                    // ── Build the GPU line list (horizon, grids, meridian,
+                    // ecliptic, crosshairs, slew trail, zenith circle).
+                    let view = LineView {
+                        wf, hf, fov, c_alt, c_az,
+                        lst, latitude: s.latitude, jd,
+                    };
+                    let mut segs: Vec<LineSegment> = Vec::with_capacity(2048);
+                    gpu_lines::build_horizon(&mut segs, &view);
+                    if grid_on { gpu_lines::build_altaz_grid(&mut segs, &view); }
+                    if meridian_on { gpu_lines::build_meridian(&mut segs, &view); }
+                    if eq_grid_on { gpu_lines::build_eq_grid(&mut segs, &view); }
+                    if ecliptic_on { gpu_lines::build_ecliptic(&mut segs, &view); }
+                    if zenith_on { gpu_lines::build_zenith(&mut segs, &view); }
+                    if slew_trail_on {
+                        let trail = trail_for_render.borrow();
+                        let trail_vec: Vec<(f64, f64, f64)> =
+                            trail.iter().copied().collect();
+                        gpu_lines::build_slew_trail(&mut segs, &view, &trail_vec);
+                    }
+                    gpu_lines::build_mount_crosshair(
+                        &mut segs, &view, m.connected, m.ra_h, m.dec_deg,
+                    );
+                    gpu_lines::build_center_crosshair(&mut segs, &view);
+
+                    // Center FOV + Mount FOV reticles on GPU.
+                    let mut fov_label_anchors: Vec<((f64, f64), [f32; 4], String)> = Vec::new();
+                    if fov_on {
+                        if let (Some(fl_mm), Some(px_um), Some(sw), Some(sh)) =
+                            (fl, cam.pixel_size_um, cam.sensor_width, cam.sensor_height)
+                        {
+                            let fov_w_deg = crate::astro::fov_deg(fl_mm, sw as f64, px_um);
+                            let fov_h_deg = crate::astro::fov_deg(fl_mm, sh as f64, px_um);
+                            let rot_deg = sv.rotation_deg.unwrap_or(0.0);
+                            let label = format!(
+                                "{:.0}x{:.0}'",
+                                fov_w_deg * 60.0, fov_h_deg * 60.0,
+                            );
+
+                            // Center FOV
+                            let (cra_deg, cdec_deg) = crate::astro::altaz_to_eq(
+                                c_alt, c_az, lst, s.latitude);
+                            let center_color =
+                                [80.0/255.0, 190.0/255.0, 1.0, 0.85];
+                            if let Some(anchor) = gpu_lines::build_fov_reticle(
+                                &mut segs, &view,
+                                cra_deg, cdec_deg, fov_w_deg, fov_h_deg, rot_deg,
+                                center_color, 1.0,
+                            ) {
+                                fov_label_anchors.push((anchor, center_color, label.clone()));
+                            }
+
+                            // Mount FOV
+                            if m.connected {
+                                if let (Some(ra_h), Some(dec)) = (m.ra_h, m.dec_deg) {
+                                    let mount_color = [1.0, 204.0/255.0, 0.0, 1.0];
+                                    if let Some(anchor) = gpu_lines::build_fov_reticle(
+                                        &mut segs, &view,
+                                        ra_h * 15.0, dec, fov_w_deg, fov_h_deg, rot_deg,
+                                        mount_color, 1.0,
+                                    ) {
+                                        fov_label_anchors.push((anchor, mount_color, label.clone()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Solve marker (ring + gap-crosshair + rotated FOV rect).
+                    if solve_marker_on {
+                        if let (Some(ra), Some(dec)) =
+                            (sv.ra_jnow_deg, sv.dec_jnow_deg)
+                        {
+                            let age_ms = sv.solved_at_ms
+                                .map(|t| js_sys::Date::now() - t);
+                            let alpha = age_ms
+                                .map(|age| (1.0 - (age / 600_000.0).min(1.0)) * 0.95 + 0.05)
+                                .unwrap_or(1.0) as f32;
+                            if alpha >= 0.1 {
+                                gpu_lines::build_solve_marker(
+                                    &mut segs, &view,
+                                    ra, dec, alpha,
+                                    sv.pixscale_arcsec,
+                                    cam.sensor_width, cam.sensor_height,
+                                    sv.rotation_deg,
+                                );
+                            }
+                        }
+                    }
+
+                    renderer.upload_lines(&segs);
+
+                    // ── GPU text: cardinals + zenith mark for now.
+                    // Other labels (star/constellation/DSO/FOV) stay on
+                    // Canvas2D until their parent layers move to GPU.
+                    let mut text_items: Vec<TextInstance> = Vec::new();
+                    if let Some(atlas) = renderer.font_atlas() {
+                        let tr = crate::i18n::t(cur_lang);
+                        let cardinal_color = [221.0/255.0, 170.0/255.0, 102.0/255.0, 1.0];
+                        let cardinal_size: f32 = 14.0;
+                        for (label, az_deg) in &[
+                            (tr.cardinal_n, 0.0_f64),
+                            (tr.cardinal_e, 90.0),
+                            (tr.cardinal_s, 180.0),
+                            (tr.cardinal_w, 270.0),
+                        ] {
+                            if let Some((sx, sy)) = view.project(-2.0, *az_deg) {
+                                let w = atlas.measure_width(label, cardinal_size);
+                                atlas.push_text(
+                                    &mut text_items,
+                                    label,
+                                    sx as f32 - w * 0.5,
+                                    sy as f32 + 4.0,
+                                    cardinal_size,
+                                    cardinal_color,
+                                );
+                            }
+                        }
+                        if zenith_on {
+                            if let Some((sx, sy)) = view.project(90.0, 0.0) {
+                                atlas.push_text(
+                                    &mut text_items,
+                                    tr.zenith_mark,
+                                    sx as f32 + 9.0,
+                                    sy as f32 - 4.0,
+                                    10.0,
+                                    [180.0/255.0, 220.0/255.0, 1.0, 0.85],
+                                );
+                            }
+                        }
+                        // FOV reticle labels (centre + mount), positioned by
+                        // the line builder so they sit above each rectangle.
+                        for ((ax, ay), color, lbl) in &fov_label_anchors {
+                            let w = atlas.measure_width(lbl, 10.0);
+                            atlas.push_text(
+                                &mut text_items,
+                                lbl,
+                                *ax as f32 - w * 0.5,
+                                *ay as f32 - 12.0,
+                                10.0,
+                                *color,
+                            );
+                        }
+                        // Solve label (above the marker ring).
+                        if solve_marker_on {
+                            if let (Some(ra), Some(dec)) =
+                                (sv.ra_jnow_deg, sv.dec_jnow_deg)
+                            {
+                                let (alt, az) = crate::astro::eq_to_altaz(
+                                    ra, dec, lst, s.latitude);
+                                if let Some((sx, sy)) = view.project(alt, az) {
+                                    let age_ms = sv.solved_at_ms
+                                        .map(|t| js_sys::Date::now() - t);
+                                    let alpha = age_ms
+                                        .map(|age| (1.0 - (age / 600_000.0).min(1.0))
+                                            * 0.95 + 0.05)
+                                        .unwrap_or(1.0) as f32;
+                                    if alpha >= 0.1 {
+                                        let label = tr.solved_mark;
+                                        let w = atlas.measure_width(label, 10.0);
+                                        atlas.push_text(
+                                            &mut text_items,
+                                            label,
+                                            sx as f32 - w * 0.5,
+                                            sy as f32 - 28.0,
+                                            10.0,
+                                            [60.0/255.0, 230.0/255.0,
+                                             120.0/255.0, alpha],
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // ── GPU DSO symbols + labels.
+                    let mut dso_items: Vec<DsoInstance> = Vec::new();
+                    if dso_on {
+                        if let Some(ref dc) = dso_cat {
+                            let params = dso_render::DsoBuildParams {
+                                view: &view,
+                                dso_cat: dc,
+                                dso_index: dso_idx.as_deref(),
+                                mag_limit: dso_mag,
+                                names_on,
+                                is_mobile: mobile_profile.is_mobile,
+                                kind_filter: dso_render::KindFilter {
+                                    gx: dso_gx, oc: dso_oc, gc: dso_gc,
+                                    nb: dso_nb, pn: dso_pn, snr: dso_snr,
+                                    gal: dso_gal,
+                                },
+                            };
+                            dso_render::build(
+                                params,
+                                renderer.font_atlas(),
+                                &mut dso_items,
+                                &mut text_items,
+                            );
+                        }
+                    }
+                    renderer.upload_dso(&dso_items);
+                    renderer.upload_text(&text_items);
+
                     renderer.render_frame(&uniforms, stars_on, const_on);
                 }
             }
@@ -589,6 +854,20 @@ pub fn SkyTab(
         } else {
             (None, None)
         };
+
+        // ── Push HUD snapshot to the DOM overlay ──────────────────────
+        set_hud_data.set(hud::HudData {
+            lst_deg: lst,
+            fov,
+            c_alt,
+            c_az,
+            mount_ra_h: m.ra_h,
+            mount_dec_deg: m.dec_deg,
+            rotation_deg: sv.rotation_deg,
+            t_off,
+            cursor_altaz,
+            cursor_radec,
+        });
 
         // ── Derive scheduler job render list ───────────────────────────
         let scheduler_jobs_data: Vec<SchedulerJobRender> = if scheduler_jobs_on {
@@ -706,6 +985,11 @@ pub fn SkyTab(
             scheduler_jobs: scheduler_jobs_data,
             mosaic_kstars: mosaic_kstars_render,
             mosaic_plan: mosaic_plan_render,
+            is_mobile: mobile_profile.is_mobile,
+            lines_on_gpu: has_gpu,
+            text_on_gpu: has_gpu,
+            dso_on_gpu: has_gpu,
+            hud_on_dom: has_gpu,
         };
 
         let nb_idx = nebulae_index.get_untracked();
@@ -719,6 +1003,7 @@ pub fn SkyTab(
         let trail_slice = trail.make_contiguous();
         render::render_overlay(
             &ctx, &params, &cat, &dso_cat,
+            dso_idx.as_deref(),
             nb_idx.as_deref(),
             &mut nebulae_cache,
             &mut hits,
@@ -1069,6 +1354,30 @@ pub fn SkyTab(
                 on:touchend=on_touchend
                 on:touchcancel=move |_: TouchEvent| { *longpress_timer.borrow_mut() = None; dragging.set_value(false); pinch_start_dist.set_value(0.0); }
             />
+
+            // ── DOM HUD (replaces render_info_overlay when GPU is up) ──────
+            {move || gpu_ready.get().then(|| view! {
+                <hud::SkyHud hud=hud_data lang=lang.read_only() />
+            })}
+
+            // ── Renderer indicator (GPU vs Canvas2D fallback) ──────────────
+            {move || {
+                let (label, color) = if gpu_ready.get() {
+                    ("GPU", "#5fd7a0")
+                } else {
+                    ("2D", "#d7a05f")
+                };
+                view! {
+                    <div style=format!(
+                        "position:absolute; bottom:6px; left:6px; z-index:50; \
+                         pointer-events:none; padding:1px 6px; \
+                         background:rgba(0,0,0,0.45); border:1px solid {0}; \
+                         color:{0}; font-family:monospace; font-size:10px; \
+                         border-radius:3px; letter-spacing:0.5px;",
+                        color
+                    )>{label}</div>
+                }
+            }}
 
             // ── Mosaic center-pick banner ──────────────────────────────────
             {move || planner.picking_center.get().then(|| view! {

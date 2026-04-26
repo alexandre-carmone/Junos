@@ -14,6 +14,8 @@ use crate::ephemeris;
 use crate::i18n::{Lang, constellation_name, t};
 use crate::nebulae::NebulaeIndex;
 
+use super::dso_index::DsoIndex;
+
 use super::utils::bv_to_rgb;
 
 // ── Star size tuning ──────────────────────────────────────────────────────────
@@ -142,6 +144,26 @@ pub struct RenderParams {
     pub mosaic_kstars: Option<MosaicPlanRender>,
     /// Live mosaic preview from the in-app planner (shown while planning mode is active).
     pub mosaic_plan: Option<MosaicPlanRender>,
+    /// Set when the host is detected as a mobile-class device. Lets render
+    /// passes use cheaper code paths (smaller fonts, tighter mag thresholds
+    /// for labels, fewer optional decorations) without changing layout.
+    pub is_mobile: bool,
+    /// When true, ground/horizon, grids, meridian, ecliptic, zenith circle,
+    /// crosshairs, and slew trail are drawn by the GPU `LineLayer`. The
+    /// Canvas2D overlay still renders text labels (cardinals, zenith mark)
+    /// until the SDF text layer lands.
+    pub lines_on_gpu: bool,
+    /// When true, cardinal direction labels (N/E/S/W) and the zenith mark are
+    /// drawn by the GPU `TextLayer`. Other labels (star/constellation/DSO/FOV)
+    /// remain on Canvas2D until their parent layers move to GPU.
+    pub text_on_gpu: bool,
+    /// When true, DSO outline symbols and DSO labels are drawn by the GPU
+    /// `DsoLayer` / `TextLayer`. Nebula thumbnails and DSO hit items still
+    /// flow through the Canvas2D path.
+    pub dso_on_gpu: bool,
+    /// When true, the bottom-left status panel is rendered by the
+    /// `<SkyHud>` Leptos DOM component; the Canvas2D version is skipped.
+    pub hud_on_dom: bool,
 }
 
 /// Render the full sky overlay on a Canvas2D context.
@@ -154,6 +176,7 @@ pub fn render_overlay(
     p: &RenderParams,
     cat: &Option<Arc<CatalogData>>,
     dso_cat: &Option<Arc<DsoCatalogData>>,
+    dso_index: Option<&DsoIndex>,
     nebulae_index: Option<&NebulaeIndex>,
     nebulae_cache: &mut HashMap<String, HtmlImageElement>,
     hit_items: &mut Vec<HitItem>,
@@ -178,18 +201,21 @@ pub fn render_overlay(
         render_fallback_stars(ctx, p, cat, &project, cx, cy, scale, hit_items);
     }
 
-    // Everything below renders on the Canvas2D overlay (both GPU and fallback)
+    // Everything below renders on the Canvas2D overlay (both GPU and fallback).
+    // When `lines_on_gpu` is true, line geometry (horizon arc, grids,
+    // meridian, ecliptic, zenith circle) is drawn by the GPU `LineLayer`;
+    // only the text labels (cardinals, zenith mark) remain on Canvas2D.
     render_ground(ctx, p, &project);
-    if p.grid_on {
+    if p.grid_on && !p.lines_on_gpu {
         render_altaz_grid(ctx, p, &project);
     }
-    if p.meridian_on {
+    if p.meridian_on && !p.lines_on_gpu {
         render_meridian(ctx, p, &project);
     }
-    if p.eq_grid_on {
+    if p.eq_grid_on && !p.lines_on_gpu {
         render_eq_grid(ctx, p, &project);
     }
-    if p.ecliptic_on {
+    if p.ecliptic_on && !p.lines_on_gpu {
         render_ecliptic(ctx, p, &project);
     }
     if p.zenith_on {
@@ -205,20 +231,24 @@ pub fn render_overlay(
         render_constellation_names_gpu(ctx, p, cat, &project);
     }
     if p.dso_on {
-        render_dso(ctx, p, dso_cat, &project, scale, nebulae_index, nebulae_cache, hit_items);
+        render_dso(ctx, p, dso_cat, dso_index, &project, scale, nebulae_index, nebulae_cache, hit_items);
     }
     if p.solar_system_on {
         render_solar_system(ctx, p, &project, hit_items);
     }
-    if p.slew_trail_on {
+    if p.slew_trail_on && !p.lines_on_gpu {
         render_slew_trail(ctx, p, &project, slew_trail);
     }
-    render_mount_crosshair(ctx, p, &project);
-    if p.solve_marker_on {
+    if !p.lines_on_gpu {
+        render_mount_crosshair(ctx, p, &project);
+    }
+    if p.solve_marker_on && !p.lines_on_gpu {
         render_solve_marker(ctx, p, &project);
     }
-    render_center_crosshair(ctx, cx, cy);
-    if p.fov_on {
+    if !p.lines_on_gpu {
+        render_center_crosshair(ctx, cx, cy);
+    }
+    if p.fov_on && !p.lines_on_gpu {
         render_center_fov(ctx, p, &project, cx, cy);
         render_mount_fov(ctx, p, &project, cx, cy);
     }
@@ -231,7 +261,9 @@ pub fn render_overlay(
     if p.scheduler_jobs_on {
         render_scheduler_jobs(ctx, p, &project);
     }
-    render_info_overlay(ctx, p);
+    if !p.hud_on_dom {
+        render_info_overlay(ctx, p);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -379,8 +411,8 @@ fn render_ground(
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
 ) {
-    // Horizon line
-    {
+    // Horizon arc — drawn on GPU when `lines_on_gpu` is set.
+    if !p.lines_on_gpu {
         let mut first = true;
         ctx.begin_path();
         for i in (0..=360).step_by(3) {
@@ -395,21 +427,23 @@ fn render_ground(
         ctx.stroke();
     }
 
-    // Cardinal labels
-    ctx.set_font("bold 14px monospace");
-    ctx.set_text_align("center");
-    let tr = t(p.cur_lang);
-    for (label, az) in &[
-        (tr.cardinal_n, 0.0_f64),
-        (tr.cardinal_e, 90.0),
-        (tr.cardinal_s, 180.0),
-        (tr.cardinal_w, 270.0),
-    ] {
-        if let Some((sx, sy)) = project(-2.0, *az) {
-            ctx.set_fill_style_str("#000");
-            let _ = ctx.fill_text(label, sx + 1.0, sy + 15.0);
-            ctx.set_fill_style_str("#ddaa66");
-            let _ = ctx.fill_text(label, sx, sy + 14.0);
+    // Cardinal labels — drawn on GPU when `text_on_gpu` is set.
+    if !p.text_on_gpu {
+        ctx.set_font("bold 14px monospace");
+        ctx.set_text_align("center");
+        let tr = t(p.cur_lang);
+        for (label, az) in &[
+            (tr.cardinal_n, 0.0_f64),
+            (tr.cardinal_e, 90.0),
+            (tr.cardinal_s, 180.0),
+            (tr.cardinal_w, 270.0),
+        ] {
+            if let Some((sx, sy)) = project(-2.0, *az) {
+                ctx.set_fill_style_str("#000");
+                let _ = ctx.fill_text(label, sx + 1.0, sy + 15.0);
+                ctx.set_fill_style_str("#ddaa66");
+                let _ = ctx.fill_text(label, sx, sy + 14.0);
+            }
         }
     }
 }
@@ -561,13 +595,16 @@ fn render_star_names_gpu(
 ) {
     let Some(ref cat) = cat else { return };
     ctx.set_fill_style_str("#8899aa");
-    ctx.set_font("10px monospace");
+    ctx.set_font(if p.is_mobile { "9px monospace" } else { "10px monospace" });
     ctx.set_text_align("left");
     let lst_rad = p.lst.to_radians();
+    // Tighter cull on mobile: only the brightest named stars get labels
+    // (cuts fillText calls roughly in half on a typical view).
+    let star_label_mag_max: f32 = if p.is_mobile { 2.2 } else { 3.0 };
     for star in cat.stars.iter() {
         let Some(name) = star.name.as_deref() else { continue };
         if name == "Sol" { continue; }
-        if star.mag >= 3.0 { continue; }
+        if star.mag >= star_label_mag_max { continue; }
         let jnow = J2000::new(star.ra_deg as f64, star.dec_deg as f64).to_jnow(p.jd);
         let ha = lst_rad - jnow.ra_deg.to_radians();
         let dec = jnow.dec_deg.to_radians();
@@ -682,6 +719,7 @@ fn render_dso(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     dso_cat: &Option<Arc<DsoCatalogData>>,
+    dso_index: Option<&DsoIndex>,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
     scale: f64,
     nebulae_index: Option<&NebulaeIndex>,
@@ -717,7 +755,22 @@ fn render_dso(
         cap_radius_deg.to_radians().cos()
     };
 
-    for dso in dso_cat.dsos.iter() {
+    // Spatial pre-cull: when an index is available, only walk catalog
+    // entries inside buckets that overlap the cap. At narrow FOV this drops
+    // the inner loop from ~2 500 to a few dozen — the dominant CPU saving on
+    // mobile. With no index (e.g. mid-load) we fall back to the full scan,
+    // which is what the great-circle gate already covered.
+    let visible: Option<Vec<u32>> = dso_index.map(|idx| {
+        idx.visible_indices(view_j2000.ra_deg, view_j2000.dec_deg, cap_radius_deg)
+    });
+    let dsos = &dso_cat.dsos;
+    let iter_indices: Box<dyn Iterator<Item = usize>> = match &visible {
+        Some(v) => Box::new(v.iter().map(|i| *i as usize)),
+        None    => Box::new(0..dsos.len()),
+    };
+
+    for di in iter_indices {
+        let Some(dso) = dsos.get(di) else { continue };
         let type_ok = match dso.kind {
             DsoType::Galaxy          => p.dso_gx,
             DsoType::OpenCluster     => p.dso_oc,
@@ -838,7 +891,10 @@ fn render_dso(
         };
 
         // ── Symbol fallback (when no image available / loaded) ──────────────
-        if !drew_image {
+        // When `dso_on_gpu` is set, the GPU DsoLayer renders the symbol —
+        // skip the Canvas2D outline entirely (nebula thumbnails still flow
+        // through the GPU-skipped path above when an image is available).
+        if !drew_image && !p.dso_on_gpu {
             match dso.kind {
                 DsoType::Galaxy => {
                     let minor_px = if dso.size_minor_arcmin > 0.0 {
@@ -919,8 +975,13 @@ fn render_dso(
             phase: None,
         });
 
-        // Label (always, image or symbol)
-        if p.names_on && p.fov < 50.0 {
+        // Label (always, image or symbol).
+        // On mobile, only label objects clearly brighter than the cutoff and
+        // tighten the FOV gate; this drops fillText calls per frame when many
+        // faint DSOs cluster near the centre at moderate zoom.
+        let label_fov_gate = if p.is_mobile { 25.0 } else { 50.0 };
+        let label_mag_ok   = !p.is_mobile || (dso.mag as f64) <= p.dso_mag - 1.5;
+        if p.names_on && p.fov < label_fov_gate && label_mag_ok && !p.dso_on_gpu {
             ctx.set_fill_style_str(match dso.kind {
                 DsoType::Galaxy           => "rgba(0,200,220,0.85)",
                 DsoType::OpenCluster      => "rgba(255,220,50,0.85)",
@@ -1395,15 +1456,19 @@ fn render_zenith(
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
 ) {
     if let Some((sx, sy)) = project(90.0, 0.0) {
-        ctx.set_stroke_style_str("rgba(180,220,255,0.85)");
-        ctx.set_line_width(1.2);
-        ctx.begin_path();
-        let _ = ctx.arc(sx, sy, 6.0, 0.0, 2.0 * PI);
-        ctx.stroke();
-        ctx.set_fill_style_str("rgba(180,220,255,0.85)");
-        ctx.set_font("bold 10px monospace");
-        ctx.set_text_align("left");
-        let _ = ctx.fill_text(t(p.cur_lang).zenith_mark, sx + 9.0, sy + 4.0);
+        if !p.lines_on_gpu {
+            ctx.set_stroke_style_str("rgba(180,220,255,0.85)");
+            ctx.set_line_width(1.2);
+            ctx.begin_path();
+            let _ = ctx.arc(sx, sy, 6.0, 0.0, 2.0 * PI);
+            ctx.stroke();
+        }
+        if !p.text_on_gpu {
+            ctx.set_fill_style_str("rgba(180,220,255,0.85)");
+            ctx.set_font("bold 10px monospace");
+            ctx.set_text_align("left");
+            let _ = ctx.fill_text(t(p.cur_lang).zenith_mark, sx + 9.0, sy + 4.0);
+        }
     }
 }
 

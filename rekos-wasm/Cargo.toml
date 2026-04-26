@@ -50,6 +50,8 @@ web-sys = { version = "0.3", features = [
     "FileReader",
     "FileList",
     "File",
+    "TextMetrics",
+    "ImageData",
 ] }
 js-sys               = "0.3"
 wasm-bindgen-futures = "0.4"
