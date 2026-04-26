@@ -377,7 +377,7 @@ fn render_fallback_stars(
             });
             if p.names_on && *mag < 3.0 {
                 ctx.set_fill_style_str("#8899aa");
-                ctx.set_font("10px monospace");
+                ctx.set_font("13px monospace");
                 ctx.set_text_align("left");
                 let _ = ctx.fill_text(name, sx + 6.0, sy - 4.0);
             }
@@ -387,7 +387,7 @@ fn render_fallback_stars(
     // Constellation names
     if p.const_on && p.con_names_on {
         ctx.set_fill_style_str("rgba(100,120,180,0.7)");
-        ctx.set_font("italic 11px monospace");
+        ctx.set_font("italic 14px monospace");
         ctx.set_text_align("center");
         let lst_rad = p.lst.to_radians();
         for (abbr, name, cra, cdec) in &cat.centers {
@@ -604,7 +604,7 @@ fn render_star_names_gpu(
 ) {
     let Some(ref cat) = cat else { return };
     ctx.set_fill_style_str("#8899aa");
-    ctx.set_font(if p.is_mobile { "9px monospace" } else { "10px monospace" });
+    ctx.set_font(if p.is_mobile { "12px monospace" } else { "13px monospace" });
     ctx.set_text_align("left");
     let lst_rad = p.lst.to_radians();
     // Tighter cull on mobile: only the brightest named stars get labels
@@ -699,7 +699,7 @@ fn render_constellation_names_gpu(
 ) {
     let Some(ref cat) = cat else { return };
     ctx.set_fill_style_str("rgba(100,120,180,0.7)");
-    ctx.set_font("italic 11px monospace");
+    ctx.set_font("italic 14px monospace");
     ctx.set_text_align("center");
     let lst_rad = p.lst.to_radians();
     for (abbr, name, cra, cdec) in &cat.centers {
@@ -742,7 +742,7 @@ fn render_dso(
     let cx = p.wf / 2.0;
     let cy = p.hf / 2.0;
     ctx.set_line_width(1.0);
-    ctx.set_font("9px monospace");
+    ctx.set_font("12px monospace");
 
     // ── Cheap angular-distance pre-cull (J2000) ───────────────────────────
     // Compute the view center in J2000 once, then skip the per-DSO
@@ -1592,7 +1592,7 @@ fn render_solve_marker(
     }
 
     ctx.set_fill_style_str(&green);
-    ctx.set_font("10px monospace");
+    ctx.set_font("13px monospace");
     ctx.set_text_align("center");
     let _ = ctx.fill_text(t(p.cur_lang).solved_mark, sx, sy - 18.0);
 }
@@ -1622,7 +1622,7 @@ fn render_solar_system(
         ctx.stroke();
         if p.names_on && p.fov < 60.0 {
             ctx.set_fill_style_str("rgba(255,220,80,0.95)");
-            ctx.set_font("11px monospace");
+            ctx.set_font("14px monospace");
             ctx.set_text_align("left");
             let _ = ctx.fill_text(t(p.cur_lang).body_sun, sx + r + 4.0, sy + 4.0);
         }
@@ -1675,7 +1675,7 @@ fn render_solar_system(
 
         if p.names_on && p.fov < 60.0 {
             ctx.set_fill_style_str("rgba(220,220,230,0.95)");
-            ctx.set_font("11px monospace");
+            ctx.set_font("14px monospace");
             ctx.set_text_align("left");
             let _ = ctx.fill_text(t(p.cur_lang).body_moon, sx + r + 4.0, sy + 4.0);
         }
@@ -1706,7 +1706,7 @@ fn render_solar_system(
         ctx.fill();
         if p.names_on && p.fov < 40.0 {
             ctx.set_fill_style_str(color);
-            ctx.set_font("10px monospace");
+            ctx.set_font("13px monospace");
             ctx.set_text_align("left");
             let _ = ctx.fill_text(planet.name_i18n(p.cur_lang), sx + r + 3.0, sy + 4.0);
         }

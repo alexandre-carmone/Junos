@@ -180,7 +180,7 @@ pub fn build(
                     &label,
                     sx as f32 + half_w as f32 + 3.0,
                     sy as f32 - 5.0,
-                    9.0,
+                    12.0,
                     color,
                 );
             }

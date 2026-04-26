@@ -70,7 +70,7 @@ pub fn build(
         if names_on && v.fov < 60.0 {
             if let Some(atlas) = atlas {
                 atlas.push_text(out_text, tr.body_sun,
-                    sx as f32 + 14.0, sy as f32 - 5.0, 11.0,
+                    sx as f32 + 14.0, sy as f32 - 5.0, 14.0,
                     [1.0, 220.0/255.0, 80.0/255.0, 0.95]);
             }
         }
@@ -84,7 +84,7 @@ pub fn build(
         if names_on && v.fov < 60.0 {
             if let Some(atlas) = atlas {
                 atlas.push_text(out_text, tr.body_moon,
-                    sx as f32 + 13.0, sy as f32 - 5.0, 11.0,
+                    sx as f32 + 13.0, sy as f32 - 5.0, 14.0,
                     [220.0/255.0, 220.0/255.0, 230.0/255.0, 0.95]);
             }
         }
@@ -100,7 +100,7 @@ pub fn build(
         if names_on && v.fov < 40.0 {
             if let Some(atlas) = atlas {
                 atlas.push_text(out_text, planet.name_i18n(lang),
-                    sx as f32 + r as f32 + 4.0, sy as f32 - 5.0, 10.0,
+                    sx as f32 + r as f32 + 4.0, sy as f32 - 5.0, 13.0,
                     color);
             }
         }
