@@ -164,6 +164,15 @@ pub struct RenderParams {
     /// When true, the bottom-left status panel is rendered by the
     /// `<SkyHud>` Leptos DOM component; the Canvas2D version is skipped.
     pub hud_on_dom: bool,
+    /// When true, hit-test items are produced by `picking::build` (CPU-only)
+    /// before `render_overlay` runs; the per-layer `hit_items.push(...)`
+    /// sites in this file skip themselves to avoid duplicates.
+    pub picking_on_cpu: bool,
+    /// When true, sun / moon / planets are rendered by the GPU `DsoLayer`
+    /// (filled-disc kind) and labelled by the `TextLayer`. Moon phase
+    /// shading is *not* preserved in this first GPU pass — `render_solar_system`
+    /// keeps that detail when it runs.
+    pub solar_on_gpu: bool,
 }
 
 /// Render the full sky overlay on a Canvas2D context.
@@ -223,7 +232,7 @@ pub fn render_overlay(
     }
     if p.has_gpu && p.names_on && p.stars_on {
         render_star_names_gpu(ctx, p, cat, &project, hit_items);
-    } else if p.has_gpu && p.stars_on {
+    } else if p.has_gpu && p.stars_on && !p.picking_on_cpu {
         // Stars are drawn by the GPU but we still need named-star hit items.
         push_star_hit_items(p, cat, &project, hit_items);
     }
@@ -233,7 +242,7 @@ pub fn render_overlay(
     if p.dso_on {
         render_dso(ctx, p, dso_cat, dso_index, &project, scale, nebulae_index, nebulae_cache, hit_items);
     }
-    if p.solar_system_on {
+    if p.solar_system_on && !p.solar_on_gpu {
         render_solar_system(ctx, p, &project, hit_items);
     }
     if p.slew_trail_on && !p.lines_on_gpu {
@@ -619,17 +628,19 @@ fn render_star_names_gpu(
         if ha.sin() > 0.0 { az = 360.0 - az; }
         if let Some((sx, sy)) = project(alt, az) {
             let _ = ctx.fill_text(name, sx + 6.0, sy - 4.0);
-            hit_items.push(HitItem {
-                sx, sy,
-                radius: 8.0,
-                kind: HitKind::Star,
-                name: name.to_string(),
-                mag: Some(star.mag),
-                ra_jnow_deg: jnow.ra_deg,
-                dec_jnow_deg: jnow.dec_deg,
-                size_arcmin: None,
-                phase: None,
-            });
+            if !p.picking_on_cpu {
+                hit_items.push(HitItem {
+                    sx, sy,
+                    radius: 8.0,
+                    kind: HitKind::Star,
+                    name: name.to_string(),
+                    mag: Some(star.mag),
+                    ra_jnow_deg: jnow.ra_deg,
+                    dec_jnow_deg: jnow.dec_deg,
+                    size_arcmin: None,
+                    phase: None,
+                });
+            }
         }
     }
 }
@@ -963,17 +974,19 @@ fn render_dso(
 
         let label = dso.display_label();
 
-        hit_items.push(HitItem {
-            sx, sy,
-            radius: r.max(8.0),
-            kind: HitKind::Dso(dso.kind),
-            name: label.clone(),
-            mag: Some(dso.mag),
-            ra_jnow_deg: dso_jnow.ra_deg,
-            dec_jnow_deg: dso_jnow.dec_deg,
-            size_arcmin: Some(dso.size_arcmin as f64),
-            phase: None,
-        });
+        if !p.picking_on_cpu {
+            hit_items.push(HitItem {
+                sx, sy,
+                radius: r.max(8.0),
+                kind: HitKind::Dso(dso.kind),
+                name: label.clone(),
+                mag: Some(dso.mag),
+                ra_jnow_deg: dso_jnow.ra_deg,
+                dec_jnow_deg: dso_jnow.dec_deg,
+                size_arcmin: Some(dso.size_arcmin as f64),
+                phase: None,
+            });
+        }
 
         // Label (always, image or symbol).
         // On mobile, only label objects clearly brighter than the cutoff and
@@ -1613,17 +1626,19 @@ fn render_solar_system(
             ctx.set_text_align("left");
             let _ = ctx.fill_text(t(p.cur_lang).body_sun, sx + r + 4.0, sy + 4.0);
         }
-        hit_items.push(HitItem {
-            sx, sy,
-            radius: r + 4.0,
-            kind: HitKind::Sun,
-            name: t(p.cur_lang).body_sun.to_string(),
-            mag: Some(sun.mag),
-            ra_jnow_deg: sun.jnow.ra_deg,
-            dec_jnow_deg: sun.jnow.dec_deg,
-            size_arcmin: sun.angular_diameter_arcmin,
-            phase: None,
-        });
+        if !p.picking_on_cpu {
+            hit_items.push(HitItem {
+                sx, sy,
+                radius: r + 4.0,
+                kind: HitKind::Sun,
+                name: t(p.cur_lang).body_sun.to_string(),
+                mag: Some(sun.mag),
+                ra_jnow_deg: sun.jnow.ra_deg,
+                dec_jnow_deg: sun.jnow.dec_deg,
+                size_arcmin: sun.angular_diameter_arcmin,
+                phase: None,
+            });
+        }
     }
 
     // ── Moon ─────────────────────────────────────────────────────────
@@ -1664,17 +1679,19 @@ fn render_solar_system(
             ctx.set_text_align("left");
             let _ = ctx.fill_text(t(p.cur_lang).body_moon, sx + r + 4.0, sy + 4.0);
         }
-        hit_items.push(HitItem {
-            sx, sy,
-            radius: r + 4.0,
-            kind: HitKind::Moon,
-            name: t(p.cur_lang).body_moon.to_string(),
-            mag: Some(moon.mag),
-            ra_jnow_deg: moon.jnow.ra_deg,
-            dec_jnow_deg: moon.jnow.dec_deg,
-            size_arcmin: moon.angular_diameter_arcmin,
-            phase: moon.phase,
-        });
+        if !p.picking_on_cpu {
+            hit_items.push(HitItem {
+                sx, sy,
+                radius: r + 4.0,
+                kind: HitKind::Moon,
+                name: t(p.cur_lang).body_moon.to_string(),
+                mag: Some(moon.mag),
+                ra_jnow_deg: moon.jnow.ra_deg,
+                dec_jnow_deg: moon.jnow.dec_deg,
+                size_arcmin: moon.angular_diameter_arcmin,
+                phase: moon.phase,
+            });
+        }
     }
 
     // ── Planets ──────────────────────────────────────────────────────
@@ -1693,17 +1710,19 @@ fn render_solar_system(
             ctx.set_text_align("left");
             let _ = ctx.fill_text(planet.name_i18n(p.cur_lang), sx + r + 3.0, sy + 4.0);
         }
-        hit_items.push(HitItem {
-            sx, sy,
-            radius: (r + 3.0).max(8.0),
-            kind: HitKind::Planet,
-            name: planet.name_i18n(p.cur_lang).to_string(),
-            mag: Some(pos.mag),
-            ra_jnow_deg: pos.jnow.ra_deg,
-            dec_jnow_deg: pos.jnow.dec_deg,
-            size_arcmin: None,
-            phase: pos.phase,
-        });
+        if !p.picking_on_cpu {
+            hit_items.push(HitItem {
+                sx, sy,
+                radius: (r + 3.0).max(8.0),
+                kind: HitKind::Planet,
+                name: planet.name_i18n(p.cur_lang).to_string(),
+                mag: Some(pos.mag),
+                ra_jnow_deg: pos.jnow.ra_deg,
+                dec_jnow_deg: pos.jnow.dec_deg,
+                size_arcmin: None,
+                phase: pos.phase,
+            });
+        }
     }
 }
 

@@ -12,6 +12,8 @@ pub(crate) mod dso_index;
 mod dso_render;
 pub(crate) mod gpu;
 mod hud;
+mod picking;
+mod solar_render;
 mod info_popup;
 mod object_search;
 pub(crate) mod render;
@@ -816,6 +818,16 @@ pub fn SkyTab(
                             );
                         }
                     }
+                    if solar_system_on {
+                        solar_render::build(
+                            &view,
+                            names_on,
+                            cur_lang,
+                            renderer.font_atlas(),
+                            &mut dso_items,
+                            &mut text_items,
+                        );
+                    }
                     renderer.upload_dso(&dso_items);
                     renderer.upload_text(&text_items);
 
@@ -990,12 +1002,43 @@ pub fn SkyTab(
             text_on_gpu: has_gpu,
             dso_on_gpu: has_gpu,
             hud_on_dom: has_gpu,
+            picking_on_cpu: has_gpu,
+            solar_on_gpu: has_gpu,
         };
 
         let nb_idx = nebulae_index.get_untracked();
         let mut nebulae_cache = nebulae_for_render.borrow_mut();
         let mut hits = hit_items_for_render.borrow_mut();
         hits.clear();
+        // Build hit list directly from catalogs / ephemerides — independent
+        // of the Canvas2D render path. The render_overlay call below skips
+        // the duplicate `hit_items.push` sites when picking_on_cpu is set.
+        if has_gpu {
+            let view = LineView {
+                wf, hf, fov, c_alt, c_az,
+                lst, latitude: s.latitude, jd,
+            };
+            picking::build(
+                picking::PickParams {
+                    view: &view,
+                    catalog: cat.as_ref(),
+                    dso_cat: dso_cat.as_ref(),
+                    dso_index: dso_idx.as_deref(),
+                    mag_limit,
+                    stars_on,
+                    dso_on,
+                    dso_filter: dso_render::KindFilter {
+                        gx: dso_gx, oc: dso_oc, gc: dso_gc,
+                        nb: dso_nb, pn: dso_pn, snr: dso_snr,
+                        gal: dso_gal,
+                    },
+                    dso_mag,
+                    solar_on: solar_system_on,
+                    lang: cur_lang,
+                },
+                &mut hits,
+            );
+        }
         // make_contiguous() rotates the ring buffer in place so we can hand
         // the trail to the renderer as a single slice without copying. The
         // trail caps at 120 entries, so the rotation is essentially free.

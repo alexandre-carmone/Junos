@@ -127,11 +127,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             keep = abs(d - 1.0) < outline && abs_x < 1.05 && abs_y < 1.05;
         }
         // 6: GalaxyCluster — finer dashed ring (different period).
-        case 6u, default: {
+        case 6u: {
             if (abs(r - 1.0) < outline) {
                 let phase = fract(theta / TWO_PI * 24.0);
                 keep = phase < 0.33;
             }
+        }
+        // 7: filled disc (used by solar-system bodies). Extra fade at the
+        // edge so the rim doesn't alias against the sky background.
+        case 7u, default: {
+            keep = r < 1.0;
         }
     }
 
