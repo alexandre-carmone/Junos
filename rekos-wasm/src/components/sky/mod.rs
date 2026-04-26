@@ -1403,25 +1403,6 @@ pub fn SkyTab(
                 <hud::SkyHud hud=hud_data lang=lang.read_only() />
             })}
 
-            // ── Renderer indicator (GPU vs Canvas2D fallback) ──────────────
-            {move || {
-                let (label, color) = if gpu_ready.get() {
-                    ("GPU", "#5fd7a0")
-                } else {
-                    ("2D", "#d7a05f")
-                };
-                view! {
-                    <div style=format!(
-                        "position:absolute; bottom:6px; left:6px; z-index:50; \
-                         pointer-events:none; padding:1px 6px; \
-                         background:rgba(0,0,0,0.45); border:1px solid {0}; \
-                         color:{0}; font-family:monospace; font-size:10px; \
-                         border-radius:3px; letter-spacing:0.5px;",
-                        color
-                    )>{label}</div>
-                }
-            }}
-
             // ── Mosaic center-pick banner ──────────────────────────────────
             {move || planner.picking_center.get().then(|| view! {
                 <div style="position:absolute; top:8px; left:50%; transform:translateX(-50%); \
