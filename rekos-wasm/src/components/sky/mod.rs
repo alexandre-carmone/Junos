@@ -110,8 +110,9 @@ pub struct MosaicPlannerState {
 #[derive(Clone, Copy)]
 pub struct MobileProfile {
     pub is_mobile: bool,
-    /// Upper bound for `device_pixel_ratio`. Mobile gets 1.25 (still crisp on
-    /// most LCDs); desktop keeps 2.0 to handle Retina without aliasing.
+    /// Upper bound for `device_pixel_ratio`. Capped at 2.0 on every device:
+    /// crisp on Retina/iPhone (which report 3.0) without paying for the full
+    /// 3× Canvas2D fill rate.
     pub dpr_cap: f64,
 }
 
@@ -138,7 +139,7 @@ fn detect_mobile_profile() -> MobileProfile {
     let is_mobile = votes >= 2;
     MobileProfile {
         is_mobile,
-        dpr_cap: if is_mobile { 1.25 } else { 2.0 },
+        dpr_cap: 2.0,
     }
 }
 
@@ -515,10 +516,10 @@ pub fn SkyTab(
         let parent = overlay_el.parent_element().unwrap();
         let w = parent.client_width() as u32;
         let h = parent.client_height().max(500) as u32;
-        // DPR cap depends on device class. Mobile gets 1.25 (still crisp on
-        // most phone LCDs, but cuts physical pixel count by ~5× vs raw 3×
-        // DPR — by far the biggest single win for Canvas2D fill rate on a
-        // flagship Android). Desktop stays at 2.0.
+        // DPR cap is 2.0 on every device. iPhone/Retina report 3.0 but the
+        // extra pixels barely improve perceived sharpness while ~2.25×-ing the
+        // Canvas2D fill cost. The is_mobile flag still gates label thresholds
+        // downstream so fillText calls stay cheap.
         let dpr_cap = mobile_profile.dpr_cap;
         let dpr = web_sys::window().map(|win| win.device_pixel_ratio().min(dpr_cap)).unwrap_or(1.0);
         let w_phys = (w as f64 * dpr).round() as u32;
