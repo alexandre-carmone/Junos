@@ -78,37 +78,64 @@ impl SkyRenderer {
         });
 
         let surface_target = wgpu::SurfaceTarget::Canvas(canvas.clone());
-        let surface = instance.create_surface(surface_target).ok()?;
+        let surface = match instance.create_surface(surface_target) {
+            Ok(s) => s,
+            Err(e) => {
+                web_sys::console::warn_1(
+                    &format!("rekos: WebGPU create_surface failed: {e}").into(),
+                );
+                return None;
+            }
+        };
 
-        let adapter = instance
+        let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 ..Default::default()
             })
-            .await?;
+            .await
+        {
+            Some(a) => a,
+            None => {
+                web_sys::console::warn_1(
+                    &"rekos: WebGPU request_adapter returned None (WebGPU unavailable or disabled)".into(),
+                );
+                return None;
+            }
+        };
 
-        let (device, queue) = adapter
+        // No required features. We previously asked for
+        // INDIRECT_FIRST_INSTANCE, but the shader only increments
+        // `instance_count` (slot [1]) and always leaves `first_instance`
+        // (slot [3]) at 0 — so we don't actually need it. iOS Safari's
+        // WebGPU does not expose `indirect-first-instance`, so requiring it
+        // caused request_device to fail on iPhone and the renderer fell back
+        // to Canvas2D.
+        // Use downlevel_defaults() rather than default() so we don't ask for
+        // 256 MiB max_buffer_size etc. that mobile Safari's WebGPU may not
+        // expose (using_resolution only patches max_texture_dimension_*).
+        let (device, queue) = match adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("stars-gpu"),
-                    // No required features. We previously asked for
-                    // INDIRECT_FIRST_INSTANCE, but the shader only increments
-                    // `instance_count` (slot [1]) and always leaves
-                    // `first_instance` (slot [3]) at 0 — so we don't actually
-                    // need it. iOS Safari's WebGPU does not expose
-                    // `indirect-first-instance`, so requiring it caused
-                    // request_device to fail on iPhone and the renderer
-                    // fell back to Canvas2D.
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default()
+                    required_limits: wgpu::Limits::downlevel_defaults()
                         .using_resolution(adapter.limits()),
                     ..Default::default()
                 },
                 None,
             )
             .await
-            .ok()?;
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                web_sys::console::warn_1(
+                    &format!("rekos: WebGPU request_device failed: {e}").into(),
+                );
+                return None;
+            }
+        };
 
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);

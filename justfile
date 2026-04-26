@@ -30,6 +30,10 @@ check:
 dev-wasm:
     cd rekos-wasm && trunk watch
 
+# The server binds two ports by default: HTTP on 8080 (KStars-facing) and
+# HTTPS on 8443 (browser-facing — required by iOS Safari for WebGPU). A
+# self-signed cert is auto-generated into .certs/ on first run. Pass
+# --no-https to skip TLS for headless/CI runs.
 dev-server:
     cargo run -p rekos-server
 
