@@ -44,7 +44,7 @@ use self::gpu::layers::lines as gpu_lines;
 use crate::i18n::{Lang, t};
 use crate::nebulae::NebulaeIndex;
 
-use actions::{SkyConfirmPopup, SkyContextMenu, open_confirm};
+use actions::SkyContextMenu;
 use controls::SkyControls;
 use info_popup::SkyInfoPopup;
 use render::{HitItem, MosaicPlanRender, MosaicTileRender, RenderParams, SchedulerJobRender};
@@ -376,9 +376,6 @@ pub fn SkyTab(
 
     // Context menu state
     let (ctx_menu, set_ctx_menu) = signal(None::<(f64, f64, f64, f64)>);
-
-    // Bottom confirmation popup: (is_align, ra_deg, dec_deg)
-    let (pending_action, set_pending_action) = signal(None::<(bool, f64, f64)>);
 
     // GPU renderer
     let gpu_renderer: Rc<RefCell<Option<SkyRenderer>>> = Rc::new(RefCell::new(None));
@@ -1361,7 +1358,6 @@ pub fn SkyTab(
     };
 
     let send_for_ctx = Arc::clone(&send);
-    let send_for_confirm = Arc::clone(&send);
     let send_for_location = Arc::clone(&send);
     let set_site_location_fn: Arc<dyn Fn(f64, f64) + Send + Sync> = Arc::new(move |lat: f64, lon: f64| {
         send_for_location(serde_json::json!({"type":"option_set","payload":{"Latitude":lat,"Longitude":lon}}).to_string());
@@ -1372,7 +1368,6 @@ pub fn SkyTab(
              style="position:relative; width:100%; overflow:hidden;"
              on:click=move |_| {
                  set_ctx_menu.set(None);
-                 set_pending_action.set(None);
                  set_info_popup.set(None);
              }>
 
@@ -1448,18 +1443,6 @@ pub fn SkyTab(
                 set_site_location=set_site_location_fn.clone()
             />
 
-            // ── Slew action button (bottom-left) ───────────────────────────
-            <div class="sky-actions"
-                 style="position:absolute; bottom:48px; left:8px; display:flex; gap:8px; z-index:50;"
-                 on:click=move |ev| ev.stop_propagation()>
-                <button
-                    on:click=move |_| open_confirm(false, time_offset_s, site, center_alt, center_az, set_ctx_menu, set_pending_action)
-                    style="padding:10px 20px; background:#1a2a4a; color:#88aaff; border:1px solid #446; \
-                           border-radius:4px; cursor:pointer; font-family:monospace; font-size:13px; font-weight:bold;">
-                    {move || tr().goto_btn}
-                </button>
-            </div>
-
             // ── Time slider (bottom) ────────────────────────────────────────
             <div class="sky-time-slider"
                  style="position:absolute; bottom:4px; left:310px; right:8px; display:flex; align-items:center; gap:8px;">
@@ -1528,14 +1511,6 @@ pub fn SkyTab(
                 set_ctx_menu=set_ctx_menu
                 pending_solve_after_slew=pending_solve_after_slew
                 send=send_for_ctx
-            />
-
-            // ── Bottom confirmation popup ────────────────────────────────────
-            <SkyConfirmPopup
-                pending_action=pending_action
-                set_pending_action=set_pending_action
-                pending_solve_after_slew=pending_solve_after_slew
-                send=send_for_confirm
             />
 
             // ── Click-to-info popup (left-click on object) ───────────────────
