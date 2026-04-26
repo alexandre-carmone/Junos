@@ -127,6 +127,7 @@ pub fn TabContent(
                     camera=camera
                     focal_length_mm=focal_length_mm
                     home_dir=home_dir
+                    mosaic_tiles=store.mosaic_tiles
                     send=Arc::clone(&send_mosaic)
                 />
             </div>

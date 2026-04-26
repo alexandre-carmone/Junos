@@ -308,6 +308,12 @@ impl DeviceStore {
 
     fn apply_ekos_event(&self, type_str: &str, payload: &serde_json::Value) {
         match type_str {
+            "file_default_path" => {
+                if let Some(s) = payload.as_str() {
+                    if !s.is_empty() { self.home_dir.set(s.to_string()); }
+                }
+            }
+
             "new_connection_state" => {
                 let connected = payload["connected"].as_bool().unwrap_or(false);
                 let online = payload["online"].as_bool().unwrap_or(false);
@@ -881,6 +887,7 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
         let prime_send = send_fn.clone();
         Effect::new(move |_| {
             if online_sig.get() {
+                prime_send(r#"{"type":"file_default_path","payload":{"type":8}}"#.to_string());
                 prime_send(r#"{"type":"get_devices","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"get_states","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"get_scopes","payload":{}}"#.to_string());

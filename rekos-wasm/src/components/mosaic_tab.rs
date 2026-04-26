@@ -55,6 +55,7 @@ pub fn MosaicTab(
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] focal_length_mm: Signal<Option<f64>>,
     #[prop(into)] home_dir: Signal<String>,
+    mosaic_tiles: RwSignal<Option<serde_json::Value>>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -158,6 +159,12 @@ pub fn MosaicTab(
         };
 
         let xml = build_esq_xml(&safe_name, &valid_frames);
+        if !home.is_empty() {
+            send_cmd(&send_s, "file_directory_operation", serde_json::json!({
+                "operation": "create",
+                "path": format!("{}/.rekos-sequences", home),
+            }));
+        }
         send_cmd(&send_s, "scheduler_save_sequence_file",
             serde_json::json!({"path": rel_path, "filedata": xml}));
 
@@ -175,12 +182,18 @@ pub fn MosaicTab(
         }));
 
         form_error.set(None);
+        planner.planning.set(false);
+        mosaic_tiles.set(None);
         if let Some(ctx) = tab_ctx { ctx.0.set(Tab::Scheduler); }
 
         let send_refresh = Arc::clone(&send_s);
         wasm_bindgen_futures::spawn_local(async move {
             gloo_timers::future::TimeoutFuture::new(1500).await;
             send_cmd(&send_refresh, "scheduler_get_jobs", serde_json::json!({}));
+            // KStars re-emits `new_mosaic_tiles` while processing import; drop
+            // it again once the dust has settled so the planetarium overlay
+            // doesn't come back.
+            mosaic_tiles.set(None);
         });
     };
 
