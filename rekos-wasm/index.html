@@ -116,6 +116,14 @@
         /* ── SMARTPHONE  ≤ 767 px  (iPhone SE → 14 Pro Max) ─────────────── */
         @media (max-width: 767px) {
 
+            /* iOS Safari zooms into any input whose computed font-size is
+               below 16 px when it gains focus. Many components set inline
+               `font-size:12px` which overrides the base rule above, so force
+               a 16 px floor on mobile with !important. */
+            input, select, textarea {
+                font-size: 16px !important;
+            }
+
             /* Status strip — smaller, tighter, still non-interactive */
             .status-strip {
                 font-size: 10px !important;
