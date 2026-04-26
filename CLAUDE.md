@@ -13,11 +13,17 @@ Two crates:
 
 `kstars/` is the upstream KStars C++ source kept as a **read-only reference** for the Ekos Live wire format — never edit it, but grep it heavily when you need to know what KStars actually sends/accepts.
 
-## Current state: milestone-1 rebuild
+## Repo layout
 
-The project was recently reset. The `rekos-wasm` frontend now contains **only the planetarium** — every other device tab (mount, camera, focus, guide, align, scheduler, filters, profiles, devices, log…) has been wiped. The sky view runs fullscreen with a small top status strip. `rekos-server` was not touched.
+- `rekos-server/`, `rekos-wasm/` — the two workspace crates (see Architecture below).
+- `junos-web/` — sibling Trunk/Leptos crate with its **own** `Cargo.toml` (not in the workspace). Build with `cd junos-web && trunk build --release`. Has its own `CLAUDE.md` — read that before touching it.
+- `kstars/` — read-only upstream KStars C++ source, kept as the authoritative reference for the Ekos Live wire format. Never edit; grep heavily.
+- `scripts/` — Python tools that regenerate the binary catalogs in `rekos-wasm/public/` (`gen_catalog.py`, `gen_dso_catalog.py`, `gen_dso_sprites.py`, `download_nebulae.py`, `platesolve_nebulae.py`, …). Per user preference, run with `uv run script.py` — never bare `python3`. The generated outputs are checked in; don't regenerate them as part of unrelated code changes.
+- `flake.nix` / `nix/` — Nix dev shell. Already provided; don't propose adding one.
 
-`ws.rs` is deliberately minimal: one `DeviceStore` with five signals (`connected`, `online`, `mount_status`, `camera_status`, `telescope_settings`, `optical_trains`, `scopes`). Its sole job for milestone 1 is feeding the FOV reticle with real values from KStars. Adding tabs back means growing both the store and the match arm, but don't do it unless the user asks.
+## Frontend tabs
+
+`rekos-wasm` is no longer planetarium-only. `components/tabs.rs` defines a `Tab` enum and `components/tab_wheel.rs` renders the tab switcher. Current tabs: `Sky` (planetarium, fullscreen behind the wheel), `Mount`, `Focus`, `Guide`, `Imaging`, `Mosaic`, `PolarAlign`, `Scheduler`. Each tab module lives directly under `components/`. The planetarium remains the most fully-featured surface; the other tabs are progressively being reintroduced — when adding to them, grow `DeviceStore` (`ws.rs`) and the `apply_ekos_event` match arm only as needed.
 
 ## Build & run
 
@@ -42,9 +48,18 @@ cargo check -p rekos-wasm --target wasm32-unknown-unknown
 cargo check -p rekos-server
 ```
 
-Workspace root `Cargo.toml` sets `default-members = ["rekos-server"]`, so `cargo build`/`cargo run` from the root operate on the server only. `rekos-wasm` is only buildable through Trunk (or `cargo check --target wasm32-unknown-unknown -p rekos-wasm`).
+Workspace root `Cargo.toml` sets `default-members = ["rekos-server"]`, so `cargo build`/`cargo run` from the root operate on the server only. `rekos-wasm` is only buildable through Trunk (or `cargo check --target wasm32-unknown-unknown -p rekos-wasm`). `junos-web` is **not** in the workspace and has its own build pipeline.
 
-There are no unit tests — verification is manual: run KStars, enable Ekos Live, point it at `http://localhost:8080`, start an equipment profile (simulators are fine), open the browser to the same URL, click Start in Ekos, check the top status strip flips to `Ekos online` and the mount-anchored FOV reticle appears on the sky.
+### Server ports
+
+`rekos-server` binds **two** ports by default:
+
+- **HTTP on `:8080`** — KStars-facing. KStars' Ekos Live client connects here.
+- **HTTPS on `:8443`** — browser-facing. iOS Safari requires TLS to expose WebGPU, so the browser must hit `https://<host>:8443`. A self-signed cert is auto-generated into `.certs/` on first run.
+
+Pass `--no-https` to skip TLS for headless/CI runs. `config.rs` (clap, env-aware) parses `--bind-addr`, `--dist-dir`, and the TLS flags.
+
+There are no unit tests — verification is manual: run KStars, enable Ekos Live, point it at `http://localhost:8080`, start an equipment profile (simulators are fine), open the browser to `https://localhost:8443` (accept the self-signed cert), click Start in Ekos, check the top status strip flips to `Ekos online` and the mount-anchored FOV reticle appears on the sky.
 
 ## Architecture
 
@@ -55,19 +70,21 @@ There are no unit tests — verification is manual: run KStars, enable Ekos Live
 - `kstars_ws.rs` handles `GET /message/ekos` and `GET /media/ekos` (KStars connects to these as an Ekos Live "offline server"). On connect it sends KStars the `set_client_state` handshake (required — KStars drops every outbound event until it receives that) and publishes a synthetic `new_connection_state {connected:true}` to the hub. Inbound text is broadcast to browsers verbatim; binary media frames are decoded from the 512-byte metadata header plus JPEG/FITS payload and re-emitted as `new_preview_image`.
 - `proxy.rs` handles `GET /ws` (browser side). On connect it tells the new browser the current KStars-attached state, then loops: KStars events → browser, browser commands → KStars via the hub.
 - `auth.rs` is a stub for `POST /api/authenticate` (no real auth — local relay only).
-- `config.rs` parses `--bind-addr` / `--dist-dir` (clap, env-aware).
+- `config.rs` parses `--bind-addr`, `--dist-dir`, and the HTTPS/TLS flags (see "Server ports" above).
 
 There is **no protocol translation** in the server. Messages flow through opaque. All Ekos Live semantics live in the WASM client.
 
 ### Frontend (`rekos-wasm`)
 
-Leptos 0.7 CSR. Entry point `main.rs` → `App()` → `<SkyTab …>`. Module layout:
+Leptos 0.7 CSR. Entry point `main.rs` → `App()` → tab wheel + active tab. Module layout:
 
 - `ws.rs` — the WebSocket spine. Owns `DeviceStore`, `apply_ekos_event()`, `use_rekos_ws()`, and the cross-referencing Effects that derive `telescope_settings` from `scopes ∩ trains`. Also fires per-device retry loops via `spawn_retry_property()` for `CCD_INFO` and `EQUATORIAL_EOD_COORD`.
 - `compat.rs` — flat snapshot types (`MountSnapshot`, `CameraSnapshot`, `SiteSnapshot`, `SolveSnapshot`) derived from `DeviceStore`. The sky module imports these, not `DeviceStore`.
-- `main.rs` — wires catalogs, site location, language, the five Leptos contexts still required by `sky/actions.rs` (`MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx`), and the fullscreen `<SkyTab>`. The top status strip (position `fixed`, `pointer-events:none`) shows WS state + mount RA/Dec + active FOV in arcmin.
-- `components/sky/` — the only surviving component. Dual-canvas renderer (WebGPU bottom + Canvas2D overlay, fallback to all-Canvas2D). See below.
-- `astro.rs` / `coords.rs` — equatorial↔horizontal math (Julian date, GMST/LST, precession to/from J2000, `fov_deg(focal, sensor_px, pixel_um)`). Correct — reuse, do not reimplement.
+- `main.rs` — wires catalogs, site location, language, the Leptos contexts required by `sky/actions.rs` (`MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx`, `MosaicPlannerCtx`), and the tab shell. The top status strip (position `fixed`, `pointer-events:none`) shows WS state + mount RA/Dec + active FOV in arcmin.
+- `components/tabs.rs`, `components/tab_wheel.rs` — tab enum and wheel switcher.
+- `components/sky/` — planetarium. Dual-canvas renderer (WebGPU bottom + Canvas2D overlay, fallback to all-Canvas2D). See below.
+- `components/{mount,focus,imaging,polar_align,scheduler,mosaic_tab}.rs`, `components/guide/` — other tabs. Each takes only the signals it needs plus `SendCmd`; never `DeviceStore` whole.
+- `astro.rs` / `coords.rs` / `ephemeris.rs` — equatorial↔horizontal math (Julian date, GMST/LST, precession to/from J2000, `fov_deg(focal, sensor_px, pixel_um)`), and ephemerides for solar-system bodies. Correct — reuse, do not reimplement.
 - `catalog.rs`, `dso_catalog.rs`, `nebulae.rs` — async fetchers for the binary blobs in `public/`.
 - `gpu.rs` + `shaders/` — WebGPU compute pipeline.
 - `i18n.rs` — string table (EN/FR). Has many unused strings; don't gratuitously prune.
@@ -76,13 +93,13 @@ Leptos 0.7 CSR. Entry point `main.rs` → `App()` → `<SkyTab …>`. Module lay
 
 ### Planetarium (`components/sky/`)
 
-Do not touch this directory for feature work on milestone 1 — it already draws what's needed. Structure:
+The most fully-featured surface. Treat as stable — make targeted edits when adding overlays or interactions; don't rewrite. Structure:
 
 - `mod.rs` — `SkyTab` component, canvas/GPU setup, event loop, localStorage persistence (`sky_center_alt`, `sky_center_az`, `sky_fov_radius`, `sky_follow_mount`, `sky_focal_override`).
 - `render.rs` — Canvas2D overlay: grid, horizon, constellations (falls back from GPU), DSO labels, nebulae thumbnails, `render_center_fov()` and `render_mount_fov()` — the two FOV rectangles. Both call `astro::fov_deg` with `RenderParams.{fl, cam_pixel_size_um, cam_sensor_width, cam_sensor_height, rotation_deg, mount_ra_h, mount_dec_deg}`.
 - `controls.rs` — right-panel render toggles + focal length override input.
 - `search.rs` — catalog object search.
-- `actions.rs` — right-click context menu + confirm popup that dispatches `mount_goto_rade` and `align_solve`. Imports `MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx` from the crate root — these newtypes still live in `main.rs` and must be provided even if their inner signals are defaulted (for milestone 1 `MountDeviceCtx` is mirrored from `mount_status.device`, the rest are defaults).
+- `actions.rs` — right-click context menu + confirm popup that dispatches `mount_goto_rade` and `align_solve`. Imports `MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx` from the crate root — these newtypes live in `main.rs` and must be provided. `MosaicPlannerCtx` (also in `main.rs`) drives the Pick-on-Sky flow that hands a center off to the Mosaic tab.
 
 ## Ekos Live wire format
 
@@ -120,7 +137,7 @@ JSON `{"type": "...", "payload": {...}}` over WebSocket. Authoritative reference
 
 ## Static assets
 
-`rekos-wasm/public/` contains binary catalogs — `junos.bin` (star catalog), `dso.bin` (deep-sky catalog), `nebulae.json` + `nebulae/` (thumbnails). Trunk copies these into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes.
+`rekos-wasm/public/` contains binary catalogs — `junos.bin` (star catalog), `dso.bin` (deep-sky catalog), `nebulae.json` + `nebulae/` (thumbnails). Trunk copies these into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes. The Python regen tools live in `scripts/` (run with `uv run`).
 
 ## Code style observed in this codebase
 
@@ -128,4 +145,4 @@ JSON `{"type": "...", "payload": {...}}` over WebSocket. Authoritative reference
 - Commands are dispatched as raw JSON strings; do not introduce a typed command enum.
 - Arc-clone `SendCmd` aggressively before moving it into closures.
 - IDE-reported `unused_variables`/`dead_code` warnings are long-standing background — don't gratuitously fix them while doing unrelated work. The `i18n` string table in particular has many unused entries that stay intentionally.
-- Tab components (when they come back) should take only the specific signals they need plus `SendCmd`, never `DeviceStore` whole. Use Leptos context only for values that need to cross many components (see `*Ctx` newtypes in `main.rs`).
+- Tab components should take only the specific signals they need plus `SendCmd`, never `DeviceStore` whole. Use Leptos context only for values that need to cross many components (see `*Ctx` newtypes in `main.rs`).
