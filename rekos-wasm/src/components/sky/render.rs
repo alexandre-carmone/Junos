@@ -972,7 +972,7 @@ fn render_dso(
             }
         }
 
-        let label = dso.display_label();
+        let label = dso.display_label(p.cur_lang);
 
         if !p.picking_on_cpu {
             hit_items.push(HitItem {

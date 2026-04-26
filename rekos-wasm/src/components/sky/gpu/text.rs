@@ -22,9 +22,11 @@ const DESIGN_PX: f64 = 48.0;
 const CELL_W: u32 = 32;
 const CELL_H: u32 = 64;
 const COLS: u32 = ATLAS_W / CELL_W;
-// ASCII printable + a handful of EN/FR accented characters.
+// ASCII printable + EN/FR accented characters (both cases — French DSO
+// names like "nébuleuse de l'Œil de Chat" use Œ, and capitalised aliases
+// like "À voir" / "Île" need uppercase accents to render without `?`).
 const CHARS: &str =
-    " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~àâäéèêëîïôöûüùç";
+    " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~àâäéèêëîïôöûüùçœÀÂÄÉÈÊËÎÏÔÖÛÜÙÇŒ";
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]

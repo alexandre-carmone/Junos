@@ -48,7 +48,7 @@ pub fn build(p: PickParams<'_>, out: &mut Vec<HitItem>) {
     }
     if p.dso_on {
         if let Some(dc) = p.dso_cat {
-            push_dsos(p.view, dc, p.dso_index, p.dso_filter, p.dso_mag, out);
+            push_dsos(p.view, dc, p.dso_index, p.dso_filter, p.dso_mag, p.lang, out);
         }
     }
     if p.solar_on {
@@ -102,6 +102,7 @@ fn push_dsos(
     dso_index: Option<&DsoIndex>,
     filter: KindFilter,
     mag_limit: f64,
+    lang: Lang,
     out: &mut Vec<HitItem>,
 ) {
     let scale = v.scale();
@@ -169,7 +170,7 @@ fn push_dsos(
             sx, sy,
             radius: r.max(8.0),
             kind: HitKind::Dso(dso.kind),
-            name: dso.display_label(),
+            name: dso.display_label(lang),
             mag: Some(dso.mag),
             ra_jnow_deg: dso_jnow.ra_deg,
             dec_jnow_deg: dso_jnow.dec_deg,

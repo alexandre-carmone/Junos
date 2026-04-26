@@ -14,6 +14,7 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 
 use crate::catalog::CatalogStar;
 use crate::dso_catalog::Dso;
+use crate::i18n::Lang;
 
 /// One search result. Flat on purpose: the click handler in `search.rs`
 /// already discriminates star-vs-DSO by `size_arcmin > 1.0` to pick the FOV
@@ -32,6 +33,7 @@ pub fn search_objects(
     query: &str,
     stars: &[CatalogStar],
     dsos: &[Dso],
+    lang: Lang,
     limit: usize,
 ) -> Vec<SearchHit> {
     let (q_spaced, q_compact) = normalize(query);
@@ -61,7 +63,8 @@ pub fn search_objects(
         // one row per alias.
         let mut best: Option<i64> = None;
         let candidates = std::iter::once(dso.name.as_str())
-            .chain(dso.common_names.iter().map(String::as_str));
+            .chain(dso.common_names.iter().map(String::as_str))
+            .chain(dso.fr_names.iter().map(String::as_str));
         for cand in candidates {
             let (n_spaced, n_compact) = normalize(cand);
             if let Some(s) = score(&matcher, &q_spaced, &q_compact, &n_spaced, &n_compact) {
@@ -70,7 +73,7 @@ pub fn search_objects(
         }
         if let Some(s) = best {
             scored.push((s, SearchHit {
-                name: dso.display_label(),
+                name: dso.display_label(lang),
                 ra_deg: dso.ra_deg as f64,
                 dec_deg: dso.dec_deg as f64,
                 size_arcmin: dso.size_arcmin,

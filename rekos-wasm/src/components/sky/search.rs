@@ -51,7 +51,7 @@ pub fn SkySearch(
                 let dso_cat = dso_catalog_sig.get();
                 let stars = cat.as_deref().map(|c| c.stars.as_slice()).unwrap_or(&[]);
                 let dsos  = dso_cat.as_deref().map(|d| d.dsos.as_slice()).unwrap_or(&[]);
-                let hits = search_objects(&q, stars, dsos, 25);
+                let hits = search_objects(&q, stars, dsos, lang.get(), 25);
 
                 if hits.is_empty() {
                     return view! { <></> }.into_any();

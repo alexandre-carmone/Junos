@@ -807,6 +807,7 @@ pub fn SkyTab(
                                     nb: dso_nb, pn: dso_pn, snr: dso_snr,
                                     gal: dso_gal,
                                 },
+                                lang: cur_lang,
                             };
                             dso_render::build(
                                 params,

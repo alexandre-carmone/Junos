@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::astro;
 use crate::coords::{J2000, JNow};
 use crate::dso_catalog::{DsoCatalogData, DsoType};
+use crate::i18n::Lang;
 
 use super::dso_index::DsoIndex;
 use super::gpu::layers::dso::DsoInstance;
@@ -25,6 +26,7 @@ pub struct DsoBuildParams<'a> {
     pub names_on:    bool,
     pub is_mobile:   bool,
     pub kind_filter: KindFilter,
+    pub lang:        Lang,
 }
 
 #[derive(Copy, Clone)]
@@ -172,7 +174,7 @@ pub fn build(
         let label_mag_ok = !p.is_mobile || (dso.mag as f64) <= p.mag_limit - 1.5;
         if p.names_on && v.fov < label_fov_gate && label_mag_ok {
             if let Some(atlas) = atlas {
-                let label = dso.display_label();
+                let label = dso.display_label(p.lang);
                 atlas.push_text(
                     out_text,
                     &label,
