@@ -52,6 +52,22 @@ just dev-server   # `cargo run -p rekos-server`
 just clean        # cargo clean + rm rekos-wasm/dist
 ```
 
+> ⚠️ **iPhone / iPad users — read this first.**
+> WebGPU on iOS Safari is gated behind two requirements that will silently
+> break the planetarium if you skip them:
+>
+> 1. **You must connect over HTTPS** (`https://<lan-ip>:8443`). Safari only
+>    exposes `navigator.gpu` in secure contexts — plain `http://…:8080`
+>    will load the UI but the sky view stays blank.
+> 2. **The WebGPU feature flag must be enabled** on iOS 18+:
+>    Settings → Apps → Safari → Advanced → **Feature Flags → WebGPU**.
+> 3. **The self-signed dev cert must be trusted** (see the iPhone steps
+>    below) — without trust, Safari refuses the WebSocket upgrade and the
+>    UI never connects to the relay.
+>
+> Desktop Chrome/Firefox/Safari on the LAN can use either port; only
+> iOS strictly needs the HTTPS one.
+
 ## Transports
 
 The server binds two ports by default:
@@ -87,3 +103,45 @@ To trust the dev cert on iPhone/iPad:
 4. Open `https://localhost:8443` in your browser.
 5. The top status strip should flip to **Ekos online** and the
    mount-anchored FOV reticle should appear on the sky view.
+
+## Frontend tabs
+
+`rekos-wasm` is more than a planetarium. The tab wheel exposes:
+
+- **Sky** — WebGPU planetarium with stars, DSOs, nebulae thumbnails,
+  constellation lines, mount-anchored FOV reticle, search, and a
+  right-click *Goto / Plate-solve* menu.
+- **Mount**, **Focus**, **Guide**, **Imaging**, **Mosaic**,
+  **PolarAlign**, **Scheduler** — Ekos module surfaces, progressively
+  reintroduced from the deprecated upstream web client.
+
+## Credits
+
+This project would not exist without the work of several upstream
+projects. In particular:
+
+- **[KStars / Ekos](https://kstars.kde.org/)** (KDE, GPL-2.0-or-later) —
+  rekos-web speaks the Ekos Live wire format directly. The `kstars/`
+  directory in this repo is a read-only checkout of the upstream KStars
+  source kept as the authoritative protocol reference. All Ekos session
+  logic, INDI device management, and plate-solving is performed by
+  KStars itself; rekos-web is only a relay and a UI.
+
+- **[Stellarium](https://stellarium.org/)** (Stellarium team,
+  GPL-2.0-or-later) — the planetarium ships imagery and data sourced
+  from the Stellarium GitHub repository:
+  - **Nebulae thumbnails** in `rekos-wasm/public/nebulae/` are derived
+    from Stellarium's `nebulae/default/` texture set
+    (see `scripts/download_nebulae.py`).
+  - **Constellation stick figures** are built from Stellarium's
+    `skycultures/modern_st` sky culture
+    (see `scripts/gen_catalog.py`).
+
+  Stellarium is licensed under the GNU General Public License v2 or
+  later. The redistributed assets remain under that license; see
+  <https://github.com/Stellarium/stellarium> for the upstream source
+  and full license text.
+
+- **Hipparcos / Tycho** catalogs and the OpenNGC deep-sky catalog feed
+  the binary catalogs in `rekos-wasm/public/`. Regeneration scripts
+  live in `scripts/` (run with `uv run`).
