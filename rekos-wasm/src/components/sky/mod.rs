@@ -167,7 +167,7 @@ pub fn SkyTab(
 
     // ── Local reactive state ───────────────────────────────────────────────
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
-    let tr = move || t(lang.get());
+    let _tr = move || t(lang.get());
     let tab_ctx = use_context::<ActiveTabCtx>();
 
     let catalog_sig = use_context::<RwSignal<Option<Arc<CatalogData>>>>()
@@ -196,7 +196,7 @@ pub fn SkyTab(
         }
     });
 
-    let (time_offset_s, set_time_offset_s) = signal(0.0_f64);
+    let (time_offset_s, _set_time_offset_s) = signal(0.0_f64);
     // Persist focal length override in localStorage
     let stored_fl = web_sys::window()
         .and_then(|w| w.local_storage().ok().flatten())
@@ -1441,37 +1441,6 @@ pub fn SkyTab(
                 site=site
                 set_site_location=set_site_location_fn.clone()
             />
-
-            // ── Time slider (bottom) ────────────────────────────────────────
-            <div class="sky-time-slider"
-                 style="position:absolute; bottom:4px; left:310px; right:8px; display:flex; align-items:center; gap:8px;">
-                <span style="font-size:11px; color:#888; white-space:nowrap;">
-                    {move || {
-                        let t = time_offset_s.get();
-                        if t.abs() < 0.5 { tr().now.to_string() }
-                        else {
-                            let h = (t / 3600.0) as i32;
-                            let m = ((t.abs() % 3600.0) / 60.0) as u32;
-                            format!("{h:+}h{m:02}m")
-                        }
-                    }}
-                </span>
-                <input type="range"
-                       style="flex:1; accent-color:#88aaff;"
-                       min="-43200" max="43200" step="60"
-                       prop:value=move || format!("{}", time_offset_s.get() as i64)
-                       on:input=move |ev| {
-                           if let Ok(v) = event_target_value(&ev).parse::<f64>() {
-                               set_time_offset_s.set(v);
-                           }
-                       }
-                />
-                <button style="background:#1a1a2e; color:#aaa; border:1px solid #444; \
-                               padding:2px 8px; cursor:pointer; font-family:monospace; font-size:11px;"
-                        on:click=move |_| set_time_offset_s.set(0.0)>
-                    {move || tr().reset}
-                </button>
-            </div>
 
             // ── Zoom bar (right side, vertical) ─────────────────────────────
             <div class="sky-zoom-bar"
