@@ -22,3 +22,5 @@ anyhow             = "1"
 axum-server        = { version = "0.7", features = ["tls-rustls"] }
 rcgen              = "0.13"
 if-addrs           = "0.13"
+image              = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+mime_guess         = "2"

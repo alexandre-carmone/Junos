@@ -1,3 +1,4 @@
+pub mod files;
 pub mod focus;
 pub mod guide;
 pub mod imaging;

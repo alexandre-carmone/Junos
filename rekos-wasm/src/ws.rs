@@ -272,6 +272,24 @@ pub struct DeviceStore {
     pub scheduler_settings: RwSignal<serde_json::Value>,
     pub scheduler_jobs:     RwSignal<Vec<serde_json::Value>>,
     pub mosaic_tiles:       RwSignal<Option<serde_json::Value>>,
+    pub livestacker_state:    RwSignal<Option<LiveStackerState>>,
+    pub livestacker_settings: RwSignal<serde_json::Value>,
+}
+
+/// Aggregated state from `new_livestacker_state`. KStars sends two flavours:
+/// state-only updates (`{state:"..."}`) and stacking updates with stats. We
+/// merge both into this struct, preserving prior numeric fields when only the
+/// state changes.
+#[derive(Debug, Clone, Default)]
+pub struct LiveStackerState {
+    pub state:          String,
+    pub ok:             bool,
+    pub frames_stacked: u32,
+    pub total_frames:   u32,
+    pub mean_snr:       f64,
+    pub min_snr:        f64,
+    pub max_snr:        f64,
+    pub message:        Option<String>,
 }
 
 impl DeviceStore {
@@ -305,6 +323,8 @@ impl DeviceStore {
             scheduler_settings: RwSignal::new(serde_json::Value::Null),
             scheduler_jobs:     RwSignal::new(Vec::new()),
             mosaic_tiles:       RwSignal::new(None),
+            livestacker_state:    RwSignal::new(None),
+            livestacker_settings: RwSignal::new(serde_json::Value::Null),
         }
     }
 
@@ -342,6 +362,7 @@ impl DeviceStore {
                     self.scheduler_status.set(SchedulerStatusData::default());
                     self.scheduler_jobs.set(Vec::new());
                     self.mosaic_tiles.set(None);
+                    self.livestacker_state.set(None);
                 }
             }
 
@@ -810,6 +831,27 @@ impl DeviceStore {
                 self.mosaic_tiles.set(Some(payload.clone()));
             }
 
+            // LiveStacker push: either {state:"..."} or {state:"stacking", ok,
+            // frames_stacked, total_frames, mean_snr, min_snr, max_snr}.
+            // Merge — preserve previous numeric stats when only state changes.
+            "new_livestacker_state" => {
+                self.livestacker_state.update(|opt| {
+                    let s = opt.get_or_insert_with(LiveStackerState::default);
+                    if let Some(v) = payload["state"].as_str() { s.state = v.to_string(); }
+                    if let Some(v) = payload["ok"].as_bool()    { s.ok = v; }
+                    if let Some(v) = payload["frames_stacked"].as_u64() { s.frames_stacked = v as u32; }
+                    if let Some(v) = payload["total_frames"].as_u64()   { s.total_frames   = v as u32; }
+                    if let Some(v) = payload["mean_snr"].as_f64() { s.mean_snr = v; }
+                    if let Some(v) = payload["min_snr"].as_f64()  { s.min_snr  = v; }
+                    if let Some(v) = payload["max_snr"].as_f64()  { s.max_snr  = v; }
+                    if let Some(v) = payload["message"].as_str()  { s.message  = Some(v.to_string()); }
+                });
+            }
+
+            "livestacker_get_all_settings" => {
+                self.livestacker_settings.set(payload.clone());
+            }
+
             _ => {}
         }
     }
@@ -856,6 +898,7 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                 prime_send(r#"{"type":"guide_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"scheduler_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"scheduler_get_jobs","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"livestacker_get_all_settings","payload":{}}"#.to_string());
                 // Guider-backend settings live in global KStars Options::,
                 // not in guide_get_all_settings. See message.cpp:1418.
                 prime_send(r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#.to_string());

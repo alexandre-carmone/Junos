@@ -2,19 +2,29 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Junos — Astrophotography Control</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            /* Lock the page: no pinch-zoom, no double-tap zoom, no rubber-band
+               scroll, no horizontal pan. Each tab owns its own scrolling. */
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            overscroll-behavior: none;
+            touch-action: pan-y;
+            -webkit-text-size-adjust: 100%;
+            text-size-adjust: 100%;
+        }
         body {
             font-family: 'Courier New', monospace;
             background: #0a0a0f;
             color: #c0c0d0;
-            min-height: 100vh;
-            /* Prevent elastic overscroll from interfering with the sky map */
-            overscroll-behavior: none;
+            position: fixed;
+            inset: 0;
         }
-        #app { width: 100%; }
+        #app { width: 100%; height: 100%; }
 
         /* ── Touch-friendly interactive elements ─────────────────────────── */
 
@@ -55,6 +65,14 @@
            disabled, so the sky can fill the whole viewport underneath. */
         .sky-pane {
             height: 100dvh;
+        }
+
+        /* Polar Align body owns its own vertical scroll; contain prevents
+           drag from bubbling up to the page on iOS. */
+        .polar-body {
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-y;
         }
 
         /* Top status strip — may wrap on very narrow widths */
@@ -221,6 +239,48 @@
                 flex: 0 0 110px !important;
             }
 
+            /* Polar Align tab */
+            .polar-header {
+                padding: 6px 12px 6px 56px !important;
+                gap: 6px 10px !important;
+                font-size: 12px !important;
+            }
+            .polar-status-msg {
+                flex-basis: 100% !important;
+                white-space: normal !important;
+                font-size: 11px !important;
+            }
+            .polar-body {
+                padding: 10px 12px !important;
+                gap: 10px !important;
+            }
+            .polar-section {
+                padding: 8px 10px !important;
+            }
+            .polar-field-row {
+                flex-wrap: wrap !important;
+                gap: 4px 8px !important;
+            }
+            .polar-field-label {
+                flex: 0 0 100% !important;
+                font-size: 12px !important;
+            }
+            .polar-preview {
+                min-height: 140px !important;
+                max-height: 40dvh !important;
+            }
+            .polar-refresh-row {
+                flex-direction: column !important;
+                gap: 10px !important;
+            }
+            .polar-correction {
+                flex: 0 0 auto !important;
+                align-self: center !important;
+            }
+            .polar-error-grid {
+                grid-template-columns: 1fr !important;
+            }
+
             /* Safe-area padding for iPhone notch / home indicator */
             #rekos-app {
                 padding-bottom: env(safe-area-inset-bottom);
@@ -241,6 +301,8 @@
             }
             .sky-search { width: calc(100vw - 72px) !important; }
             .status-strip { font-size: 9px !important; }
+            .polar-header { padding-left: 48px !important; font-size: 11px !important; }
+            .polar-stage-badge { font-size: 10px !important; padding: 3px 8px !important; }
         }
     </style>
     <!-- Trunk replaces this with the built WASM entry point -->
@@ -254,5 +316,25 @@
 </head>
 <body>
     <div id="app"></div>
+    <script>
+        // iOS Safari ignores user-scalable=no and lets two-finger gestures
+        // pinch-zoom anyway. Block the gesture events explicitly.
+        ['gesturestart', 'gesturechange', 'gestureend'].forEach(ev => {
+            document.addEventListener(ev, e => e.preventDefault(), { passive: false });
+        });
+        // Kill double-tap zoom (iOS).
+        let lastTouchEnd = 0;
+        document.addEventListener('touchend', e => {
+            const now = Date.now();
+            if (now - lastTouchEnd <= 350) e.preventDefault();
+            lastTouchEnd = now;
+        }, { passive: false });
+        // Block any multi-touch move (pinch / two-finger pan) at the document
+        // level. Single-finger touchmove still propagates so internal scrolls
+        // and the sky map's drag gestures keep working.
+        document.addEventListener('touchmove', e => {
+            if (e.touches.length > 1) e.preventDefault();
+        }, { passive: false });
+    </script>
 </body>
 </html>

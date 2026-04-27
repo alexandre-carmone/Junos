@@ -31,11 +31,12 @@ struct DragState {
 use crate::i18n::{Lang, t};
 use crate::{ActiveTabCtx, Tab};
 
-const TABS: [Tab; 8] = [
+const TABS: [Tab; 9] = [
     Tab::Sky,
     Tab::Mount,
     Tab::Focus,
     Tab::Imaging,
+    Tab::Files,
     Tab::PolarAlign,
     Tab::Guide,
     Tab::Scheduler,
@@ -74,6 +75,8 @@ fn tab_icon(tab: Tab) -> &'static str {
         Tab::Focus => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>"##,
         // Camera body
         Tab::Imaging => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8 L8 8 L9.5 5.5 L14.5 5.5 L16 8 L20 8 A1 1 0 0 1 21 9 L21 18 A1 1 0 0 1 20 19 L4 19 A1 1 0 0 1 3 18 L3 9 A1 1 0 0 1 4 8 Z"/><circle cx="12" cy="13" r="4"/></svg>"##,
+        // Folder with image inside (gallery / file browser)
+        Tab::Files => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 L3 19 A1 1 0 0 0 4 20 L20 20 A1 1 0 0 0 21 19 L21 9 A1 1 0 0 0 20 8 L12 8 L10 5.5 L4 5.5 A1 1 0 0 0 3 6.5 Z"/><circle cx="9" cy="14" r="1.6" fill="currentColor" stroke="none"/><path d="M6 18 L11 13 L14 16 L17 13 L19 15"/></svg>"##,
         // Ursa Minor (Little Dipper): handle curving from Polaris to a 4-star
         // bowl. Polaris (top-left) and Kochab (bowl, lower-right) are drawn
         // larger as the two brightest stars.
@@ -95,6 +98,7 @@ fn tab_title(tab: Tab, s: &crate::i18n::Translations) -> &'static str {
         Tab::Mount      => s.tab_mount,
         Tab::Focus      => s.tab_focus,
         Tab::Imaging    => s.tab_imaging,
+        Tab::Files      => s.tab_files,
         Tab::PolarAlign => s.tab_polar_align,
         Tab::Guide      => s.tab_guide,
         Tab::Scheduler  => s.tab_scheduler,

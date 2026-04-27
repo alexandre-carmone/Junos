@@ -1,5 +1,6 @@
 mod auth;
 mod config;
+mod files;
 mod hub;
 mod kstars_ws;
 mod proxy;
@@ -57,6 +58,10 @@ async fn main() {
         .route("/api/authenticate", post(auth::authenticate))
         .route("/message/ekos", get(kstars_ws::message_handler))
         .route("/media/ekos", get(kstars_ws::media_handler))
+        .route("/api/files/list",  get(files::list))
+        .route("/api/files/meta",  get(files::meta))
+        .route("/api/files/thumb", get(files::thumb))
+        .route("/api/files/raw",   get(files::raw))
         .fallback_service(ServeDir::new(&dist_dir).append_index_html_on_directories(true))
         .with_state(state);
 

@@ -38,4 +38,26 @@ pub struct Config {
     /// Skip the HTTPS listener entirely (HTTP-only mode for CI / headless).
     #[arg(long, env = "NO_HTTPS")]
     pub no_https: bool,
+
+    /// Root directory served by the `/api/files/*` browser. Browser requests
+    /// are sandboxed inside this folder. If unset, falls back to $HOME/Pictures
+    /// and finally to the current working directory.
+    #[arg(long, env = "CAPTURES_DIR")]
+    pub captures_dir: Option<PathBuf>,
+}
+
+impl Config {
+    /// Resolve the effective captures root: flag → $HOME/Pictures → cwd.
+    pub fn resolved_captures_dir(&self) -> PathBuf {
+        if let Some(p) = &self.captures_dir {
+            return p.clone();
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            let p = PathBuf::from(home).join("Pictures");
+            if p.is_dir() {
+                return p;
+            }
+        }
+        PathBuf::from(".")
+    }
 }

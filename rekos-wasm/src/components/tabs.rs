@@ -9,6 +9,7 @@ use std::sync::Arc;
 use leptos::prelude::*;
 
 use crate::compat::{self, MosaicSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot};
+use crate::components::files::FilesTab;
 use crate::components::focus::FocusTab;
 use crate::components::guide::GuideTab;
 use crate::components::imaging::ImagingTab;
@@ -60,12 +61,14 @@ pub fn TabContent(
     let send_polar     = Arc::clone(&send);
     let send_guide     = Arc::clone(&send);
     let send_scheduler = Arc::clone(&send);
+    let send_files     = Arc::clone(&send);
     let send_mosaic    = send;
 
     let sky_visible       = move || active_tab.get() == Tab::Sky;
     let mount_visible     = move || active_tab.get() == Tab::Mount;
     let focus_visible     = move || active_tab.get() == Tab::Focus;
     let imaging_visible   = move || active_tab.get() == Tab::Imaging;
+    let files_visible     = move || active_tab.get() == Tab::Files;
     let polar_visible     = move || active_tab.get() == Tab::PolarAlign;
     let guide_visible     = move || active_tab.get() == Tab::Guide;
     let scheduler_visible = move || active_tab.get() == Tab::Scheduler;
@@ -104,6 +107,15 @@ pub fn TabContent(
         <Show when=imaging_visible>
             <div style="position:absolute; inset:0; z-index:40;">
                 <ImagingTab capture=capture_snapshot camera=camera send=Arc::clone(&send_imaging) />
+            </div>
+        </Show>
+        <Show when=files_visible>
+            <div style="position:absolute; inset:0; z-index:40;">
+                <FilesTab
+                    livestacker_state=store.livestacker_state
+                    livestacker_settings=store.livestacker_settings
+                    send=Arc::clone(&send_files)
+                />
             </div>
         </Show>
         <Show when=polar_visible>
