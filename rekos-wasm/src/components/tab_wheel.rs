@@ -157,6 +157,8 @@ pub fn TabWheel() -> impl IntoView {
     // animates because `active` updates and the CSS transition kicks back in.
     let drag_offset_deg = RwSignal::new(0.0_f32);
     let dragging = RwSignal::new(false);
+    // Brief "you've hit the end" jitter when a drag is clamped at a boundary.
+    let bumped = RwSignal::new(false);
 
     // Rotation derived from the active tab so it always sits at 9 o'clock
     // (180°), plus the live drag offset.
@@ -215,11 +217,13 @@ pub fn TabWheel() -> impl IntoView {
             wheel_accum.set(0.0);
             let cur = tab_index(active.get_untracked());
             let new_idx = if acc > 0.0 {
-                (cur + 1) % N
+                (cur + 1).min(N - 1)
             } else {
-                (cur + N - 1) % N
+                cur.saturating_sub(1)
             };
-            active.set(TABS[new_idx]);
+            if new_idx != cur {
+                active.set(TABS[new_idx]);
+            }
             // Pop the wheel open briefly so the user sees what changed.
             expanded.set(true);
             clear_timer();
@@ -293,9 +297,26 @@ pub fn TabWheel() -> impl IntoView {
                 st.moved = true;
                 dragging.set(true);
             }
-            // Live, smooth rotation — no quantisation. We commit a tab on
-            // release.
-            drag_offset_deg.set(delta);
+            // Clamp so the disc can't rotate past the first or last tab —
+            // otherwise the empty (un-buttoned) right half of the circle
+            // sweeps into view at the top or bottom of the half-disc.
+            let step_deg = (ARC_END_DEG - ARC_START_DEG) / (N as f32 - 1.0);
+            let anchor = st.anchor_idx as f32;
+            // Sign mirrors the release math: positive offset → previous tab.
+            let min_off = -(N as f32 - 1.0 - anchor) * step_deg;
+            let max_off = anchor * step_deg;
+            let clamped = delta.clamp(min_off, max_off);
+            if clamped != delta && !bumped.get_untracked() {
+                bumped.set(true);
+                let cb = Closure::<dyn FnMut()>::new(move || bumped.set(false));
+                if let Some(w) = web_sys::window() {
+                    let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(
+                        cb.as_ref().unchecked_ref(), 140,
+                    );
+                }
+                cb.forget();
+            }
+            drag_offset_deg.set(clamped);
         }
     };
 
@@ -314,9 +335,9 @@ pub fn TabWheel() -> impl IntoView {
                     // clockwise, which brings the *previous* tab into the
                     // 9 o'clock slot (since `base_angle` increases clockwise).
                     let steps = (drag_offset_deg.get_untracked() / step_deg).round() as i32;
-                    let n = N as i32;
-                    let new_idx = (((st.anchor_idx as i32 - steps) % n) + n) % n;
-                    active.set(TABS[new_idx as usize]);
+                    let new_idx = (st.anchor_idx as i32 - steps)
+                        .clamp(0, N as i32 - 1) as usize;
+                    active.set(TABS[new_idx]);
                     was_dragging.set(true);
                 }
             }
@@ -353,14 +374,20 @@ pub fn TabWheel() -> impl IntoView {
                 style=move || format!(
                     "position:absolute; left:0; top:0; width:{box_}px; height:{box_}px; \
                      border-radius:50%; \
-                     background:rgba(6,6,15,0.55); border:1px solid #222; \
-                     transform:rotate({rot}deg); \
+                     background:radial-gradient(circle at 30% 50%, rgba(20,24,40,0.7), rgba(6,6,15,0.55)); \
+                     border:1px solid #222; \
+                     transform:translateX({bx}px) rotate({rot}deg); \
                      transition:{tr}; \
                      opacity:{op}; pointer-events:{pe}; \
                      touch-action:none;",
                     box_ = BOX_PX,
                     rot  = rotation.get(),
-                    tr   = if dragging.get() { "opacity 0.15s" } else { "transform 0.25s ease, opacity 0.15s" },
+                    bx   = if bumped.get() { 3.0 } else { 0.0 },
+                    tr   = if dragging.get() {
+                        "opacity 0.15s, transform 0.08s ease-out"
+                    } else {
+                        "transform 0.32s cubic-bezier(0.34,1.56,0.64,1), opacity 0.15s"
+                    },
                     op   = if expanded.get() { 1.0 } else { 0.0 },
                     pe   = if expanded.get() { "auto" } else { "none" },
                 )
@@ -375,31 +402,51 @@ pub fn TabWheel() -> impl IntoView {
                     let ang_rad = base_angle(i).to_radians();
                     let cx = BOX_PX * 0.5 + RADIUS_PX * ang_rad.cos();
                     let cy = BOX_PX * 0.5 + RADIUS_PX * ang_rad.sin();
-                    let btn_w = 62.0_f32;
-                    let btn_h = 38.0_f32;
+                    let btn_w = 66.0_f32;
+                    let btn_h = 44.0_f32;
                     let arm_timer = Rc::clone(&arm_timer);
                     let was_dragging = Rc::clone(&was_dragging);
                     let style = move || {
                         let on = active.get() == tab;
-                        let (bg, border, color) = if on {
-                            ("rgba(40,60,110,0.95)", "#88aaff", "#cfe0ff")
+                        let (bg, border, color, shadow) = if on {
+                            (
+                                "rgba(60,90,160,0.95)",
+                                "#a8c2ff",
+                                "#e8f0ff",
+                                "0 0 14px rgba(136,170,255,0.45)",
+                            )
                         } else {
-                            ("rgba(12,14,24,0.9)", "#2a2a35", "#88aaff")
+                            (
+                                "rgba(12,14,24,0.85)",
+                                "#1e2030",
+                                "#88aaff",
+                                "none",
+                            )
                         };
                         format!(
                             "position:absolute; left:{l}px; top:{t}px; \
                              width:{w}px; height:{h}px; \
                              transform:translate(-50%,-50%) rotate({cr}deg); \
-                             border-radius:6px; border:1px solid {border}; \
+                             border-radius:8px; border:1px solid {border}; \
                              background:{bg}; color:{color}; \
+                             box-shadow:{shadow}; \
                              font:600 13px/1 ui-monospace,monospace; letter-spacing:0.05em; \
                              cursor:pointer; touch-action:manipulation; \
                              -webkit-tap-highlight-color:transparent; \
-                             padding:0; \
-                             transition:background 0.15s, border-color 0.15s;",
+                             padding:0; display:flex; align-items:center; justify-content:center; \
+                             transition:background 0.15s, border-color 0.15s, box-shadow 0.2s;",
                             l = cx, t = cy, w = btn_w, h = btn_h,
                             cr = -rotation.get(),
-                            bg = bg, border = border, color = color,
+                            bg = bg, border = border, color = color, shadow = shadow,
+                        )
+                    };
+                    let icon_style = move || {
+                        let on = active.get() == tab;
+                        let pct = if on { 70 } else { 56 };
+                        format!(
+                            "display:inline-block; width:{p}%; height:{p}%; \
+                             pointer-events:none;",
+                            p = pct,
                         )
                     };
                     view! {
@@ -414,8 +461,7 @@ pub fn TabWheel() -> impl IntoView {
                             }
                         >
                             <span
-                                style="display:inline-block; width:60%; height:60%; \
-                                       pointer-events:none;"
+                                style=icon_style
                                 inner_html=tab_icon(tab)
                             />
                         </button>
@@ -423,15 +469,20 @@ pub fn TabWheel() -> impl IntoView {
                 }).collect_view()}
             </div>
 
-            // Active-slot indicator — small notch at 9 o'clock, outside the
-            // rotating layer so it stays put while the wheel turns.
+            // Active-slot indicator — a soft glow halo behind the 9 o'clock
+            // slot, sitting outside the rotating layer so it stays put while
+            // the wheel turns. Acts as a "dock" the active tab snaps into.
             <div
                 style=move || format!(
-                    "position:absolute; left:{l}px; top:50%; transform:translateY(-50%); \
-                     width:6px; height:18px; border-radius:2px; \
-                     background:#88aaff; box-shadow:0 0 6px rgba(136,170,255,0.6); \
-                     opacity:{op}; pointer-events:none;",
-                    l = (BOX_PX * 0.5 - RADIUS_PX - 12.0).max(0.0),
+                    "position:absolute; left:{l}px; top:50%; \
+                     transform:translate(-50%,-50%); \
+                     width:78px; height:54px; border-radius:10px; \
+                     border:1px solid rgba(136,170,255,0.55); \
+                     background:radial-gradient(ellipse at center, rgba(136,170,255,0.18), rgba(136,170,255,0) 70%); \
+                     box-shadow:0 0 18px rgba(136,170,255,0.35) inset; \
+                     opacity:{op}; pointer-events:none; \
+                     transition:opacity 0.15s;",
+                    l = (BOX_PX * 0.5 - RADIUS_PX),
                     op = if expanded.get() { 1.0 } else { 0.0 },
                 )
             />
