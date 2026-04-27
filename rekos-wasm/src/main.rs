@@ -10,6 +10,7 @@ mod ephemeris;
 mod i18n;
 mod nebulae;
 mod ws;
+mod ws_helpers;
 
 use std::sync::Arc;
 

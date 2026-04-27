@@ -34,6 +34,8 @@ use gloo_net::websocket::{futures::WebSocket, Message};
 use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
+use crate::ws_helpers::extract_indi_number;
+
 /// Type-erased command sink. Components dispatch raw Ekos Live JSON strings.
 pub type SendCmd = Arc<dyn Fn(String) + Send + Sync>;
 
@@ -437,25 +439,11 @@ impl DeviceStore {
                 );
 
                 if prop == "CCD_INFO" {
-                    let mut max_x: Option<f64> = None;
-                    let mut max_y: Option<f64> = None;
-                    let mut pix_x: Option<f64> = None;
-                    let mut pix_y: Option<f64> = None;
-                    let mut pix_any: Option<f64> = None;
-                    if let Some(arr) = payload["numbers"].as_array() {
-                        for el in arr {
-                            let n = el["name"].as_str().unwrap_or("");
-                            let v = el["value"].as_f64();
-                            match n {
-                                "CCD_MAX_X"        => max_x   = v,
-                                "CCD_MAX_Y"        => max_y   = v,
-                                "CCD_PIXEL_SIZE_X" => pix_x   = v,
-                                "CCD_PIXEL_SIZE_Y" => pix_y   = v,
-                                "CCD_PIXEL_SIZE"   => pix_any = v,
-                                _ => {}
-                            }
-                        }
-                    }
+                    let max_x  = extract_indi_number(payload, "CCD_MAX_X");
+                    let max_y  = extract_indi_number(payload, "CCD_MAX_Y");
+                    let pix_x  = extract_indi_number(payload, "CCD_PIXEL_SIZE_X");
+                    let pix_y  = extract_indi_number(payload, "CCD_PIXEL_SIZE_Y");
+                    let pix_any = extract_indi_number(payload, "CCD_PIXEL_SIZE");
                     let pix = pix_x.or(pix_y).or(pix_any);
                     let sw  = max_x.map(|v| v as u32);
                     let sh  = max_y.map(|v| v as u32);
@@ -468,14 +456,8 @@ impl DeviceStore {
                         });
                     }
                 } else if prop == "ABS_FOCUS_POSITION" {
-                    let mut pos: Option<i64> = None;
-                    if let Some(arr) = payload["numbers"].as_array() {
-                        for el in arr {
-                            if el["name"].as_str() == Some("FOCUS_ABSOLUTE_POSITION") {
-                                pos = el["value"].as_f64().map(|v| v as i64);
-                            }
-                        }
-                    }
+                    let pos = extract_indi_number(payload, "FOCUS_ABSOLUTE_POSITION")
+                        .map(|v| v as i64);
                     if pos.is_some() {
                         self.focus_status.update(|opt| {
                             let fs = opt.get_or_insert_with(FocusStatusData::default);
@@ -486,14 +468,7 @@ impl DeviceStore {
                         });
                     }
                 } else if prop == "FOCUS_TEMPERATURE" {
-                    let mut temp: Option<f64> = None;
-                    if let Some(arr) = payload["numbers"].as_array() {
-                        for el in arr {
-                            if el["name"].as_str() == Some("TEMPERATURE") {
-                                temp = el["value"].as_f64();
-                            }
-                        }
-                    }
+                    let temp = extract_indi_number(payload, "TEMPERATURE");
                     if temp.is_some() {
                         self.focus_status.update(|opt| {
                             let fs = opt.get_or_insert_with(FocusStatusData::default);
@@ -504,14 +479,7 @@ impl DeviceStore {
                         });
                     }
                 } else if prop == "CCD_TEMPERATURE" {
-                    let mut t: Option<f64> = None;
-                    if let Some(arr) = payload["numbers"].as_array() {
-                        for el in arr {
-                            if el["name"].as_str() == Some("CCD_TEMPERATURE_VALUE") {
-                                t = el["value"].as_f64();
-                            }
-                        }
-                    }
+                    let t = extract_indi_number(payload, "CCD_TEMPERATURE_VALUE");
                     if t.is_some() {
                         self.camera_status.update(|opt| {
                             let cs = opt.get_or_insert_with(CameraStatusData::default);
@@ -539,19 +507,8 @@ impl DeviceStore {
                     }
                 } else if prop == "EQUATORIAL_EOD_COORD" {
                     // INDI mount coord property: RA in hours, DEC in degrees.
-                    let mut ra_h: Option<f64> = None;
-                    let mut de_d: Option<f64> = None;
-                    if let Some(arr) = payload["numbers"].as_array() {
-                        for el in arr {
-                            let n = el["name"].as_str().unwrap_or("");
-                            let v = el["value"].as_f64();
-                            match n {
-                                "RA"  => ra_h = v,
-                                "DEC" => de_d = v,
-                                _ => {}
-                            }
-                        }
-                    }
+                    let ra_h = extract_indi_number(payload, "RA");
+                    let de_d = extract_indi_number(payload, "DEC");
                     if ra_h.is_some() || de_d.is_some() {
                         self.mount_status.update(|opt| {
                             let ms = opt.get_or_insert_with(MountStatusData::default);

@@ -24,6 +24,7 @@ use wasm_bindgen::JsCast;
 use crate::compat::{MountSnapshot, PolarAlignSnapshot};
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::{PolarVectorData, SendCmd};
+use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
 
 /// Wire values for the direction dropdown (sent to KStars as-is).
 const DIRECTION_WIRE: &[&str] = &["West", "East"];
@@ -59,19 +60,8 @@ fn speed_label(wire: &str, tr: &Translations) -> String {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn send_cmd(send: &SendCmd, t: &str, payload: serde_json::Value) {
-    let msg = serde_json::json!({ "type": t, "payload": payload }).to_string();
-    send(msg);
-}
-
 fn dispatch_align_setting(send: &SendCmd, key: &str, value: serde_json::Value) {
-    let mut inner = serde_json::Map::new();
-    inner.insert(key.to_string(), value);
-    send_cmd(
-        send,
-        "align_set_all_settings",
-        serde_json::json!({ "settings": serde_json::Value::Object(inner) }),
-    );
+    ws_dispatch_setting(send, "align_set_all_settings", Some("settings"), key, value);
 }
 
 fn stage_color(stage: &str) -> &'static str {

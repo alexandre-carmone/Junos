@@ -16,6 +16,7 @@ use wasm_bindgen::JsCast;
 use crate::compat::{CameraSnapshot, CaptureSnapshot};
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
+use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting, send_device_property_set};
 
 /// Responsive layout for the Imaging tab. Three breakpoints:
 ///   - wide  (>=1200px): preview | settings | sequence
@@ -292,11 +293,6 @@ details.imaging-panel > .imaging-panel-body {
 .imaging-ghost-btn:hover { background: rgba(24,30,50,0.95); border-color: #88aaff; }
 "#;
 
-fn send_cmd(send: &SendCmd, t: &str, payload: serde_json::Value) {
-    let msg = serde_json::json!({ "type": t, "payload": payload }).to_string();
-    send(msg);
-}
-
 fn status_color(status: &str) -> &'static str {
     let s = status.to_lowercase();
     if s.contains("error") || s.contains("abort") || s.contains("fail") { "#ff6a6a" }
@@ -425,46 +421,35 @@ pub fn ImagingTab(
     let on_cooler_on = move |_| {
         let dev = cam_cool_on.with(|c| c.device.clone());
         if dev.is_empty() { return; }
-        send_cmd(&s_cool_on, "device_property_set", serde_json::json!({
-            "device": dev, "property": "CCD_COOLER",
-            "elements": [
-                { "name": "COOLER_ON",  "state": 1 },
-                { "name": "COOLER_OFF", "state": 0 },
-            ]
-        }));
+        send_device_property_set(&s_cool_on, &dev, "CCD_COOLER", serde_json::json!([
+            { "name": "COOLER_ON",  "state": 1 },
+            { "name": "COOLER_OFF", "state": 0 },
+        ]));
     };
     let s_cool_off = send.clone();
     let cam_cool_off = camera;
     let on_cooler_off = move |_| {
         let dev = cam_cool_off.with(|c| c.device.clone());
         if dev.is_empty() { return; }
-        send_cmd(&s_cool_off, "device_property_set", serde_json::json!({
-            "device": dev, "property": "CCD_COOLER",
-            "elements": [
-                { "name": "COOLER_ON",  "state": 0 },
-                { "name": "COOLER_OFF", "state": 1 },
-            ]
-        }));
+        send_device_property_set(&s_cool_off, &dev, "CCD_COOLER", serde_json::json!([
+            { "name": "COOLER_ON",  "state": 0 },
+            { "name": "COOLER_OFF", "state": 1 },
+        ]));
     };
     let s_set_temp = send.clone();
     let cam_set_temp = camera;
     let on_set_temp = move |_| {
         let dev = cam_set_temp.with(|c| c.device.clone());
         if dev.is_empty() { return; }
-        send_cmd(&s_set_temp, "device_property_set", serde_json::json!({
-            "device": dev, "property": "CCD_TEMPERATURE",
-            "elements": [
-                { "name": "CCD_TEMPERATURE_VALUE", "value": target_temp.get() },
-            ]
-        }));
+        send_device_property_set(&s_set_temp, &dev, "CCD_TEMPERATURE", serde_json::json!([
+            { "name": "CCD_TEMPERATURE_VALUE", "value": target_temp.get() },
+        ]));
     };
 
     // ── Settings dispatch ────────────────────────────────────────────────
     let s_set_all = send.clone();
     let dispatch_setting = move |key: &'static str, value: serde_json::Value| {
-        let mut map = serde_json::Map::new();
-        map.insert(key.to_string(), value);
-        send_cmd(&s_set_all, "capture_set_all_settings", serde_json::Value::Object(map));
+        ws_dispatch_setting(&s_set_all, "capture_set_all_settings", None, key, value);
     };
 
     // ── Sequence queue rendering ──────────────────────────────────────────

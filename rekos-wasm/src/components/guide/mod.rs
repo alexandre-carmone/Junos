@@ -31,6 +31,7 @@ use wasm_bindgen::JsCast;
 use crate::compat::GuideSnapshot;
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
+use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
 
 type LabelFn = fn(&Translations) -> &'static str;
 
@@ -165,18 +166,11 @@ fn stage_color(status: &str) -> &'static str {
 // Command dispatchers
 // ---------------------------------------------------------------------------
 
-fn send_cmd(send: &SendCmd, t: &str, payload: serde_json::Value) {
-    let msg = serde_json::json!({ "type": t, "payload": payload }).to_string();
-    send(msg);
-}
-
 /// `guide_set_all_settings` payload is the widget map directly at payload
 /// root — see message.cpp:673 (`auto settings = payload.toVariantMap()`).
 /// This differs from `align_set_all_settings` which expects `{settings:{...}}`.
 fn dispatch_guide_setting(send: &SendCmd, key: &str, value: serde_json::Value) {
-    let mut map = serde_json::Map::new();
-    map.insert(key.to_string(), value);
-    send_cmd(send, "guide_set_all_settings", serde_json::Value::Object(map));
+    ws_dispatch_setting(send, "guide_set_all_settings", None, key, value);
 }
 
 /// Set one KStars `Options::` entry (GuiderType, PHD2Host, etc), then

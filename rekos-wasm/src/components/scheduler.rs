@@ -16,6 +16,7 @@ use crate::compat::SchedulerSnapshot;
 use crate::dso_catalog::DsoCatalogData;
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
+use crate::ws_helpers::send_cmd;
 use crate::SchedulerPrefillCtx;
 
 const SCHED_CSS: &str = r#"
@@ -334,11 +335,6 @@ fn dec_to_dms(dec_d: f64) -> String {
     let m    = rem.floor() as i64;
     let s    = ((rem - m as f64) * 60.0).round() as i64;
     format!("{}{:02}° {:02}′ {:02}″", sign, d, m, s)
-}
-
-fn send_cmd(send: &SendCmd, type_str: &str, payload: serde_json::Value) {
-    let msg = serde_json::json!({"type": type_str, "payload": payload}).to_string();
-    send(msg);
 }
 
 fn sanitize_name(name: &str) -> String {

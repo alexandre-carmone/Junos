@@ -18,11 +18,7 @@ use web_sys::{HtmlCanvasElement, CanvasRenderingContext2d, MouseEvent};
 use crate::compat::{CameraSnapshot, FocusSnapshot};
 use crate::i18n::{Lang, t};
 use crate::ws::SendCmd;
-
-fn send_cmd(send: &SendCmd, t: &str, payload: serde_json::Value) {
-    let msg = serde_json::json!({ "type": t, "payload": payload }).to_string();
-    send(msg);
-}
+use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
 
 fn status_color(status: &str) -> &'static str {
     let s = status.to_lowercase();
@@ -145,9 +141,7 @@ pub fn FocusTab(
     // ── Settings grid ─────────────────────────────────────────────────────
     let send_set_all = send.clone();
     let dispatch_setting = move |key: &'static str, value: serde_json::Value| {
-        let mut map = serde_json::Map::new();
-        map.insert(key.to_string(), value);
-        send_cmd(&send_set_all, "focus_set_all_settings", serde_json::Value::Object(map));
+        ws_dispatch_setting(&send_set_all, "focus_set_all_settings", None, key, value);
     };
 
     let settings_rows = move || {
