@@ -16,6 +16,7 @@ use crate::components::imaging::ImagingTab;
 use crate::components::mosaic_tab::MosaicTab;
 use crate::components::mount::MountTab;
 use crate::components::polar_align::PolarAlignTab;
+use crate::components::profiles::ProfilesTab;
 use crate::components::scheduler::SchedulerTab;
 use crate::components::sky::SkyTab;
 use crate::ws::{DeviceStore, SendCmd};
@@ -62,6 +63,7 @@ pub fn TabContent(
     let send_guide     = Arc::clone(&send);
     let send_scheduler = Arc::clone(&send);
     let send_files     = Arc::clone(&send);
+    let send_profiles  = Arc::clone(&send);
     let send_mosaic    = send;
 
     let sky_visible       = move || active_tab.get() == Tab::Sky;
@@ -73,6 +75,7 @@ pub fn TabContent(
     let guide_visible     = move || active_tab.get() == Tab::Guide;
     let scheduler_visible = move || active_tab.get() == Tab::Scheduler;
     let mosaic_visible    = move || active_tab.get() == Tab::Mosaic;
+    let profiles_visible  = move || active_tab.get() == Tab::Profiles;
 
     view! {
         <div style=move || format!(
@@ -141,6 +144,17 @@ pub fn TabContent(
                     home_dir=home_dir
                     mosaic_tiles=store.mosaic_tiles
                     send=Arc::clone(&send_mosaic)
+                />
+            </div>
+        </Show>
+        <Show when=profiles_visible>
+            <div style="position:absolute; inset:0; z-index:40;">
+                <ProfilesTab
+                    profiles=store.profiles
+                    selected_profile=store.selected_profile
+                    online=store.online
+                    connected=store.connected
+                    send=Arc::clone(&send_profiles)
                 />
             </div>
         </Show>

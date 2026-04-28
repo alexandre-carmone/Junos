@@ -5,6 +5,7 @@ pub mod imaging;
 pub mod mount;
 pub mod mosaic_tab;
 pub mod polar_align;
+pub mod profiles;
 pub mod scheduler;
 pub mod sky;
 pub mod tab_wheel;

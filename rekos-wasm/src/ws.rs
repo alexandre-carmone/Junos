@@ -137,6 +137,105 @@ pub struct ScopeInfo {
     pub aperture_mm: f64,
 }
 
+/// Equipment profile mirrored from KStars `get_profiles` responses.
+///
+/// Wire shape: `kstars/profileinfo.cpp::toJson` (~line 135). We model the
+/// scalar + driver-label fields the UI shows; the legacy `drivers`
+/// object-of-arrays is ignored on parse — typed slots cover the same data.
+#[derive(Debug, Clone, Default)]
+pub struct ProfileInfo {
+    pub name:                String,
+    pub auto_connect:        bool,
+    pub port_selector:       bool,
+    pub mode:                String,    // "local" | "remote"
+    pub remote_host:         String,
+    pub remote_port:         u16,
+    pub guiding:             i32,       // 0=Internal 1=PHD2 2=LinGuider 3=SEP
+    pub remote_guiding_host: String,
+    pub remote_guiding_port: u16,
+    pub use_web_manager:     bool,
+    pub mount:               String,
+    pub ccd:                 String,
+    pub guider:              String,
+    pub focuser:             String,
+    pub filter:              String,
+    pub ao:                  String,
+    pub dome:                String,
+    pub weather:             String,
+    pub aux1:                String,
+    pub aux2:                String,
+    pub aux3:                String,
+    pub aux4:                String,
+    pub remote:              String,    // CSV of remote drivers
+    pub driver_source:       String,
+}
+
+impl ProfileInfo {
+    fn from_json(v: &serde_json::Value) -> Self {
+        let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
+        let b = |k: &str| v[k].as_bool().unwrap_or(false);
+        let u = |k: &str| v[k].as_u64().unwrap_or(0) as u16;
+        let i = |k: &str| v[k].as_i64().unwrap_or(0) as i32;
+        let mode = v["mode"].as_str().unwrap_or("local").to_string();
+        Self {
+            name:                s("name"),
+            auto_connect:        b("auto_connect"),
+            port_selector:       b("port_selector"),
+            mode:                if mode.is_empty() { "local".into() } else { mode },
+            remote_host:         s("remote_host"),
+            remote_port:         u("remote_port"),
+            guiding:             i("guiding"),
+            remote_guiding_host: s("remote_guiding_host"),
+            remote_guiding_port: u("remote_guiding_port"),
+            use_web_manager:     b("use_web_manager"),
+            mount:               s("mount"),
+            ccd:                 s("ccd"),
+            guider:              s("guider"),
+            focuser:             s("focuser"),
+            filter:              s("filter"),
+            ao:                  s("ao"),
+            dome:                s("dome"),
+            weather:             s("weather"),
+            aux1:                s("aux1"),
+            aux2:                s("aux2"),
+            aux3:                s("aux3"),
+            aux4:                s("aux4"),
+            remote:              s("remote"),
+            driver_source:       s("driver_source"),
+        }
+    }
+
+    /// Serialize for `profile_add` / `profile_update`.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name":                self.name,
+            "auto_connect":        self.auto_connect,
+            "port_selector":       self.port_selector,
+            "mode":                self.mode,
+            "remote_host":         self.remote_host,
+            "remote_port":         self.remote_port,
+            "guiding":             self.guiding,
+            "remote_guiding_host": self.remote_guiding_host,
+            "remote_guiding_port": self.remote_guiding_port,
+            "use_web_manager":     self.use_web_manager,
+            "mount":               self.mount,
+            "ccd":                 self.ccd,
+            "guider":              self.guider,
+            "focuser":             self.focuser,
+            "filter":              self.filter,
+            "ao":                  self.ao,
+            "dome":                self.dome,
+            "weather":             self.weather,
+            "aux1":                self.aux1,
+            "aux2":                self.aux2,
+            "aux3":                self.aux3,
+            "aux4":                self.aux4,
+            "remote":              self.remote,
+            "driver_source":       if self.driver_source.is_empty() { "system".to_string() } else { self.driver_source.clone() },
+        })
+    }
+}
+
 // Polar alignment state (PAA). See kstars/ekos/align/polaralignmentassistant.*
 // and the `new_polar_state` arms in message.cpp:1157-1263.
 #[derive(Debug, Clone, Default)]
@@ -274,6 +373,12 @@ pub struct DeviceStore {
     pub mosaic_tiles:       RwSignal<Option<serde_json::Value>>,
     pub livestacker_state:    RwSignal<Option<LiveStackerState>>,
     pub livestacker_settings: RwSignal<serde_json::Value>,
+    /// Equipment profile list, populated by `get_profiles` responses.
+    /// Available before `online == true` — profile CRUD is dispatched
+    /// before the Ekos-startup gate (message.cpp:249).
+    pub profiles:             RwSignal<Vec<ProfileInfo>>,
+    /// Name of the currently-selected profile in KStars (`selectedProfile`).
+    pub selected_profile:     RwSignal<Option<String>>,
 }
 
 /// Aggregated state from `new_livestacker_state`. KStars sends two flavours:
@@ -325,6 +430,8 @@ impl DeviceStore {
             mosaic_tiles:       RwSignal::new(None),
             livestacker_state:    RwSignal::new(None),
             livestacker_settings: RwSignal::new(serde_json::Value::Null),
+            profiles:             RwSignal::new(Vec::new()),
+            selected_profile:     RwSignal::new(None),
         }
     }
 
@@ -402,6 +509,18 @@ impl DeviceStore {
                     if let Some(v) = payload["autoParkCountdown"].as_str()  { ms.auto_park_countdown  = v.to_string(); }
                     if let Some(s) = payload["status"].as_str() { ms.status_str = s.to_string(); }
                 });
+            }
+
+            "get_profiles" => {
+                // Equipment profile list. Wire shape from message.cpp:1322-1339:
+                //   { selectedProfile: "<name>", profiles: [ProfileInfo.toJson, …] }
+                if let Some(arr) = payload["profiles"].as_array() {
+                    let list: Vec<ProfileInfo> = arr.iter().map(ProfileInfo::from_json).collect();
+                    self.profiles.set(list);
+                }
+                if let Some(s) = payload["selectedProfile"].as_str() {
+                    self.selected_profile.set(if s.is_empty() { None } else { Some(s.to_string()) });
+                }
             }
 
             "get_scopes" => {
@@ -902,6 +1021,22 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                 // Guider-backend settings live in global KStars Options::,
                 // not in guide_get_all_settings. See message.cpp:1418.
                 prime_send(r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#.to_string());
+            }
+        });
+    }
+
+    // Profile list: not gated on `online`. KStars dispatches profile_*
+    // commands before the Ekos-startup gate (message.cpp:249), so the
+    // browser can list/CRUD/start profiles while Ekos is offline.
+    // KStars also pushes `get_profiles` unsolicited on connect
+    // (message.cpp:93), but if the browser opens after KStars is already
+    // up that initial push is missed — re-fetch on every WS connect.
+    let connected_sig = store.connected;
+    {
+        let prime_send = send_fn.clone();
+        Effect::new(move |_| {
+            if connected_sig.get() {
+                prime_send(r#"{"type":"get_profiles","payload":{}}"#.to_string());
             }
         });
     }

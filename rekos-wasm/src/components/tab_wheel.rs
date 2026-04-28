@@ -31,7 +31,8 @@ struct DragState {
 use crate::i18n::{Lang, t};
 use crate::{ActiveTabCtx, Tab};
 
-const TABS: [Tab; 9] = [
+const TABS: [Tab; 10] = [
+    Tab::Profiles,
     Tab::Sky,
     Tab::Mount,
     Tab::Focus,
@@ -89,6 +90,8 @@ fn tab_icon(tab: Tab) -> &'static str {
         Tab::Scheduler => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10 L21 10 M8 3 L8 7 M16 3 L16 7"/><circle cx="9" cy="14" r="0.9" fill="currentColor"/><circle cx="13" cy="14" r="0.9" fill="currentColor"/><circle cx="17" cy="14" r="0.9" fill="currentColor"/></svg>"##,
         // 3x3 mosaic grid
         Tab::Mosaic => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 9 L21 9 M3 15 L21 15 M9 3 L9 21 M15 3 L15 21"/></svg>"##,
+        // Stack of equipment cards (profiles)
+        Tab::Profiles => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="14" height="12" rx="1.5"/><path d="M7 4 L21 4 L21 16"/><path d="M7 11 L15 11 M7 14 L13 14"/></svg>"##,
     }
 }
 
@@ -103,6 +106,7 @@ fn tab_title(tab: Tab, s: &crate::i18n::Translations) -> &'static str {
         Tab::Guide      => s.tab_guide,
         Tab::Scheduler  => s.tab_scheduler,
         Tab::Mosaic     => s.tab_mosaic,
+        Tab::Profiles   => s.tab_profiles,
     }
 }
 
