@@ -58,28 +58,20 @@ pub fn ProfilesTab(
     };
 
     view! {
-        <div style="position:absolute; inset:0; background:#0a0a0f; color:#c0c0d0; \
-                    font-family:monospace; overflow:auto; padding:20px 20px 20px 80px;">
-            <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
-                <h2 style="margin:0; font-size:14px; color:#88aaff; letter-spacing:0.08em;">
+        <div class="profile-pane">
+            <div class="profile-header">
+                <h2 class="profile-header-title">
                     {move || tr().profiles_title}
                 </h2>
-                <span style="color:#556; font-size:11px;">
+                <span class="profile-header-count">
                     {move || format!("({})", profiles.get().len())}
                 </span>
-                <span style="flex:1"></span>
-                <button
-                    style="padding:5px 14px; border-radius:6px; border:1px solid #3a5a3a; \
-                           background:#0a1a0a; color:#44ee88; \
-                           font:600 11px monospace; cursor:pointer;"
-                    on:click=on_add
-                >
+                <span class="profile-header-spacer"></span>
+                <button class="profile-btn profile-btn--add" on:click=on_add>
                     "+ " {move || tr().profiles_add}
                 </button>
                 <button
-                    style="padding:5px 14px; border-radius:6px; border:1px solid #2a2a3a; \
-                           background:#0a0a14; color:#88aaff; \
-                           font:600 11px monospace; cursor:pointer;"
+                    class="profile-btn profile-btn--refresh"
                     on:click=on_refresh
                     title=move || if connected.get() { "" } else { "WS not connected" }
                 >
@@ -108,15 +100,14 @@ pub fn ProfilesTab(
                     let list = profiles.get();
                     if list.is_empty() {
                         view! {
-                            <div style="padding:40px; text-align:center; color:#556; \
-                                        border:1px dashed #222; border-radius:8px;">
+                            <div class="profile-empty">
                                 {tr().profiles_empty}
                             </div>
                         }.into_any()
                     } else {
                         let send_for_rows = send_for_list.clone();
                         view! {
-                            <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div class="profile-list">
                                 {list.into_iter().map(|p| {
                                     view! {
                                         <ProfileRow
@@ -143,29 +134,23 @@ pub fn ProfilesTab(
                     let name_for_yes = name.clone();
                     let send_yes = send_for_del.clone();
                     view! {
-                        <div style="position:fixed; inset:0; background:rgba(0,0,0,0.6); \
-                                    z-index:100; display:flex; align-items:center; justify-content:center;"
+                        <div class="profile-modal-backdrop"
                              on:click=move |_| confirm_delete.set(None)
                         >
-                            <div style="background:#0a0a14; border:1px solid #5a2a2a; border-radius:8px; \
-                                        padding:18px 22px; min-width:280px;"
+                            <div class="profile-modal"
                                  on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
                             >
-                                <div style="font-size:12px; color:#ee9999; margin-bottom:8px;">
+                                <div class="profile-modal-title">
                                     {tr().profiles_confirm_delete}
                                 </div>
-                                <div style="font-size:13px; color:#cfe0ff; margin-bottom:14px;">{name.clone()}</div>
-                                <div style="display:flex; gap:10px; justify-content:flex-end;">
+                                <div class="profile-modal-target">{name.clone()}</div>
+                                <div class="profile-modal-actions">
                                     <button
-                                        style="padding:5px 12px; border-radius:5px; border:1px solid #2a2a3a; \
-                                               background:#0a0a14; color:#88aaff; cursor:pointer; \
-                                               font:600 11px monospace;"
+                                        class="profile-action-btn profile-action-btn--edit"
                                         on:click=move |_| confirm_delete.set(None)
                                     >{tr().profiles_cancel}</button>
                                     <button
-                                        style="padding:5px 12px; border-radius:5px; border:1px solid #5a2a2a; \
-                                               background:#1a0a0a; color:#ee4444; cursor:pointer; \
-                                               font:600 11px monospace;"
+                                        class="profile-action-btn profile-action-btn--delete"
                                         on:click=move |_| {
                                             let payload = serde_json::json!({"name": name_for_yes});
                                             send_yes(serde_json::json!({
@@ -276,94 +261,61 @@ fn ProfileRow(
         }
     };
 
-    let active_style = is_active.clone();
-    let row_style = move || {
-        let on = active_style();
-        let (border, bg) = if on {
-            ("#88aaff", "rgba(60,90,160,0.10)")
-        } else {
-            ("#222", "rgba(12,14,24,0.6)")
-        };
-        format!(
-            "display:flex; align-items:center; gap:12px; padding:10px 14px; \
-             border:1px solid {border}; border-radius:8px; background:{bg};"
-        )
-    };
+    let active_for_class = is_active.clone();
 
     view! {
-        <div style=row_style>
-            <div style="flex:1; min-width:0;">
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:13px; color:#cfe0ff; font-weight:600;">{name.clone()}</span>
+        <div
+            class="profile-row"
+            class:profile-row--active=move || active_for_class()
+        >
+            <div class="profile-row-main">
+                <div class="profile-row-head">
+                    <span class="profile-row-name">{name.clone()}</span>
                     {move || if is_active() {
                         view! {
-                            <span style="padding:2px 8px; border-radius:10px; \
-                                         background:rgba(60,150,80,0.18); color:#44ee88; \
-                                         font-size:10px; font-weight:600; letter-spacing:0.05em;">
+                            <span class="profile-status-badge profile-status-badge--active">
                                 {tr().profiles_active}
                             </span>
                         }.into_any()
                     } else {
                         view! { <span></span> }.into_any()
                     }}
-                    <span style="color:#556; font-size:10px; text-transform:uppercase;">
+                    <span class="profile-row-mode">
                         {mode.clone()}
                     </span>
                 </div>
-                <div style="font-size:11px; color:#778; margin-top:3px; \
-                            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                <div class="profile-row-summary">
                     {summary}
                 </div>
             </div>
-            <div style="display:flex; gap:6px; flex-shrink:0;">
+            <div class="profile-row-actions">
                 {move || if is_running() {
                     view! {
                         <button
-                            style="padding:5px 12px; border-radius:5px; border:1px solid #5a2a2a; \
-                                   background:#1a0a0a; color:#ee4444; cursor:pointer; \
-                                   font:600 11px monospace;"
+                            class="profile-action-btn profile-action-btn--stop"
                             on:click=on_stop.clone()
                         >{tr().profiles_stop}</button>
                     }.into_any()
                 } else if is_starting() {
                     view! {
-                        <span style="padding:5px 12px; border-radius:5px; border:1px solid #3a3a5a; \
-                                     background:#0a0a14; color:#ffcc44; \
-                                     font:600 11px monospace;">
+                        <span class="profile-action-btn profile-action-btn--starting">
                             {tr().profiles_starting}
                         </span>
                     }.into_any()
                 } else {
                     view! {
                         <button
-                            style="padding:5px 12px; border-radius:5px; border:1px solid #3a5a3a; \
-                                   background:#0a1a0a; color:#44ee88; cursor:pointer; \
-                                   font:600 11px monospace;"
+                            class="profile-action-btn profile-action-btn--launch"
                             on:click=on_launch.clone()
                         >{tr().profiles_launch}</button>
                     }.into_any()
                 }}
                 <button
-                    style="padding:5px 12px; border-radius:5px; border:1px solid #2a2a3a; \
-                           background:#0a0a14; color:#88aaff; cursor:pointer; \
-                           font:600 11px monospace;"
+                    class="profile-action-btn profile-action-btn--edit"
                     on:click=on_edit
                 >{tr().profiles_edit}</button>
                 <button
-                    style={
-                        let delete_disabled = delete_disabled.clone();
-                        move || {
-                        let dis = delete_disabled();
-                        format!(
-                            "padding:5px 12px; border-radius:5px; border:1px solid #5a2a2a; \
-                             background:#1a0a0a; color:{c}; \
-                             font:600 11px monospace; \
-                             cursor:{cur}; opacity:{op};",
-                            c = if dis { "#5a3a3a" } else { "#ee4444" },
-                            cur = if dis { "not-allowed" } else { "pointer" },
-                            op = if dis { 0.5 } else { 1.0 },
-                        )
-                    }}
+                    class="profile-action-btn profile-action-btn--delete"
                     disabled=delete_disabled
                     title=move || if is_simulators { "Simulators is not deletable" } else { "" }
                     on:click=on_delete
@@ -497,21 +449,21 @@ fn ProfileForm(
     let is_remote = move || mode_for_remote.get() == "remote";
 
     view! {
-        <div style="border:1px solid #3a3a5a; border-radius:8px; padding:14px 16px; \
-                    margin-bottom:14px; background:rgba(20,24,40,0.4);">
-            <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-                <span style="font-size:12px; color:#88aaff; font-weight:600; letter-spacing:0.06em;">
+        <div class="profile-form">
+            <div class="profile-form-head">
+                <span class="profile-form-head-title">
                     {move || if is_new { tr().profiles_new } else { tr().profiles_edit }}
                 </span>
             </div>
 
             // Row 1: name + mode + auto_connect + port_selector + web_mgr
-            <div style="display:flex; flex-wrap:wrap; gap:10px 18px; margin-bottom:10px;">
+            <div class="profile-form-row">
                 <Field label=tr().profiles_name>
                     <TextInput value=name placeholder="Name"/>
                 </Field>
                 <Field label=tr().profiles_mode>
                     <select
+                        class="profile-select"
                         prop:value=move || mode.get()
                         on:change=move |ev: Event| {
                             if let Some(t) = ev.target() {
@@ -520,8 +472,6 @@ fn ProfileForm(
                                 }
                             }
                         }
-                        style="background:#0a0a14; color:#cfe0ff; border:1px solid #2a2a3a; \
-                               padding:4px 8px; border-radius:4px; font:600 11px monospace;"
                     >
                         <option value="local">{tr().profiles_mode_local}</option>
                         <option value="remote">{tr().profiles_mode_remote}</option>
@@ -538,6 +488,7 @@ fn ProfileForm(
                 </Field>
                 <Field label=tr().profiles_guiding>
                     <select
+                        class="profile-select"
                         prop:value=move || guiding.get().to_string()
                         on:change=move |ev: Event| {
                             if let Some(t) = ev.target() {
@@ -546,8 +497,6 @@ fn ProfileForm(
                                 }
                             }
                         }
-                        style="background:#0a0a14; color:#cfe0ff; border:1px solid #2a2a3a; \
-                               padding:4px 8px; border-radius:4px; font:600 11px monospace;"
                     >
                         {GUIDING_LABELS.iter().enumerate().map(|(i, label)| {
                             view! { <option value=i.to_string()>{*label}</option> }
@@ -558,7 +507,7 @@ fn ProfileForm(
 
             // Remote section (visible only when mode == remote)
             <Show when=is_remote>
-                <div style="display:flex; flex-wrap:wrap; gap:10px 18px; margin-bottom:10px;">
+                <div class="profile-form-row">
                     <Field label=tr().profiles_host>
                         <TextInput value=host placeholder="localhost"/>
                     </Field>
@@ -575,12 +524,10 @@ fn ProfileForm(
             </Show>
 
             // Drivers section
-            <div style="font-size:11px; color:#88aaff; font-weight:600; \
-                        margin:4px 0 6px 0; letter-spacing:0.06em;">
+            <div class="profile-form-section-title">
                 {move || tr().profiles_drivers}
             </div>
-            <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); \
-                        gap:8px 14px; margin-bottom:10px;">
+            <div class="profile-form-grid">
                 <DrvField label="Mount" value=mount/>
                 <DrvField label="CCD" value=ccd/>
                 <DrvField label="Guider" value=guider_drv/>
@@ -598,17 +545,13 @@ fn ProfileForm(
                 <TextInput value=remote placeholder="indi_eqmod_telescope,..."/>
             </Field>
 
-            <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px;">
+            <div class="profile-form-actions">
                 <button
-                    style="padding:5px 14px; border-radius:5px; border:1px solid #2a2a3a; \
-                           background:#0a0a14; color:#88aaff; cursor:pointer; \
-                           font:600 11px monospace;"
+                    class="profile-action-btn profile-action-btn--edit"
                     on:click=on_cancel
                 >{tr().profiles_cancel}</button>
                 <button
-                    style="padding:5px 14px; border-radius:5px; border:1px solid #3a5a3a; \
-                           background:#0a1a0a; color:#44ee88; cursor:pointer; \
-                           font:600 11px monospace;"
+                    class="profile-action-btn profile-action-btn--launch"
                     on:click=on_save
                 >{tr().profiles_save}</button>
             </div>
@@ -619,8 +562,8 @@ fn ProfileForm(
 #[component]
 fn Field(label: &'static str, children: Children) -> impl IntoView {
     view! {
-        <div style="display:flex; flex-direction:column; gap:3px; min-width:120px;">
-            <span style="font-size:10px; color:#778; letter-spacing:0.05em;">{label}</span>
+        <div class="profile-field">
+            <span class="profile-field-label">{label}</span>
             {children()}
         </div>
     }
@@ -629,8 +572,8 @@ fn Field(label: &'static str, children: Children) -> impl IntoView {
 #[component]
 fn DrvField(label: &'static str, value: RwSignal<String>) -> impl IntoView {
     view! {
-        <div style="display:flex; flex-direction:column; gap:3px;">
-            <span style="font-size:10px; color:#778;">{label}</span>
+        <div class="profile-field profile-field-drv">
+            <span class="profile-field-label">{label}</span>
             <TextInput value=value placeholder="--"/>
         </div>
     }
@@ -643,6 +586,7 @@ fn TextInput(
 ) -> impl IntoView {
     view! {
         <input
+            class="profile-input"
             type="text"
             prop:value=move || value.get()
             placeholder=placeholder
@@ -653,9 +597,6 @@ fn TextInput(
                     }
                 }
             }
-            style="background:#0a0a14; color:#cfe0ff; border:1px solid #2a2a3a; \
-                   padding:4px 8px; border-radius:4px; font:400 11px monospace; \
-                   min-width:0; width:100%;"
         />
     }
 }
