@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 use web_sys::MouseEvent;
 
 use crate::compat::MountSnapshot;
@@ -50,33 +49,6 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
     let dec_input = RwSignal::new(String::new());
     let tgt_input = RwSignal::new(String::new());
     let j2000     = RwSignal::new(false);
-
-    // ── Window width for responsive layout ───────────────────────────
-    let win_w = RwSignal::new({
-        web_sys::window()
-            .and_then(|w| w.inner_width().ok())
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1024.0)
-    });
-    let resize_send = win_w;
-    let closure = wasm_bindgen::closure::Closure::<dyn Fn()>::new(move || {
-        if let Some(w) = web_sys::window()
-            .and_then(|w| w.inner_width().ok())
-            .and_then(|v| v.as_f64())
-        {
-            resize_send.set(w);
-        }
-    });
-    if let Some(window) = web_sys::window() {
-        let _ = window.add_event_listener_with_callback(
-            "resize",
-            closure.as_ref().unchecked_ref(),
-        );
-    }
-    closure.forget();
-
-    let is_desktop = move || win_w.get() > 900.0;
-    let is_phone   = move || win_w.get() < 600.0;
 
     // ── SendCmd clones for each action ────────────────────────────────
     let send = Arc::new(send);
@@ -138,81 +110,52 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
     let send_abort2  = mk_send!();
     let send_track   = mk_send!();
 
-    // ── Styles ────────────────────────────────────────────────────────
-    let input_style =
-        "width:100%; padding:6px 8px; background:#111; color:#ccc; \
-         border:1px solid #444; border-radius:4px; font:13px monospace; \
-         box-sizing:border-box;";
-
-    let label_style = "font:11px monospace; color:#888; margin-bottom:2px; display:block;";
-
-    let btn = |color: &str| -> String {
-        format!(
-            "padding:8px 12px; border-radius:6px; border:1px solid {color}; \
-             background:rgba(20,22,40,0.92); color:{color}; font:700 12px monospace; \
-             cursor:pointer; touch-action:manipulation; \
-             -webkit-tap-highlight-color:transparent; \
-             min-height:40px; width:100%;"
-        )
+    // D-pad press/release helpers — emit `mount_set_motion` for one direction.
+    let dpad_press = |dir: &'static str| {
+        let s = Arc::clone(&send);
+        move |ev: web_sys::PointerEvent| {
+            ev.prevent_default();
+            s(serde_json::json!({
+                "type": "mount_set_motion",
+                "payload": { "direction": dir, "action": true }
+            }).to_string());
+        }
     };
-
-    let dpad_btn = move || {
-        let sz = if is_phone() { "56px" } else { "48px" };
-        format!(
-            "width:{sz}; height:{sz}; border-radius:8px; border:1px solid #4466cc; \
-             background:rgba(20,26,60,0.92); color:#99bbff; \
-             font:700 18px/1 monospace; cursor:pointer; \
-             touch-action:none; -webkit-tap-highlight-color:transparent; \
-             display:flex; align-items:center; justify-content:center; \
-             user-select:none;"
-        )
+    let dpad_release = |dir: &'static str| {
+        let s = Arc::clone(&send);
+        move |_: web_sys::PointerEvent| {
+            s(serde_json::json!({
+                "type": "mount_set_motion",
+                "payload": { "direction": dir, "action": false }
+            }).to_string());
+        }
     };
-
-    let dpad_abort_btn = move || {
-        let sz = if is_phone() { "56px" } else { "48px" };
-        format!(
-            "width:{sz}; height:{sz}; border-radius:50%; border:2px solid #ff4444; \
-             background:rgba(60,10,10,0.92); color:#ff8888; \
-             font:700 14px/1 monospace; cursor:pointer; \
-             touch-action:none; -webkit-tap-highlight-color:transparent; \
-             display:flex; align-items:center; justify-content:center; \
-             user-select:none;"
-        )
-    };
-
-    let section_title_style =
-        "font:700 11px monospace; color:#88aaff; letter-spacing:0.1em; \
-         border-bottom:1px solid #223; padding-bottom:4px; margin-bottom:10px;";
 
     view! {
         <div
-            style="position:absolute; inset:0; background:#0a0a0f; color:#c0c0d0; \
-                   font-family:monospace; overflow-y:auto; overflow-x:hidden; \
-                   padding-bottom:60px;"
+            class="mount-pane"
             on:click=|ev: MouseEvent| ev.stop_propagation()
         >
             // ── Header ────────────────────────────────────────────────
-            <div style="display:flex; align-items:center; gap:10px; padding:10px 14px 6px; \
-                        border-bottom:1px solid #222; flex-wrap:wrap;">
-                <span style="font:700 13px monospace; color:#cfe0ff; letter-spacing:0.08em;">
+            <div class="mount-header">
+                <span class="mount-header-title">
                     {move || tr().mount_title}
                 </span>
                 {move || {
                     let m = mount.get();
                     m.device_name.map(|dev| view! {
-                        <span style="font:12px monospace; color:#666; margin-left:4px;">{dev}</span>
+                        <span class="mount-header-device">{dev}</span>
                     })
                 }}
-                <div style="margin-left:auto;">
+                <div class="mount-header-status-wrap">
                     {move || {
                         let m = mount.get();
                         let (label, color) = status_label_color(&m, tr());
                         view! {
-                            <span style=format!(
-                                "padding:3px 8px; border-radius:4px; border:1px solid {color}; \
-                                 background:rgba(0,0,0,0.5); color:{color}; \
-                                 font:700 11px monospace; letter-spacing:0.08em;"
-                            )>{label}</span>
+                            <span
+                                class="mount-status-pill"
+                                style=format!("color:{color};")
+                            >{label}</span>
                         }
                     }}
                 </div>
@@ -222,9 +165,7 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
             {move || {
                 let m = mount.get();
                 (!m.meridian_flip_status.is_empty()).then(|| view! {
-                    <div style="padding:4px 14px; background:rgba(60,40,0,0.6); \
-                                border-bottom:1px solid #664; \
-                                font:11px monospace; color:#ffcc88;">
+                    <div class="mount-banner mount-banner--meridian">
                         {tr().mount_meridian_flip}{": "}{m.meridian_flip_status}
                     </div>
                 })
@@ -232,35 +173,26 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
             {move || {
                 let m = mount.get();
                 (!m.auto_park_countdown.is_empty()).then(|| view! {
-                    <div style="padding:4px 14px; background:rgba(20,40,80,0.6); \
-                                border-bottom:1px solid #336; \
-                                font:11px monospace; color:#88aaff;">
+                    <div class="mount-banner mount-banner--autopark">
                         {tr().mount_autopark}{": "}{m.auto_park_countdown}
                     </div>
                 })
             }}
 
-            // ── Body — responsive grid ────────────────────────────────
-            <div style=move || {
-                if is_desktop() {
-                    "display:grid; grid-template-columns:1fr 1fr; gap:0; height:calc(100% - 80px);"
-                        .to_string()
-                } else {
-                    "display:flex; flex-direction:column;".to_string()
-                }
-            }>
+            // ── Body — responsive grid (CSS @media handles the breakpoint) ──
+            <div class="mount-body">
 
                 // ── Left column: Coordinates + GoTo ───────────────────
-                <div style="padding:14px; overflow-y:auto; border-right:1px solid #1a1a2e;">
+                <div class="mount-col-left">
 
                     // Coordinates section
-                    <div style=section_title_style>{move || tr().mount_coords_section}</div>
+                    <div class="mount-section-title">{move || tr().mount_coords_section}</div>
 
                     // No-mount placeholder
                     {move || {
                         let m = mount.get();
                         (!m.connected).then(|| view! {
-                            <div style="color:#555; font:12px monospace; padding:20px 0; text-align:center;">
+                            <div class="mount-no-device">
                                 {tr().mount_no_device}
                             </div>
                         })
@@ -299,14 +231,12 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                                  }),
                             ];
                             view! {
-                                <div style="display:grid; grid-template-columns:auto 1fr; \
-                                            gap:4px 12px; align-items:baseline;">
+                                <div class="mount-coord-grid">
                                     {coords.into_iter().map(|(lbl, val)| view! {
-                                        <span style="font:11px monospace; color:#888; white-space:nowrap;">
+                                        <span class="mount-coord-label">
                                             {lbl}{":"}
                                         </span>
-                                        <span style="font:12px monospace; color:#cfe0ff; \
-                                                     font-variant-numeric:tabular-nums;">
+                                        <span class="mount-coord-value">
                                             {val}
                                         </span>
                                     }).collect::<Vec<_>>()}
@@ -316,41 +246,40 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                     }}
 
                     // GoTo section
-                    <div style="margin-top:18px;">
-                        <div style=section_title_style>{move || tr().mount_goto_section}</div>
-                        <div style="display:flex; flex-direction:column; gap:8px;">
+                    <div class="mount-goto">
+                        <div class="mount-section-title">{move || tr().mount_goto_section}</div>
+                        <div class="mount-goto-fields">
                             <div>
-                                <label style=label_style>{move || tr().mount_ra_input}</label>
+                                <label class="mount-label">{move || tr().mount_ra_input}</label>
                                 <input
+                                    class="mount-input"
                                     type="text"
                                     placeholder="HH MM SS"
-                                    style=input_style
                                     prop:value=move || ra_input.get()
                                     on:input=move |ev| ra_input.set(event_target_value(&ev))
                                 />
                             </div>
                             <div>
-                                <label style=label_style>{move || tr().mount_dec_input}</label>
+                                <label class="mount-label">{move || tr().mount_dec_input}</label>
                                 <input
+                                    class="mount-input"
                                     type="text"
                                     placeholder="±DD MM SS"
-                                    style=input_style
                                     prop:value=move || dec_input.get()
                                     on:input=move |ev| dec_input.set(event_target_value(&ev))
                                 />
                             </div>
                             <div>
-                                <label style=label_style>{move || tr().mount_target_input}</label>
+                                <label class="mount-label">{move || tr().mount_target_input}</label>
                                 <input
+                                    class="mount-input"
                                     type="text"
                                     placeholder="M42, NGC1234…"
-                                    style=input_style
                                     prop:value=move || tgt_input.get()
                                     on:input=move |ev| tgt_input.set(event_target_value(&ev))
                                 />
                             </div>
-                            <label style="display:flex; align-items:center; gap:6px; \
-                                          font:12px monospace; color:#aaa; cursor:pointer;">
+                            <label class="mount-checkbox-row">
                                 <input
                                     type="checkbox"
                                     prop:checked=move || j2000.get()
@@ -358,18 +287,18 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                                 />
                                 {move || tr().mount_j2000_label}
                             </label>
-                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                            <div class="mount-goto-actions">
                                 <button
-                                    style=btn("#44cc88")
+                                    class="mount-btn mount-btn--ok"
                                     on:click=on_goto.clone()
                                 >{move || tr().mount_goto_btn}</button>
                                 <button
-                                    style=btn("#88aaff")
+                                    class="mount-btn mount-btn--info"
                                     on:click=on_sync.clone()
                                 >{move || tr().mount_sync_btn}</button>
                             </div>
                             <button
-                                style=btn("#66aaee")
+                                class="mount-btn mount-btn--info-2"
                                 on:click=on_goto_target.clone()
                             >{move || tr().mount_goto_target_btn}</button>
                         </div>
@@ -377,151 +306,67 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                 </div>
 
                 // ── Right column: D-pad + controls ────────────────────
-                <div style="padding:14px; display:flex; flex-direction:column; gap:16px; \
-                             align-items:center;">
+                <div class="mount-col-right">
 
                     // D-pad
                     <div>
-                        <div style=move || format!(
-                            "display:grid; grid-template-columns:repeat(3,{}); \
-                             grid-template-rows:repeat(3,{}); gap:6px;",
-                            if is_phone() { "56px" } else { "48px" },
-                            if is_phone() { "56px" } else { "48px" }
-                        )>
+                        <div class="mount-dpad">
                             // Row 1: empty, N, empty
                             <div></div>
                             <button
-                                style=move || dpad_btn()
-                                on:pointerdown={
-                                    let s = Arc::clone(&send);
-                                    move |ev: web_sys::PointerEvent| {
-                                        ev.prevent_default();
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"N","action":true}}).to_string());
-                                    }
-                                }
-                                on:pointerup={
-                                    let s = Arc::clone(&send);
-                                    move |_: web_sys::PointerEvent| {
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"N","action":false}}).to_string());
-                                    }
-                                }
-                                on:pointerleave={
-                                    let s = Arc::clone(&send);
-                                    move |_: web_sys::PointerEvent| {
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"N","action":false}}).to_string());
-                                    }
-                                }
+                                class="mount-dpad-btn"
+                                on:pointerdown=dpad_press("N")
+                                on:pointerup=dpad_release("N")
+                                on:pointerleave=dpad_release("N")
                             >"↑"</button>
                             <div></div>
 
                             // Row 2: W, abort, E
                             <button
-                                style=move || dpad_btn()
-                                on:pointerdown={
-                                    let s = Arc::clone(&send);
-                                    move |ev: web_sys::PointerEvent| {
-                                        ev.prevent_default();
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"W","action":true}}).to_string());
-                                    }
-                                }
-                                on:pointerup={
-                                    let s = Arc::clone(&send);
-                                    move |_: web_sys::PointerEvent| {
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"W","action":false}}).to_string());
-                                    }
-                                }
-                                on:pointerleave={
-                                    let s = Arc::clone(&send);
-                                    move |_: web_sys::PointerEvent| {
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"W","action":false}}).to_string());
-                                    }
-                                }
+                                class="mount-dpad-btn"
+                                on:pointerdown=dpad_press("W")
+                                on:pointerup=dpad_release("W")
+                                on:pointerleave=dpad_release("W")
                             >"←"</button>
                             <button
-                                style=move || dpad_abort_btn()
+                                class="mount-dpad-btn mount-dpad-btn--abort"
                                 on:click=move |_| {
                                     send_abort2(serde_json::json!({"type":"mount_abort","payload":{}}).to_string());
                                 }
                                 title=move || tr().mount_abort_btn
                             >"●"</button>
                             <button
-                                style=move || dpad_btn()
-                                on:pointerdown={
-                                    let s = Arc::clone(&send);
-                                    move |ev: web_sys::PointerEvent| {
-                                        ev.prevent_default();
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"E","action":true}}).to_string());
-                                    }
-                                }
-                                on:pointerup={
-                                    let s = Arc::clone(&send);
-                                    move |_: web_sys::PointerEvent| {
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"E","action":false}}).to_string());
-                                    }
-                                }
-                                on:pointerleave={
-                                    let s = Arc::clone(&send);
-                                    move |_: web_sys::PointerEvent| {
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"E","action":false}}).to_string());
-                                    }
-                                }
+                                class="mount-dpad-btn"
+                                on:pointerdown=dpad_press("E")
+                                on:pointerup=dpad_release("E")
+                                on:pointerleave=dpad_release("E")
                             >"→"</button>
 
                             // Row 3: empty, S, empty
                             <div></div>
                             <button
-                                style=move || dpad_btn()
-                                on:pointerdown={
-                                    let s = Arc::clone(&send);
-                                    move |ev: web_sys::PointerEvent| {
-                                        ev.prevent_default();
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"S","action":true}}).to_string());
-                                    }
-                                }
-                                on:pointerup={
-                                    let s = Arc::clone(&send);
-                                    move |_: web_sys::PointerEvent| {
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"S","action":false}}).to_string());
-                                    }
-                                }
-                                on:pointerleave={
-                                    let s = Arc::clone(&send);
-                                    move |_: web_sys::PointerEvent| {
-                                        s(serde_json::json!({"type":"mount_set_motion","payload":{"direction":"S","action":false}}).to_string());
-                                    }
-                                }
+                                class="mount-dpad-btn"
+                                on:pointerdown=dpad_press("S")
+                                on:pointerup=dpad_release("S")
+                                on:pointerleave=dpad_release("S")
                             >"↓"</button>
                             <div></div>
                         </div>
                     </div>
 
                     // Slew rate selector
-                    <div style="width:100%; max-width:320px;">
-                        <div style=format!("{section_title_style} margin-bottom:6px;")>
+                    <div class="mount-slew-rate">
+                        <div class="mount-section-title mount-section-title--tight">
                             {move || tr().mount_slew_rate}
                         </div>
-                        <div style="display:flex; gap:4px; flex-wrap:wrap; justify-content:center;">
+                        <div class="mount-slew-rate-row">
                             {(0..8i32).map(|idx| {
                                 let lbl = RATE_LABELS[idx as usize];
                                 let oc = on_rate(idx);
                                 view! {
                                     <button
-                                        style=move || {
-                                            let active = mount.get().slew_rate == Some(idx);
-                                            let (bg, border, color) = if active {
-                                                ("rgba(40,60,110,0.95)", "#88aaff", "#cfe0ff")
-                                            } else {
-                                                ("rgba(12,14,24,0.85)", "#2a2a35", "#88aaff")
-                                            };
-                                            format!(
-                                                "min-width:36px; height:32px; padding:0 6px; \
-                                                 border-radius:5px; border:1px solid {border}; \
-                                                 background:{bg}; color:{color}; \
-                                                 font:700 11px monospace; cursor:pointer; \
-                                                 touch-action:manipulation; \
-                                                 -webkit-tap-highlight-color:transparent;"
-                                            )
-                                        }
+                                        class="mount-slew-rate-btn"
+                                        class:mount-slew-rate-btn--active=move || mount.get().slew_rate == Some(idx)
                                         on:click=oc
                                     >{lbl}</button>
                                 }
@@ -530,32 +375,29 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                     </div>
 
                     // Action buttons
-                    <div style="width:100%; max-width:320px; \
-                                display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div class="mount-actions">
                         <button
-                            style=btn("#88aaff")
+                            class="mount-btn mount-btn--info"
                             on:click=move |_| {
                                 send_park(serde_json::json!({"type":"mount_park","payload":{}}).to_string());
                             }
                         >{move || tr().mount_park_btn}</button>
                         <button
-                            style=btn("#66ccaa")
+                            class="mount-btn mount-btn--success"
                             on:click=move |_| {
                                 send_unpark(serde_json::json!({"type":"mount_unpark","payload":{}}).to_string());
                             }
                         >{move || tr().mount_unpark_btn}</button>
                         <button
-                            style=btn("#ff5555")
+                            class="mount-btn mount-btn--danger"
                             on:click=move |_| {
                                 send_abort(serde_json::json!({"type":"mount_abort","payload":{}}).to_string());
                             }
                         >{move || tr().mount_abort_btn}</button>
                         <button
-                            style=move || {
-                                let tracking = mount.get().tracking;
-                                let color = if tracking { "#44ff88" } else { "#888" };
-                                btn(color)
-                            }
+                            class="mount-btn"
+                            class:mount-btn--track-on=move || mount.get().tracking
+                            class:mount-btn--track-off=move || !mount.get().tracking
                             on:click=move |_| {
                                 let enabled = !mount.get_untracked().tracking;
                                 send_track(serde_json::json!({
