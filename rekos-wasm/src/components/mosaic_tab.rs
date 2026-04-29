@@ -197,33 +197,25 @@ pub fn MosaicTab(
         });
     };
 
-    // ── Common styles ──────────────────────────────────────────────────────
-    let input_style = "background:#111; color:#ccc; border:1px solid #444; \
-                       font-family:monospace; font-size:12px; padding:3px 5px; box-sizing:border-box;";
-    let section_title = "font-size:12px; font-weight:bold; color:#88aaff; \
-                         padding:6px 0 4px; border-bottom:1px solid #2a2a3a; margin-bottom:8px;";
-
     view! {
-        <div style="position:absolute; inset:0; overflow-y:auto; background:#0a0a0f; \
-                    color:#c0c0d0; font-family:monospace; padding:16px; box-sizing:border-box;">
-        <div style="max-width:680px; margin:0 auto; display:flex; flex-direction:column; gap:18px;">
+        <div class="mosaic-tab-root">
+        <div class="mosaic-tab-inner">
 
             // ── Header ──────────────────────────────────────────────────────
-            <div style="font-size:15px; font-weight:bold; color:#cfe0ff; padding-bottom:6px; \
-                         border-bottom:1px solid #333;">
+            <div class="mosaic-header">
                 {move || tr().mosaic_planner_title}
             </div>
 
             // ── Target & Field ───────────────────────────────────────────────
-            <div style="display:flex; flex-direction:column; gap:8px;">
-                <div style=section_title>{move || tr().mosaic_target_field}</div>
+            <div class="mosaic-section">
+                <div class="mosaic-section-title">{move || tr().mosaic_target_field}</div>
 
                 // Target name + Pick on Sky button
-                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                    <label style="font-size:12px; display:flex; align-items:center; gap:6px; flex:1; min-width:200px;">
+                <div class="mosaic-target-row">
+                    <label class="mosaic-target-label">
                         {move || tr().mosaic_target_label}
                         <input type="text"
-                               style=format!("{input_style} flex:1;")
+                               class="mosaic-input mosaic-input--flex"
                                placeholder=move || tr().mosaic_target_placeholder
                                prop:value=move || planner.target.get()
                                on:input=move |ev| {
@@ -233,15 +225,11 @@ pub fn MosaicTab(
                                } />
                     </label>
                     <button
-                        style=move || {
+                        class=move || {
                             if planner.picking_center.get() {
-                                "padding:5px 12px; background:#003030; color:#00ffff; \
-                                 border:1px solid #00cccc; cursor:pointer; \
-                                 font-family:monospace; font-size:12px; border-radius:3px; white-space:nowrap;"
+                                "mosaic-pick-btn mosaic-pick-btn--active"
                             } else {
-                                "padding:5px 12px; background:#0a1a2a; color:#88aaff; \
-                                 border:1px solid #446; cursor:pointer; \
-                                 font-family:monospace; font-size:12px; border-radius:3px; white-space:nowrap;"
+                                "mosaic-pick-btn"
                             }
                         }
                         on:click=on_pick_sky>
@@ -267,7 +255,7 @@ pub fn MosaicTab(
                     let decd = dec_abs as u32;
                     let decm = ((dec_abs - decd as f64) * 60.0) as u32;
                     view! {
-                        <div style="font-size:11px; color:#88aaff; padding:2px 0;">
+                        <div class="mosaic-center-display">
                             {format!("Center: {:02}h {:02}m  {}{}\u{00b0} {:02}\u{2019}",
                                      rah, ram, dec_s, decd, decm)}
                         </div>
@@ -275,11 +263,11 @@ pub fn MosaicTab(
                 })}
 
                 // Grid + Overlap + PA
-                <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-                    <label style="font-size:12px; display:flex; align-items:center; gap:4px;">
+                <div class="mosaic-params-row">
+                    <label class="mosaic-param-label">
                         {move || tr().mosaic_grid_label}
                         <input type="number" min="1" max="10"
-                               style=format!("{input_style} width:44px; text-align:center;")
+                               class="mosaic-input mosaic-input--center"
                                prop:value=move || planner.grid_w.get().to_string()
                                on:input=move |ev| {
                                    let v = ev.target().unwrap()
@@ -290,7 +278,7 @@ pub fn MosaicTab(
                                } />
                         {"\u{00d7}"}
                         <input type="number" min="1" max="10"
-                               style=format!("{input_style} width:44px; text-align:center;")
+                               class="mosaic-input mosaic-input--center"
                                prop:value=move || planner.grid_h.get().to_string()
                                on:input=move |ev| {
                                    let v = ev.target().unwrap()
@@ -300,10 +288,10 @@ pub fn MosaicTab(
                                    }
                                } />
                     </label>
-                    <label style="font-size:12px; display:flex; align-items:center; gap:4px;">
+                    <label class="mosaic-param-label">
                         {move || tr().mosaic_overlap_label}
                         <input type="number" min="0" max="50" step="1"
-                               style=format!("{input_style} width:50px;")
+                               class="mosaic-input mosaic-input--w50"
                                prop:value=move || format!("{:.0}", planner.overlap.get())
                                on:input=move |ev| {
                                    let v = ev.target().unwrap()
@@ -314,10 +302,10 @@ pub fn MosaicTab(
                                } />
                         {"%"}
                     </label>
-                    <label style="font-size:12px; display:flex; align-items:center; gap:4px;">
+                    <label class="mosaic-param-label">
                         {move || tr().mosaic_pa_label}
                         <input type="number" min="-180" max="180" step="1"
-                               style=format!("{input_style} width:56px;")
+                               class="mosaic-input mosaic-input--w56"
                                prop:value=move || format!("{:.0}", planner.pa.get())
                                on:input=move |ev| {
                                    let v = ev.target().unwrap()
@@ -343,7 +331,7 @@ pub fn MosaicTab(
                         let gw = planner.grid_w.get() as f64;
                         let gh = planner.grid_h.get() as f64;
                         view! {
-                            <div style="font-size:11px; color:#557; padding:2px 0;">
+                            <div class="mosaic-fov-hint">
                                 {format!("Tile: {fw:.0}\u{2019}\u{00d7}{fh:.0}\u{2019}   \
                                           Full field: {:.0}\u{2019}\u{00d7}{:.0}\u{2019}",
                                           fw * gw, fh * gh)}
@@ -351,7 +339,7 @@ pub fn MosaicTab(
                         }
                     } else {
                         view! {
-                            <div style="font-size:11px; color:#555; padding:2px 0;">
+                            <div class="mosaic-fov-hint mosaic-fov-hint--unavailable">
                                 {no_fov_msg}
                             </div>
                         }
@@ -360,12 +348,11 @@ pub fn MosaicTab(
             </div>
 
             // ── Capture Sequence ─────────────────────────────────────────────
-            <div style="display:flex; flex-direction:column; gap:8px;">
-                <div style=section_title>{move || tr().mosaic_capture_seq}</div>
+            <div class="mosaic-section">
+                <div class="mosaic-section-title">{move || tr().mosaic_capture_seq}</div>
 
                 // Column headers
-                <div style="display:grid; grid-template-columns:1fr 80px 60px 28px; \
-                            gap:4px; font-size:11px; color:#666; padding:0 2px 4px;">
+                <div class="mosaic-seq-header">
                     <span>{move || tr().mosaic_filter_col}</span>
                     <span>{move || tr().mosaic_exp_col}</span>
                     <span>{move || tr().mosaic_count_col}</span>
@@ -379,9 +366,9 @@ pub fn MosaicTab(
                         let ex = frame.exposure.clone();
                         let co = frame.count.clone();
                         view! {
-                            <div style="display:grid; grid-template-columns:1fr 80px 60px 28px; gap:4px; margin-bottom:2px;">
+                            <div class="mosaic-seq-row">
                                 <input type="text"
-                                       style=format!("{input_style} width:100%;")
+                                       class="mosaic-input mosaic-input--full"
                                        placeholder=move || tr().mosaic_filter_placeholder
                                        prop:value=fi
                                        on:input=move |ev| {
@@ -392,7 +379,7 @@ pub fn MosaicTab(
                                            });
                                        } />
                                 <input type="number" min="1" step="1"
-                                       style=format!("{input_style} width:100%;")
+                                       class="mosaic-input mosaic-input--full"
                                        prop:value=ex
                                        on:input=move |ev| {
                                            let v = ev.target().unwrap()
@@ -402,7 +389,7 @@ pub fn MosaicTab(
                                            });
                                        } />
                                 <input type="number" min="1"
-                                       style=format!("{input_style} width:100%;")
+                                       class="mosaic-input mosaic-input--full"
                                        prop:value=co
                                        on:input=move |ev| {
                                            let v = ev.target().unwrap()
@@ -412,9 +399,7 @@ pub fn MosaicTab(
                                            });
                                        } />
                                 <button
-                                    style="background:#1a0a0a; color:#cc4444; border:1px solid #422; \
-                                           cursor:pointer; font-family:monospace; font-size:13px; \
-                                           border-radius:2px; padding:0 4px; line-height:1;"
+                                    class="mosaic-seq-remove-btn"
                                     on:click=move |_| {
                                         seq_frames.update(|fs| {
                                             if fs.len() > 1 { fs.remove(idx); }
@@ -429,9 +414,7 @@ pub fn MosaicTab(
 
                 // Add filter row
                 <button
-                    style="align-self:flex-start; margin-top:4px; padding:3px 10px; \
-                           background:#0a1a0a; color:#44cc44; border:1px solid #264; \
-                           cursor:pointer; font-family:monospace; font-size:12px; border-radius:3px;"
+                    class="mosaic-add-btn"
                     on:click=move |_| {
                         seq_frames.update(|fs| fs.push(SeqFrame::default()));
                     }>
@@ -439,8 +422,8 @@ pub fn MosaicTab(
                 </button>
 
                 // Startup flags
-                <div style="display:flex; gap:16px; flex-wrap:wrap; font-size:12px; padding-top:4px;">
-                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                <div class="mosaic-flags-row">
+                    <label class="mosaic-flag-label">
                         <input type="checkbox"
                                prop:checked=move || step_track.get()
                                on:change=move |ev| {
@@ -450,7 +433,7 @@ pub fn MosaicTab(
                                } />
                         {move || tr().mosaic_step_track}
                     </label>
-                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                    <label class="mosaic-flag-label">
                         <input type="checkbox"
                                prop:checked=move || step_focus.get()
                                on:change=move |ev| {
@@ -460,7 +443,7 @@ pub fn MosaicTab(
                                } />
                         {move || tr().mosaic_step_focus}
                     </label>
-                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                    <label class="mosaic-flag-label">
                         <input type="checkbox"
                                prop:checked=move || step_align.get()
                                on:change=move |ev| {
@@ -470,7 +453,7 @@ pub fn MosaicTab(
                                } />
                         {move || tr().mosaic_step_align}
                     </label>
-                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                    <label class="mosaic-flag-label">
                         <input type="checkbox"
                                prop:checked=move || step_guide.get()
                                on:change=move |ev| {
@@ -484,12 +467,12 @@ pub fn MosaicTab(
             </div>
 
             // ── Output dir ────────────────────────────────────────────────────
-            <div style="display:flex; flex-direction:column; gap:6px;">
-                <div style=section_title>{move || tr().mosaic_output}</div>
-                <label style="font-size:12px; display:flex; align-items:center; gap:6px;">
+            <div class="mosaic-section">
+                <div class="mosaic-section-title">{move || tr().mosaic_output}</div>
+                <label class="mosaic-target-label">
                     {move || tr().mosaic_output_dir}
                     <input type="text"
-                           style=format!("{input_style} flex:1;")
+                           class="mosaic-input mosaic-input--flex"
                            placeholder=move || tr().mosaic_output_placeholder
                            prop:value=move || planner.dir.get()
                            on:input=move |ev| {
@@ -502,23 +485,13 @@ pub fn MosaicTab(
 
             // ── Error ──────────────────────────────────────────────────────────
             {move || form_error.get().map(|e| view! {
-                <div style="color:#ff6666; font-size:12px; padding:4px 0;">{e}</div>
+                <div class="mosaic-error">{e}</div>
             })}
 
             // ── Send button ────────────────────────────────────────────────────
-            <div style="display:flex; justify-content:flex-end; padding-bottom:24px;">
+            <div class="mosaic-submit-row">
                 <button
-                    style=move || {
-                        if planner.center.get().is_some() {
-                            "padding:10px 28px; background:#0a1a2a; color:#88aaff; \
-                             border:1px solid #446; cursor:pointer; font-family:monospace; \
-                             font-size:13px; font-weight:bold; border-radius:4px;"
-                        } else {
-                            "padding:10px 28px; background:#111; color:#445; \
-                             border:1px solid #333; cursor:not-allowed; font-family:monospace; \
-                             font-size:13px; font-weight:bold; border-radius:4px;"
-                        }
-                    }
+                    class="mosaic-submit-btn"
                     disabled=move || planner.center.get().is_none()
                     on:click=on_send>
                     {move || tr().mosaic_send_scheduler}

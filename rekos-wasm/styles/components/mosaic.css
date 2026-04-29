@@ -1,0 +1,241 @@
+/* Mosaic Planner tab — target, grid, capture sequence, output, submit. */
+
+/* ── Root shell ───────────────────────────────────────────────── */
+
+.mosaic-tab-root {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+/* ── Inner wrapper ────────────────────────────────────────────── */
+
+.mosaic-tab-inner {
+    max-width: 680px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+/* ── Page header ──────────────────────────────────────────────── */
+
+.mosaic-header {
+    font-size: 15px;
+    font-weight: bold;
+    color: var(--text-dim);
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-mid);
+}
+
+/* ── Section ──────────────────────────────────────────────────── */
+
+.mosaic-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.mosaic-section-title {
+    font-size: var(--fs-sm);
+    font-weight: bold;
+    color: var(--text-blue);
+    padding: 6px 0 4px;
+    border-bottom: 1px solid var(--border-strong);
+    margin-bottom: 8px;
+}
+
+/* ── Target row ───────────────────────────────────────────────── */
+
+.mosaic-target-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.mosaic-target-label {
+    font-size: var(--fs-sm);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 200px;
+}
+
+/* ── Pick-on-sky button ───────────────────────────────────────── */
+
+.mosaic-pick-btn {
+    padding: 5px 12px;
+    background: var(--bg-button-info);
+    color: var(--text-blue);
+    border: 1px solid var(--border-accent);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    border-radius: var(--r-sm);
+    white-space: nowrap;
+}
+
+.mosaic-pick-btn--active {
+    background: #003030;
+    color: var(--accent-cyan);
+    border-color: var(--accent-cyan-dim);
+}
+
+/* ── Center coordinate display ────────────────────────────────── */
+
+.mosaic-center-display {
+    font-size: var(--fs-sm);
+    color: var(--text-blue);
+    padding: 2px 0;
+}
+
+/* ── Grid / Overlap / PA params row ───────────────────────────── */
+
+.mosaic-params-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.mosaic-param-label {
+    font-size: var(--fs-sm);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* ── FOV hint line ────────────────────────────────────────────── */
+
+.mosaic-fov-hint {
+    font-size: var(--fs-sm);
+    color: #557;
+    padding: 2px 0;
+}
+
+.mosaic-fov-hint--unavailable {
+    color: #555;
+}
+
+/* ── Inputs ───────────────────────────────────────────────────── */
+
+.mosaic-input {
+    background: var(--bg-input);
+    color: #ccc;
+    border: 1px solid var(--border-input);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    padding: 3px 5px;
+    box-sizing: border-box;
+}
+
+.mosaic-input--flex   { flex: 1; }
+.mosaic-input--center { width: 44px; text-align: center; }
+.mosaic-input--w50    { width: 50px; }
+.mosaic-input--w56    { width: 56px; }
+.mosaic-input--full   { width: 100%; }
+
+/* ── Capture sequence ─────────────────────────────────────────── */
+
+.mosaic-seq-header,
+.mosaic-seq-row {
+    display: grid;
+    grid-template-columns: 1fr 80px 60px 28px;
+    gap: 4px;
+}
+
+.mosaic-seq-header {
+    font-size: var(--fs-sm);
+    color: #666;
+    padding: 0 2px 4px;
+}
+
+.mosaic-seq-row {
+    margin-bottom: 2px;
+}
+
+.mosaic-seq-remove-btn {
+    background: #1a0a0a;
+    color: #cc4444;
+    border: 1px solid #422;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--fs-md);
+    border-radius: 2px;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+/* ── Add filter row button ────────────────────────────────────── */
+
+.mosaic-add-btn {
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 3px 10px;
+    background: #0a1a0a;
+    color: #44cc44;
+    border: 1px solid #264;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    border-radius: var(--r-sm);
+}
+
+/* ── Startup step flags ───────────────────────────────────────── */
+
+.mosaic-flags-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: var(--fs-sm);
+    padding-top: 4px;
+}
+
+.mosaic-flag-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+/* ── Error message ────────────────────────────────────────────── */
+
+.mosaic-error {
+    color: #ff6666;
+    font-size: var(--fs-sm);
+    padding: 4px 0;
+}
+
+/* ── Submit row ───────────────────────────────────────────────── */
+
+.mosaic-submit-row {
+    display: flex;
+    justify-content: flex-end;
+    padding-bottom: 24px;
+}
+
+.mosaic-submit-btn {
+    padding: 10px 28px;
+    background: var(--bg-button-info);
+    color: var(--text-blue);
+    border: 1px solid var(--border-accent);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--fs-md);
+    font-weight: bold;
+    border-radius: var(--r-sm);
+}
+
+.mosaic-submit-btn:disabled {
+    background: var(--bg-input);
+    color: #445;
+    border-color: var(--border-mid);
+    cursor: not-allowed;
+}
