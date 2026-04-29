@@ -123,33 +123,25 @@ pub fn SkyContextMenu(
                 let decm = ((dec_abs - decd as f64) * 60.0) as u32;
                 view! {
                     <div class="sky-ctx-menu"
+                        // left/top are dynamic per-click positions; the rest of the
+                        // menu's appearance lives in components/sky.css.
                         style=format!(
-                        "position:fixed; left:min({}px, calc(100vw - 200px)); \
-                         top:min({}px, calc(100dvh - 180px)); \
-                         background:#1a1a2e; border:1px solid #555; \
-                         border-radius:4px; padding:8px; font-size:12px; z-index:100; min-width:180px;",
-                        sx, sy
-                    )
-                    on:click=move |ev| ev.stop_propagation()
+                            "left:min({}px, calc(100vw - 200px)); top:min({}px, calc(100dvh - 180px));",
+                            sx, sy
+                        )
+                        on:click=move |ev| ev.stop_propagation()
                     >
-                        <div style="color:#aaa; margin-bottom:6px;">
+                        <div class="sky-ctx-menu__coord">
                             {format!("{} {:02}h{:02}m{:04.1}s", tr().ra_label, rah, ram, ras)}
                         </div>
-                        <div style="color:#aaa; margin-bottom:8px;">
+                        <div class="sky-ctx-menu__coord">
                             {format!("{} {}{}\u{00b0}{:02}'{:02}\"", tr().dec_label, dec_sign, decd, decm,
                                 ((dec_abs - decd as f64) * 3600.0 - decm as f64 * 60.0) as u32)}
                         </div>
                         <button
+                                class="sky-ctx-btn sky-ctx-btn--goto"
+                                class:sky-ctx-btn--disabled=move || goto_disabled.get()
                                 disabled=move || goto_disabled.get()
-                                style=move || if goto_disabled.get() {
-                                    "width:100%; background:#1a1a1a; color:#555; border:1px solid #333; \
-                                     padding:4px 8px; cursor:not-allowed; font-family:monospace; font-size:12px; \
-                                     border-radius:2px; margin-bottom:4px; opacity:0.6;"
-                                } else {
-                                    "width:100%; background:#2a3a5a; color:#aaf; border:1px solid #556; \
-                                     padding:4px 8px; cursor:pointer; font-family:monospace; font-size:12px; \
-                                     border-radius:2px; margin-bottom:4px;"
-                                }
                                 on:click=on_goto.clone()>
                             {move || {
                                 if let Some(svc) = goto_disabled.get().then(|| mount_busy.get()).flatten() {
@@ -160,16 +152,9 @@ pub fn SkyContextMenu(
                             }}
                         </button>
                         <button
+                                class="sky-ctx-btn sky-ctx-btn--align"
+                                class:sky-ctx-btn--disabled=move || align_disabled.get()
                                 disabled=move || align_disabled.get()
-                                style=move || if align_disabled.get() {
-                                    "width:100%; background:#1a1a1a; color:#555; border:1px solid #333; \
-                                     padding:4px 8px; cursor:not-allowed; font-family:monospace; font-size:12px; \
-                                     border-radius:2px; opacity:0.6;"
-                                } else {
-                                    "width:100%; background:#2a4a3a; color:#afa; border:1px solid #565; \
-                                     padding:4px 8px; cursor:pointer; font-family:monospace; font-size:12px; \
-                                     border-radius:2px;"
-                                }
                                 on:click=on_align.clone()>
                             {move || {
                                 let busy = mount_busy.get().or_else(|| camera_busy.get());
@@ -181,16 +166,12 @@ pub fn SkyContextMenu(
                             }}
                         </button>
                         <button
-                            style="width:100%; background:#1a1a3a; color:#88aaff; border:1px solid #446; \
-                                   padding:4px 8px; cursor:pointer; font-family:monospace; font-size:12px; \
-                                   border-radius:2px; margin-top:6px;"
+                            class="sky-ctx-btn sky-ctx-btn--scheduler"
                             on:click=on_add_scheduler.clone()>
                             {move || tr().sky_add_scheduler}
                         </button>
                         <button
-                            style="width:100%; background:#0a1a2a; color:#00cccc; border:1px solid #0a6060; \
-                                   padding:4px 8px; cursor:pointer; font-family:monospace; font-size:12px; \
-                                   border-radius:2px; margin-top:4px;"
+                            class="sky-ctx-btn sky-ctx-btn--mosaic"
                             on:click=on_create_mosaic.clone()>
                             {move || tr().sky_create_mosaic}
                         </button>

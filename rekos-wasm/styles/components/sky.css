@@ -1,0 +1,433 @@
+/* Sky / planetarium tab.
+   Naming: .sky-<part>, with state suffixes via .sky-<part>--<state>.
+   Canvas2D fillStyle / strokeStyle paint strings stay inline in render.rs;
+   only DOM styles live here. */
+
+/* ── Layout root ─────────────────────────────────────────────────── */
+.sky-pane {
+    position: relative;
+    width: 100%;
+    height: 100dvh;
+    overflow: hidden;
+}
+
+.sky-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+.sky-canvas--overlay {
+    cursor: crosshair;
+}
+
+/* ── Mosaic-pick banner (top-center transient prompt) ────────────── */
+.sky-mosaic-banner {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    pointer-events: none;
+    padding: 8px 18px;
+    background: var(--bg-banner);
+    border: 1px solid var(--accent-cyan-dim);
+    color: var(--accent-cyan);
+    font-family: var(--font-mono);
+    font-size: var(--fs-md);
+    border-radius: var(--r-md);
+    white-space: nowrap;
+}
+
+/* ── Search box (top-left) ───────────────────────────────────────── */
+.sky-search {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 50;
+    width: min(230px, calc(100vw - 120px));
+}
+.sky-search input {
+    background: var(--bg-panel-glass);
+    color: var(--text);
+    border: 1px solid var(--border-accent);
+    padding: 4px 8px;
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    box-sizing: border-box;
+    border-radius: 2px;
+}
+.sky-search-results {
+    background: var(--bg-panel-solid);
+    border: 1px solid var(--border-accent);
+    border-top: none;
+    max-height: 220px;
+    overflow-y: auto;
+    border-radius: 0 0 2px 2px;
+}
+.sky-search-result {
+    padding: 3px 8px;
+    cursor: pointer;
+    color: var(--text);
+    border-bottom: 1px solid #1a1a2a;
+    font-size: 12px;
+}
+
+/* ── Controls panel (top-right, collapsible) ─────────────────────── */
+.sky-controls {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    z-index: 50;
+}
+
+.sky-controls-toggle {
+    background: var(--bg-panel-dim);
+    color: var(--text-blue);
+    border: 1px solid var(--border-accent);
+    border-radius: var(--r-sm);
+    padding: 4px 10px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--fs-base);
+    line-height: 1;
+    min-height: 32px;
+}
+.sky-controls-toggle--open {
+    background: rgba(26, 26, 46, 0.92);
+}
+
+.sky-controls-panel {
+    background: var(--bg-panel-glass);
+    border: 1px solid var(--border-mid);
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    overflow: hidden;
+    /* Sizing constraints — kept here so responsive.css can override them. */
+    min-width: 180px;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - 120px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.sky-controls-section-hdr {
+    padding: 7px 10px;
+    width: 100%;
+    text-align: left;
+    border: none;
+    border-bottom: 1px solid var(--border-strong);
+    background: var(--bg-section-hdr);
+    color: var(--text-blue);
+    font-weight: bold;
+    font-size: var(--fs-sm);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    min-height: 36px;
+}
+
+.sky-controls-section {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-strong);
+}
+.sky-controls-section--no-border {
+    border-bottom: none;
+}
+.sky-controls-section--gap-6 {
+    gap: 6px;
+}
+
+.sky-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+.sky-checkbox-row--indent {
+    padding-left: 16px;
+}
+.sky-checkbox-row--with-icon {
+    gap: 5px;
+}
+.sky-checkbox-row--separator {
+    border-top: 1px solid var(--border-strong);
+    padding-top: 4px;
+    margin-top: 2px;
+}
+.sky-checkbox-row svg {
+    flex-shrink: 0;
+}
+
+.sky-controls-input {
+    background: var(--bg-input);
+    color: #ccc;
+    border: 1px solid var(--border-input);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    padding: 2px;
+}
+.sky-controls-mag-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+}
+.sky-controls-mag-row > span {
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-size: var(--fs-sm);
+}
+.sky-controls-mag-row input {
+    width: 52px;
+}
+.sky-controls-settings-row {
+    font-size: var(--fs-sm);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.sky-controls-settings-row input {
+    width: 60px;
+}
+.sky-controls-loc-row {
+    margin-bottom: 3px;
+}
+.sky-controls-loc-row input {
+    width: 72px;
+}
+
+.sky-controls-btn {
+    background: var(--bg-button);
+    color: var(--text-blue);
+    border: 1px solid var(--border-input);
+    padding: 4px 8px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+}
+.sky-controls-btn--ok {
+    background: var(--bg-button-ok);
+    color: var(--accent-green-soft);
+    border-color: var(--border-ok);
+}
+
+.sky-controls-divider {
+    border-top: 1px solid var(--border-strong);
+    margin-top: 4px;
+    padding-top: 6px;
+}
+.sky-controls-subhdr {
+    font-size: var(--fs-sm);
+    color: var(--text-blue);
+    margin-bottom: 4px;
+    font-weight: bold;
+}
+.sky-controls-loc-buttons {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+/* ── Zoom bar (right side, vertical) ─────────────────────────────── */
+.sky-zoom-bar {
+    position: absolute;
+    right: 8px;
+    top: 50px;
+    bottom: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    z-index: 30;
+}
+.sky-zoom-bar__label {
+    font-size: var(--fs-sm);
+    color: var(--text-faint);
+    white-space: nowrap;
+}
+.sky-zoom-slider {
+    flex: 1;
+    accent-color: var(--text-blue);
+    writing-mode: vertical-lr;
+    direction: rtl;
+    -webkit-appearance: slider-vertical;
+    width: 20px;
+    cursor: pointer;
+}
+
+/* ── Mosaic editor (floating bottom-right while planning) ────────── */
+.sky-mosaic-editor {
+    position: absolute;
+    bottom: 80px;
+    right: max(6px, env(safe-area-inset-right));
+    z-index: 110;
+    width: min(240px, calc(100vw - 12px));
+    background: rgba(8, 8, 20, 0.94);
+    border: 1px solid var(--border-info);
+    border-radius: var(--r-md);
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+.sky-mosaic-editor__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.sky-mosaic-editor__title {
+    color: var(--accent-cyan-dim);
+    font-weight: bold;
+}
+.sky-mosaic-editor__close {
+    background: none;
+    border: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    font-size: var(--fs-base);
+    line-height: 1;
+    padding: 0 2px;
+}
+.sky-mosaic-editor__center {
+    font-size: var(--fs-sm);
+    color: var(--text-blue);
+}
+.sky-mosaic-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.sky-mosaic-row--label {
+    gap: 5px;
+}
+.sky-mosaic-row > span {
+    color: var(--text-muted);
+    min-width: 52px;
+}
+.sky-mosaic-row > span.sky-mosaic-row__sep {
+    color: var(--text-faint);
+    min-width: 0;
+}
+.sky-mosaic-input {
+    background: var(--bg-input);
+    color: #ccc;
+    border: 1px solid var(--border-input);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 2px 5px;
+}
+.sky-mosaic-input--target {
+    flex: 1;
+}
+.sky-mosaic-input--small {
+    width: 40px;
+    padding: 2px 4px;
+    text-align: center;
+}
+.sky-mosaic-input--med {
+    width: 48px;
+    padding: 2px 4px;
+}
+.sky-mosaic-input--pa {
+    width: 54px;
+    padding: 2px 4px;
+}
+.sky-mosaic-open-btn {
+    margin-top: 4px;
+    padding: 6px 0;
+    background: var(--bg-button-info);
+    color: var(--text-blue);
+    border: 1px solid var(--border-accent);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    border-radius: 3px;
+    text-align: center;
+}
+
+/* ── Right-click context menu ─────────────────────────────────────── */
+.sky-ctx-menu {
+    position: fixed;
+    background: var(--bg-button);
+    border: 1px solid #555;
+    border-radius: var(--r-sm);
+    padding: 8px;
+    font-size: 12px;
+    z-index: 100;
+    min-width: 180px;
+    /* Sizing constraints — responsive.css cannot widen these so keep here. */
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - 32px);
+    overflow-y: auto;
+}
+.sky-ctx-menu__coord {
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+.sky-ctx-menu__coord:last-of-type {
+    margin-bottom: 8px;
+}
+.sky-ctx-btn {
+    width: 100%;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    border-radius: 2px;
+}
+.sky-ctx-btn--goto {
+    background: #2a3a5a;
+    color: #aaf;
+    border: 1px solid #556;
+    margin-bottom: 4px;
+}
+.sky-ctx-btn--align {
+    background: #2a4a3a;
+    color: #afa;
+    border: 1px solid #565;
+}
+.sky-ctx-btn--scheduler {
+    background: #1a1a3a;
+    color: var(--text-blue);
+    border: 1px solid var(--border-accent);
+    margin-top: 6px;
+}
+.sky-ctx-btn--mosaic {
+    background: var(--bg-button-info);
+    color: var(--accent-cyan-dim);
+    border: 1px solid var(--border-info);
+    margin-top: 4px;
+}
+.sky-ctx-btn--disabled,
+.sky-ctx-btn[disabled] {
+    background: #1a1a1a !important;
+    color: #555 !important;
+    border-color: #333 !important;
+    cursor: not-allowed !important;
+    opacity: 0.6;
+}
+
+/* ── Confirm popup (bottom of screen) ────────────────────────────── */
+.sky-confirm-popup {
+    padding-left:   max(16px, env(safe-area-inset-left))  !important;
+    padding-right:  max(16px, env(safe-area-inset-right)) !important;
+    padding-bottom: max(14px, env(safe-area-inset-bottom)) !important;
+}

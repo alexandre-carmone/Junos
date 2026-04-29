@@ -40,105 +40,89 @@ pub fn SkyControls(
 
     view! {
         <div class="sky-controls"
-             style="position:absolute; top:8px; right:8px; display:flex; flex-direction:column; align-items:flex-end; gap:4px; z-index:50;"
              on:click=move |ev| ev.stop_propagation()>
             // Toggle button
             <button
+                class="sky-controls-toggle"
+                class:sky-controls-toggle--open=move || show_controls.get()
                 on:click=move |_| set_show_controls.update(|v| *v = !*v)
-                title=move || tr().toggle_controls
-                style=move || format!(
-                    "background:{}; color:#88aaff; border:1px solid #446; border-radius:4px; \
-                     padding:4px 10px; cursor:pointer; font-family:monospace; font-size:14px; \
-                     line-height:1; min-height:32px;",
-                    if show_controls.get() { "rgba(26,26,46,0.92)" } else { "rgba(10,10,20,0.75)" }
-                )>
+                title=move || tr().toggle_controls>
                 {move || if show_controls.get() { "\u{2716}" } else { "\u{2699}" }}
             </button>
 
             // Collapsible panel
-            {move || show_controls.get().then(|| {
-                let section_hdr = "padding:7px 10px; width:100%; text-align:left; \
-                                   border:none; border-bottom:1px solid #2a2a3a; \
-                                   background:rgba(30,30,50,0.7); color:#88aaff; \
-                                   font-weight:bold; font-size:11px; font-family:monospace; \
-                                   text-transform:uppercase; letter-spacing:0.06em; \
-                                   cursor:pointer; display:flex; justify-content:space-between; \
-                                   align-items:center; min-height:36px;";
-                view! {
-                <div class="sky-controls-panel"
-                     style="background:rgba(10,10,20,0.88); border:1px solid #333; \
-                             border-radius:4px; font-size:12px; overflow:hidden;">
+            {move || show_controls.get().then(|| view! {
+                <div class="sky-controls-panel">
 
                     // ── Part 1 : Sky display ───────────────────────────
-                    <button style=section_hdr
+                    <button class="sky-controls-section-hdr"
                             on:click=move |_| set_show_sky_section.update(|v| *v = !*v)>
                         {move || tr().sky_section}
                         {move || if show_sky_section.get() { "\u{25be}" } else { "\u{25b8}" }}
                     </button>
                     {move || show_sky_section.get().then(|| view! {
-                        <div style="display:flex; flex-direction:column; gap:4px; padding:6px 10px; \
-                                     border-bottom:1px solid #2a2a3a;">
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                        <div class="sky-controls-section">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.stars.get()
                                        on:change=move |ev| toggles.stars.set(event_target_checked(&ev)) />
                                 {move || tr().stars_checkbox}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.names.get()
                                        on:change=move |ev| toggles.names.set(event_target_checked(&ev)) />
                                 {move || tr().names_checkbox}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.constellations.get()
                                        on:change=move |ev| toggles.constellations.set(event_target_checked(&ev)) />
                                 {move || tr().constellations}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; padding-left:16px;">
+                            <label class="sky-checkbox-row sky-checkbox-row--indent">
                                 <input type="checkbox" prop:checked=move || toggles.con_names.get()
                                        on:change=move |ev| toggles.con_names.set(event_target_checked(&ev)) />
                                 {move || tr().names_checkbox}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.grid.get()
                                        on:change=move |ev| toggles.grid.set(event_target_checked(&ev)) />
                                 {move || tr().grid}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.eq_grid.get()
                                        on:change=move |ev| toggles.eq_grid.set(event_target_checked(&ev)) />
                                 {move || tr().eq_grid}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.meridian.get()
                                        on:change=move |ev| toggles.meridian.set(event_target_checked(&ev)) />
                                 {move || tr().meridian}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.ecliptic.get()
                                        on:change=move |ev| toggles.ecliptic.set(event_target_checked(&ev)) />
                                 {move || tr().ecliptic}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.zenith.get()
                                        on:change=move |ev| toggles.zenith.set(event_target_checked(&ev)) />
                                 {move || tr().zenith}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.fov.get()
                                        on:change=move |ev| toggles.fov.set(event_target_checked(&ev)) />
                                 {move || tr().fov}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.solve_marker.get()
                                        on:change=move |ev| toggles.solve_marker.set(event_target_checked(&ev)) />
                                 {move || tr().solve_marker}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.slew_trail.get()
                                        on:change=move |ev| toggles.slew_trail.set(event_target_checked(&ev)) />
                                 {move || tr().slew_trail}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; border-top:1px solid #2a2a3a; padding-top:4px; margin-top:2px;">
+                            <label class="sky-checkbox-row sky-checkbox-row--separator">
                                 <input type="checkbox" prop:checked=move || toggles.scheduler_jobs.get()
                                        on:change=move |ev| toggles.scheduler_jobs.set(event_target_checked(&ev)) />
                                 {move || tr().sky_scheduler_jobs}
@@ -147,47 +131,46 @@ pub fn SkyControls(
                     })}
 
                     // ── Part 2 : Objects (DSO) ─────────────────────────
-                    <button style=section_hdr
+                    <button class="sky-controls-section-hdr"
                             on:click=move |_| set_show_objects_section.update(|v| *v = !*v)>
                         {move || tr().objects_section}
                         {move || if show_objects_section.get() { "\u{25be}" } else { "\u{25b8}" }}
                     </button>
                     {move || show_objects_section.get().then(|| view! {
-                        <div style="display:flex; flex-direction:column; gap:4px; padding:6px 10px; \
-                                     border-bottom:1px solid #2a2a3a;">
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                        <div class="sky-controls-section">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.dso.get()
                                        on:change=move |ev| toggles.dso.set(event_target_checked(&ev)) />
                                 {move || tr().all_dso}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="sky-checkbox-row">
                                 <input type="checkbox" prop:checked=move || toggles.solar_system.get()
                                        on:change=move |ev| toggles.solar_system.set(event_target_checked(&ev)) />
                                 {move || tr().solar_system}
                             </label>
-                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                            <label class="sky-checkbox-row sky-checkbox-row--with-icon">
                                 <input type="checkbox" prop:checked=move || toggles.dso_galaxy.get()
                                        on:change=move |ev| toggles.dso_galaxy.set(event_target_checked(&ev)) />
-                                <svg width="14" height="10" style="flex-shrink:0;">
+                                <svg width="14" height="10">
                                     <ellipse cx="7" cy="5" rx="6" ry="2.5"
                                              fill="none" stroke="rgba(0,200,220,0.85)" stroke-width="1.2"/>
                                 </svg>
                                 {move || tr().galaxies}
                             </label>
-                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                            <label class="sky-checkbox-row sky-checkbox-row--with-icon">
                                 <input type="checkbox" prop:checked=move || toggles.dso_open_cluster.get()
                                        on:change=move |ev| toggles.dso_open_cluster.set(event_target_checked(&ev)) />
-                                <svg width="14" height="14" style="flex-shrink:0;">
+                                <svg width="14" height="14">
                                     <circle cx="7" cy="7" r="5.5"
                                             fill="none" stroke="rgba(255,220,50,0.85)" stroke-width="1.2"
                                             stroke-dasharray="3,2"/>
                                 </svg>
                                 {move || tr().open_clusters}
                             </label>
-                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                            <label class="sky-checkbox-row sky-checkbox-row--with-icon">
                                 <input type="checkbox" prop:checked=move || toggles.dso_globular.get()
                                        on:change=move |ev| toggles.dso_globular.set(event_target_checked(&ev)) />
-                                <svg width="14" height="14" style="flex-shrink:0;">
+                                <svg width="14" height="14">
                                     <circle cx="7" cy="7" r="5.5"
                                             fill="none" stroke="rgba(255,160,60,0.85)" stroke-width="1.2"/>
                                     <line x1="1.5" y1="7" x2="12.5" y2="7"
@@ -197,19 +180,19 @@ pub fn SkyControls(
                                 </svg>
                                 {move || tr().globular_clusters}
                             </label>
-                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                            <label class="sky-checkbox-row sky-checkbox-row--with-icon">
                                 <input type="checkbox" prop:checked=move || toggles.dso_nebula.get()
                                        on:change=move |ev| toggles.dso_nebula.set(event_target_checked(&ev)) />
-                                <svg width="14" height="14" style="flex-shrink:0;">
+                                <svg width="14" height="14">
                                     <rect x="1.5" y="1.5" width="11" height="11"
                                           fill="none" stroke="rgba(60,220,100,0.85)" stroke-width="1.2"/>
                                 </svg>
                                 {move || tr().nebulae}
                             </label>
-                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                            <label class="sky-checkbox-row sky-checkbox-row--with-icon">
                                 <input type="checkbox" prop:checked=move || toggles.dso_planetary.get()
                                        on:change=move |ev| toggles.dso_planetary.set(event_target_checked(&ev)) />
-                                <svg width="18" height="14" style="flex-shrink:0;">
+                                <svg width="18" height="14">
                                     <circle cx="9" cy="7" r="4"
                                             fill="none" stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
                                     <line x1="1" y1="7" x2="5" y2="7"
@@ -223,31 +206,30 @@ pub fn SkyControls(
                                 </svg>
                                 {move || tr().planetary_nebulae}
                             </label>
-                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                            <label class="sky-checkbox-row sky-checkbox-row--with-icon">
                                 <input type="checkbox" prop:checked=move || toggles.dso_snr.get()
                                        on:change=move |ev| toggles.dso_snr.set(event_target_checked(&ev)) />
-                                <svg width="14" height="14" style="flex-shrink:0;">
+                                <svg width="14" height="14">
                                     <rect x="1.5" y="1.5" width="11" height="11"
                                           fill="none" stroke="rgba(60,220,100,0.65)" stroke-width="1.2"
                                           stroke-dasharray="2,2"/>
                                 </svg>
                                 {move || tr().supernova_remnants}
                             </label>
-                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                            <label class="sky-checkbox-row sky-checkbox-row--with-icon">
                                 <input type="checkbox" prop:checked=move || toggles.dso_galaxy_cluster.get()
                                        on:change=move |ev| toggles.dso_galaxy_cluster.set(event_target_checked(&ev)) />
-                                <svg width="14" height="14" style="flex-shrink:0;">
+                                <svg width="14" height="14">
                                     <circle cx="7" cy="7" r="5.5"
                                             fill="none" stroke="rgba(220,100,220,0.85)" stroke-width="1.2"
                                             stroke-dasharray="2,3"/>
                                 </svg>
                                 {move || tr().galaxy_clusters}
                             </label>
-                            <label style="display:flex; align-items:center; gap:4px; margin-top:2px;">
-                                <span style="color:#aaa; white-space:nowrap; font-size:11px;">{move || tr().mag_limit}</span>
+                            <label class="sky-controls-mag-row">
+                                <span>{move || tr().mag_limit}</span>
                                 <input type="number" min="1" max="20" step="0.5"
-                                       style="width:52px; background:#111; color:#ccc; border:1px solid #444; \
-                                              font-family:monospace; font-size:11px; padding:2px;"
+                                       class="sky-controls-input"
                                        prop:value=move || format!("{:.1}", toggles.dso_mag_limit.get())
                                        on:input=move |ev| {
                                            if let Ok(v) = event_target_value(&ev).parse::<f64>() {
@@ -259,18 +241,17 @@ pub fn SkyControls(
                     })}
 
                     // ── Part 3 : Settings ──────────────────────────────
-                    <button style=section_hdr
+                    <button class="sky-controls-section-hdr"
                             on:click=move |_| set_show_settings_section.update(|v| *v = !*v)>
                         {move || tr().settings_section}
                         {move || if show_settings_section.get() { "\u{25be}" } else { "\u{25b8}" }}
                     </button>
                     {move || show_settings_section.get().then(|| view! {
-                        <div style="display:flex; flex-direction:column; gap:6px; padding:6px 10px;">
-                            <label style="font-size:11px; display:flex; align-items:center; gap:4px;">
+                        <div class="sky-controls-section sky-controls-section--no-border sky-controls-section--gap-6">
+                            <label class="sky-controls-settings-row">
                                 {move || tr().fl_mm}
                                 <input type="number"
-                                       style="width:60px; background:#111; color:#ccc; border:1px solid #444; \
-                                              font-family:monospace; font-size:11px; padding:2px;"
+                                       class="sky-controls-input"
                                        prop:value=move || focal_override.get()
                                        placeholder=move || focal_length_mm.get()
                                            .map(|v| format!("{v:.0}")).unwrap_or_default()
@@ -284,37 +265,33 @@ pub fn SkyControls(
                                            set_focal_override.set(val);
                                        } />
                             </label>
-                            <button style="background:#1a1a2e; color:#88aaff; border:1px solid #444; \
-                                           padding:4px 8px; cursor:pointer; font-family:monospace; font-size:11px;"
+                            <button class="sky-controls-btn"
                                     on:click=move |_| {
                                         set_follow_mount.set(true);
                                     }>
                                 {move || tr().follow_mount}
                             </button>
-                            <div style="border-top:1px solid #2a2a3a; margin-top:4px; padding-top:6px;">
-                                <div style="font-size:11px; color:#88aaff; margin-bottom:4px; font-weight:bold;">
+                            <div class="sky-controls-divider">
+                                <div class="sky-controls-subhdr">
                                     {move || tr().location_section}
                                 </div>
-                                <label style="font-size:11px; display:flex; align-items:center; gap:4px; margin-bottom:3px;">
+                                <label class="sky-controls-settings-row sky-controls-loc-row">
                                     {move || tr().latitude_label}
                                     <input type="number" step="0.0001" min="-90" max="90"
-                                           style="width:72px; background:#111; color:#ccc; border:1px solid #444; \
-                                                  font-family:monospace; font-size:11px; padding:2px;"
+                                           class="sky-controls-input"
                                            prop:value=move || lat_str.get()
                                            on:input=move |ev| lat_str.set(event_target_value(&ev)) />
                                 </label>
-                                <label style="font-size:11px; display:flex; align-items:center; gap:4px; margin-bottom:4px;">
+                                <label class="sky-controls-settings-row sky-controls-loc-row">
                                     {move || tr().longitude_label}
                                     <input type="number" step="0.0001" min="-180" max="180"
-                                           style="width:72px; background:#111; color:#ccc; border:1px solid #444; \
-                                                  font-family:monospace; font-size:11px; padding:2px;"
+                                           class="sky-controls-input"
                                            prop:value=move || lon_str.get()
                                            on:input=move |ev| lon_str.set(event_target_value(&ev)) />
                                 </label>
-                                <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                                <div class="sky-controls-loc-buttons">
                                     <button
-                                        style="background:#1a1a2e; color:#88aaff; border:1px solid #444; \
-                                               padding:4px 8px; cursor:pointer; font-family:monospace; font-size:11px;"
+                                        class="sky-controls-btn"
                                         on:click=move |_| {
                                             let lat = lat_str.get().parse::<f64>().unwrap_or(0.0);
                                             let lon = lon_str.get().parse::<f64>().unwrap_or(0.0);
@@ -323,8 +300,7 @@ pub fn SkyControls(
                                         {move || tr().set_location_btn}
                                     </button>
                                     <button
-                                        style="background:#1a2a1a; color:#8f8; border:1px solid #484; \
-                                               padding:4px 8px; cursor:pointer; font-family:monospace; font-size:11px;"
+                                        class="sky-controls-btn sky-controls-btn--ok"
                                         on:click=move |_| {
                                             let lat_s = lat_str;
                                             let lon_s = lon_str;
@@ -360,7 +336,6 @@ pub fn SkyControls(
 
 
                 </div>
-                }
             })}
         </div>
     }

@@ -1,0 +1,178 @@
+/* Responsive overrides — kept in a single file so the cascade is auditable.
+   Loaded last so component-base rules can be overridden at the breakpoints. */
+
+/* ── TABLET  768 – 1023 px ───────────────────────────────────────── */
+@media (min-width: 768px) and (max-width: 1023px) {
+    .sky-controls-panel { min-width: 160px; }
+    .focus-body { grid-template-columns: 3fr 2fr; }
+    .focus-left-col { grid-template-rows: 1fr 90px; }
+    .focus-hfr-pane canvas { height: 76px !important; }
+}
+
+/* ── SMARTPHONE  ≤ 767 px  (iPhone SE → 14 Pro Max) ─────────────── */
+@media (max-width: 767px) {
+
+    /* iOS Safari zooms into any input whose computed font-size is
+       below 16 px when it gains focus. Many components set inline
+       `font-size:12px` which overrides the base rule above, so force
+       a 16 px floor on mobile with !important. */
+    input, select, textarea {
+        font-size: 16px !important;
+    }
+
+    /* Status strip — smaller, tighter, still non-interactive */
+    .status-strip {
+        font-size: 10px !important;
+        padding: 4px 8px !important;
+    }
+
+    /* Inputs: prevent fixed widths from overflowing */
+    input[type="text"],
+    input[type="number"] {
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    /* Sky search — fill the row, leave space for controls gear */
+    .sky-search {
+        width: calc(100vw - 72px) !important;
+        top: 34px !important;
+    }
+
+    /* Sky controls — slide below status strip, cap height */
+    .sky-controls {
+        top: 34px !important;
+    }
+    .sky-controls-panel {
+        min-width: 0 !important;
+        width: calc(100vw - 16px);
+        max-height: calc(100dvh - 160px);
+    }
+    .sky-controls-panel input[type="number"] {
+        width: 72px !important;
+    }
+
+    /* Sky map: push time-slider to full-width row above action buttons */
+    .sky-time-slider {
+        left: 8px !important;
+        bottom: 100px !important;
+    }
+
+    /* Sky action buttons: move up so they clear the time slider */
+    .sky-actions {
+        bottom: 52px !important;
+    }
+
+    /* Zoom bar: stays right, shifted to clear time slider */
+    .sky-zoom-bar {
+        top: 72px !important;
+        bottom: 150px !important;
+    }
+
+    /* Confirm popup: stack the two main rows vertically */
+    .sky-confirm-popup {
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }
+    .sky-confirm-popup > div:last-child {
+        justify-content: space-between;
+        flex-wrap: wrap;
+    }
+    .sky-confirm-popup button {
+        flex: 1 1 30%;
+        min-width: 0;
+        padding: 12px 10px !important;
+        font-size: 13px !important;
+    }
+
+    /* Focus tab */
+    .focus-header {
+        padding: 0 12px !important;
+        flex-wrap: wrap !important;
+        gap: 10px !important;
+        font-size: 12px !important;
+        height: auto !important;
+    }
+    .focus-tab-root {
+        grid-template-rows: auto 1fr !important;
+    }
+    .focus-body {
+        grid-template-columns: 1fr !important;
+        grid-template-rows: minmax(50dvh, 1fr) auto !important;
+    }
+    .focus-body > div:first-child {
+        border-right: none !important;
+        border-bottom: 1px solid #222 !important;
+    }
+    .focus-left-col {
+        grid-template-rows: 1fr 72px !important;
+    }
+    .focus-hfr-pane {
+        padding: 4px !important;
+    }
+    .focus-hfr-pane canvas {
+        height: 62px !important;
+    }
+    .focus-setting-row > span:first-child {
+        flex: 0 0 110px !important;
+    }
+
+    /* Polar Align tab */
+    .polar-header {
+        padding: 6px 12px 6px 56px !important;
+        gap: 6px 10px !important;
+        font-size: 12px !important;
+    }
+    .polar-status-msg {
+        flex-basis: 100% !important;
+        white-space: normal !important;
+        font-size: 11px !important;
+    }
+    .polar-body {
+        padding: 10px 12px !important;
+        gap: 10px !important;
+    }
+    .polar-section {
+        padding: 8px 10px !important;
+    }
+    .polar-field-row {
+        flex-wrap: wrap !important;
+        gap: 4px 8px !important;
+    }
+    .polar-field-label {
+        flex: 0 0 100% !important;
+        font-size: 12px !important;
+    }
+    .polar-preview {
+        min-height: 140px !important;
+        max-height: 40dvh !important;
+    }
+    .polar-refresh-row {
+        flex-direction: column !important;
+        gap: 10px !important;
+    }
+    .polar-correction {
+        flex: 0 0 auto !important;
+        align-self: center !important;
+    }
+    .polar-error-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* Safe-area padding for iPhone notch / home indicator */
+    #rekos-app {
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+}
+
+/* ── Very small phones  ≤ 374 px  (iPhone SE 1st gen) ───────────── */
+@media (max-width: 374px) {
+    button {
+        min-width: 36px !important;
+        font-size: 12px !important;
+    }
+    .sky-search { width: calc(100vw - 72px) !important; }
+    .status-strip { font-size: 9px !important; }
+    .polar-header { padding-left: 48px !important; font-size: 11px !important; }
+    .polar-stage-badge { font-size: 10px !important; padding: 3px 8px !important; }
+}

@@ -135,6 +135,18 @@ JSON `{"type": "...", "payload": {...}}` over WebSocket. Authoritative reference
 3. If the browser *sends* it, dispatch via `send(serde_json::json!({…}).to_string())`. For INDI properties that may arrive before the driver is registered, use the `spawn_retry_property` pattern.
 4. To expose new state to the planetarium, plumb it through `compat.rs` (the `*Snapshot` types consumed by `SkyTab`).
 
+## Styling
+
+Styles live in `rekos-wasm/styles/`, bundled by Trunk via `<link data-trunk rel="css" …>` in `index.html` (load order: `tokens` → `base` → `shell` → `components/*` → `responsive`):
+
+- `tokens.css` defines design tokens (`--bg`, `--text-blue`, `--accent-cyan`, `--sp-*`, `--r-*`, `--fs-*`, `--font-mono`). Reference these via `var(--name)` in CSS rather than restating hex/px literals.
+- `components/sky.css` and `components/tab_wheel.css` hold the class definitions for the migrated components. Use semantic class names: `<component>-<part>` (e.g. `sky-controls-toggle`, `tab-wheel-button`), with state modifiers as `--<state>` suffixes (e.g. `tab-wheel-button--active`).
+- `responsive.css` is the single home for `@media` rules so the cascade is auditable.
+
+In Leptos `view! {}`, prefer `class="…"` over inline `style="…"`. Use `class:foo=move || cond` for state toggles. Inline `style=` is reserved for values that genuinely change per render — and even then prefer setting CSS custom properties consumed by a class (see how `tab_wheel.rs` passes `--tw-rot`, `--tw-bx`, `--tw-cr`) rather than restating full property strings. Canvas2D paint strings (`ctx.fillStyle = …` in `sky/render.rs`) are *not* DOM CSS — leave them inline.
+
+When migrating a previously-untouched tab, add a new `components/<tab>.css`, replace its inline styles with class names, and link the new file from `index.html`. Sky and the tab wheel are migrated; the other tabs (mount, focus, imaging, scheduler, polar_align, mosaic, guide, files) still use inline styles and `const CSS: &str` blocks — convert opportunistically when next editing them.
+
 ## Static assets
 
 `rekos-wasm/public/` contains binary catalogs — `junos.bin` (star catalog), `dso.bin` (deep-sky catalog), `nebulae.json` + `nebulae/` (thumbnails). Trunk copies these into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes. The Python regen tools live in `scripts/` (run with `uv run`).

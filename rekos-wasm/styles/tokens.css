@@ -1,0 +1,62 @@
+/* Design tokens. One source of truth for color, spacing, radius, fonts.
+   Reference these via var(--name) instead of restating literals. */
+
+:root {
+    /* Background / surfaces */
+    --bg:               #0a0a0f;
+    --bg-input:         #111;
+    --bg-input-deep:    #06060c;
+    --bg-panel:         rgba(20, 26, 60, 0.92);
+    --bg-panel-dim:     rgba(10, 10, 20, 0.75);
+    --bg-panel-glass:   rgba(10, 10, 20, 0.88);
+    --bg-panel-solid:   rgba(10, 10, 20, 0.95);
+    --bg-section-hdr:   rgba(30, 30, 50, 0.7);
+    --bg-button:        #1a1a2e;
+    --bg-button-info:   #0a1a2a;
+    --bg-button-ok:     #1a2a1a;
+    --bg-banner:        rgba(0, 30, 50, 0.92);
+
+    /* Text */
+    --text:             #c0c0d0;
+    --text-dim:         #cfe0ff;
+    --text-muted:       #aaa;
+    --text-faint:       #888;
+    --text-blue:        #88aaff;
+
+    /* Accents */
+    --accent-cyan:      #00ffff;
+    --accent-cyan-dim:  #00cccc;
+    --accent-amber:     #ffd060;
+    --accent-green:     #7affa0;
+    --accent-green-soft:#8f8;
+
+    /* Borders */
+    --border:           #222;
+    --border-strong:    #2a2a3a;
+    --border-mid:       #333;
+    --border-input:     #444;
+    --border-accent:    #446;
+    --border-accent-2:  #4466cc;
+    --border-ok:        #484;
+    --border-info:      #0a6060;
+
+    /* Spacing scale */
+    --sp-1:             4px;
+    --sp-2:             8px;
+    --sp-3:             10px;
+    --sp-4:             14px;
+    --sp-5:             18px;
+
+    /* Radii */
+    --r-sm:             4px;
+    --r-md:             6px;
+    --r-lg:             8px;
+
+    /* Fonts */
+    --font-mono:        'Courier New', monospace;
+    --fs-xs:            10px;
+    --fs-sm:            11px;
+    --fs-md:            13px;
+    --fs-base:          14px;
+    --fs-lg:            16px;
+}
