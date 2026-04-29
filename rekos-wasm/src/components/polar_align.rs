@@ -198,24 +198,6 @@ fn would_cross_meridian(
     }
 }
 
-fn action_btn(color: &str) -> String {
-    format!(
-        "padding:8px 12px; background:rgba(12,14,24,0.9); \
-         border:1px solid {c}; color:{c}; cursor:pointer; \
-         font-family:monospace; font-size:12px;",
-        c = color
-    )
-}
-
-fn input_style() -> &'static str {
-    "flex:1; background:#06060c; color:#cfe0ff; border:1px solid #222; \
-     padding:4px 6px; font-family:monospace; font-size:12px;"
-}
-
-fn field_label_style() -> &'static str {
-    "flex:0 0 clamp(80px,22%,120px); color:#88aaff; font-size:11px;"
-}
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -367,76 +349,58 @@ pub fn PolarAlignTab(
     let refresh_visible = move || polar.with(|p| is_refresh_stage(&p.stage));
 
     view! {
-        <div class="polar-tab-root"
-             style="position:absolute; inset:0; background:#0a0a0f; color:#c0c0d0; \
-                    font-family:monospace; display:grid; \
-                    grid-template-rows:auto 1fr; overflow:hidden;">
+        <div class="polar-tab-root">
 
             // ── Header ────────────────────────────────────────────────
-            <div class="polar-header"
-                 style="display:flex; align-items:center; gap:8px 14px; \
-                        flex-wrap:wrap; min-height:48px; \
-                        padding:8px 20px 8px 80px; border-bottom:1px solid #222; \
-                        background:rgba(6,6,15,0.85); font-size:13px;">
+            <div class="polar-header">
                 <span class="polar-stage-badge"
                       style=move || format!(
-                    "display:inline-block; padding:4px 10px; border-radius:14px; \
-                     border:1px solid {c}; color:{c}; font-size:11px;",
-                    c = stage_color(&polar.with(|p| p.stage.clone()))
+                    "--badge-color:{};",
+                    stage_color(&polar.with(|p| p.stage.clone()))
                 )>
                     {move || {
                         let s = polar.with(|p| p.stage.clone());
                         if s.is_empty() { tr().pa_idle.to_string() } else { s }
                     }}
                 </span>
-                <span style="color:#88aaff;">{move || tr().pa_enabled_label}</span>
+                <span class="polar-header-label">{move || tr().pa_enabled_label}</span>
                 <span>{move || if polar.with(|p| p.enabled) { tr().yes } else { tr().no }}</span>
                 <span class="polar-status-msg"
-                      style="flex:1; color:#c0c0d0; overflow:hidden; \
-                             white-space:nowrap; text-overflow:ellipsis;"
                       title=move || polar.with(|p| p.message.clone())>
                     {move || polar.with(|p| p.message.clone())}
                 </span>
             </div>
 
             // ── Body ──────────────────────────────────────────────────
-            <div class="polar-body"
-                 style="overflow-y:auto; padding:16px 20px; \
-                        display:flex; flex-direction:column; gap:14px;">
+            <div class="polar-body">
 
                 // Live frame from KStars align module (uuid "+A" — every
                 // capture, solve, and refresh iteration streams a JPEG).
                 <Show when=move || polar.with(|p| p.preview_url.is_some())>
-                    <div class="polar-preview"
-                         style="display:flex; justify-content:center; \
-                                align-items:center; background:#06060c; \
-                                border:1px solid #222; padding:8px; \
-                                min-height:220px; max-height:440px;">
+                    <div class="polar-preview">
                         <img
                             src=move || polar.with(|p|
                                 p.preview_url.clone().unwrap_or_default())
                             alt="align frame"
-                            style="max-width:100%; max-height:424px; \
-                                   object-fit:contain; display:block; \
-                                   image-rendering:pixelated;"
+                            class="polar-preview-img"
                         />
                     </div>
                 </Show>
 
                 // Intro section
                 <Show when=intro_visible>
-                    <fieldset class="polar-section" style="border:1px solid #222; padding:12px 14px;">
-                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">
+                    <fieldset class="polar-section">
+                        <legend class="polar-section-legend polar-section-legend--blue">
                             {move || tr().pa_pre_start}
                         </legend>
-                        <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div class="polar-section-body">
 
                             // Direction
-                            <div class="polar-field-row" style="display:flex; align-items:center; gap:8px;">
-                                <span class="polar-field-label" style=field_label_style()>{move || tr().pa_direction}</span>
+                            <div class="polar-field-row">
+                                <span class="polar-field-label">{move || tr().pa_direction}</span>
                                 <select
                                     on:change=on_direction_change.clone()
-                                    style=input_style()
+                                    class="polar-input"
                                     prop:value=move || polar.with(|p|
                                         settings_str(&p.settings, "pAHDirection")
                                             .unwrap_or_else(|| "West".into()))
@@ -452,8 +416,8 @@ pub fn PolarAlignTab(
                             </div>
 
                             // Rotation
-                            <div class="polar-field-row" style="display:flex; align-items:center; gap:8px;">
-                                <span class="polar-field-label" style=field_label_style()>{move || tr().pa_rotation_deg_label}</span>
+                            <div class="polar-field-row">
+                                <span class="polar-field-label">{move || tr().pa_rotation_deg_label}</span>
                                 <input
                                     type="number"
                                     min="15"
@@ -463,16 +427,16 @@ pub fn PolarAlignTab(
                                     prop:value=move || polar.with(|p|
                                         settings_i64(&p.settings, "pAHRotation")
                                             .unwrap_or(30).to_string())
-                                    style=input_style()
+                                    class="polar-input"
                                 />
                             </div>
 
                             // Mount speed
-                            <div class="polar-field-row" style="display:flex; align-items:center; gap:8px;">
-                                <span class="polar-field-label" style=field_label_style()>{move || tr().pa_mount_speed_label}</span>
+                            <div class="polar-field-row">
+                                <span class="polar-field-label">{move || tr().pa_mount_speed_label}</span>
                                 <select
                                     on:change=on_speed_change.clone()
-                                    style=input_style()
+                                    class="polar-input"
                                     prop:value=move || polar.with(|p|
                                         settings_str(&p.settings, "pAHMountSpeed")
                                             .unwrap_or_default())
@@ -498,8 +462,8 @@ pub fn PolarAlignTab(
                             </div>
 
                             // Manual slew
-                            <div class="polar-field-row" style="display:flex; align-items:center; gap:8px;">
-                                <span class="polar-field-label" style=field_label_style()>{move || tr().pa_manual_slew_label}</span>
+                            <div class="polar-field-row">
+                                <span class="polar-field-label">{move || tr().pa_manual_slew_label}</span>
                                 <input
                                     type="checkbox"
                                     on:change=on_manual_change.clone()
@@ -512,17 +476,13 @@ pub fn PolarAlignTab(
                             // Meridian-crossing warning — mirrors
                             // PolarAlignmentAssistant::checkPAHForMeridianCrossing().
                             <Show when=move || meridian_warning().is_some()>
-                                <div style="margin-top:4px; padding:8px 10px; \
-                                            border:1px solid #ff9a3a; \
-                                            background:rgba(80,40,10,0.4); \
-                                            color:#ffb070; font-size:11px; \
-                                            line-height:1.4;">
+                                <div class="polar-meridian-warning">
                                     {move || meridian_warning().unwrap_or_default()}
                                 </div>
                             </Show>
 
                             <div style="margin-top:6px;">
-                                <button on:click=on_start.clone() style=action_btn("#7affa0")>
+                                <button on:click=on_start.clone() class="polar-btn polar-btn--start">
                                     {move || tr().pa_start_btn_long}
                                 </button>
                             </div>
@@ -532,18 +492,18 @@ pub fn PolarAlignTab(
 
                 // Progress section
                 <Show when=progress_visible>
-                    <fieldset class="polar-section" style="border:1px solid #222; padding:12px 14px;">
-                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">
+                    <fieldset class="polar-section">
+                        <legend class="polar-section-legend polar-section-legend--blue">
                             {move || tr().pa_capture_solve}
                         </legend>
-                        <div style="padding:8px 0; color:#cfe0ff;">
+                        <div class="polar-section-text" style="padding:8px 0;">
                             {move || {
                                 let m = polar.with(|p| p.message.clone());
                                 if m.is_empty() { tr().pa_running.to_string() } else { m }
                             }}
                         </div>
                         <div>
-                            <button on:click=on_stop_abort.clone() style=action_btn("#ff6a6a")>
+                            <button on:click=on_stop_abort.clone() class="polar-btn polar-btn--stop">
                                 {move || tr().pa_abort_short}
                             </button>
                         </div>
@@ -552,15 +512,15 @@ pub fn PolarAlignTab(
 
                 // Manual rotation section
                 <Show when=rotation_visible>
-                    <fieldset class="polar-section" style="border:1px solid #222; padding:12px 14px;">
-                        <legend style="color:#ffd060; padding:0 6px; font-size:11px;">
+                    <fieldset class="polar-section">
+                        <legend class="polar-section-legend polar-section-legend--amber">
                             {move || tr().pa_manual_rotation_section}
                         </legend>
-                        <div style="padding:4px 0 10px; color:#cfe0ff;">
+                        <div class="polar-section-text" style="padding:4px 0 10px;">
                             {move || tr().pa_manual_rotate_instr}
                         </div>
                         <div>
-                            <button on:click=on_slew_done.clone() style=action_btn("#ffd060")>
+                            <button on:click=on_slew_done.clone() class="polar-btn polar-btn--rotation">
                                 {move || tr().pa_rotation_done}
                             </button>
                         </div>
@@ -569,16 +529,16 @@ pub fn PolarAlignTab(
 
                 // Refresh section
                 <Show when=refresh_visible>
-                    <fieldset class="polar-section" style="border:1px solid #222; padding:12px 14px;">
-                        <legend style="color:#7affa0; padding:0 6px; font-size:11px;">
+                    <fieldset class="polar-section">
+                        <legend class="polar-section-legend polar-section-legend--green">
                             {move || tr().pa_refresh_correct}
                         </legend>
-                        <div class="polar-refresh-row" style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
-                            <div class="polar-refresh-main" style="display:flex; flex-direction:column; gap:8px; flex:1 1 260px; min-width:0;">
+                        <div class="polar-refresh-row">
+                            <div class="polar-refresh-main">
 
                                 // Exposure
-                                <div class="polar-field-row" style="display:flex; align-items:center; gap:8px;">
-                                    <span class="polar-field-label" style=field_label_style()>{move || tr().pa_exposure_s_label}</span>
+                                <div class="polar-field-row">
+                                    <span class="polar-field-label">{move || tr().pa_exposure_s_label}</span>
                                     <input
                                         type="number"
                                         min="0.1"
@@ -586,16 +546,16 @@ pub fn PolarAlignTab(
                                         step="0.1"
                                         on:change=on_exposure_change.clone()
                                         prop:value=move || exposure.get().to_string()
-                                        style=input_style()
+                                        class="polar-input"
                                     />
                                 </div>
 
                                 // Algorithm
-                                <div class="polar-field-row" style="display:flex; align-items:center; gap:8px;">
-                                    <span class="polar-field-label" style=field_label_style()>{move || tr().pa_algorithm_label}</span>
+                                <div class="polar-field-row">
+                                    <span class="polar-field-label">{move || tr().pa_algorithm_label}</span>
                                     <select
                                         on:change=on_algo_change.clone()
-                                        style=input_style()
+                                        class="polar-input"
                                         prop:value=move || polar.with(|p|
                                             settings_str(&p.settings, "pAHRefreshAlgorithm")
                                                 .unwrap_or_else(|| "Plate Solve".into()))
@@ -611,10 +571,9 @@ pub fn PolarAlignTab(
                                 </div>
 
                                 // Error readouts
-                                <div class="polar-error-grid" style="display:grid; grid-template-columns:1fr 1fr; \
-                                            gap:8px; margin-top:6px;">
-                                    <div style="border:1px solid #222; padding:6px 8px;">
-                                        <div style="color:#88aaff; font-size:11px;">{move || tr().pa_original}</div>
+                                <div class="polar-error-grid">
+                                    <div class="polar-error-cell">
+                                        <div class="polar-error-cell-label polar-error-cell-label--original">{move || tr().pa_original}</div>
                                         {move || {
                                             let tr_ = tr();
                                             let v = polar.with(|p| p.vector.clone());
@@ -623,20 +582,20 @@ pub fn PolarAlignTab(
                                                 None => (f64::NAN, f64::NAN, f64::NAN),
                                             };
                                             view! {
-                                                <div style="font-size:12px;">
+                                                <div class="polar-error-value">
                                                     {tr_.pa_total_label} {format_deg_as_dms_small(err)}
                                                 </div>
-                                                <div style="font-size:12px;">
+                                                <div class="polar-error-value">
                                                     {tr_.pa_az_label_long} {format_deg_as_dms_small(az)}
                                                 </div>
-                                                <div style="font-size:12px;">
+                                                <div class="polar-error-value">
                                                     {tr_.pa_alt_label_long} {format_deg_as_dms_small(alt)}
                                                 </div>
                                             }
                                         }}
                                     </div>
-                                    <div style="border:1px solid #222; padding:6px 8px;">
-                                        <div style="color:#7affa0; font-size:11px;">{move || tr().pa_updated}</div>
+                                    <div class="polar-error-cell">
+                                        <div class="polar-error-cell-label polar-error-cell-label--updated">{move || tr().pa_updated}</div>
                                         {move || {
                                             let tr_ = tr();
                                             let (e, az, al) = polar.with(|p| (
@@ -649,27 +608,27 @@ pub fn PolarAlignTab(
                                                 None => "—".to_string(),
                                             };
                                             view! {
-                                                <div style="font-size:12px;">{tr_.pa_total_label} {fmt(e)}</div>
-                                                <div style="font-size:12px;">{tr_.pa_az_label_long} {fmt(az)}</div>
-                                                <div style="font-size:12px;">{tr_.pa_alt_label_long} {fmt(al)}</div>
+                                                <div class="polar-error-value">{tr_.pa_total_label} {fmt(e)}</div>
+                                                <div class="polar-error-value">{tr_.pa_az_label_long} {fmt(az)}</div>
+                                                <div class="polar-error-value">{tr_.pa_alt_label_long} {fmt(al)}</div>
                                             }
                                         }}
                                     </div>
                                 </div>
 
                                 // Refresh controls
-                                <div style="display:flex; gap:8px; margin-top:8px;">
-                                    <button on:click=on_start_refresh.clone() style=action_btn("#7affa0")>
+                                <div class="polar-refresh-actions">
+                                    <button on:click=on_start_refresh.clone() class="polar-btn polar-btn--start">
                                         {move || tr().pa_start_refresh}
                                     </button>
-                                    <button on:click=on_stop_refresh.clone() style=action_btn("#ffd060")>
+                                    <button on:click=on_stop_refresh.clone() class="polar-btn polar-btn--rotation">
                                         {move || tr().pa_stop_refresh}
                                     </button>
                                 </div>
                             </div>
 
                             // Correction vector preview
-                            <div class="polar-correction" style="flex:0 0 140px;">
+                            <div class="polar-correction">
                                 {move || correction_svg(polar.with(|p| p.vector.clone()))}
                             </div>
                         </div>
@@ -677,8 +636,8 @@ pub fn PolarAlignTab(
                 </Show>
 
                 // Footer — always-visible global Stop
-                <div class="polar-footer" style="display:flex; gap:8px;">
-                    <button on:click=on_stop_footer style=action_btn("#ff6a6a")>
+                <div class="polar-footer">
+                    <button on:click=on_stop_footer class="polar-btn polar-btn--stop">
                         {move || tr().pa_stop_btn_long}
                     </button>
                 </div>
@@ -699,9 +658,9 @@ fn correction_svg(vector: Option<PolarVectorData>) -> impl IntoView {
         None => (f64::NAN, f64::NAN, f64::NAN),
     };
     view! {
-        <div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
+        <div class="polar-correction-wrap">
             <svg width="120" height="120" viewBox="-60 -60 120 120"
-                 style="background:#06060c; border:1px solid #222;">
+                 class="polar-correction-svg">
                 <circle cx="0" cy="0" r="55" fill="none" stroke="#333" stroke-width="0.5"/>
                 <circle cx="0" cy="0" r="28" fill="none" stroke="#222" stroke-width="0.5"/>
                 <line x1="-55" y1="0" x2="55" y2="0" stroke="#222" stroke-width="0.5"/>
@@ -717,7 +676,7 @@ fn correction_svg(vector: Option<PolarVectorData>) -> impl IntoView {
                 </g>
                 <circle cx="0" cy="0" r="2" fill="#cfe0ff"/>
             </svg>
-            <div style="font-size:10px; color:#c0c0d0; text-align:center; line-height:1.4;">
+            <div class="polar-correction-labels">
                 <div>"Err "  {format_deg_as_dms_small(err)}</div>
                 <div>"Az "   {format_deg_as_dms_small(az)}</div>
                 <div>"Alt "  {format_deg_as_dms_small(alt)}</div>
