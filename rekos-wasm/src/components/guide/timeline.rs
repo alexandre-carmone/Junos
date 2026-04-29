@@ -106,10 +106,10 @@ pub fn drift_plot(
     let xticks: Vec<f64> = (0..=4).map(|i| i as f64 * VIEW_W / 4.0).collect();
 
     view! {
-        <div style="display:flex; flex-direction:column; gap:4px;">
+        <div class="guide-drift-plot">
             <svg viewBox=format!("0 0 {} {}", VIEW_W, total_h)
                  width="100%"
-                 style="background:#06060c; border:1px solid #222;">
+                 class="guide-drift-svg">
 
                 // Plot area background
                 <rect x="0" y="0" width=VIEW_W height=PLOT_H fill="#0a0a12"/>
@@ -194,7 +194,7 @@ pub fn drift_plot(
                     }
                 }).collect::<Vec<_>>()}
             </svg>
-            <div style="font-size:10px; color:#667;">
+            <div class="guide-drift-caption">
                 "RA/DEC drift (arcsec) over the last 2 minutes. \
                  Coloured ribbon shows guide state."
             </div>

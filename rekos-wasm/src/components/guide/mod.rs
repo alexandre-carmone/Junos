@@ -106,46 +106,6 @@ fn event_target_checked(ev: &web_sys::Event) -> bool {
 // Style constants
 // ---------------------------------------------------------------------------
 
-fn action_btn(color: &str, enabled: bool) -> String {
-    let (border, c, opacity) = if enabled {
-        (color, color, "1")
-    } else {
-        ("#333", "#666", "0.55")
-    };
-    format!(
-        "padding:8px 12px; background:rgba(12,14,24,0.9); \
-         border:1px solid {border}; color:{c}; \
-         cursor:{cursor}; font-family:monospace; font-size:12px; \
-         opacity:{opacity};",
-        border = border,
-        c = c,
-        cursor = if enabled { "pointer" } else { "not-allowed" },
-        opacity = opacity,
-    )
-}
-
-fn input_style() -> &'static str {
-    "flex:1; min-width:0; background:#06060c; color:#cfe0ff; \
-     border:1px solid #222; padding:4px 6px; \
-     font-family:monospace; font-size:12px;"
-}
-
-fn field_label_style() -> &'static str {
-    "flex:0 0 clamp(100px,25%,200px); color:#88aaff; font-size:11px;"
-}
-
-fn row_style() -> &'static str {
-    "display:flex; align-items:center; gap:8px;"
-}
-
-fn fieldset_style() -> &'static str {
-    "border:1px solid #222; padding:10px 14px; margin:0;"
-}
-
-fn legend_style() -> &'static str {
-    "color:#88aaff; padding:0 6px; font-size:11px; cursor:pointer;"
-}
-
 fn stage_color(status: &str) -> &'static str {
     match status {
         "" | "Idle" | "Aborted" | "Disconnected"        => "#808090",
@@ -241,8 +201,8 @@ fn bool_row(
         dispatch_guide_setting(&s, key, serde_json::Value::Bool(event_target_checked(&ev)));
     };
     view! {
-        <div style=row_style()>
-            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
+        <div class="guide-field-row">
+            <span class="guide-field-label">{move || label(t(lang.get()))}</span>
             <input type="checkbox"
                    on:change=on_change
                    prop:checked=move || guide.with(|g|
@@ -271,8 +231,8 @@ fn int_row(
         }
     };
     view! {
-        <div style=row_style()>
-            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
+        <div class="guide-field-row">
+            <span class="guide-field-label">{move || label(t(lang.get()))}</span>
             <input type="number"
                    min=min.to_string()
                    max=max.to_string()
@@ -281,7 +241,7 @@ fn int_row(
                    prop:value=move || guide.with(|g|
                        settings_i64(&g.settings, key).map(|v| v.to_string())
                            .unwrap_or_default())
-                   style=input_style() />
+                   class="guide-input" />
         </div>
     }
 }
@@ -308,8 +268,8 @@ fn float_row(
         }
     };
     view! {
-        <div style=row_style()>
-            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
+        <div class="guide-field-row">
+            <span class="guide-field-label">{move || label(t(lang.get()))}</span>
             <input type="number"
                    min=min.to_string()
                    max=max.to_string()
@@ -318,7 +278,7 @@ fn float_row(
                    prop:value=move || guide.with(|g|
                        settings_f64(&g.settings, key).map(|v| format!("{v}"))
                            .unwrap_or_default())
-                   style=input_style() />
+                   class="guide-input" />
         </div>
     }
 }
@@ -342,10 +302,10 @@ fn select_row(
         );
     };
     view! {
-        <div style=row_style()>
-            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
+        <div class="guide-field-row">
+            <span class="guide-field-label">{move || label(t(lang.get()))}</span>
             <select on:change=on_change
-                    style=input_style()
+                    class="guide-input"
                     prop:value=move || guide.with(|g|
                         settings_str(&g.settings, key).unwrap_or_default())>
                 {move || {
@@ -378,13 +338,13 @@ fn text_option_row(
         dispatch_option(&s, option, serde_json::Value::String(event_target_value(&ev)));
     };
     view! {
-        <div style=row_style()>
-            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
+        <div class="guide-field-row">
+            <span class="guide-field-label">{move || label(t(lang.get()))}</span>
             <input type="text"
                    on:change=on_change
                    prop:value=move || guide.with(|g|
                        settings_str(&g.options, option).unwrap_or_default())
-                   style=input_style() />
+                   class="guide-input" />
         </div>
     }
 }
@@ -408,8 +368,8 @@ fn int_option_row(
         }
     };
     view! {
-        <div style=row_style()>
-            <span style=field_label_style()>{move || label(t(lang.get()))}</span>
+        <div class="guide-field-row">
+            <span class="guide-field-label">{move || label(t(lang.get()))}</span>
             <input type="number"
                    min=min.to_string()
                    max=max.to_string()
@@ -418,7 +378,7 @@ fn int_option_row(
                    prop:value=move || guide.with(|g|
                        settings_i64(&g.options, option).map(|v| v.to_string())
                            .unwrap_or_default())
-                   style=input_style() />
+                   class="guide-input" />
         </div>
     }
 }
@@ -473,31 +433,21 @@ pub fn GuideTab(
     let btn_clear    = move || can_clear(&status());
 
     view! {
-        <div class="guide-tab-root"
-             style="position:absolute; inset:0; background:#0a0a0f; color:#c0c0d0; \
-                    font-family:monospace; display:grid; \
-                    grid-template-rows:auto 1fr; overflow:hidden;">
+        <div class="guide-tab-root">
 
             // ── Header ───────────────────────────────────────────────────
-            <div class="guide-header"
-                 style="display:flex; align-items:center; gap:8px 14px; \
-                        flex-wrap:wrap; min-height:48px; \
-                        padding:8px 20px 8px 80px; border-bottom:1px solid #222; \
-                        background:rgba(6,6,15,0.85); font-size:13px;">
-                <span style=move || format!(
-                    "display:inline-block; padding:4px 10px; border-radius:14px; \
-                     border:1px solid {c}; color:{c}; font-size:11px;",
-                    c = stage_color(&status())
-                )>
+            <div class="guide-header">
+                <span class="guide-status-badge"
+                      style=move || format!("--badge-color:{}", stage_color(&status()))>
                     {move || {
                         let s = status();
                         if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
-                <span style="color:#88aaff;">{move || tr().guide_guider_label}</span>
+                <span class="guide-header-label">{move || tr().guide_guider_label}</span>
                 <span>{move || guider_type_label(guider_type(), t(lang.get()))}</span>
-                <span style="color:#88aaff; margin-left:8px;">{move || tr().guide_rms}</span>
-                <span style="font-size:12px;">
+                <span class="guide-header-label" style="margin-left:8px;">{move || tr().guide_rms}</span>
+                <span class="guide-rms">
                     {move || {
                         let tr_ = tr();
                         guide.with(|g| {
@@ -507,29 +457,22 @@ pub fn GuideTab(
                         })
                     }}
                 </span>
-                <span style="flex:1;"></span>
-                <span style="color:#88aaff;">{move || tr().guide_connected}</span>
+                <span class="guide-header-spacer"></span>
+                <span class="guide-header-label">{move || tr().guide_connected}</span>
                 <span>{move || if guide.with(|g| g.connected) { tr().yes } else { tr().no }}</span>
             </div>
 
             // ── Body ─────────────────────────────────────────────────────
-            <div class="guide-body"
-                 style="overflow-y:auto; padding:16px 20px; \
-                        display:flex; flex-direction:column; gap:14px;">
+            <div class="guide-body">
 
                 // Preview frame (uuid "+G*" from kstars media.cpp:753)
                 <Show when=move || guide.with(|g| g.preview_url.is_some())>
-                    <div style="display:flex; justify-content:center; \
-                                align-items:center; background:#06060c; \
-                                border:1px solid #222; padding:8px; \
-                                min-height:180px; max-height:400px;">
+                    <div class="guide-preview">
                         <img
                             src=move || guide.with(|g|
                                 g.preview_url.clone().unwrap_or_default())
                             alt="guide frame"
-                            style="max-width:100%; max-height:384px; \
-                                   object-fit:contain; display:block; \
-                                   image-rendering:pixelated;"
+                            class="guide-preview-img"
                         />
                     </div>
                 </Show>
@@ -540,49 +483,49 @@ pub fn GuideTab(
                 {move || guide.with(|g| drift_plot(&g.drift, &g.history))}
 
                 // ── Action row ──────────────────────────────────────────
-                <fieldset style=fieldset_style()>
-                    <legend style=legend_style()>{move || tr().guide_actions}</legend>
-                    <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                <fieldset class="guide-section">
+                    <legend class="guide-section-legend">{move || tr().guide_actions}</legend>
+                    <div class="guide-action-row">
                         <button
                             on:click=on_start.clone()
                             disabled=move || !btn_start()
-                            style=move || action_btn("#7affa0", btn_start())>
+                            class="guide-btn guide-btn--green">
                             {move || tr().guide_start}
                         </button>
                         <button
                             on:click=on_stop.clone()
                             disabled=move || !btn_stop()
-                            style=move || action_btn("#ff6a6a", btn_stop())>
+                            class="guide-btn guide-btn--red">
                             {move || tr().stop}
                         </button>
                         <button
                             on:click=on_capture.clone()
                             disabled=move || !btn_capture()
-                            style=move || action_btn("#88aaff", btn_capture())>
+                            class="guide-btn guide-btn--blue">
                             {move || tr().guide_capture}
                         </button>
                         <button
                             on:click=on_loop.clone()
                             disabled=move || !btn_loop()
-                            style=move || action_btn("#88aaff", btn_loop())>
+                            class="guide-btn guide-btn--blue">
                             {move || tr().guide_loop}
                         </button>
                         <button
                             on:click=on_clear.clone()
                             disabled=move || !btn_clear()
-                            style=move || action_btn("#ffd060", btn_clear())>
+                            class="guide-btn guide-btn--amber">
                             {move || tr().guide_clear_cal}
                         </button>
                     </div>
-                    <div style="margin-top:6px; font-size:11px; color:#667;">
+                    <div class="guide-btn-note">
                         {move || tr().guide_capture_loop_note}
                     </div>
                 </fieldset>
 
                 // ── Essentials ──────────────────────────────────────────
-                <fieldset style=fieldset_style()>
-                    <legend style=legend_style()>{move || tr().guide_essentials}</legend>
-                    <div style="display:flex; flex-direction:column; gap:8px;">
+                <fieldset class="guide-section">
+                    <legend class="guide-section-legend">{move || tr().guide_essentials}</legend>
+                    <div class="guide-section-body">
                         {float_row (&send, guide, lang, "guideExposure",    |t| t.guide_f_exposure,     0.1, 60.0, 0.1)}
                         {float_row (&send, guide, lang, "guideDelay",       |t| t.guide_f_delay,        0.0, 60.0, 0.1)}
                         {float_row (&send, guide, lang, "guideGain",        |t| t.guide_f_gain,         0.0, 1000.0, 1.0)}
@@ -596,9 +539,9 @@ pub fn GuideTab(
                 </fieldset>
 
                 // ── RA/DEC enable ───────────────────────────────────────
-                <fieldset style=fieldset_style()>
-                    <legend style=legend_style()>{move || tr().guide_ra_dec_corrections}</legend>
-                    <div style="display:flex; flex-direction:column; gap:8px;">
+                <fieldset class="guide-section">
+                    <legend class="guide-section-legend">{move || tr().guide_ra_dec_corrections}</legend>
+                    <div class="guide-section-body">
                         {bool_row(&send, guide, lang, "rAGuideEnabled",      |t| t.guide_f_ra_guiding)}
                         {bool_row(&send, guide, lang, "eastRAGuideEnabled",  |t| t.guide_f_east_pulses)}
                         {bool_row(&send, guide, lang, "westRAGuideEnabled",  |t| t.guide_f_west_pulses)}
@@ -609,9 +552,9 @@ pub fn GuideTab(
                 </fieldset>
 
                 // ── Calibration (collapsible) ───────────────────────────
-                <details style="border:1px solid #222;">
-                    <summary style=legend_style()>{move || tr().guide_calibration}</summary>
-                    <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
+                <details class="guide-details">
+                    <summary class="guide-section-legend">{move || tr().guide_calibration}</summary>
+                    <div class="guide-details-body">
                         {int_row  (&send, guide, lang, "kcfg_AutoModeIterations",         |t| t.guide_f_iterations,          1, 100, 1)}
                         {int_row  (&send, guide, lang, "kcfg_CalibrationPulseDuration",   |t| t.guide_f_pulse_duration,      100, 10000, 100)}
                         {int_row  (&send, guide, lang, "kcfg_CalibrationMaxMove",         |t| t.guide_f_max_move,            1, 200, 1)}
@@ -625,10 +568,10 @@ pub fn GuideTab(
                 </details>
 
                 // ── Dither (collapsible) ────────────────────────────────
-                <details style="border:1px solid #222;">
-                    <summary style=legend_style()>{move || tr().guide_dither}</summary>
-                    <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
-                        <div style="font-size:11px; color:#667; margin-bottom:4px;">
+                <details class="guide-details">
+                    <summary class="guide-section-legend">{move || tr().guide_dither}</summary>
+                    <div class="guide-details-body">
+                        <div class="guide-btn-note" style="margin-top:0; margin-bottom:4px;">
                             {move || tr().guide_dither_note}
                         </div>
                         {bool_row (&send, guide, lang, "kcfg_DitherEnabled",             |t| t.guide_f_dither_enabled)}
@@ -646,9 +589,9 @@ pub fn GuideTab(
                 </details>
 
                 // ── Algorithms (collapsible) ────────────────────────────
-                <details style="border:1px solid #222;">
-                    <summary style=legend_style()>{move || tr().guide_algorithms}</summary>
-                    <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
+                <details class="guide-details">
+                    <summary class="guide-section-legend">{move || tr().guide_algorithms}</summary>
+                    <div class="guide-details-body">
                         {select_row(&send, guide, lang, "kcfg_GuideAlgorithm",           |t| t.guide_f_detection,      GUIDE_ALGO_OPTS)}
                         {select_row(&send, guide, lang, "kcfg_RAGuidePulseAlgorithm",    |t| t.guide_f_ra_pulse_algo,  PULSE_ALGO_OPTS)}
                         {select_row(&send, guide, lang, "kcfg_DECGuidePulseAlgorithm",   |t| t.guide_f_dec_pulse_algo, PULSE_ALGO_OPTS)}
@@ -672,23 +615,23 @@ pub fn GuideTab(
                 </details>
 
                 // ── Guider backend (default open) ───────────────────────
-                <details open=true style="border:1px solid #222;">
-                    <summary style=legend_style()>{move || tr().guide_backend}</summary>
-                    <div style="padding:10px 14px; display:flex; flex-direction:column; gap:10px;">
-                        <div style="display:flex; gap:14px; flex-wrap:wrap;">
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <details open=true class="guide-details">
+                    <summary class="guide-section-legend">{move || tr().guide_backend}</summary>
+                    <div class="guide-details-body">
+                        <div class="guide-backend-radios">
+                            <label class="guide-backend-label">
                                 <input type="radio" name="guider-type"
                                        on:change=on_internal
                                        prop:checked=move || guider_type() == 0 />
                                 {move || tr().guide_internal}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="guide-backend-label">
                                 <input type="radio" name="guider-type"
                                        on:change=on_phd2
                                        prop:checked=move || guider_type() == 1 />
                                 {move || tr().guide_phd2_label}
                             </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <label class="guide-backend-label">
                                 <input type="radio" name="guider-type"
                                        on:change=on_linguider
                                        prop:checked=move || guider_type() == 2 />
@@ -698,14 +641,14 @@ pub fn GuideTab(
 
                         // PHD2 host/port — always shown (they remain editable
                         // even when Internal is active, matching KStars UI).
-                        <div style="border-top:1px solid #1a1a20; padding-top:8px;">
-                            <div style="font-size:11px; color:#88aaff; margin-bottom:6px;">{move || tr().guide_phd2}</div>
+                        <div class="guide-backend-section">
+                            <div class="guide-backend-section-title">{move || tr().guide_phd2}</div>
                             {text_option_row(&send, guide, lang, "PHD2Host", |t| t.guide_host)}
                             {int_option_row (&send, guide, lang, "PHD2Port", |t| t.guide_port, 1, 65535)}
                         </div>
 
-                        <div style="border-top:1px solid #1a1a20; padding-top:8px;">
-                            <div style="font-size:11px; color:#88aaff; margin-bottom:6px;">{move || tr().guide_linguider}</div>
+                        <div class="guide-backend-section">
+                            <div class="guide-backend-section-title">{move || tr().guide_linguider}</div>
                             {text_option_row(&send, guide, lang, "LinGuiderHost", |t| t.guide_host)}
                             {int_option_row (&send, guide, lang, "LinGuiderPort", |t| t.guide_port, 1, 65535)}
                         </div>
@@ -713,17 +656,17 @@ pub fn GuideTab(
                 </details>
 
                 // ── Advanced / GPG (collapsed by default) ───────────────
-                <details style="border:1px solid #222;">
-                    <summary style=legend_style()>{move || tr().guide_advanced}</summary>
-                    <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
+                <details class="guide-details">
+                    <summary class="guide-section-legend">{move || tr().guide_advanced}</summary>
+                    <div class="guide-details-body">
                         {bool_row (&send, guide, lang, "kcfg_SaveGuideLog",              |t| t.guide_f_save_log)}
                         {bool_row (&send, guide, lang, "kcfg_UseGuideHead",              |t| t.guide_f_use_guide_head)}
                         {bool_row (&send, guide, lang, "kcfg_AlwaysInventGuideStar",     |t| t.guide_f_invent_star)}
                         {bool_row (&send, guide, lang, "latestCheck",                    |t| t.guide_f_latest_checks)}
                         {float_row(&send, guide, lang, "guiderAccuracyThreshold",        |t| t.guide_f_accuracy_thr,     0.0, 10.0, 0.1)}
 
-                        <div style="border-top:1px solid #1a1a20; padding-top:8px; margin-top:6px;">
-                            <div style="font-size:11px; color:#88aaff; margin-bottom:6px;">{move || tr().guide_gpg}</div>
+                        <div class="guide-backend-section" style="margin-top:6px;">
+                            <div class="guide-backend-section-title">{move || tr().guide_gpg}</div>
                             {int_row  (&send, guide, lang, "kcfg_GPGPeriod",                    |t| t.guide_f_gpg_period,             1, 3600, 1)}
                             {bool_row (&send, guide, lang, "kcfg_GPGEstimatePeriod",            |t| t.guide_f_gpg_estimate_period)}
                             {bool_row (&send, guide, lang, "kcfg_GPGDarkGuiding",               |t| t.guide_f_gpg_dark)}
