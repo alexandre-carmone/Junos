@@ -1,0 +1,555 @@
+/* Imaging / Capture tab — responsive layout, panels, sequence queue. */
+
+/* ── Root shell ───────────────────────────────────────────────── */
+
+.imaging-tab-root {
+    position: absolute;
+    inset: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+    -webkit-tap-highlight-color: rgba(136, 170, 255, 0.25);
+}
+
+/* Kill the 300ms tap delay and prevent double-tap zoom on every tappable
+   element inside the imaging tab. Inputs keep their native behaviour. */
+.imaging-tab-root button,
+.imaging-tab-root summary,
+.imaging-tab-root .imaging-ghost-btn,
+.imaging-tab-root .imaging-job-remove {
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* ── Header ───────────────────────────────────────────────────── */
+
+.imaging-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 18px;
+    padding: 10px 20px 10px 80px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(6, 6, 15, 0.85);
+    font-size: var(--fs-md);
+    min-height: 44px;
+}
+
+/* Status badge — reactive border/color via --imaging-status-color */
+.imaging-status-badge {
+    display: inline-block;
+    padding: var(--sp-1) var(--sp-3);
+    border-radius: 14px;
+    font-size: var(--fs-sm);
+    border: 1px solid var(--imaging-status-color, #808090);
+    color: var(--imaging-status-color, #808090);
+}
+
+.imaging-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.imaging-stat-label {
+    color: var(--text-blue);
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* Cooler value — reactive color via --imaging-cooler-color */
+.imaging-cooler-val {
+    color: var(--imaging-cooler-color, #808090);
+}
+
+/* Pushes the preview-toggle button to the right end of the header */
+.imaging-header-push {
+    margin-left: auto;
+}
+
+/* ── Body: responsive grid ────────────────────────────────────── */
+
+/* Default wide layout: preview | settings | sequence */
+.imaging-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px 320px;
+    grid-template-rows: auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    align-items: start;
+}
+
+/* Preview hidden — collapse its column */
+.imaging-body.no-preview {
+    grid-template-columns: minmax(0, 1fr) 320px;
+}
+.imaging-body.no-preview .imaging-preview { display: none; }
+.imaging-body.no-preview .imaging-settings { border-right: 1px solid var(--border); }
+
+/* ── Preview panel ────────────────────────────────────────────── */
+
+.imaging-preview {
+    position: sticky;
+    top: 0;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-input-deep);
+    border-right: 1px solid var(--border);
+}
+
+.imaging-preview-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    image-rendering: pixelated;
+}
+
+.imaging-preview-empty {
+    color: #444;
+    font-size: var(--fs-sm);
+    text-align: center;
+    padding: 0 12px;
+}
+
+/* ── Settings panel ───────────────────────────────────────────── */
+
+.imaging-settings {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: var(--sp-4);
+    gap: var(--sp-4);
+    border-right: 1px solid var(--border);
+}
+
+/* Toolbar: collapse / expand all panels */
+.imaging-settings-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    padding-bottom: 6px;
+    border-bottom: 1px solid #1a1c28;
+    margin-bottom: var(--sp-1);
+}
+
+.imaging-settings-toolbar-title {
+    color: var(--text-blue);
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+/* Flex row for the collapse/expand buttons in the toolbar */
+.imaging-toolbar-btns {
+    display: flex;
+    gap: 6px;
+}
+
+/* Ghost button shared by header toggles and toolbar buttons */
+.imaging-ghost-btn {
+    background: rgba(12, 14, 24, 0.9);
+    border: 1px solid #334;
+    color: var(--text-blue);
+    padding: var(--sp-1) var(--sp-3);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    border-radius: 3px;
+}
+.imaging-ghost-btn:hover {
+    background: rgba(24, 30, 50, 0.95);
+    border-color: var(--text-blue);
+}
+
+/* Actions fieldset card */
+.imaging-card {
+    border: 1px solid var(--border);
+    padding: var(--sp-3) 12px;
+}
+
+.imaging-card-legend {
+    color: var(--text-blue);
+    padding: 0 6px;
+    font-size: var(--fs-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* 2-column button grid (actions, cooler on/off) */
+.imaging-btn-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--sp-2);
+}
+
+/* Action buttons — reactive border/color via --btn-color */
+.imaging-action-btn {
+    padding: var(--sp-2) var(--sp-3);
+    background: rgba(12, 14, 24, 0.9);
+    border: 1px solid var(--btn-color, var(--text-blue));
+    color: var(--btn-color, var(--text-blue));
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+}
+
+/* ── Cooling row ──────────────────────────────────────────────── */
+
+.imaging-cooling-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-2);
+}
+
+/* ── Foldable panels — native <details>/<summary> ─────────────── */
+
+details.imaging-panel {
+    border: 1px solid var(--border);
+    background: rgba(10, 12, 20, 0.55);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+details.imaging-panel > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: var(--sp-2) 12px;
+    color: var(--text-blue);
+    font-size: var(--fs-sm);
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    user-select: none;
+}
+
+details.imaging-panel > summary::-webkit-details-marker { display: none; }
+
+details.imaging-panel > summary::before {
+    content: "▸";
+    display: inline-block;
+    width: 10px;
+    font-size: var(--fs-xs);
+    color: #557;
+    transition: transform 0.12s;
+}
+
+details.imaging-panel[open] > summary::before { transform: rotate(90deg); }
+details.imaging-panel > summary:hover { background: rgba(20, 24, 40, 0.7); }
+
+details.imaging-panel > .imaging-panel-body {
+    padding: var(--sp-3) 12px 12px;
+    border-top: 1px solid #1a1c28;
+}
+
+/* ── Field rows (render_field / render_group) ─────────────────── */
+
+.imaging-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.imaging-field-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-size: var(--fs-sm);
+}
+
+.imaging-field-label {
+    flex: 0 0 120px;
+    color: var(--text-blue);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.imaging-field-input {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg-input-deep);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding: 4px 6px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+}
+
+/* ── Sequence queue ───────────────────────────────────────────── */
+
+.imaging-sequence {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    max-height: 100vh;
+    overflow: hidden;
+}
+
+.imaging-sequence-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    padding: 12px var(--sp-4) var(--sp-2);
+    border-bottom: 1px solid var(--border);
+}
+
+.imaging-sequence-title {
+    color: var(--text-blue);
+    font-size: var(--fs-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.imaging-sequence-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--sp-2) var(--sp-3);
+}
+
+/* Save / Load inline rows — intentional semantic colors, no token equivalent */
+.imaging-save-row {
+    display: flex;
+    gap: 6px;
+    padding: 6px var(--sp-2);
+    background: #0d1a12;
+    border-bottom: 1px solid #224433;
+}
+
+.imaging-save-input {
+    flex: 1;
+    background: var(--bg-input);
+    color: #c0ffd0;
+    border: 1px solid #335544;
+    padding: 4px var(--sp-2);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+}
+
+.imaging-load-row {
+    display: flex;
+    gap: 6px;
+    padding: 6px var(--sp-2);
+    background: #1a1200;
+    border-bottom: 1px solid #443322;
+}
+
+.imaging-load-input {
+    flex: 1;
+    background: var(--bg-input);
+    color: #ffd0aa;
+    border: 1px solid #554433;
+    padding: 4px var(--sp-2);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+}
+
+/* Empty queue message */
+.imaging-queue-empty {
+    color: #555;
+    font-size: var(--fs-sm);
+    padding: 12px 6px;
+}
+
+/* ── Sequence job cards ────────────────────────────────────────── */
+
+.imaging-job-card {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: var(--sp-2) var(--sp-3);
+    margin-bottom: 6px;
+    background: rgba(14, 16, 26, 0.85);
+    border: 1px solid #22263a;
+    border-radius: var(--r-sm);
+}
+
+.imaging-job-head {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+
+.imaging-job-idx { color: #555; font-size: var(--fs-xs); }
+
+.imaging-job-main {
+    flex: 1;
+    color: var(--text-dim);
+    font-size: var(--fs-sm);
+    font-weight: bold;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.imaging-job-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-3);
+    color: #7a88a8;
+    font-size: var(--fs-xs);
+}
+
+.imaging-job-remove {
+    background: transparent;
+    border: 1px solid #443;
+    color: #ff6a6a;
+    padding: 2px var(--sp-2);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+}
+
+.imaging-job-badge {
+    font-size: 9px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 1px 7px;
+    border-radius: 3px;
+    color: #0a0c14;
+    white-space: nowrap;
+}
+
+.imaging-job-sep {
+    color: #333;
+    font-size: var(--fs-xs);
+}
+
+.imaging-job-field {
+    color: #aab8d0;
+    font-size: var(--fs-sm);
+    white-space: nowrap;
+}
+
+.imaging-job-count {
+    color: var(--text-dim);
+    font-size: var(--fs-sm);
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+/* ── Responsive: medium (<=1200px) ───────────────────────────── */
+
+@media (max-width: 1199px) {
+    .imaging-body {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-rows: minmax(220px, 45%) auto;
+    }
+    .imaging-preview {
+        grid-column: 1 / -1;
+        position: relative;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+    .imaging-settings { border-right: 1px solid var(--border); }
+    .imaging-sequence {
+        position: relative;
+        max-height: none;
+        overflow-y: auto;
+    }
+    .imaging-body.no-preview {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-rows: auto;
+    }
+}
+
+/* ── Responsive: narrow (<=760px) ────────────────────────────── */
+
+@media (max-width: 759px) {
+    .imaging-header {
+        padding: var(--sp-2) 12px;
+        gap: 6px 12px;
+        font-size: var(--fs-sm);
+    }
+    .imaging-body {
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .imaging-preview {
+        grid-column: auto;
+        flex-shrink: 0;
+        min-height: 200px;
+        max-height: 40vh;
+    }
+    .imaging-settings {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: var(--sp-3);
+        gap: var(--sp-3);
+        overflow-y: visible;
+        flex-shrink: 0;
+    }
+    .imaging-sequence {
+        flex-shrink: 0;
+        overflow: visible;
+    }
+    .imaging-sequence-list {
+        overflow-y: visible;
+        max-height: none;
+    }
+    .imaging-body.no-preview .imaging-preview { display: none; }
+}
+
+/* ── Touch-first sizing ───────────────────────────────────────── */
+
+/* Bigger tap targets + larger inputs on coarse pointers (phones, tablets).
+   Applies regardless of width so a fine pointer on a narrow desktop window
+   stays compact. */
+@media (pointer: coarse) {
+    .imaging-tab-root button,
+    .imaging-tab-root .imaging-ghost-btn,
+    .imaging-tab-root .imaging-job-remove {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 10px var(--sp-4);
+        font-size: var(--fs-md);
+    }
+    .imaging-tab-root input[type="number"],
+    .imaging-tab-root input[type="text"],
+    .imaging-tab-root input[type="checkbox"] {
+        min-height: 40px;
+        font-size: var(--fs-base);
+    }
+    .imaging-tab-root input[type="checkbox"] {
+        min-width: 24px;
+        transform: scale(1.3);
+        margin: 0 6px;
+    }
+    details.imaging-panel > summary {
+        padding: var(--sp-4);
+        font-size: var(--fs-sm);
+    }
+    .imaging-job-card {
+        padding: var(--sp-3) 12px;
+    }
+    .imaging-job-remove {
+        min-height: 36px;
+        min-width: 36px;
+        padding: var(--sp-1) var(--sp-3);
+    }
+    .imaging-status-badge {
+        padding: var(--sp-2) var(--sp-4);
+    }
+}

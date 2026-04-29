@@ -18,280 +18,6 @@ use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting, send_device_property_set};
 
-/// Responsive layout for the Imaging tab. Three breakpoints:
-///   - wide  (>=1200px): preview | settings | sequence
-///   - medium (>=760px, <1200px): preview spans top, settings | sequence share bottom
-///   - narrow (<760px): stacked — preview, settings, sequence
-const IMAGING_CSS: &str = r#"
-.imaging-tab-root {
-    position: absolute; inset: 0; background: #0a0a0f; color: #c0c0d0;
-    font-family: monospace; display: grid; grid-template-rows: auto 1fr;
-    overflow: hidden;
-    -webkit-tap-highlight-color: rgba(136,170,255,0.25);
-}
-/* Kill the 300ms tap delay and prevent double-tap zoom on every tappable
-   element inside the imaging tab. Inputs keep their native behaviour. */
-.imaging-tab-root button,
-.imaging-tab-root summary,
-.imaging-tab-root .imaging-ghost-btn,
-.imaging-tab-root .imaging-job-remove {
-    touch-action: manipulation;
-    -webkit-user-select: none;
-    user-select: none;
-}
-.imaging-header {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
-    padding: 10px 20px 10px 80px;
-    border-bottom: 1px solid #222; background: rgba(6,6,15,0.85);
-    font-size: 13px; min-height: 44px;
-}
-.imaging-status-badge {
-    display: inline-block; padding: 4px 10px; border-radius: 14px;
-    font-size: 11px;
-}
-.imaging-stat { display: inline-flex; align-items: center; gap: 6px; }
-.imaging-stat-label {
-    color: #88aaff; font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.06em;
-}
-
-/* Body: default wide layout */
-.imaging-body {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 340px 320px;
-    grid-template-rows: auto;
-    min-height: 0;
-    overflow-y: auto; -webkit-overflow-scrolling: touch;
-    align-items: start;
-}
-/* Preview hidden — collapse its column */
-.imaging-body.no-preview {
-    grid-template-columns: minmax(0, 1fr) 320px;
-}
-.imaging-body.no-preview .imaging-preview { display: none; }
-.imaging-body.no-preview .imaging-settings { border-right: 1px solid #222; }
-.imaging-preview {
-    position: sticky; top: 0;
-    min-width: 0; height: 100%;
-    overflow: hidden;
-    display: flex; align-items: center; justify-content: center;
-    background: #06060c; border-right: 1px solid #222;
-}
-.imaging-preview-img {
-    max-width: 100%; max-height: 100%;
-    object-fit: contain; image-rendering: pixelated;
-}
-.imaging-preview-empty {
-    color: #444; font-size: 12px; text-align: center; padding: 0 12px;
-}
-.imaging-settings {
-    display: flex; flex-direction: column;
-    min-width: 0;
-    padding: 14px; gap: 14px;
-    border-right: 1px solid #222;
-}
-.imaging-sequence {
-    position: sticky; top: 0;
-    display: flex; flex-direction: column;
-    min-width: 0; max-height: 100vh;
-    overflow: hidden;
-}
-.imaging-sequence-head {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 8px; padding: 12px 14px 8px;
-    border-bottom: 1px solid #222;
-}
-.imaging-sequence-title {
-    color: #88aaff; font-size: 11px; text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
-.imaging-sequence-list {
-    flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px;
-}
-.imaging-job-card {
-    display: flex; flex-direction: column; gap: 3px;
-    padding: 8px 10px; margin-bottom: 6px;
-    background: rgba(14,16,26,0.85);
-    border: 1px solid #22263a; border-radius: 4px;
-}
-.imaging-job-head {
-    display: flex; align-items: center; gap: 8px;
-}
-.imaging-job-idx { color: #555; font-size: 10px; }
-.imaging-job-main {
-    flex: 1; color: #cfe0ff; font-size: 12px; font-weight: bold;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.imaging-job-meta {
-    display: flex; flex-wrap: wrap; gap: 10px;
-    color: #7a88a8; font-size: 10px;
-}
-.imaging-job-remove {
-    background: transparent; border: 1px solid #443;
-    color: #ff6a6a; padding: 2px 8px; cursor: pointer;
-    font-family: monospace; font-size: 11px;
-}
-
-/* Foldable panels — native <details>/<summary> */
-details.imaging-panel {
-    border: 1px solid #222; background: rgba(10,12,20,0.55);
-    border-radius: 3px; overflow: hidden;
-}
-details.imaging-panel > summary {
-    list-style: none; cursor: pointer;
-    padding: 8px 12px;
-    color: #88aaff; font-size: 11px; font-weight: bold;
-    text-transform: uppercase; letter-spacing: 0.08em;
-    display: flex; align-items: center; gap: 8px;
-    user-select: none;
-}
-details.imaging-panel > summary::-webkit-details-marker { display: none; }
-details.imaging-panel > summary::before {
-    content: "▸"; display: inline-block; width: 10px;
-    font-size: 10px; color: #557;
-    transition: transform 0.12s;
-}
-details.imaging-panel[open] > summary::before { transform: rotate(90deg); }
-details.imaging-panel > summary:hover { background: rgba(20,24,40,0.7); }
-details.imaging-panel > .imaging-panel-body {
-    padding: 10px 12px 12px;
-    border-top: 1px solid #1a1c28;
-}
-
-.imaging-job-badge {
-    font-size: 9px; font-weight: bold; text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 1px 7px; border-radius: 3px;
-    color: #0a0c14; white-space: nowrap;
-}
-.imaging-job-sep {
-    color: #333; font-size: 10px;
-}
-.imaging-job-field {
-    color: #aab8d0; font-size: 11px; white-space: nowrap;
-}
-.imaging-job-count {
-    color: #cfe0ff; font-size: 11px; font-weight: bold; white-space: nowrap;
-}
-
-/* Medium: <=1200px — preview on top, settings + sequence side by side */
-@media (max-width: 1199px) {
-    .imaging-body {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-        grid-template-rows: minmax(220px, 45%) auto;
-    }
-    .imaging-preview {
-        grid-column: 1 / -1;
-        position: relative; height: auto;
-        border-right: none;
-        border-bottom: 1px solid #222;
-    }
-    .imaging-settings { border-right: 1px solid #222; }
-    .imaging-sequence {
-        position: relative; max-height: none;
-        overflow-y: auto;
-    }
-    .imaging-body.no-preview {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-        grid-template-rows: auto;
-    }
-}
-
-/* Narrow: <=760px — stacked single column, whole body scrolls */
-@media (max-width: 759px) {
-    .imaging-header {
-        padding: 8px 12px;
-        gap: 6px 12px;
-        font-size: 12px;
-    }
-    .imaging-body {
-        display: flex;
-        flex-direction: column;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
-    }
-    .imaging-preview {
-        grid-column: auto;
-        flex-shrink: 0;
-        min-height: 200px;
-        max-height: 40vh;
-    }
-    .imaging-settings {
-        border-right: none;
-        border-bottom: 1px solid #222;
-        padding: 10px;
-        gap: 10px;
-        overflow-y: visible;
-        flex-shrink: 0;
-    }
-    .imaging-sequence {
-        flex-shrink: 0;
-        overflow: visible;
-    }
-    .imaging-sequence-list {
-        overflow-y: visible;
-        max-height: none;
-    }
-    .imaging-body.no-preview .imaging-preview { display: none; }
-}
-
-/* Touch-first sizing: bigger tap targets + larger inputs on coarse
-   pointers (phones, tablets). Applies regardless of width so a fine
-   pointer on a narrow desktop window stays compact. */
-@media (pointer: coarse) {
-    .imaging-tab-root button,
-    .imaging-tab-root .imaging-ghost-btn,
-    .imaging-tab-root .imaging-job-remove {
-        min-height: 44px;
-        min-width: 44px;
-        padding: 10px 14px;
-        font-size: 13px;
-    }
-    .imaging-tab-root input[type="number"],
-    .imaging-tab-root input[type="text"],
-    .imaging-tab-root input[type="checkbox"] {
-        min-height: 40px;
-        font-size: 14px;
-    }
-    .imaging-tab-root input[type="checkbox"] {
-        min-width: 24px;
-        transform: scale(1.3);
-        margin: 0 6px;
-    }
-    details.imaging-panel > summary {
-        padding: 14px 14px;
-        font-size: 12px;
-    }
-    .imaging-job-card {
-        padding: 10px 12px;
-    }
-    .imaging-job-remove {
-        min-height: 36px;
-        min-width: 36px;
-        padding: 4px 10px;
-    }
-    .imaging-status-badge {
-        padding: 8px 14px;
-    }
-}
-
-/* Settings toolbar + ghost button shared by header toggles */
-.imaging-settings-toolbar {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 8px; padding-bottom: 6px; border-bottom: 1px solid #1a1c28;
-    margin-bottom: 4px;
-}
-.imaging-settings-toolbar-title {
-    color: #88aaff; font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
-.imaging-ghost-btn {
-    background: rgba(12,14,24,0.9); border: 1px solid #334;
-    color: #88aaff; padding: 4px 10px; cursor: pointer;
-    font-family: monospace; font-size: 11px; border-radius: 3px;
-}
-.imaging-ghost-btn:hover { background: rgba(24,30,50,0.95); border-color: #88aaff; }
-"#;
 
 fn status_color(status: &str) -> &'static str {
     let s = status.to_lowercase();
@@ -504,14 +230,15 @@ pub fn ImagingTab(
 
     view! {
         <div class="imaging-tab-root">
-            <style>{IMAGING_CSS}</style>
 
             // ── Header ────────────────────────────────────────────────────
             <div class="imaging-header">
-                <span class="imaging-status-badge" style=move || format!(
-                    "border:1px solid {c}; color:{c};",
-                    c = status_color(&capture.with(|c| c.status.clone()))
-                )>
+                <span
+                    class="imaging-status-badge"
+                    style=move || format!(
+                        "--imaging-status-color:{};",
+                        status_color(&capture.with(|c| c.status.clone()))
+                    )>
                     {move || {
                         let s = capture.with(|c| c.status.clone());
                         if s.is_empty() { tr().idle.to_string() } else { s }
@@ -532,14 +259,18 @@ pub fn ImagingTab(
                 </span>
                 <span class="imaging-stat">
                     <span class="imaging-stat-label">{move || tr().imaging_cooler}</span>
-                    <span style=move || {
-                        let on = camera.with(|c| c.cooler_on).unwrap_or(false);
-                        format!("color:{};", if on { "#7affa0" } else { "#808090" })
-                    }>{move || match camera.with(|c| c.cooler_on) {
-                        Some(true)  => tr().imaging_cooler_on_val.to_string(),
-                        Some(false) => tr().imaging_cooler_off_val.to_string(),
-                        None        => "—".to_string(),
-                    }}</span>
+                    <span
+                        class="imaging-cooler-val"
+                        style=move || {
+                            let on = camera.with(|c| c.cooler_on).unwrap_or(false);
+                            format!("--imaging-cooler-color:{};", if on { "#7affa0" } else { "#808090" })
+                        }>
+                        {move || match camera.with(|c| c.cooler_on) {
+                            Some(true)  => tr().imaging_cooler_on_val.to_string(),
+                            Some(false) => tr().imaging_cooler_off_val.to_string(),
+                            None        => "—".to_string(),
+                        }}
+                    </span>
                 </span>
                 <span class="imaging-stat">
                     <span class="imaging-stat-label">{move || tr().imaging_sensor}</span>
@@ -556,8 +287,7 @@ pub fn ImagingTab(
                     })}</span>
                 </span>
                 <button
-                    class="imaging-ghost-btn"
-                    style="margin-left:auto;"
+                    class="imaging-ghost-btn imaging-header-push"
                     on:click=on_toggle_preview
                     title=move || tr().imaging_toggle_preview_title>
                     {move || if preview_visible.get() { tr().imaging_hide_preview } else { tr().imaging_show_preview }}
@@ -586,20 +316,20 @@ pub fn ImagingTab(
                     // Toolbar: collapse / expand all panels
                     <div class="imaging-settings-toolbar">
                         <span class="imaging-settings-toolbar-title">{move || tr().imaging_capture_controls}</span>
-                        <div style="display:flex; gap:6px;">
+                        <div class="imaging-toolbar-btns">
                             <button class="imaging-ghost-btn" on:click=on_collapse_all>{move || tr().imaging_collapse_all}</button>
                             <button class="imaging-ghost-btn" on:click=on_expand_all>{move || tr().imaging_expand_all}</button>
                         </div>
                     </div>
 
                     // Actions — always visible, not foldable
-                    <fieldset style=card_style()>
-                        <legend style=legend_style()>{move || tr().imaging_actions}</legend>
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                            <button on:click=on_start   style=action_btn("#7affa0")>{move || tr().start}</button>
-                            <button on:click=on_stop    style=action_btn("#ff6a6a")>{move || tr().stop}</button>
-                            <button on:click=on_preview style=action_btn("#88aaff")>{move || tr().preview}</button>
-                            <button on:click=on_loop    style=action_btn("#88aaff")>{move || tr().focus_loop_btn}</button>
+                    <fieldset class="imaging-card">
+                        <legend class="imaging-card-legend">{move || tr().imaging_actions}</legend>
+                        <div class="imaging-btn-grid">
+                            <button on:click=on_start   class="imaging-action-btn" style="--btn-color:#7affa0;">{move || tr().start}</button>
+                            <button on:click=on_stop    class="imaging-action-btn" style="--btn-color:#ff6a6a;">{move || tr().stop}</button>
+                            <button on:click=on_preview class="imaging-action-btn" style="--btn-color:#88aaff;">{move || tr().preview}</button>
+                            <button on:click=on_loop    class="imaging-action-btn" style="--btn-color:#88aaff;">{move || tr().focus_loop_btn}</button>
                         </div>
                     </fieldset>
 
@@ -616,8 +346,8 @@ pub fn ImagingTab(
                         }>
                         <summary>{move || tr().imaging_cooling}</summary>
                         <div class="imaging-panel-body">
-                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                                <span style=label_style()>{move || tr().imaging_target_c}</span>
+                            <div class="imaging-cooling-row">
+                                <span class="imaging-field-label">{move || tr().imaging_target_c}</span>
                                 <input
                                     type="number"
                                     step="0.5"
@@ -626,13 +356,13 @@ pub fn ImagingTab(
                                         let s = event_target_value(&ev);
                                         if let Ok(n) = s.parse::<f64>() { target_temp.set(n); }
                                     }
-                                    style=input_style()
+                                    class="imaging-field-input"
                                 />
-                                <button on:click=on_set_temp style=action_btn("#88aaff")>{move || tr().imaging_set}</button>
+                                <button on:click=on_set_temp class="imaging-action-btn" style="--btn-color:#88aaff;">{move || tr().imaging_set}</button>
                             </div>
-                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                                <button on:click=on_cooler_on  style=action_btn("#7affa0")>{move || tr().cooler_on}</button>
-                                <button on:click=on_cooler_off style=action_btn("#ff6a6a")>{move || tr().cooler_off}</button>
+                            <div class="imaging-btn-grid">
+                                <button on:click=on_cooler_on  class="imaging-action-btn" style="--btn-color:#7affa0;">{move || tr().cooler_on}</button>
+                                <button on:click=on_cooler_off class="imaging-action-btn" style="--btn-color:#ff6a6a;">{move || tr().cooler_off}</button>
                             </div>
                         </div>
                     </details>
@@ -726,16 +456,18 @@ pub fn ImagingTab(
                 <div class="imaging-sequence">
                     <div class="imaging-sequence-head">
                         <span class="imaging-sequence-title">{move || tr().imaging_sequence_queue}</span>
-                        <div style="display:flex; gap:6px;">
-                            <button on:click=on_add_job   style=action_btn("#88aaff")>{move || tr().imaging_add_job}</button>
-                            <button on:click=on_clear_seq style=action_btn("#ff6a6a")>{move || tr().seq_clear}</button>
+                        <div class="imaging-toolbar-btns">
+                            <button on:click=on_add_job   class="imaging-action-btn" style="--btn-color:#88aaff;">{move || tr().imaging_add_job}</button>
+                            <button on:click=on_clear_seq class="imaging-action-btn" style="--btn-color:#ff6a6a;">{move || tr().seq_clear}</button>
                             <button
-                                style=action_btn("#aaffcc")
+                                class="imaging-action-btn"
+                                style="--btn-color:#aaffcc;"
                                 on:click=move |_| { save_open.update(|v| *v = !*v); load_open.set(false); }>
                                 {move || tr().save_profile}
                             </button>
                             <button
-                                style=action_btn("#ffcc88")
+                                class="imaging-action-btn"
+                                style="--btn-color:#ffcc88;"
                                 on:click=move |_| { load_open.update(|v| *v = !*v); save_open.set(false); }>
                                 {move || tr().load_profile}
                             </button>
@@ -743,35 +475,35 @@ pub fn ImagingTab(
                     </div>
                     // Save inline row
                     <Show when=move || save_open.get()>
-                        <div style="display:flex; gap:6px; padding:6px 8px; background:#0d1a12; border-bottom:1px solid #224433;">
+                        <div class="imaging-save-row">
                             <input
                                 type="text"
                                 placeholder="/home/user/seq.esq"
                                 prop:value=move || save_path.get()
                                 on:input=move |ev| save_path.set(event_target_value(&ev))
-                                style="flex:1; background:#111; color:#c0ffd0; border:1px solid #335544; padding:4px 8px; font-family:monospace; font-size:12px;"
+                                class="imaging-save-input"
                             />
-                            <button style=action_btn("#aaffcc") on:click=move |_| {
+                            <button class="imaging-action-btn" style="--btn-color:#aaffcc;" on:click=move |_| {
                                 let path = save_path.get_untracked();
                                 if !path.is_empty() {
                                     sv_save.with_value(|s| send_cmd(s, "capture_save_sequence_file", serde_json::json!({"filepath": path})));
                                     save_open.set(false);
                                 }
                             }>"✓"</button>
-                            <button style=action_btn("#555") on:click=move |_| save_open.set(false)>"✕"</button>
+                            <button class="imaging-action-btn" style="--btn-color:#555;" on:click=move |_| save_open.set(false)>"✕"</button>
                         </div>
                     </Show>
                     // Load inline row
                     <Show when=move || load_open.get()>
-                        <div style="display:flex; gap:6px; padding:6px 8px; background:#1a1200; border-bottom:1px solid #443322;">
+                        <div class="imaging-load-row">
                             <input
                                 type="text"
                                 placeholder="/home/user/seq.esq"
                                 prop:value=move || load_path.get()
                                 on:input=move |ev| load_path.set(event_target_value(&ev))
-                                style="flex:1; background:#111; color:#ffd0aa; border:1px solid #554433; padding:4px 8px; font-family:monospace; font-size:12px;"
+                                class="imaging-load-input"
                             />
-                            <button style=action_btn("#ffcc88") on:click=move |_| {
+                            <button class="imaging-action-btn" style="--btn-color:#ffcc88;" on:click=move |_| {
                                 let path = load_path.get_untracked();
                                 if !path.is_empty() {
                                     sv_load.with_value(|s| send_cmd(s, "capture_load_sequence_file", serde_json::json!({"filepath": path})));
@@ -783,7 +515,7 @@ pub fn ImagingTab(
                                     });
                                 }
                             }>"✓"</button>
-                            <button style=action_btn("#555") on:click=move |_| load_open.set(false)>"✕"</button>
+                            <button class="imaging-action-btn" style="--btn-color:#555;" on:click=move |_| load_open.set(false)>"✕"</button>
                         </div>
                     </Show>
                     <div class="imaging-sequence-list">
@@ -791,7 +523,7 @@ pub fn ImagingTab(
                             let rows = sequence_rows();
                             if rows.is_empty() {
                                 return view! {
-                                    <div style="color:#555; font-size:11px; padding:12px 6px;">
+                                    <div class="imaging-queue-empty">
                                         {tr().imaging_empty_queue}
                                     </div>
                                 }.into_any();
@@ -868,7 +600,7 @@ fn render_group(
     dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
 ) -> leptos::prelude::AnyView {
     view! {
-        <div style="display:flex; flex-direction:column; gap:6px;">
+        <div class="imaging-field-group">
             {fields.iter().map(|f| {
                 let d = dispatch.clone();
                 render_field(*f, lang, get_value, d)
@@ -913,7 +645,7 @@ fn render_field(
                             }
                         }
                     }
-                    style=input_style()
+                    class="imaging-field-input"
                 />
             }.into_any()
         }
@@ -926,7 +658,7 @@ fn render_field(
                     on:change=move |ev| {
                         d(field.key, serde_json::Value::String(event_target_value(&ev)));
                     }
-                    style=input_style()
+                    class="imaging-field-input"
                 />
             }.into_any()
         }
@@ -934,8 +666,8 @@ fn render_field(
 
     let label_fn = field.label;
     view! {
-        <div style="display:flex; align-items:center; gap:8px; font-size:11px;">
-            <span style=label_style()>{move || label_fn(t(lang.get()))}</span>
+        <div class="imaging-field-row">
+            <span class="imaging-field-label">{move || label_fn(t(lang.get()))}</span>
             {editor}
         </div>
     }.into_any()
@@ -951,33 +683,6 @@ fn value_to_display(v: &serde_json::Value) -> String {
     }
 }
 
-// ── Style helpers ────────────────────────────────────────────────────────
-
-fn card_style() -> &'static str {
-    "border:1px solid #222; padding:10px 12px;"
-}
-
-fn legend_style() -> &'static str {
-    "color:#88aaff; padding:0 6px; font-size:11px; text-transform:uppercase; letter-spacing:0.06em;"
-}
-
-fn label_style() -> &'static str {
-    "flex:0 0 120px; color:#88aaff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-}
-
-fn action_btn(color: &str) -> String {
-    format!(
-        "padding:8px 10px; background:rgba(12,14,24,0.9); \
-         border:1px solid {c}; color:{c}; cursor:pointer; \
-         font-family:monospace; font-size:12px;",
-        c = color
-    )
-}
-
-fn input_style() -> &'static str {
-    "flex:1; min-width:0; background:#06060c; color:#cfe0ff; border:1px solid #222; \
-     padding:4px 6px; font-family:monospace; font-size:12px;"
-}
 
 fn event_target_checked(ev: &web_sys::Event) -> bool {
     ev.target()
