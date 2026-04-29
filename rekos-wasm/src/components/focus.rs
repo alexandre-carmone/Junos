@@ -163,105 +163,92 @@ pub fn FocusTab(
     };
 
     view! {
-        <div class="focus-tab-root"
-             style="position:absolute; inset:0; background:#0a0a0f; color:#c0c0d0; \
-                    font-family:monospace; display:grid; \
-                    grid-template-rows:56px 1fr; overflow:hidden;">
+        <div class="focus-tab-root">
             // Header
-            <div class="focus-header"
-                 style="display:flex; align-items:center; gap:18px; padding:0 20px 0 80px; \
-                        border-bottom:1px solid #222; background:rgba(6,6,15,0.85); \
-                        font-size:13px;">
-                <span style=move || format!(
-                    "display:inline-block; padding:4px 10px; border-radius:14px; \
-                     border:1px solid {c}; color:{c}; font-size:11px;",
-                    c = status_color(&focus.with(|f| f.status.clone()))
-                )>
+            <div class="focus-header">
+                <span
+                    class="focus-status-pill"
+                    style=move || format!(
+                        "--focus-status-color:{};",
+                        status_color(&focus.with(|f| f.status.clone()))
+                    )
+                >
                     {move || {
                         let s = focus.with(|f| f.status.clone());
                         if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
-                <span style="color:#88aaff;">{move || tr().focus_header_focuser}</span>
+                <span class="focus-header-label">{move || tr().focus_header_focuser}</span>
                 <span>{move || {
                     let d = focus.with(|f| f.device.clone());
                     if d.is_empty() { "—".to_string() } else { d }
                 }}</span>
-                <span style="color:#88aaff;">{move || tr().focus_header_hfr}</span>
+                <span class="focus-header-label">{move || tr().focus_header_hfr}</span>
                 <span>{move || focus.with(|f| f.hfr
                     .map(|v| format!("{:.3}", v))
                     .unwrap_or_else(|| "—".into()))}</span>
-                <span style="color:#88aaff;">{move || tr().focus_header_position}</span>
+                <span class="focus-header-label">{move || tr().focus_header_position}</span>
                 <span>{move || focus.with(|f| f.position
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into()))}</span>
-                <span style="color:#88aaff;">{move || tr().focus_header_temperature}</span>
+                <span class="focus-header-label">{move || tr().focus_header_temperature}</span>
                 <span>{move || focus.with(|f| f.temperature
                     .map(|v| format!("{:.1}°C", v))
                     .unwrap_or_else(|| "—".into()))}</span>
             </div>
 
             // Body
-            <div class="focus-body" style="gap:0;">
+            <div class="focus-body">
                 // Left — preview + HFR plot
-                <div class="focus-left-col"
-                     style="display:grid; grid-template-rows:1fr 110px; \
-                            min-height:0; border-right:1px solid #222;">
-                    <div class="focus-preview"
-                         style="position:relative; min-height:0; overflow:hidden; \
-                                display:flex; align-items:center; justify-content:center; \
-                                background:#06060c;">
+                <div class="focus-left-col">
+                    <div class="focus-preview">
                         {move || match focus.with(|f| f.preview_url.clone()) {
                             Some(url) => view! {
                                 <img
                                     src=url
+                                    class="focus-preview-img"
                                     on:click=on_preview_click.clone()
-                                    style="max-width:100%; max-height:100%; \
-                                           object-fit:contain; cursor:crosshair; \
-                                           image-rendering:pixelated;"
                                 />
                             }.into_any(),
                             None => view! {
-                                <div style="color:#444; font-size:12px; text-align:center; padding:0 12px;">
+                                <div class="focus-no-frame">
                                     {move || tr().focus_no_frame}
                                 </div>
                             }.into_any(),
                         }}
                     </div>
-                    <div class="focus-hfr-pane"
-                         style="border-top:1px solid #222; padding:6px; background:#06060c;">
+                    <div class="focus-hfr-pane">
                         <canvas
                             node_ref=canvas_ref
+                            class="focus-hfr-canvas"
                             width="640"
                             height="90"
-                            style="width:100%; height:94px; display:block;"
                         ></canvas>
                     </div>
                 </div>
 
                 // Right — controls
-                <div style="display:flex; flex-direction:column; min-height:0; \
-                            overflow-y:auto; padding:14px 16px; gap:16px;">
+                <div class="focus-right-col">
 
                     // Actions
-                    <fieldset style="border:1px solid #222; padding:10px 12px;">
-                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">{move || tr().focus_actions_section}</legend>
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                            <button on:click=on_start style=action_btn("#7affa0")>{move || tr().start}</button>
-                            <button on:click=on_stop style=action_btn("#ff6a6a")>{move || tr().stop}</button>
-                            <button on:click=on_capture style=action_btn("#88aaff")>{move || tr().focus_capture_btn}</button>
-                            <button on:click=on_loop style=action_btn("#88aaff")>{move || tr().focus_loop_btn}</button>
-                            <button on:click=on_reset style="grid-column:1 / span 2;">{
-                                view! { <span>{move || tr().focus_reset_frame}</span> }
-                            }</button>
+                    <fieldset class="focus-fieldset">
+                        <legend class="focus-legend">{move || tr().focus_actions_section}</legend>
+                        <div class="focus-actions-grid">
+                            <button on:click=on_start class="focus-btn focus-btn--start">{move || tr().start}</button>
+                            <button on:click=on_stop  class="focus-btn focus-btn--stop">{move || tr().stop}</button>
+                            <button on:click=on_capture class="focus-btn focus-btn--action">{move || tr().focus_capture_btn}</button>
+                            <button on:click=on_loop    class="focus-btn focus-btn--action">{move || tr().focus_loop_btn}</button>
+                            <button on:click=on_reset class="focus-btn focus-btn--wide">
+                                {move || tr().focus_reset_frame}
+                            </button>
                         </div>
                     </fieldset>
 
                     // Manual
-                    <fieldset style="border:1px solid #222; padding:10px 12px;">
-                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">{move || tr().focus_manual_section}</legend>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                            <span style="font-size:11px; color:#88aaff;">{move || tr().focus_step_label}</span>
+                    <fieldset class="focus-fieldset">
+                        <legend class="focus-legend">{move || tr().focus_manual_section}</legend>
+                        <div class="focus-step-row">
+                            <span class="focus-step-label">{move || tr().focus_step_label}</span>
                             <input
                                 type="number"
                                 min="1"
@@ -270,24 +257,24 @@ pub fn FocusTab(
                                     let v: i64 = event_target_value(&ev).parse().unwrap_or(100);
                                     step_size.set(v.max(1));
                                 }
-                                style=input_style()
+                                class="focus-input"
                             />
                         </div>
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                            <button on:click=on_in style=action_btn("#88aaff")>{move || tr().focus_in_btn}</button>
-                            <button on:click=on_out style=action_btn("#88aaff")>{move || tr().focus_out_btn}</button>
+                        <div class="focus-manual-grid">
+                            <button on:click=on_in  class="focus-btn focus-btn--action">{move || tr().focus_in_btn}</button>
+                            <button on:click=on_out class="focus-btn focus-btn--action">{move || tr().focus_out_btn}</button>
                         </div>
                     </fieldset>
 
                     // Settings
-                    <fieldset style="border:1px solid #222; padding:10px 12px;">
-                        <legend style="color:#88aaff; padding:0 6px; font-size:11px;">{move || tr().focus_settings_section}</legend>
-                        <div style="display:flex; flex-direction:column; gap:6px;">
+                    <fieldset class="focus-fieldset">
+                        <legend class="focus-legend">{move || tr().focus_settings_section}</legend>
+                        <div class="focus-settings-list">
                             {move || {
                                 let rows = settings_rows();
                                 if rows.is_empty() {
                                     return view! {
-                                        <div style="color:#555; font-size:11px;">
+                                        <div class="focus-settings-empty">
                                             {tr().focus_settings_not_loaded}
                                         </div>
                                     }.into_any();
@@ -303,20 +290,6 @@ pub fn FocusTab(
             </div>
         </div>
     }
-}
-
-fn action_btn(color: &str) -> String {
-    format!(
-        "padding:8px 10px; background:rgba(12,14,24,0.9); \
-         border:1px solid {c}; color:{c}; cursor:pointer; \
-         font-family:monospace; font-size:12px;",
-        c = color
-    )
-}
-
-fn input_style() -> &'static str {
-    "flex:1; background:#06060c; color:#cfe0ff; border:1px solid #222; \
-     padding:4px 6px; font-family:monospace; font-size:12px;"
 }
 
 fn render_setting_row(
@@ -368,7 +341,7 @@ fn render_setting_row(
                             }
                         }
                     }
-                    style=input_style()
+                    class="focus-input"
                 />
             }.into_any()
         }
@@ -382,7 +355,7 @@ fn render_setting_row(
                         let s = event_target_value(&ev);
                         d(static_key, serde_json::Value::String(s));
                     }
-                    style=input_style()
+                    class="focus-input"
                 />
             }.into_any()
         }
@@ -390,10 +363,8 @@ fn render_setting_row(
 
     let title_key = key.clone();
     view! {
-        <div class="focus-setting-row" style="display:flex; align-items:center; gap:8px; font-size:11px;">
-            <span style="flex:0 0 140px; color:#88aaff; overflow:hidden; \
-                         text-overflow:ellipsis; white-space:nowrap;"
-                  title=title_key>
+        <div class="focus-setting-row">
+            <span class="focus-setting-key" title=title_key>
                 {key}
             </span>
             {field}
