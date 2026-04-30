@@ -164,26 +164,6 @@
         padding-bottom: env(safe-area-inset-bottom);
     }
 
-    /* Mount d-pad: bigger touch targets on phones */
-    .mount-dpad {
-        grid-template-columns: repeat(3, 56px) !important;
-        grid-template-rows: repeat(3, 56px) !important;
-    }
-    .mount-dpad-btn {
-        width: 56px !important;
-        height: 56px !important;
-    }
-
-    /* Mount tab: stack columns on phones */
-    .mount-body {
-        display: flex !important;
-        flex-direction: column !important;
-        height: auto !important;
-    }
-    .mount-col-left {
-        border-right: none !important;
-        border-bottom: 1px solid #1a1a2e;
-    }
 }
 
 /* ── Files tab ───────────────────────────────────────────────────── */
