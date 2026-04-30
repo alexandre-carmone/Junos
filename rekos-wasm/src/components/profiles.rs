@@ -18,6 +18,17 @@ use crate::ws::{ProfileInfo, SendCmd};
 
 const GUIDING_LABELS: [&str; 4] = ["Internal", "PHD2", "LinGuider", "SEP"];
 
+// Tailwind class fragments for the small row-action buttons. Kept as
+// constants only to avoid bug-prone copy/paste between the row, modal,
+// and form footer. The base spacing/typography is shared; the colour
+// triplet (border / bg / text) varies by intent.
+const BTN_BASE: &str = "px-3 py-[5px] rounded-[5px] font-mono font-semibold text-sm cursor-pointer";
+const BTN_LAUNCH: &str = "border border-[#3a5a3a] bg-[#0a1a0a] text-[#44ee88]";
+const BTN_STOP: &str = "border border-[#5a2a2a] bg-[#1a0a0a] text-[#ee4444]";
+const BTN_STARTING: &str = "border border-[#3a3a5a] bg-[#0a0a14] text-[#ffcc44]";
+const BTN_EDIT: &str = "border border-border-strong bg-[#0a0a14] text-text-blue";
+const BTN_DELETE: &str = "border border-[#5a2a2a] bg-[#1a0a0a] text-[#ee4444] disabled:text-[#5a3a3a] disabled:cursor-not-allowed disabled:opacity-50";
+
 #[component]
 pub fn ProfilesTab(
     profiles: RwSignal<Vec<ProfileInfo>>,
@@ -58,20 +69,23 @@ pub fn ProfilesTab(
     };
 
     view! {
-        <div class="profile-pane">
-            <div class="profile-header">
-                <h2 class="profile-header-title">
+        <div class="absolute inset-0 bg-bg text-text font-mono overflow-auto pt-5 pr-5 pb-5 pl-20">
+            <div class="flex items-center gap-3 mb-4">
+                <h2 class="m-0 text-base text-text-blue tracking-[0.08em]">
                     {move || tr().profiles_title}
                 </h2>
-                <span class="profile-header-count">
+                <span class="text-[#556] text-sm">
                     {move || format!("({})", profiles.get().len())}
                 </span>
-                <span class="profile-header-spacer"></span>
-                <button class="profile-btn profile-btn--add" on:click=on_add>
+                <span class="flex-1"></span>
+                <button
+                    class="px-[14px] py-[5px] rounded-md font-mono font-semibold text-sm cursor-pointer border border-[#3a5a3a] bg-[#0a1a0a] text-[#44ee88]"
+                    on:click=on_add
+                >
                     "+ " {move || tr().profiles_add}
                 </button>
                 <button
-                    class="profile-btn profile-btn--refresh"
+                    class="px-[14px] py-[5px] rounded-md font-mono font-semibold text-sm cursor-pointer border border-border-strong bg-[#0a0a14] text-text-blue"
                     on:click=on_refresh
                     title=move || if connected.get() { "" } else { "WS not connected" }
                 >
@@ -100,14 +114,14 @@ pub fn ProfilesTab(
                     let list = profiles.get();
                     if list.is_empty() {
                         view! {
-                            <div class="profile-empty">
+                            <div class="p-10 text-center text-[#556] border border-dashed border-border-base rounded-lg">
                                 {tr().profiles_empty}
                             </div>
                         }.into_any()
                     } else {
                         let send_for_rows = send_for_list.clone();
                         view! {
-                            <div class="profile-list">
+                            <div class="flex flex-col gap-sp-2">
                                 {list.into_iter().map(|p| {
                                     view! {
                                         <ProfileRow
@@ -134,23 +148,23 @@ pub fn ProfilesTab(
                     let name_for_yes = name.clone();
                     let send_yes = send_for_del.clone();
                     view! {
-                        <div class="profile-modal-backdrop"
+                        <div class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center"
                              on:click=move |_| confirm_delete.set(None)
                         >
-                            <div class="profile-modal"
+                            <div class="bg-[#0a0a14] border border-[#5a2a2a] rounded-lg py-sp-5 px-[22px] min-w-[280px]"
                                  on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
                             >
-                                <div class="profile-modal-title">
+                                <div class="text-[12px] text-[#ee9999] mb-sp-2">
                                     {tr().profiles_confirm_delete}
                                 </div>
-                                <div class="profile-modal-target">{name.clone()}</div>
-                                <div class="profile-modal-actions">
+                                <div class="text-md text-text-dim mb-sp-4">{name.clone()}</div>
+                                <div class="flex gap-sp-3 justify-end">
                                     <button
-                                        class="profile-action-btn profile-action-btn--edit"
+                                        class=format!("{BTN_BASE} {BTN_EDIT}")
                                         on:click=move |_| confirm_delete.set(None)
                                     >{tr().profiles_cancel}</button>
                                     <button
-                                        class="profile-action-btn profile-action-btn--delete"
+                                        class=format!("{BTN_BASE} {BTN_DELETE}")
                                         on:click=move |_| {
                                             let payload = serde_json::json!({"name": name_for_yes});
                                             send_yes(serde_json::json!({
@@ -265,57 +279,63 @@ fn ProfileRow(
 
     view! {
         <div
-            class="profile-row"
-            class:profile-row--active=move || active_for_class()
+            class=move || {
+                let base = "flex items-center gap-3 py-sp-3 px-sp-4 border rounded-lg bg-[rgba(12,14,24,0.6)]";
+                if active_for_class() {
+                    format!("{base} border-text-blue !bg-[rgba(60,90,160,0.10)]")
+                } else {
+                    format!("{base} border-border-base")
+                }
+            }
         >
-            <div class="profile-row-main">
-                <div class="profile-row-head">
-                    <span class="profile-row-name">{name.clone()}</span>
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-sp-2">
+                    <span class="text-md text-text-dim font-semibold">{name.clone()}</span>
                     {move || if is_active() {
                         view! {
-                            <span class="profile-status-badge profile-status-badge--active">
+                            <span class="px-2 py-[2px] rounded-[10px] text-xs font-semibold tracking-[0.05em] bg-[rgba(60,150,80,0.18)] text-[#44ee88]">
                                 {tr().profiles_active}
                             </span>
                         }.into_any()
                     } else {
                         view! { <span></span> }.into_any()
                     }}
-                    <span class="profile-row-mode">
+                    <span class="text-[#556] text-xs uppercase">
                         {mode.clone()}
                     </span>
                 </div>
-                <div class="profile-row-summary">
+                <div class="text-sm text-[#778] mt-[3px] whitespace-nowrap overflow-hidden text-ellipsis">
                     {summary}
                 </div>
             </div>
-            <div class="profile-row-actions">
+            <div class="flex gap-[6px] shrink-0">
                 {move || if is_running() {
                     view! {
                         <button
-                            class="profile-action-btn profile-action-btn--stop"
+                            class=format!("{BTN_BASE} {BTN_STOP}")
                             on:click=on_stop.clone()
                         >{tr().profiles_stop}</button>
                     }.into_any()
                 } else if is_starting() {
                     view! {
-                        <span class="profile-action-btn profile-action-btn--starting">
+                        <span class=format!("{BTN_BASE} {BTN_STARTING}")>
                             {tr().profiles_starting}
                         </span>
                     }.into_any()
                 } else {
                     view! {
                         <button
-                            class="profile-action-btn profile-action-btn--launch"
+                            class=format!("{BTN_BASE} {BTN_LAUNCH}")
                             on:click=on_launch.clone()
                         >{tr().profiles_launch}</button>
                     }.into_any()
                 }}
                 <button
-                    class="profile-action-btn profile-action-btn--edit"
+                    class=format!("{BTN_BASE} {BTN_EDIT}")
                     on:click=on_edit
                 >{tr().profiles_edit}</button>
                 <button
-                    class="profile-action-btn profile-action-btn--delete"
+                    class=format!("{BTN_BASE} {BTN_DELETE}")
                     disabled=delete_disabled
                     title=move || if is_simulators { "Simulators is not deletable" } else { "" }
                     on:click=on_delete
@@ -448,22 +468,24 @@ fn ProfileForm(
     let mode_for_remote = mode;
     let is_remote = move || mode_for_remote.get() == "remote";
 
+    let select_cls = "bg-[#0a0a14] text-text-dim border border-border-strong px-2 py-1 rounded-sm font-mono font-semibold text-sm";
+
     view! {
-        <div class="profile-form">
-            <div class="profile-form-head">
-                <span class="profile-form-head-title">
+        <div class="border border-[#3a3a5a] rounded-lg pt-sp-4 pr-4 pb-sp-4 pl-4 mb-sp-4 bg-[rgba(20,24,40,0.4)]">
+            <div class="flex items-center gap-sp-3 mb-sp-3">
+                <span class="text-[12px] text-text-blue font-semibold tracking-[0.06em]">
                     {move || if is_new { tr().profiles_new } else { tr().profiles_edit }}
                 </span>
             </div>
 
             // Row 1: name + mode + auto_connect + port_selector + web_mgr
-            <div class="profile-form-row">
+            <div class="flex flex-wrap gap-y-sp-3 gap-x-sp-5 mb-sp-3">
                 <Field label=tr().profiles_name>
                     <TextInput value=name placeholder="Name"/>
                 </Field>
                 <Field label=tr().profiles_mode>
                     <select
-                        class="profile-select"
+                        class=select_cls
                         prop:value=move || mode.get()
                         on:change=move |ev: Event| {
                             if let Some(t) = ev.target() {
@@ -488,7 +510,7 @@ fn ProfileForm(
                 </Field>
                 <Field label=tr().profiles_guiding>
                     <select
-                        class="profile-select"
+                        class=select_cls
                         prop:value=move || guiding.get().to_string()
                         on:change=move |ev: Event| {
                             if let Some(t) = ev.target() {
@@ -507,7 +529,7 @@ fn ProfileForm(
 
             // Remote section (visible only when mode == remote)
             <Show when=is_remote>
-                <div class="profile-form-row">
+                <div class="flex flex-wrap gap-y-sp-3 gap-x-sp-5 mb-sp-3">
                     <Field label=tr().profiles_host>
                         <TextInput value=host placeholder="localhost"/>
                     </Field>
@@ -524,10 +546,10 @@ fn ProfileForm(
             </Show>
 
             // Drivers section
-            <div class="profile-form-section-title">
+            <div class="text-sm text-text-blue font-semibold mt-sp-1 mb-[6px] tracking-[0.06em]">
                 {move || tr().profiles_drivers}
             </div>
-            <div class="profile-form-grid">
+            <div class="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-y-sp-2 gap-x-sp-4 mb-sp-3">
                 <DrvField label="Mount" value=mount/>
                 <DrvField label="CCD" value=ccd/>
                 <DrvField label="Guider" value=guider_drv/>
@@ -545,13 +567,13 @@ fn ProfileForm(
                 <TextInput value=remote placeholder="indi_eqmod_telescope,..."/>
             </Field>
 
-            <div class="profile-form-actions">
+            <div class="flex gap-sp-3 justify-end mt-sp-4">
                 <button
-                    class="profile-action-btn profile-action-btn--edit"
+                    class=format!("{BTN_BASE} {BTN_EDIT}")
                     on:click=on_cancel
                 >{tr().profiles_cancel}</button>
                 <button
-                    class="profile-action-btn profile-action-btn--launch"
+                    class=format!("{BTN_BASE} {BTN_LAUNCH}")
                     on:click=on_save
                 >{tr().profiles_save}</button>
             </div>
@@ -562,8 +584,8 @@ fn ProfileForm(
 #[component]
 fn Field(label: &'static str, children: Children) -> impl IntoView {
     view! {
-        <div class="profile-field">
-            <span class="profile-field-label">{label}</span>
+        <div class="flex flex-col gap-[3px] min-w-[120px]">
+            <span class="text-xs text-[#778] tracking-[0.05em]">{label}</span>
             {children()}
         </div>
     }
@@ -572,8 +594,8 @@ fn Field(label: &'static str, children: Children) -> impl IntoView {
 #[component]
 fn DrvField(label: &'static str, value: RwSignal<String>) -> impl IntoView {
     view! {
-        <div class="profile-field profile-field-drv">
-            <span class="profile-field-label">{label}</span>
+        <div class="flex flex-col gap-[3px] min-w-0">
+            <span class="text-xs text-[#778] tracking-[0.05em]">{label}</span>
             <TextInput value=value placeholder="--"/>
         </div>
     }
@@ -586,7 +608,7 @@ fn TextInput(
 ) -> impl IntoView {
     view! {
         <input
-            class="profile-input"
+            class="bg-[#0a0a14] text-text-dim border border-border-strong px-2 py-1 rounded-sm font-mono font-normal text-sm min-w-0 w-full"
             type="text"
             prop:value=move || value.get()
             placeholder=placeholder
