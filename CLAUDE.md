@@ -23,7 +23,7 @@ Two crates:
 
 ## Frontend tabs
 
-`rekos-wasm` is no longer planetarium-only. `components/tabs.rs` defines a `Tab` enum and `components/tab_wheel.rs` renders the tab switcher. Current tabs: `Sky` (planetarium, fullscreen behind the wheel), `Mount`, `Focus`, `Guide`, `Imaging`, `Mosaic`, `PolarAlign`, `Scheduler`. Each tab module lives directly under `components/`. The planetarium remains the most fully-featured surface; the other tabs are progressively being reintroduced — when adding to them, grow `DeviceStore` (`ws.rs`) and the `apply_ekos_event` match arm only as needed.
+`rekos-wasm` is no longer planetarium-only. `components/tabs.rs` defines a `Tab` enum and `components/tab_wheel.rs` renders the tab switcher. Current tabs: `Sky` (planetarium, fullscreen behind the wheel), `Mount`, `Focus`, `Guide`, `Imaging`, `Files`, `Mosaic`, `PolarAlign`, `Scheduler`, `Profiles`. Each tab module lives directly under `components/`. `SkyTab` is kept mounted (`display:none` when inactive) so its WebGPU context and catalog state survive tab switches; the other tabs render only when active. The planetarium remains the most fully-featured surface; the other tabs are progressively being reintroduced — when adding to them, grow `DeviceStore` (`ws.rs`) and the `apply_ekos_event` match arm only as needed.
 
 ## Build & run
 
