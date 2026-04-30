@@ -18,6 +18,16 @@ use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting, send_device_property_set};
 
+// ── Shared Tailwind class fragments ───────────────────────────────────────────
+// Repeating chrome — buttons, inputs, foldable panels — kept here so each
+// `view! {}` doesn't carry the same long string 4× over.
+const GHOST_BTN: &str = "bg-[rgba(12,14,24,0.9)] border border-[#334] text-text-blue py-sp-1 px-sp-3 cursor-pointer font-mono text-sm rounded-[3px] hover:bg-[rgba(24,30,50,0.95)] hover:border-text-blue";
+const ACTION_BTN: &str = "py-sp-2 px-sp-3 bg-[rgba(12,14,24,0.9)] border border-[var(--btn-color,var(--text-blue))] text-[color:var(--btn-color,var(--text-blue))] cursor-pointer font-mono text-sm";
+const FIELD_INPUT: &str = "flex-1 min-w-0 bg-bg-input-deep text-text-dim border border-border-base py-1 px-[6px] font-mono text-sm";
+const FIELD_LABEL: &str = "basis-[120px] grow-0 shrink-0 text-text-blue overflow-hidden text-ellipsis whitespace-nowrap";
+const PANEL_CLS: &str = "border border-border-base bg-[rgba(10,12,20,0.55)] rounded-[3px] overflow-hidden";
+const SUMMARY_CLS: &str = "list-none cursor-pointer py-sp-2 px-3 text-text-blue text-sm font-bold uppercase tracking-[0.08em] flex items-center gap-sp-2 select-none hover:bg-[rgba(20,24,40,0.7)] [&::-webkit-details-marker]:hidden";
+const PANEL_BODY: &str = "py-sp-3 px-3 pb-3 border-t border-[#1a1c28]";
 
 fn status_color(status: &str) -> &'static str {
     let s = status.to_lowercase();
@@ -228,15 +238,17 @@ pub fn ImagingTab(
         })
     };
 
+    let stat_label = "text-text-blue text-xs uppercase tracking-[0.06em]";
+
     view! {
-        <div class="imaging-tab-root">
+        <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] overflow-hidden [-webkit-tap-highlight-color:rgba(136,170,255,0.25)]">
 
             // ── Header ────────────────────────────────────────────────────
-            <div class="imaging-header">
+            <div class="flex flex-wrap items-center gap-y-[10px] gap-x-[18px] py-[10px] pl-20 pr-5 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md min-h-[44px] max-[759px]:py-sp-2 max-[759px]:px-3 max-[759px]:gap-y-[6px] max-[759px]:gap-x-3 max-[759px]:text-sm">
                 <span
-                    class="imaging-status-badge"
+                    class="inline-block py-sp-1 px-sp-3 rounded-[14px] text-sm border border-current"
                     style=move || format!(
-                        "--imaging-status-color:{};",
+                        "color:{};",
                         status_color(&capture.with(|c| c.status.clone()))
                     )>
                     {move || {
@@ -244,26 +256,25 @@ pub fn ImagingTab(
                         if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
-                <span class="imaging-stat">
-                    <span class="imaging-stat-label">{move || tr().imaging_camera}</span>
+                <span class="inline-flex items-center gap-[6px]">
+                    <span class=stat_label>{move || tr().imaging_camera}</span>
                     <span>{move || {
                         let d = camera.with(|c| c.device.clone());
                         if d.is_empty() { "—".to_string() } else { d }
                     }}</span>
                 </span>
-                <span class="imaging-stat">
-                    <span class="imaging-stat-label">{move || tr().imaging_temp}</span>
+                <span class="inline-flex items-center gap-[6px]">
+                    <span class=stat_label>{move || tr().imaging_temp}</span>
                     <span>{move || camera.with(|c| c.temperature
                         .map(|v| format!("{:.1}°C", v))
                         .unwrap_or_else(|| "—".into()))}</span>
                 </span>
-                <span class="imaging-stat">
-                    <span class="imaging-stat-label">{move || tr().imaging_cooler}</span>
+                <span class="inline-flex items-center gap-[6px]">
+                    <span class=stat_label>{move || tr().imaging_cooler}</span>
                     <span
-                        class="imaging-cooler-val"
                         style=move || {
                             let on = camera.with(|c| c.cooler_on).unwrap_or(false);
-                            format!("--imaging-cooler-color:{};", if on { "#7affa0" } else { "#808090" })
+                            format!("color:{};", if on { "#7affa0" } else { "#808090" })
                         }>
                         {move || match camera.with(|c| c.cooler_on) {
                             Some(true)  => tr().imaging_cooler_on_val.to_string(),
@@ -272,38 +283,57 @@ pub fn ImagingTab(
                         }}
                     </span>
                 </span>
-                <span class="imaging-stat">
-                    <span class="imaging-stat-label">{move || tr().imaging_sensor}</span>
+                <span class="inline-flex items-center gap-[6px]">
+                    <span class=stat_label>{move || tr().imaging_sensor}</span>
                     <span>{move || camera.with(|c| match (c.sensor_width, c.sensor_height) {
                         (Some(w), Some(h)) => format!("{}×{}", w, h),
                         _ => "—".into(),
                     })}</span>
                 </span>
-                <span class="imaging-stat">
-                    <span class="imaging-stat-label">{move || tr().imaging_progress}</span>
+                <span class="inline-flex items-center gap-[6px]">
+                    <span class=stat_label>{move || tr().imaging_progress}</span>
                     <span>{move || capture.with(|c| match (c.seq_current, c.seq_total) {
                         (Some(a), Some(b)) => format!("{} / {}", a, b),
                         _ => "—".into(),
                     })}</span>
                 </span>
                 <button
-                    class="imaging-ghost-btn imaging-header-push"
+                    class=format!("{GHOST_BTN} ml-auto")
                     on:click=on_toggle_preview
                     title=move || tr().imaging_toggle_preview_title>
                     {move || if preview_visible.get() { tr().imaging_hide_preview } else { tr().imaging_show_preview }}
                 </button>
             </div>
 
-            // ── Body: responsive grid ─────────────────────────────────────
-            <div class=move || if preview_visible.get() { "imaging-body" } else { "imaging-body no-preview" }>
+            // ── Body: responsive grid (1199px shrinks to 2-col, 759px stacks) ──
+            <div class=move || {
+                let shared = "min-h-0 overflow-y-auto items-start \
+                              max-[759px]:flex max-[759px]:flex-col";
+                let cols = if preview_visible.get() {
+                    "grid grid-cols-[minmax(0,1fr)_340px_320px] \
+                     max-[1199px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] \
+                     max-[1199px]:grid-rows-[minmax(220px,45%)_auto]"
+                } else {
+                    "grid grid-cols-[minmax(0,1fr)_320px] \
+                     max-[1199px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                };
+                format!("{shared} {cols}")
+            }>
                 // ─ Preview ────────────────────────────────────────────────
-                <div class="imaging-preview">
+                <div
+                    class=move || {
+                        let base = "min-w-0 h-full overflow-hidden flex items-center justify-center bg-bg-input-deep border-r border-border-base \
+                                    sticky top-0 \
+                                    max-[1199px]:col-span-full max-[1199px]:relative max-[1199px]:h-auto max-[1199px]:border-r-0 max-[1199px]:border-b max-[1199px]:border-border-base \
+                                    max-[759px]:col-auto max-[759px]:shrink-0 max-[759px]:min-h-[200px] max-[759px]:max-h-[40vh]";
+                        if preview_visible.get() { base.to_string() } else { format!("{base} hidden") }
+                    }>
                     {move || match capture.with(|c| c.preview_url.clone()) {
                         Some(url) => view! {
-                            <img class="imaging-preview-img" src=url />
+                            <img class="max-w-full max-h-full object-contain [image-rendering:pixelated]" src=url />
                         }.into_any(),
                         None => view! {
-                            <div class="imaging-preview-empty">
+                            <div class="text-[#444] text-sm text-center px-3">
                                 {move || tr().imaging_no_frame}
                             </div>
                         }.into_any(),
@@ -311,31 +341,31 @@ pub fn ImagingTab(
                 </div>
 
                 // ─ Settings ──────────────────────────────────────────────
-                <div class="imaging-settings">
+                <div class="flex flex-col min-w-0 p-sp-4 gap-sp-4 border-r border-border-base max-[759px]:border-r-0 max-[759px]:border-b max-[759px]:border-border-base max-[759px]:p-sp-3 max-[759px]:gap-sp-3 max-[759px]:overflow-y-visible max-[759px]:shrink-0">
 
                     // Toolbar: collapse / expand all panels
-                    <div class="imaging-settings-toolbar">
-                        <span class="imaging-settings-toolbar-title">{move || tr().imaging_capture_controls}</span>
-                        <div class="imaging-toolbar-btns">
-                            <button class="imaging-ghost-btn" on:click=on_collapse_all>{move || tr().imaging_collapse_all}</button>
-                            <button class="imaging-ghost-btn" on:click=on_expand_all>{move || tr().imaging_expand_all}</button>
+                    <div class="flex items-center justify-between gap-sp-2 pb-[6px] border-b border-[#1a1c28] mb-sp-1">
+                        <span class="text-text-blue text-xs uppercase tracking-[0.08em]">{move || tr().imaging_capture_controls}</span>
+                        <div class="flex gap-[6px]">
+                            <button class=GHOST_BTN on:click=on_collapse_all>{move || tr().imaging_collapse_all}</button>
+                            <button class=GHOST_BTN on:click=on_expand_all>{move || tr().imaging_expand_all}</button>
                         </div>
                     </div>
 
                     // Actions — always visible, not foldable
-                    <fieldset class="imaging-card">
-                        <legend class="imaging-card-legend">{move || tr().imaging_actions}</legend>
-                        <div class="imaging-btn-grid">
-                            <button on:click=on_start   class="imaging-action-btn" style="--btn-color:#7affa0;">{move || tr().start}</button>
-                            <button on:click=on_stop    class="imaging-action-btn" style="--btn-color:#ff6a6a;">{move || tr().stop}</button>
-                            <button on:click=on_preview class="imaging-action-btn" style="--btn-color:#88aaff;">{move || tr().preview}</button>
-                            <button on:click=on_loop    class="imaging-action-btn" style="--btn-color:#88aaff;">{move || tr().focus_loop_btn}</button>
+                    <fieldset class="border border-border-base py-sp-3 px-3">
+                        <legend class="text-text-blue px-[6px] text-sm uppercase tracking-[0.06em]">{move || tr().imaging_actions}</legend>
+                        <div class="grid grid-cols-2 gap-sp-2">
+                            <button on:click=on_start   class=ACTION_BTN style="--btn-color:#7affa0;">{move || tr().start}</button>
+                            <button on:click=on_stop    class=ACTION_BTN style="--btn-color:#ff6a6a;">{move || tr().stop}</button>
+                            <button on:click=on_preview class=ACTION_BTN style="--btn-color:#88aaff;">{move || tr().preview}</button>
+                            <button on:click=on_loop    class=ACTION_BTN style="--btn-color:#88aaff;">{move || tr().focus_loop_btn}</button>
                         </div>
                     </fieldset>
 
                     // Cooling — foldable, open by default
                     <details
-                        class="imaging-panel"
+                        class=PANEL_CLS
                         prop:open=move || cooling_open.get()
                         on:toggle=move |ev: web_sys::Event| {
                             if let Some(el) = ev.target()
@@ -344,10 +374,13 @@ pub fn ImagingTab(
                                 cooling_open.set(el.open());
                             }
                         }>
-                        <summary>{move || tr().imaging_cooling}</summary>
-                        <div class="imaging-panel-body">
-                            <div class="imaging-cooling-row">
-                                <span class="imaging-field-label">{move || tr().imaging_target_c}</span>
+                        <summary class=SUMMARY_CLS>
+                            <span class=move || marker_cls(cooling_open.get())>"▸"</span>
+                            {move || tr().imaging_cooling}
+                        </summary>
+                        <div class=PANEL_BODY>
+                            <div class="flex items-center gap-sp-2 mb-sp-2">
+                                <span class=FIELD_LABEL>{move || tr().imaging_target_c}</span>
                                 <input
                                     type="number"
                                     step="0.5"
@@ -356,117 +389,135 @@ pub fn ImagingTab(
                                         let s = event_target_value(&ev);
                                         if let Ok(n) = s.parse::<f64>() { target_temp.set(n); }
                                     }
-                                    class="imaging-field-input"
+                                    class=FIELD_INPUT
                                 />
-                                <button on:click=on_set_temp class="imaging-action-btn" style="--btn-color:#88aaff;">{move || tr().imaging_set}</button>
+                                <button on:click=on_set_temp class=ACTION_BTN style="--btn-color:#88aaff;">{move || tr().imaging_set}</button>
                             </div>
-                            <div class="imaging-btn-grid">
-                                <button on:click=on_cooler_on  class="imaging-action-btn" style="--btn-color:#7affa0;">{move || tr().cooler_on}</button>
-                                <button on:click=on_cooler_off class="imaging-action-btn" style="--btn-color:#ff6a6a;">{move || tr().cooler_off}</button>
+                            <div class="grid grid-cols-2 gap-sp-2">
+                                <button on:click=on_cooler_on  class=ACTION_BTN style="--btn-color:#7affa0;">{move || tr().cooler_on}</button>
+                                <button on:click=on_cooler_off class=ACTION_BTN style="--btn-color:#ff6a6a;">{move || tr().cooler_off}</button>
                             </div>
                         </div>
                     </details>
 
                     <details
-                        class="imaging-panel"
+                        class=PANEL_CLS
                         prop:open=move || exposure_open.get()
                         on:toggle=move |ev: web_sys::Event| {
                             if let Some(el) = ev.target()
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { exposure_open.set(el.open()); }
                         }>
-                        <summary>{move || tr().imaging_exposure}</summary>
-                        <div class="imaging-panel-body">
+                        <summary class=SUMMARY_CLS>
+                            <span class=move || marker_cls(exposure_open.get())>"▸"</span>
+                            {move || tr().imaging_exposure}
+                        </summary>
+                        <div class=PANEL_BODY>
                             {render_group(EXPOSURE_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
                     <details
-                        class="imaging-panel"
+                        class=PANEL_CLS
                         prop:open=move || frame_open.get()
                         on:toggle=move |ev: web_sys::Event| {
                             if let Some(el) = ev.target()
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { frame_open.set(el.open()); }
                         }>
-                        <summary>{move || tr().imaging_frame}</summary>
-                        <div class="imaging-panel-body">
+                        <summary class=SUMMARY_CLS>
+                            <span class=move || marker_cls(frame_open.get())>"▸"</span>
+                            {move || tr().imaging_frame}
+                        </summary>
+                        <div class=PANEL_BODY>
                             {render_group(FRAME_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
                     <details
-                        class="imaging-panel"
+                        class=PANEL_CLS
                         prop:open=move || gain_open.get()
                         on:toggle=move |ev: web_sys::Event| {
                             if let Some(el) = ev.target()
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { gain_open.set(el.open()); }
                         }>
-                        <summary>{move || tr().imaging_gain_iso}</summary>
-                        <div class="imaging-panel-body">
+                        <summary class=SUMMARY_CLS>
+                            <span class=move || marker_cls(gain_open.get())>"▸"</span>
+                            {move || tr().imaging_gain_iso}
+                        </summary>
+                        <div class=PANEL_BODY>
                             {render_group(GAIN_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
                     <details
-                        class="imaging-panel"
+                        class=PANEL_CLS
                         prop:open=move || filter_open.get()
                         on:toggle=move |ev: web_sys::Event| {
                             if let Some(el) = ev.target()
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { filter_open.set(el.open()); }
                         }>
-                        <summary>{move || tr().imaging_filter}</summary>
-                        <div class="imaging-panel-body">
+                        <summary class=SUMMARY_CLS>
+                            <span class=move || marker_cls(filter_open.get())>"▸"</span>
+                            {move || tr().imaging_filter}
+                        </summary>
+                        <div class=PANEL_BODY>
                             {render_group(FILTER_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
                     <details
-                        class="imaging-panel"
+                        class=PANEL_CLS
                         prop:open=move || target_open.get()
                         on:toggle=move |ev: web_sys::Event| {
                             if let Some(el) = ev.target()
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { target_open.set(el.open()); }
                         }>
-                        <summary>{move || tr().imaging_target}</summary>
-                        <div class="imaging-panel-body">
+                        <summary class=SUMMARY_CLS>
+                            <span class=move || marker_cls(target_open.get())>"▸"</span>
+                            {move || tr().imaging_target}
+                        </summary>
+                        <div class=PANEL_BODY>
                             {render_group(TARGET_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
                     <details
-                        class="imaging-panel"
+                        class=PANEL_CLS
                         prop:open=move || jobtemp_open.get()
                         on:toggle=move |ev: web_sys::Event| {
                             if let Some(el) = ev.target()
                                 .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
                             { jobtemp_open.set(el.open()); }
                         }>
-                        <summary>{move || tr().imaging_job_temperature}</summary>
-                        <div class="imaging-panel-body">
+                        <summary class=SUMMARY_CLS>
+                            <span class=move || marker_cls(jobtemp_open.get())>"▸"</span>
+                            {move || tr().imaging_job_temperature}
+                        </summary>
+                        <div class=PANEL_BODY>
                             {render_group(ENFORCE_TEMP_FIELDS, lang, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
                 </div>
 
                 // ─ Sequence queue ────────────────────────────────────────
-                <div class="imaging-sequence">
-                    <div class="imaging-sequence-head">
-                        <span class="imaging-sequence-title">{move || tr().imaging_sequence_queue}</span>
-                        <div class="imaging-toolbar-btns">
-                            <button on:click=on_add_job   class="imaging-action-btn" style="--btn-color:#88aaff;">{move || tr().imaging_add_job}</button>
-                            <button on:click=on_clear_seq class="imaging-action-btn" style="--btn-color:#ff6a6a;">{move || tr().seq_clear}</button>
+                <div class="sticky top-0 flex flex-col min-w-0 max-h-screen overflow-hidden max-[1199px]:relative max-[1199px]:max-h-none max-[1199px]:overflow-y-auto max-[759px]:shrink-0 max-[759px]:overflow-visible">
+                    <div class="flex items-center justify-between gap-sp-2 pt-3 pb-sp-2 px-sp-4 border-b border-border-base">
+                        <span class="text-text-blue text-sm uppercase tracking-[0.08em]">{move || tr().imaging_sequence_queue}</span>
+                        <div class="flex gap-[6px]">
+                            <button on:click=on_add_job   class=ACTION_BTN style="--btn-color:#88aaff;">{move || tr().imaging_add_job}</button>
+                            <button on:click=on_clear_seq class=ACTION_BTN style="--btn-color:#ff6a6a;">{move || tr().seq_clear}</button>
                             <button
-                                class="imaging-action-btn"
+                                class=ACTION_BTN
                                 style="--btn-color:#aaffcc;"
                                 on:click=move |_| { save_open.update(|v| *v = !*v); load_open.set(false); }>
                                 {move || tr().save_profile}
                             </button>
                             <button
-                                class="imaging-action-btn"
+                                class=ACTION_BTN
                                 style="--btn-color:#ffcc88;"
                                 on:click=move |_| { load_open.update(|v| *v = !*v); save_open.set(false); }>
                                 {move || tr().load_profile}
@@ -475,35 +526,35 @@ pub fn ImagingTab(
                     </div>
                     // Save inline row
                     <Show when=move || save_open.get()>
-                        <div class="imaging-save-row">
+                        <div class="flex gap-[6px] py-[6px] px-sp-2 bg-[#0d1a12] border-b border-[#224433]">
                             <input
                                 type="text"
                                 placeholder="/home/user/seq.esq"
                                 prop:value=move || save_path.get()
                                 on:input=move |ev| save_path.set(event_target_value(&ev))
-                                class="imaging-save-input"
+                                class="flex-1 bg-bg-input text-[#c0ffd0] border border-[#335544] py-1 px-sp-2 font-mono text-sm"
                             />
-                            <button class="imaging-action-btn" style="--btn-color:#aaffcc;" on:click=move |_| {
+                            <button class=ACTION_BTN style="--btn-color:#aaffcc;" on:click=move |_| {
                                 let path = save_path.get_untracked();
                                 if !path.is_empty() {
                                     sv_save.with_value(|s| send_cmd(s, "capture_save_sequence_file", serde_json::json!({"filepath": path})));
                                     save_open.set(false);
                                 }
                             }>"✓"</button>
-                            <button class="imaging-action-btn" style="--btn-color:#555;" on:click=move |_| save_open.set(false)>"✕"</button>
+                            <button class=ACTION_BTN style="--btn-color:#555;" on:click=move |_| save_open.set(false)>"✕"</button>
                         </div>
                     </Show>
                     // Load inline row
                     <Show when=move || load_open.get()>
-                        <div class="imaging-load-row">
+                        <div class="flex gap-[6px] py-[6px] px-sp-2 bg-[#1a1200] border-b border-[#443322]">
                             <input
                                 type="text"
                                 placeholder="/home/user/seq.esq"
                                 prop:value=move || load_path.get()
                                 on:input=move |ev| load_path.set(event_target_value(&ev))
-                                class="imaging-load-input"
+                                class="flex-1 bg-bg-input text-[#ffd0aa] border border-[#554433] py-1 px-sp-2 font-mono text-sm"
                             />
-                            <button class="imaging-action-btn" style="--btn-color:#ffcc88;" on:click=move |_| {
+                            <button class=ACTION_BTN style="--btn-color:#ffcc88;" on:click=move |_| {
                                 let path = load_path.get_untracked();
                                 if !path.is_empty() {
                                     sv_load.with_value(|s| send_cmd(s, "capture_load_sequence_file", serde_json::json!({"filepath": path})));
@@ -515,15 +566,15 @@ pub fn ImagingTab(
                                     });
                                 }
                             }>"✓"</button>
-                            <button class="imaging-action-btn" style="--btn-color:#555;" on:click=move |_| load_open.set(false)>"✕"</button>
+                            <button class=ACTION_BTN style="--btn-color:#555;" on:click=move |_| load_open.set(false)>"✕"</button>
                         </div>
                     </Show>
-                    <div class="imaging-sequence-list">
+                    <div class="flex-1 min-h-0 overflow-y-auto py-sp-2 px-sp-3 max-[759px]:overflow-y-visible max-[759px]:max-h-none">
                         {move || {
                             let rows = sequence_rows();
                             if rows.is_empty() {
                                 return view! {
-                                    <div class="imaging-queue-empty">
+                                    <div class="text-[#555] text-sm py-3 px-[6px]">
                                         {tr().imaging_empty_queue}
                                     </div>
                                 }.into_any();
@@ -534,29 +585,29 @@ pub fn ImagingTab(
                                 let badge_color = job_status_color(&r.status);
                                 let filter_label = if r.filter.is_empty() { "—".into() } else { r.filter };
                                 view! {
-                                    <div class="imaging-job-card">
-                                        <div class="imaging-job-head">
-                                            <span class="imaging-job-idx">{format!("#{}", idx + 1)}</span>
+                                    <div class="flex flex-col gap-[3px] py-sp-2 px-sp-3 mb-[6px] bg-[rgba(14,16,26,0.85)] border border-[#22263a] rounded-sm">
+                                        <div class="flex items-center gap-sp-2">
+                                            <span class="text-[#555] text-xs">{format!("#{}", idx + 1)}</span>
                                             <span
-                                                class="imaging-job-badge"
+                                                class="text-[9px] font-bold uppercase tracking-[0.06em] py-[1px] px-[7px] rounded-[3px] text-[#0a0c14] whitespace-nowrap"
                                                 style:background=badge_color>
                                                 {r.status}
                                             </span>
                                             <button
-                                                class="imaging-job-remove"
+                                                class="bg-transparent border border-[#443] text-[#ff6a6a] py-[2px] px-sp-2 cursor-pointer font-mono text-sm"
                                                 title=tr().imaging_remove_job
                                                 on:click=move |_| on_remove(idx)>
                                                 "×"
                                             </button>
                                         </div>
-                                        <div class="imaging-job-meta">
-                                            <span class="imaging-job-field">{r.ftype}</span>
-                                            <span class="imaging-job-sep">"|"</span>
-                                            <span class="imaging-job-field">{format!("{} s", r.exp)}</span>
-                                            <span class="imaging-job-sep">"|"</span>
-                                            <span class="imaging-job-field">{filter_label}</span>
-                                            <span class="imaging-job-sep">"|"</span>
-                                            <span class="imaging-job-count">
+                                        <div class="flex flex-wrap gap-sp-3 text-[#7a88a8] text-xs">
+                                            <span class="text-[#aab8d0] text-sm whitespace-nowrap">{r.ftype}</span>
+                                            <span class="text-[#333] text-xs">"|"</span>
+                                            <span class="text-[#aab8d0] text-sm whitespace-nowrap">{format!("{} s", r.exp)}</span>
+                                            <span class="text-[#333] text-xs">"|"</span>
+                                            <span class="text-[#aab8d0] text-sm whitespace-nowrap">{filter_label}</span>
+                                            <span class="text-[#333] text-xs">"|"</span>
+                                            <span class="text-text-dim text-sm font-bold whitespace-nowrap">
                                                 {format!("{} / {}", r.completed, r.total)}
                                             </span>
                                         </div>
@@ -568,6 +619,18 @@ pub fn ImagingTab(
                 </div>
             </div>
         </div>
+    }
+}
+
+fn marker_cls(open: bool) -> &'static str {
+    let base = "inline-block w-[10px] text-xs text-[#557] transition-transform duration-[120ms]";
+    if open {
+        // Trick: prepend the rotation utility; keeping the base unchanged
+        // means "▸" rotates 90° to act as the open chevron.
+        // (Two leaked &str variants so the closure can return &'static str.)
+        "inline-block w-[10px] text-xs text-[#557] transition-transform duration-[120ms] rotate-90"
+    } else {
+        base
     }
 }
 
@@ -600,7 +663,7 @@ fn render_group(
     dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
 ) -> leptos::prelude::AnyView {
     view! {
-        <div class="imaging-field-group">
+        <div class="flex flex-col gap-[6px]">
             {fields.iter().map(|f| {
                 let d = dispatch.clone();
                 render_field(*f, lang, get_value, d)
@@ -645,7 +708,7 @@ fn render_field(
                             }
                         }
                     }
-                    class="imaging-field-input"
+                    class=FIELD_INPUT
                 />
             }.into_any()
         }
@@ -658,7 +721,7 @@ fn render_field(
                     on:change=move |ev| {
                         d(field.key, serde_json::Value::String(event_target_value(&ev)));
                     }
-                    class="imaging-field-input"
+                    class=FIELD_INPUT
                 />
             }.into_any()
         }
@@ -666,8 +729,8 @@ fn render_field(
 
     let label_fn = field.label;
     view! {
-        <div class="imaging-field-row">
-            <span class="imaging-field-label">{move || label_fn(t(lang.get()))}</span>
+        <div class="flex items-center gap-sp-2 text-sm">
+            <span class=FIELD_LABEL>{move || label_fn(t(lang.get()))}</span>
             {editor}
         </div>
     }.into_any()
