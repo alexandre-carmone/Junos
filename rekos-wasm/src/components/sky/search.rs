@@ -34,10 +34,11 @@ pub fn SkySearch(
 
     view! {
         <div
-            class="sky-search"
+            class="absolute top-2 left-2 z-50 w-[min(230px,calc(100vw-120px))] max-md:w-[calc(100vw-72px)] max-md:!top-[34px]"
             on:click=move |ev| ev.stop_propagation()
         >
             <input type="text"
+                class="bg-bg-panel-glass text-text border border-border-accent py-1 px-sp-2 w-full font-mono text-[12px] box-border rounded-[2px]"
                 placeholder=move || tr().search_placeholder
                 prop:value=move || sky_search.get()
                 on:input=move |e| set_sky_search.set(event_target_value(&e))
@@ -91,7 +92,7 @@ pub fn SkySearch(
 
                                 set_sky_search.set(String::new());
                             }
-                            class="sky-search-result"
+                            class="py-[3px] px-sp-2 cursor-pointer text-text border-b border-[#1a1a2a] text-[12px]"
                         >
                             {label}
                         </div>
@@ -99,7 +100,7 @@ pub fn SkySearch(
                 }).collect_view();
 
                 view! {
-                    <div class="sky-search-results">
+                    <div class="bg-bg-panel-solid border border-border-accent border-t-0 max-h-[220px] overflow-y-auto rounded-b-[2px]">
                         {rows}
                     </div>
                 }.into_any()

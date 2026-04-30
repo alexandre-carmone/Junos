@@ -121,26 +121,24 @@ pub fn SkyContextMenu(
                 let dec_abs = dec_deg.abs();
                 let decd = dec_abs as u32;
                 let decm = ((dec_abs - decd as f64) * 60.0) as u32;
+                let btn_base = "w-full py-1 px-sp-2 cursor-pointer font-mono text-[12px] rounded-[2px] disabled:!bg-[#1a1a1a] disabled:!text-[#555] disabled:!border-[#333] disabled:!cursor-not-allowed disabled:opacity-60";
                 view! {
-                    <div class="sky-ctx-menu"
-                        // left/top are dynamic per-click positions; the rest of the
-                        // menu's appearance lives in components/sky.css.
+                    <div class="fixed bg-bg-button border border-[#555] rounded-sm p-sp-2 text-[12px] z-[100] min-w-[180px] max-w-[calc(100vw-16px)] max-h-[calc(100dvh-32px)] overflow-y-auto"
                         style=format!(
                             "left:min({}px, calc(100vw - 200px)); top:min({}px, calc(100dvh - 180px));",
                             sx, sy
                         )
                         on:click=move |ev| ev.stop_propagation()
                     >
-                        <div class="sky-ctx-menu__coord">
+                        <div class="text-text-muted mb-[6px]">
                             {format!("{} {:02}h{:02}m{:04.1}s", tr().ra_label, rah, ram, ras)}
                         </div>
-                        <div class="sky-ctx-menu__coord">
+                        <div class="text-text-muted mb-sp-2">
                             {format!("{} {}{}\u{00b0}{:02}'{:02}\"", tr().dec_label, dec_sign, decd, decm,
                                 ((dec_abs - decd as f64) * 3600.0 - decm as f64 * 60.0) as u32)}
                         </div>
                         <button
-                                class="sky-ctx-btn sky-ctx-btn--goto"
-                                class:sky-ctx-btn--disabled=move || goto_disabled.get()
+                                class=format!("{btn_base} bg-[#2a3a5a] text-[#aaf] border border-[#556] mb-1")
                                 disabled=move || goto_disabled.get()
                                 on:click=on_goto.clone()>
                             {move || {
@@ -152,8 +150,7 @@ pub fn SkyContextMenu(
                             }}
                         </button>
                         <button
-                                class="sky-ctx-btn sky-ctx-btn--align"
-                                class:sky-ctx-btn--disabled=move || align_disabled.get()
+                                class=format!("{btn_base} bg-[#2a4a3a] text-[#afa] border border-[#565]")
                                 disabled=move || align_disabled.get()
                                 on:click=on_align.clone()>
                             {move || {
@@ -166,12 +163,12 @@ pub fn SkyContextMenu(
                             }}
                         </button>
                         <button
-                            class="sky-ctx-btn sky-ctx-btn--scheduler"
+                            class=format!("{btn_base} bg-[#1a1a3a] text-text-blue border border-border-accent mt-[6px]")
                             on:click=on_add_scheduler.clone()>
                             {move || tr().sky_add_scheduler}
                         </button>
                         <button
-                            class="sky-ctx-btn sky-ctx-btn--mosaic"
+                            class=format!("{btn_base} bg-bg-button-info text-accent-cyan-dim border border-border-info mt-1")
                             on:click=on_create_mosaic.clone()>
                             {move || tr().sky_create_mosaic}
                         </button>

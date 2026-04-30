@@ -1362,8 +1362,12 @@ pub fn SkyTab(
         send_for_location(serde_json::json!({"type":"option_set","payload":{"Latitude":lat,"Longitude":lon}}).to_string());
     });
 
+    let mosaic_input = "bg-bg-input text-[#ccc] border border-border-input font-mono text-[12px] py-[2px] px-[5px]";
+    let mosaic_row_label = "text-text-muted min-w-[52px]";
+    let mosaic_row_sep = "text-text-faint min-w-0";
+
     view! {
-        <div class="sky-pane"
+        <div class="relative w-full h-[100dvh] overflow-hidden"
              on:click=move |_| {
                  set_ctx_menu.set(None);
                  set_info_popup.set(None);
@@ -1372,13 +1376,13 @@ pub fn SkyTab(
             // WebGPU canvas (bottom layer)
             <canvas
                 node_ref=gpu_canvas_ref
-                class="sky-canvas"
+                class="absolute top-0 left-0 w-full h-full block"
             />
 
             // Canvas2D overlay (top layer)
             <canvas
                 node_ref=overlay_ref
-                class="sky-canvas sky-canvas--overlay"
+                class="absolute top-0 left-0 w-full h-full block cursor-crosshair"
                 on:mousedown=on_mousedown
                 on:mousemove=on_mousemove
                 on:mouseup=on_mouseup
@@ -1398,7 +1402,7 @@ pub fn SkyTab(
 
             // ── Mosaic center-pick banner ──────────────────────────────────
             {move || planner.picking_center.get().then(|| view! {
-                <div class="sky-mosaic-banner">
+                <div class="absolute top-2 left-1/2 -translate-x-1/2 z-[100] pointer-events-none py-2 px-[18px] bg-bg-banner border border-accent-cyan-dim text-accent-cyan font-mono text-md rounded-md whitespace-nowrap">
                     {"Click on the sky to set mosaic center"}
                 </div>
             })}
@@ -1438,9 +1442,9 @@ pub fn SkyTab(
             />
 
             // ── Zoom bar (right side, vertical) ─────────────────────────────
-            <div class="sky-zoom-bar"
+            <div class="absolute right-2 top-[50px] bottom-10 max-md:top-[72px] max-md:bottom-[150px] flex flex-col items-center gap-1 z-30"
                  on:click=move |ev| ev.stop_propagation()>
-                <span class="sky-zoom-bar__label">
+                <span class="text-sm text-text-faint whitespace-nowrap">
                     {move || {
                         let fov = fov_radius.get() * 2.0;
                         if fov >= 10.0 { format!("{:.0}\u{00b0}", fov) }
@@ -1449,7 +1453,7 @@ pub fn SkyTab(
                     }}
                 </span>
                 <input type="range"
-                       class="sky-zoom-slider"
+                       class="flex-1 [accent-color:var(--text-blue)] [writing-mode:vertical-lr] [direction:rtl] [-webkit-appearance:slider-vertical] w-5 cursor-pointer"
                        min="-1000" max="1954" step="10"
                        prop:value=move || format!("{}", (fov_radius.get().log10() * 1000.0) as i32)
                        on:mousedown=|ev| ev.stop_propagation()
@@ -1481,14 +1485,14 @@ pub fn SkyTab(
             // ── Floating mosaic editor (shown while planning == true) ──────────
             {move || planner.planning.get().then(|| view! {
                 <div
-                    class="sky-mosaic-editor"
+                    class="absolute bottom-20 right-[max(6px,env(safe-area-inset-right))] z-[110] w-[min(240px,calc(100vw-12px))] bg-[rgba(8,8,20,0.94)] border border-border-info rounded-md py-[10px] px-3 font-mono text-[12px] text-text flex flex-col gap-[7px]"
                     on:click=move |ev| ev.stop_propagation()
                     on:mousedown=move |ev| ev.stop_propagation()
                 >
-                    <div class="sky-mosaic-editor__header">
-                        <span class="sky-mosaic-editor__title">{"Mosaic Setup"}</span>
+                    <div class="flex justify-between items-center">
+                        <span class="text-accent-cyan-dim font-bold">{"Mosaic Setup"}</span>
                         <button
-                            class="sky-mosaic-editor__close"
+                            class="bg-none border-none text-text-faint cursor-pointer text-base leading-none px-[2px]"
                             on:click=move |_| {
                                 planner.planning.set(false);
                                 planner.center.set(None);
@@ -1506,16 +1510,16 @@ pub fn SkyTab(
                         let decd = da as u32;
                         let decm = ((da - decd as f64) * 60.0) as u32;
                         view! {
-                            <div class="sky-mosaic-editor__center">
+                            <div class="text-sm text-text-blue">
                                 {format!("Center  {:02}h{:02}m  {}{}\u{00b0}{:02}\u{2019}", rah, ram, ds, decd, decm)}
                             </div>
                         }
                     })}
 
-                    <label class="sky-mosaic-row sky-mosaic-row--label">
-                        <span>{"Target:"}</span>
+                    <label class="flex items-center gap-[5px]">
+                        <span class=mosaic_row_label>{"Target:"}</span>
                         <input type="text" placeholder="e.g. M31"
-                               class="sky-mosaic-input sky-mosaic-input--target"
+                               class=format!("{mosaic_input} flex-1")
                                prop:value=move || planner.target.get()
                                on:input=move |ev| {
                                    planner.target.set(
@@ -1525,10 +1529,10 @@ pub fn SkyTab(
                                } />
                     </label>
 
-                    <div class="sky-mosaic-row">
-                        <span>{"Grid:"}</span>
+                    <div class="flex items-center gap-1">
+                        <span class=mosaic_row_label>{"Grid:"}</span>
                         <input type="number" min="1" max="10"
-                               class="sky-mosaic-input sky-mosaic-input--small"
+                               class=format!("{mosaic_input} w-10 text-center")
                                prop:value=move || planner.grid_w.get().to_string()
                                on:input=move |ev| {
                                    if let Ok(n) = ev.target().unwrap()
@@ -1537,9 +1541,9 @@ pub fn SkyTab(
                                        planner.grid_w.set(n.clamp(1, 10));
                                    }
                                } />
-                        <span class="sky-mosaic-row__sep">{"\u{00d7}"}</span>
+                        <span class=mosaic_row_sep>{"\u{00d7}"}</span>
                         <input type="number" min="1" max="10"
-                               class="sky-mosaic-input sky-mosaic-input--small"
+                               class=format!("{mosaic_input} w-10 text-center")
                                prop:value=move || planner.grid_h.get().to_string()
                                on:input=move |ev| {
                                    if let Ok(n) = ev.target().unwrap()
@@ -1550,10 +1554,10 @@ pub fn SkyTab(
                                } />
                     </div>
 
-                    <label class="sky-mosaic-row">
-                        <span>{"Overlap:"}</span>
+                    <label class="flex items-center gap-1">
+                        <span class=mosaic_row_label>{"Overlap:"}</span>
                         <input type="number" min="0" max="50" step="1"
-                               class="sky-mosaic-input sky-mosaic-input--med"
+                               class=format!("{mosaic_input} w-12")
                                prop:value=move || format!("{:.0}", planner.overlap.get())
                                on:input=move |ev| {
                                    if let Ok(n) = ev.target().unwrap()
@@ -1562,13 +1566,13 @@ pub fn SkyTab(
                                        planner.overlap.set(n.clamp(0.0, 50.0));
                                    }
                                } />
-                        <span class="sky-mosaic-row__sep">{"%"}</span>
+                        <span class=mosaic_row_sep>{"%"}</span>
                     </label>
 
-                    <label class="sky-mosaic-row">
-                        <span>{"PA:"}</span>
+                    <label class="flex items-center gap-1">
+                        <span class=mosaic_row_label>{"PA:"}</span>
                         <input type="number" min="-180" max="180" step="1"
-                               class="sky-mosaic-input sky-mosaic-input--pa"
+                               class=format!("{mosaic_input} w-[54px]")
                                prop:value=move || format!("{:.0}", planner.pa.get())
                                on:input=move |ev| {
                                    if let Ok(n) = ev.target().unwrap()
@@ -1577,11 +1581,11 @@ pub fn SkyTab(
                                        planner.pa.set(n);
                                    }
                                } />
-                        <span class="sky-mosaic-row__sep">{"\u{00b0}"}</span>
+                        <span class=mosaic_row_sep>{"\u{00b0}"}</span>
                     </label>
 
                     <button
-                        class="sky-mosaic-open-btn"
+                        class="mt-1 py-[6px] bg-bg-button-info text-text-blue border border-border-accent cursor-pointer font-mono text-[12px] rounded-[3px] text-center"
                         on:click=move |_| {
                             if let Some(ctx) = tab_ctx {
                                 ctx.0.set(Tab::Mosaic);
