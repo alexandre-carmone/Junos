@@ -56,8 +56,8 @@
           doCheck = false;
         };
 
-        # Exclude large reference-only subtrees from the Nix source hash so that
-        # edits to kstars/ or a previous dist/ don't invalidate Rust rebuilds.
+        # Exclude large reference-only subtrees and generated/runtime artifacts
+        # from the Nix source hash so unrelated edits don't bust Rust rebuilds.
         filteredSrc = pkgs.lib.cleanSourceWith {
           src = ./.;
           filter = path: _type:
@@ -65,7 +65,11 @@
             in !(pkgs.lib.hasPrefix "/kstars" rel)
             && !(pkgs.lib.hasPrefix "/target" rel)
             && !(pkgs.lib.hasPrefix "/rekos-wasm/dist" rel)
-            && !(pkgs.lib.hasPrefix "/.git" rel);
+            && !(pkgs.lib.hasPrefix "/rekos-wasm/bin" rel)
+            && !(rel == "/rekos-wasm/styles/tailwind.css")
+            && !(pkgs.lib.hasPrefix "/.certs" rel)
+            && !(pkgs.lib.hasPrefix "/.git" rel)
+            && !(rel == "/result");
         };
 
         # ── Stage 1: compile rekos-wasm to a raw .wasm binary ──────────────
@@ -89,15 +93,27 @@
           doCheck = false;
         };
 
-        # ── Stage 2: wasm-bindgen + assets → dist directory ────────────────
+        # ── Stage 2: tailwind + wasm-bindgen + assets → dist directory ─────
         rekosWasmDist = pkgs.stdenv.mkDerivation {
           name = "rekos-wasm-dist";
           src = ./rekos-wasm;
 
-          nativeBuildInputs = [ wasmBindgenCli pkgs.python3 ];
+          nativeBuildInputs = [
+            wasmBindgenCli
+            pkgs.python3
+            pkgs.tailwindcss
+          ];
 
           buildPhase = ''
             mkdir -p $out
+
+            # Generate Tailwind utilities CSS (matches Trunk's pre_build hook).
+            mkdir -p styles
+            tailwindcss \
+              --config tailwind.config.js \
+              --input styles/tailwind.input.css \
+              --output styles/tailwind.css \
+              --minify
 
             # Generate JS bindings + processed WASM
             wasm-bindgen \
@@ -107,6 +123,13 @@
 
             # Static catalog assets (checked-in binaries — copy as-is)
             cp -r public/. "$out/"
+
+            # Stylesheets referenced by the rewritten <link rel="stylesheet"> tags
+            mkdir -p "$out/styles"
+            cp styles/tokens.css      "$out/styles/"
+            cp styles/base.css        "$out/styles/"
+            cp styles/tailwind.css    "$out/styles/"
+            cp styles/responsive.css  "$out/styles/"
 
             # Strip Trunk directives from index.html and inject the init script
             python3 ${./nix/process-html.py} index.html "$out/index.html"
@@ -125,6 +148,9 @@
           src = filteredSrc;
           cargoLock.lockFile = ./Cargo.lock;
 
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [ pkgs.openssl ];
+
           buildPhase = ''
             cargo build -p rekos-server --release
           '';
@@ -134,6 +160,30 @@
           '';
 
           doCheck = false;
+        };
+
+        # ── Dev shell ───────────────────────────────────────────────────────
+        devShell = pkgs.mkShell {
+          packages = [
+            rustToolchainWasm
+            wasmBindgenCli
+            pkgs.trunk
+            pkgs.tailwindcss
+            pkgs.pkg-config
+            pkgs.openssl
+            pkgs.python3
+            pkgs.uv
+            pkgs.just
+            pkgs.cacert
+          ];
+
+          shellHook = ''
+            export OPENSSL_NO_VENDOR=1
+            if [ -e rekos-wasm/bin/tailwindcss ]; then
+              echo "warning: rekos-wasm/bin/tailwindcss exists — the Nix shell ships its own \`tailwindcss\` on PATH."
+              echo "         Trunk's pre_build hook still calls bin/tailwindcss; either delete it or keep both in sync."
+            fi
+          '';
         };
 
       in {
@@ -149,7 +199,12 @@
           '';
         };
 
-        # Convenience: `nix run` starts the server on localhost:3000
+        devShells.default = devShell;
+
+        # Convenience: `nix run` starts the server. It binds HTTP on :8080
+        # (KStars-facing) and HTTPS on :8443 (browser-facing, required by
+        # iOS Safari for WebGPU). A self-signed cert is auto-generated into
+        # ./.certs/ on first run.
         apps.default = {
           type = "app";
           program = "${self.packages.${system}.default}/bin/rekos-server";
