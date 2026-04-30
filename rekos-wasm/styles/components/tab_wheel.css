@@ -56,11 +56,11 @@
     height: 44px;
     transform: translate(-50%, -50%) rotate(var(--tw-cr, 0deg));
     border-radius: var(--r-lg);
-    border: 1px solid #1e2030;
-    background: rgba(12, 14, 24, 0.85);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-wheel);
     color: var(--text-blue);
     box-shadow: none;
-    font: 600 13px/1 ui-monospace, monospace;
+    font: 600 var(--fs-md)/1 var(--font-mono);
     letter-spacing: 0.05em;
     cursor: pointer;
     touch-action: manipulation;
@@ -74,10 +74,10 @@
     min-width: 0;
 }
 .tab-wheel-button--active {
-    background: rgba(60, 90, 160, 0.95);
-    border-color: #a8c2ff;
-    color: #e8f0ff;
-    box-shadow: 0 0 14px rgba(136, 170, 255, 0.45);
+    background: var(--accent-blue-active);
+    border-color: var(--text-blue-bright);
+    color: var(--text-dim);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--text-blue) 45%, transparent);
 }
 .tab-wheel-button-icon {
     display: inline-block;
@@ -98,9 +98,9 @@
     width: 78px;
     height: 54px;
     border-radius: 10px;
-    border: 1px solid rgba(136, 170, 255, 0.55);
-    background: radial-gradient(ellipse at center, rgba(136, 170, 255, 0.18), rgba(136, 170, 255, 0) 70%);
-    box-shadow: 0 0 18px rgba(136, 170, 255, 0.35) inset;
+    border: 1px solid color-mix(in srgb, var(--text-blue) 55%, transparent);
+    background: radial-gradient(ellipse at center, color-mix(in srgb, var(--text-blue) 18%, transparent), transparent 70%);
+    box-shadow: 0 0 18px color-mix(in srgb, var(--text-blue) 35%, transparent) inset;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.15s;
@@ -118,9 +118,9 @@
     height: 68px;
     border-radius: 50%;
     border: 2px solid var(--text-blue);
-    background: rgba(12, 14, 24, 0.92);
+    background: var(--bg-wheel);
     color: var(--text-dim);
-    font: 700 15px/1 ui-monospace, monospace;
+    font: 700 var(--fs-base)/1 var(--font-mono);
     letter-spacing: 0.06em;
     cursor: pointer;
     touch-action: manipulation;
@@ -150,9 +150,9 @@
     padding: 0 8px;
     border-radius: 11px;
     border: 1px solid var(--text-blue);
-    background: rgba(12, 14, 24, 0.9);
+    background: var(--bg-wheel);
     color: var(--text-blue);
-    font: 600 10px/1 ui-monospace, monospace;
+    font: 600 var(--fs-xs)/1 var(--font-mono);
     cursor: pointer;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;

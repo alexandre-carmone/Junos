@@ -15,6 +15,7 @@
     --bg-button-info:   #0a1a2a;
     --bg-button-ok:     #1a2a1a;
     --bg-banner:        rgba(0, 30, 50, 0.92);
+    --bg-wheel:         rgba(12, 14, 24, 0.90);
 
     /* Text */
     --text:             #c0c0d0;
@@ -24,11 +25,13 @@
     --text-blue:        #88aaff;
 
     /* Accents */
-    --accent-cyan:      #00ffff;
-    --accent-cyan-dim:  #00cccc;
-    --accent-amber:     #ffd060;
-    --accent-green:     #7affa0;
-    --accent-green-soft:#8f8;
+    --accent-cyan:        #00ffff;
+    --accent-cyan-dim:    #00cccc;
+    --accent-amber:       #ffd060;
+    --accent-green:       #7affa0;
+    --accent-green-soft:  #8f8;
+    --accent-blue-active: rgba(60, 90, 160, 0.95);
+    --text-blue-bright:   #a8c2ff;
 
     /* Borders */
     --border:           #222;

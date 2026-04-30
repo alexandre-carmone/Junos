@@ -9,4 +9,5 @@ pub mod profiles;
 pub mod scheduler;
 pub mod sky;
 pub mod tab_wheel;
+pub mod tab_wheel_icons;
 pub mod tabs;
