@@ -4,8 +4,8 @@ use crate::Tab;
 // 24x24 viewBox; sized at the call site via the wrapping <span>.
 pub fn tab_icon(tab: Tab) -> &'static str {
     match tab {
-        // 4-point star
-        Tab::Sky => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 L13.6 10.4 L22 12 L13.6 13.6 L12 22 L10.4 13.6 L2 12 L10.4 10.4 Z"/><circle cx="18" cy="5" r="0.8" fill="currentColor"/><circle cx="5" cy="18" r="0.8" fill="currentColor"/></svg>"##,
+        // Constellation: connected stars with a bright 4-point focal star
+        Tab::Sky => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6 L10 4 L15 9 L20 5 M15 9 L9 14 L14 18 L20 16" opacity="0.55"/><path d="M15 9 L16.1 11.1 L18.2 9 L16.1 12.1 L15 14 L13.9 12.1 L11.8 9 L13.9 11.1 Z" fill="currentColor" stroke="none"/><circle cx="5" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="10" cy="4" r="0.9" fill="currentColor" stroke="none"/><circle cx="20" cy="5" r="0.9" fill="currentColor" stroke="none"/><circle cx="9" cy="14" r="1" fill="currentColor" stroke="none"/><circle cx="14" cy="18" r="1" fill="currentColor" stroke="none"/><circle cx="20" cy="16" r="0.9" fill="currentColor" stroke="none"/></svg>"##,
         // Equatorial mount: tripod + tilted RA axis with counterweight bar
         Tab::Mount => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21 L7 14 M12 21 L17 14 M12 21 L12 15"/><path d="M5 6 L19 16" /><circle cx="12" cy="11" r="2.2" fill="currentColor" stroke="none"/><circle cx="5" cy="6" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="16" r="1.6" fill="currentColor" stroke="none"/></svg>"##,
         // Concentric focus rings
