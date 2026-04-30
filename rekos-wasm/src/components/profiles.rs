@@ -81,8 +81,8 @@ pub fn ProfilesTab(
     };
 
     view! {
-        <div class="absolute inset-0 bg-bg text-text font-mono overflow-auto pt-5 pr-5 pb-5 pl-20">
-            <div class="flex items-center gap-3 mb-4">
+        <div class="absolute inset-0 bg-bg text-text font-mono overflow-auto pt-5 pr-5 pb-5 pl-20 max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:pt-3 max-[759px]:pb-3">
+            <div class="flex flex-wrap items-center gap-3 mb-4 max-[759px]:gap-sp-2">
                 <h2 class="m-0 text-base text-text-blue tracking-[0.08em]">
                     {move || tr().profiles_title}
                 </h2>
@@ -290,7 +290,7 @@ fn ProfileRow(
     view! {
         <div
             class=move || {
-                let base = "flex items-center gap-3 py-sp-3 px-sp-4 border rounded-lg bg-[rgba(12,14,24,0.6)]";
+                let base = "flex items-center gap-3 py-sp-3 px-sp-4 border rounded-lg bg-[rgba(12,14,24,0.6)] max-[759px]:flex-col max-[759px]:items-stretch max-[759px]:gap-sp-2";
                 if active_for_class() {
                     format!("{base} border-text-blue !bg-[rgba(60,90,160,0.10)]")
                 } else {
@@ -318,7 +318,7 @@ fn ProfileRow(
                     {summary}
                 </div>
             </div>
-            <div class="flex gap-[6px] shrink-0">
+            <div class="flex gap-[6px] shrink-0 max-[759px]:flex-wrap max-[759px]:justify-end">
                 {move || if is_running() {
                     view! {
                         <button
@@ -578,7 +578,7 @@ fn ProfileForm(
                 <TextInput value=remote placeholder="indi_eqmod_telescope,..."/>
             </Field>
 
-            <div class="flex gap-sp-3 justify-end mt-sp-4">
+            <div class="flex flex-wrap gap-sp-3 justify-end mt-sp-4">
                 <button
                     class=format!("{BTN_BASE} {BTN_EDIT}")
                     on:click=on_cancel
