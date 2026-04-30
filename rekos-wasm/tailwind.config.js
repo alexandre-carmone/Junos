@@ -23,6 +23,7 @@ module.exports = {
         "glass-bg":         "var(--glass-bg)",
         "glass-bg-strong":  "var(--glass-bg-strong)",
         "glass-border":     "var(--glass-border)",
+        "text":             "var(--text)",
         "text-dim":         "var(--text-dim)",
         "text-muted":       "var(--text-muted)",
         "text-faint":       "var(--text-faint)",
