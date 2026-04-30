@@ -4,7 +4,7 @@ default: run
 
 # Install all toolchain bits needed to build and run rekos.
 # Assumes `rustup` and `cargo` are already on PATH.
-install:
+install: setup-tailwind
     rustup target add wasm32-unknown-unknown
     cargo install --locked trunk
 
