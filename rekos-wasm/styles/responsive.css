@@ -163,18 +163,6 @@
 
 }
 
-/* ── Files tab ───────────────────────────────────────────────────── */
-@media (max-width: 900px) {
-    .files-body { grid-template-columns: 160px 1fr 280px; }
-}
-@media (max-width: 700px) {
-    .files-body {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto auto auto;
-        overflow-y: auto;
-    }
-}
-
 /* ── Very small phones  ≤ 374 px  (iPhone SE 1st gen) ───────────── */
 @media (max-width: 374px) {
     button {

@@ -63,6 +63,15 @@ struct FitsRow {
     comment: String,
 }
 
+// ── Tailwind class fragments ─────────────────────────────────────────────────
+const FILES_ROW: &str = "flex items-center gap-[6px] w-full text-left py-[6px] px-sp-2 mb-[2px] bg-transparent text-text border border-transparent rounded-sm cursor-pointer hover:bg-[rgba(136,170,255,0.08)] hover:border-border-strong";
+const FILES_THUMB_BASE: &str = "bg-bg-input-deep border border-border-strong rounded-sm overflow-hidden cursor-pointer p-0 text-inherit flex flex-col hover:border-text-blue";
+const FILES_BTN: &str = "bg-bg-button text-text-dim border border-border-strong py-[5px] px-sp-3 rounded-sm text-[12px] cursor-pointer hover:border-text-blue";
+const FILES_FIELD: &str = "flex flex-col gap-[3px] text-sm text-text-blue";
+const FILES_FIELD_INPUT: &str = "bg-bg-input-deep text-text border border-border-strong py-1 px-[6px] rounded-sm text-[12px] focus:outline-none focus:border-text-blue";
+const FILES_SECTION: &str = "text-text-blue text-sm uppercase tracking-[0.06em] mt-[14px] mb-[6px] font-semibold";
+const FILES_KV: &str = "flex justify-between gap-sp-2";
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 #[component]
@@ -151,25 +160,25 @@ pub fn FilesTab(
     let send_btn = Arc::clone(&send);
 
     view! {
-        <div class="files-tab-root">
+        <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] overflow-hidden">
             // Header strip
-            <div class="files-header">
-                <span class="files-title">{move || tr().files_title}</span>
-                <span class="files-breadcrumb">
+            <div class="flex items-center gap-3 py-sp-3 pr-5 pl-20 border-b border-border-base bg-bg-panel-solid text-md min-h-[44px]">
+                <span class="text-text-blue font-semibold tracking-[0.06em]">{move || tr().files_title}</span>
+                <span class="text-text">
                     {move || render_breadcrumb(&current_path.get(), tr().files_breadcrumb_root, current_path)}
                 </span>
-                <span class="files-grow"></span>
-                <span class="files-status">
+                <span class="flex-1"></span>
+                <span class="text-text-blue text-sm">
                     {move || if loading.get() { tr().files_loading } else { "" }}
                 </span>
             </div>
 
-            <div class="files-body">
+            <div class="grid grid-cols-[220px_minmax(0,1fr)_380px] max-[900px]:grid-cols-[160px_1fr_280px] max-[700px]:grid-cols-1 max-[700px]:grid-rows-[auto_auto_auto] max-[700px]:overflow-y-auto min-h-0 overflow-hidden">
                 // Left: folder list + parent
-                <div class="files-side">
+                <div class="border-r border-border-base overflow-y-auto p-sp-2">
                     <Show when=move || !current_path.with(|p| p.is_empty())>
                         <button
-                            class="files-row files-parent"
+                            class=format!("{FILES_ROW} text-text-blue")
                             on:click=move |_| {
                                 let cur = current_path.get();
                                 let parent = parent_of(&cur);
@@ -190,7 +199,7 @@ pub fn FilesTab(
                             let name = d.name.clone();
                             view! {
                                 <button
-                                    class="files-row files-folder"
+                                    class=FILES_ROW
                                     on:click=move |_| {
                                         let cur = current_path.get();
                                         let next = if cur.is_empty() { name.clone() }
@@ -199,21 +208,21 @@ pub fn FilesTab(
                                         selected.set(None);
                                     }
                                 >
-                                    <span class="files-folder-icon">"\u{1F4C1}"</span>
-                                    <span class="files-row-name">{d.name.clone()}</span>
+                                    <span class="text-[14px]">"\u{1F4C1}"</span>
+                                    <span class="whitespace-nowrap overflow-hidden text-ellipsis">{d.name.clone()}</span>
                                 </button>
                             }
                         }).collect_view()
                     }}
                     <Show when=move || list_error.get().is_some()>
-                        <div class="files-error">
+                        <div class="text-[#ff8888] p-sp-2 text-[12px]">
                             {move || format!("{}: {}", tr().files_error, list_error.get().unwrap_or_default())}
                         </div>
                     </Show>
                 </div>
 
                 // Center: thumbnails
-                <div class="files-grid">
+                <div class="overflow-y-auto p-3 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-sp-3 content-start">
                     {move || {
                         let l = listing.get();
                         let files: Vec<DirEntry> = l
@@ -222,7 +231,7 @@ pub fn FilesTab(
                             .unwrap_or_default();
                         if files.is_empty() && !loading.get() && list_error.get().is_none() {
                             return view! {
-                                <div class="files-empty">{tr().files_empty_dir}</div>
+                                <div class="text-text-faint p-5 text-center">{tr().files_empty_dir}</div>
                             }.into_any();
                         }
                         let cur_path = current_path.get();
@@ -234,15 +243,15 @@ pub fn FilesTab(
                             let active = move || selected.get().as_deref() == Some(rel.as_str());
                             view! {
                                 <button
-                                    class=move || if active() { "files-thumb files-thumb-active" } else { "files-thumb" }
+                                    class=move || if active() { format!("{FILES_THUMB_BASE} !border-text-blue shadow-[0_0_0_2px_rgba(136,170,255,0.25)]") } else { FILES_THUMB_BASE.to_string() }
                                     on:click=move |_| selected.set(Some(rel_for_click.clone()))
                                 >
                                     <img
-                                        class="files-thumb-img"
+                                        class="w-full aspect-square object-cover bg-black block"
                                         src=format!("/api/files/thumb?size=256&path={}", url_encode(&rel_for_thumb))
                                         loading="lazy"
                                     />
-                                    <span class="files-thumb-name">{f.name.clone()}</span>
+                                    <span class="text-xs py-1 px-[6px] text-text-muted whitespace-nowrap overflow-hidden text-ellipsis">{f.name.clone()}</span>
                                 </button>
                             }.into_any()
                         }).collect_view().into_any()
@@ -250,38 +259,38 @@ pub fn FilesTab(
                 </div>
 
                 // Right: detail panel + LiveStacker pane
-                <div class="files-detail">
+                <div class="border-l border-border-base overflow-y-auto p-3 bg-bg-panel-dim">
                     {move || render_detail(selected.get(), selected_meta.get(), meta_error.get(), &tr())}
 
-                    <div class="files-livestack">
-                        <h3 class="files-section">{move || tr().livestack_title}</h3>
-                        <div class="files-ls-buttons">
+                    <div class="mt-[18px] pt-3 border-t border-border-base">
+                        <h3 class=FILES_SECTION>{move || tr().livestack_title}</h3>
+                        <div class="flex gap-[6px] flex-wrap mb-sp-2">
                             {
                                 let s1 = Arc::clone(&send_btn);
                                 let s2 = Arc::clone(&send_btn);
                                 let s3 = Arc::clone(&send_btn);
                                 let s4 = Arc::clone(&send_btn);
                                 view! {
-                                    <button class="files-btn" on:click=move |_| send_cmd(&s1, "livestacker_initialize", json!({}))>
+                                    <button class=FILES_BTN on:click=move |_| send_cmd(&s1, "livestacker_initialize", json!({}))>
                                         {move || tr().livestack_init}
                                     </button>
-                                    <button class="files-btn" on:click=move |_| send_cmd(&s2, "livestacker_start", json!({}))>
+                                    <button class=FILES_BTN on:click=move |_| send_cmd(&s2, "livestacker_start", json!({}))>
                                         {move || tr().livestack_start}
                                     </button>
-                                    <button class="files-btn" on:click=move |_| send_cmd(&s3, "livestacker_stop", json!({}))>
+                                    <button class=FILES_BTN on:click=move |_| send_cmd(&s3, "livestacker_stop", json!({}))>
                                         {move || tr().livestack_stop}
                                     </button>
-                                    <button class="files-btn" on:click=move |_| send_cmd(&s4, "livestacker_close", json!({}))>
+                                    <button class=FILES_BTN on:click=move |_| send_cmd(&s4, "livestacker_close", json!({}))>
                                         {move || tr().livestack_close}
                                     </button>
                                 }
                             }
                         </div>
-                        <div class="files-ls-status">
+                        <div class="text-[12px] min-h-[22px]">
                             {move || render_livestack_status(livestacker_state.get(), &tr())}
                         </div>
-                        <details class="files-collapsible">
-                            <summary>{move || tr().livestack_settings}</summary>
+                        <details class="mt-sp-3 border border-border-strong rounded-sm bg-[rgba(6,6,15,0.4)] py-[6px] px-sp-2">
+                            <summary class="cursor-pointer text-text-blue text-sm uppercase tracking-[0.06em]">{move || tr().livestack_settings}</summary>
                             <LiveStackSettings settings=livestacker_settings send=Arc::clone(&send_btn) />
                         </details>
                     </div>
@@ -341,25 +350,29 @@ fn LiveStackSettings(settings: RwSignal<Value>, send: SendCmd) -> impl IntoView 
         send_cmd(&send_apply, "livestacker_set_all_settings", payload);
     };
 
+    let row_field = "flex flex-row items-center gap-sp-2 text-text text-[12px]";
+
     view! {
-        <div class="files-ls-form">
-            <label class="files-field">
+        <div class="flex flex-col gap-sp-2 py-sp-2">
+            <label class=FILES_FIELD>
                 <span>{move || tr().livestack_dir_in}</span>
                 <input
                     type="text"
+                    class=FILES_FIELD_INPUT
                     prop:value=move || dir_in.get()
                     on:input=move |ev| dir_in.set(event_value(&ev))
                 />
             </label>
-            <label class="files-field">
+            <label class=FILES_FIELD>
                 <span>{move || tr().livestack_dir_out}</span>
                 <input
                     type="text"
+                    class=FILES_FIELD_INPUT
                     prop:value=move || dir_out.get()
                     on:input=move |ev| dir_out.set(event_value(&ev))
                 />
             </label>
-            <label class="files-field files-field-row">
+            <label class=row_field>
                 <input
                     type="checkbox"
                     prop:checked=move || looping.get()
@@ -367,7 +380,7 @@ fn LiveStackSettings(settings: RwSignal<Value>, send: SendCmd) -> impl IntoView 
                 />
                 <span>{move || tr().livestack_looping}</span>
             </label>
-            <label class="files-field files-field-row">
+            <label class=row_field>
                 <input
                     type="checkbox"
                     prop:checked=move || calc_snr.get()
@@ -375,23 +388,25 @@ fn LiveStackSettings(settings: RwSignal<Value>, send: SendCmd) -> impl IntoView 
                 />
                 <span>{move || tr().livestack_calc_snr}</span>
             </label>
-            <label class="files-field">
+            <label class=FILES_FIELD>
                 <span>{move || tr().livestack_low_sigma}</span>
                 <input
                     type="number" step="0.1"
+                    class=FILES_FIELD_INPUT
                     prop:value=move || low_sigma.get()
                     on:input=move |ev| low_sigma.set(event_value(&ev))
                 />
             </label>
-            <label class="files-field">
+            <label class=FILES_FIELD>
                 <span>{move || tr().livestack_high_sigma}</span>
                 <input
                     type="number" step="0.1"
+                    class=FILES_FIELD_INPUT
                     prop:value=move || high_sigma.get()
                     on:input=move |ev| high_sigma.set(event_value(&ev))
                 />
             </label>
-            <button class="files-btn files-btn-primary" on:click=on_apply>
+            <button class=format!("{FILES_BTN} bg-[rgba(40,60,110,0.95)] border-text-blue") on:click=on_apply>
                 {move || tr().livestack_apply}
             </button>
         </div>
@@ -402,14 +417,14 @@ fn LiveStackSettings(settings: RwSignal<Value>, send: SendCmd) -> impl IntoView 
 
 fn render_livestack_status(s: Option<LiveStackerState>, tr: &Translations) -> impl IntoView {
     match s {
-        None => view! { <span class="files-ls-idle">{tr.livestack_no_state}</span> }.into_any(),
+        None => view! { <span class="text-text-faint">{tr.livestack_no_state}</span> }.into_any(),
         Some(st) => {
             let frames = format!("{} / {}", st.frames_stacked, st.total_frames);
             let snr = if st.mean_snr > 0.0 { format!("{:.2}", st.mean_snr) } else { "—".into() };
             let state_label = st.state.clone();
             view! {
-                <div class="files-ls-stats">
-                    <span class="files-ls-badge">{state_label}</span>
+                <div class="flex gap-[14px] flex-wrap items-center">
+                    <span class="bg-[rgba(40,60,110,0.95)] border border-text-blue py-[2px] px-sp-2 rounded-[10px] text-sm text-text-dim">{state_label}</span>
                     <span><b>{tr.livestack_frames}":"</b>" "{frames}</span>
                     <span><b>{tr.livestack_snr}":"</b>" "{snr}</span>
                 </div>
@@ -425,18 +440,18 @@ fn render_detail(
     tr: &Translations,
 ) -> impl IntoView {
     let Some(rel) = sel else {
-        return view! { <div class="files-no-sel">{tr.files_no_selection}</div> }.into_any();
+        return view! { <div class="text-text-faint p-5 text-center text-[12px]">{tr.files_no_selection}</div> }.into_any();
     };
     if let Some(e) = err {
-        return view! { <div class="files-error">{format!("{}: {}", tr.files_error, e)}</div> }.into_any();
+        return view! { <div class="text-[#ff8888] p-sp-2 text-[12px]">{format!("{}: {}", tr.files_error, e)}</div> }.into_any();
     }
     let preview_url = format!("/api/files/raw?as=preview&path={}", url_encode(&rel));
     let meta_view = match meta {
-        None => view! { <div class="files-no-sel">{tr.files_loading}</div> }.into_any(),
+        None => view! { <div class="text-text-faint p-5 text-center text-[12px]">{tr.files_loading}</div> }.into_any(),
         Some(m) => render_meta_blocks(&m, tr).into_any(),
     };
     view! {
-        <img class="files-preview" src=preview_url />
+        <img class="w-full max-h-[260px] object-contain bg-black border border-border-strong rounded-sm mb-3" src=preview_url />
         {meta_view}
     }.into_any()
 }
@@ -445,7 +460,7 @@ fn render_meta_blocks(m: &FileMeta, tr: &Translations) -> impl IntoView {
     let p = m.fits.as_ref().map(|f| f.parsed.clone()).unwrap_or(Value::Null);
 
     let kv = |label: &'static str, value: String| {
-        view! { <div class="files-kv"><span class="files-kv-k">{label}</span><span class="files-kv-v">{value}</span></div> }
+        view! { <div class=FILES_KV><span class="text-text-blue">{label}</span><span class="text-[#d0d0e0] text-right break-words">{value}</span></div> }
     };
     let basic = vec![
         kv(tr.files_filename, m.name.clone()),
@@ -480,22 +495,24 @@ fn render_meta_blocks(m: &FileMeta, tr: &Translations) -> impl IntoView {
     let lbl_astrom = tr.files_astrometry;
     let lbl_raw = tr.files_raw_header;
 
+    let kv_list = "grid gap-[3px] text-[12px]";
+
     view! {
-        <h3 class="files-section">{lbl_basics}</h3>
-        <div class="files-kv-list">{basic.into_iter().collect_view()}</div>
-        <h3 class="files-section">{lbl_optical}</h3>
-        <div class="files-kv-list">{optical.into_iter().collect_view()}</div>
-        <h3 class="files-section">{lbl_astrom}</h3>
-        <div class="files-kv-list">{astrom.into_iter().collect_view()}</div>
+        <h3 class=FILES_SECTION>{lbl_basics}</h3>
+        <div class=kv_list>{basic.into_iter().collect_view()}</div>
+        <h3 class=FILES_SECTION>{lbl_optical}</h3>
+        <div class=kv_list>{optical.into_iter().collect_view()}</div>
+        <h3 class=FILES_SECTION>{lbl_astrom}</h3>
+        <div class=kv_list>{astrom.into_iter().collect_view()}</div>
         <Show when=move || has_header>
-            <details class="files-collapsible">
-                <summary>{lbl_raw}</summary>
-                <div class="files-fits-header">
+            <details class="mt-sp-3 border border-border-strong rounded-sm bg-[rgba(6,6,15,0.4)] py-[6px] px-sp-2">
+                <summary class="cursor-pointer text-text-blue text-sm uppercase tracking-[0.06em]">{lbl_raw}</summary>
+                <div class="mt-sp-2 max-h-[280px] overflow-auto text-sm font-mono">
                     {header_rows.iter().map(|r| view! {
-                        <div class="files-fits-row">
-                            <span class="files-fits-key">{r.key.clone()}</span>
-                            <span class="files-fits-val">{r.value.clone()}</span>
-                            <span class="files-fits-cmt">{r.comment.clone()}</span>
+                        <div class="grid grid-cols-[80px_1fr_1.2fr] gap-[6px] py-[1px] border-b border-dotted border-[#1a1a25]">
+                            <span class="text-text-blue">{r.key.clone()}</span>
+                            <span class="text-[#d0d0e0] break-all">{r.value.clone()}</span>
+                            <span class="text-text-faint italic break-all">{r.comment.clone()}</span>
                         </div>
                     }).collect_view()}
                 </div>
@@ -512,12 +529,13 @@ fn render_breadcrumb(path: &str, root_label: &'static str, current_path: RwSigna
         acc.push_str(seg);
         chips.push((acc.clone(), seg.to_string()));
     }
+    let crumb_base = "bg-transparent border-none cursor-pointer font-inherit py-[2px] px-sp-1 rounded-sm hover:bg-[rgba(136,170,255,0.15)]";
     chips.into_iter().enumerate().map(|(i, (target, label))| {
         let is_last = i + 1 == path.split('/').filter(|s| !s.is_empty()).count() + 1;
         view! {
-            <span class="files-crumb-sep">{if i == 0 { "" } else { " / " }}</span>
+            <span class="text-text-faint">{if i == 0 { "" } else { " / " }}</span>
             <button
-                class=if is_last { "files-crumb files-crumb-active" } else { "files-crumb" }
+                class=if is_last { format!("{crumb_base} text-text-dim") } else { format!("{crumb_base} text-text-blue") }
                 on:click=move |_| current_path.set(target.clone())
             >{label}</button>
         }
