@@ -15,7 +15,7 @@ run: build
 # Full release build: trunk (wasm) + cargo (server).
 build: build-wasm build-server
 
-build-wasm:
+build-wasm: ensure-trunk
     cd rekos-wasm && trunk build --release
 
 build-server:
@@ -27,8 +27,21 @@ check:
     cargo check -p rekos-server
 
 # Dev loop: trunk watch in one terminal, `just dev-server` in another.
-dev-wasm:
+dev-wasm: ensure-trunk
     cd rekos-wasm && trunk watch
+
+# Make sure `trunk` is on PATH; if missing, add ~/.cargo/bin or install it.
+ensure-trunk:
+    if ! command -v trunk >/dev/null 2>&1; then \
+        if [ -x "$HOME/.cargo/bin/trunk" ]; then \
+            echo "trunk found in ~/.cargo/bin but not on PATH; add it to your shell rc:"; \
+            echo '  export PATH="$HOME/.cargo/bin:$PATH"'; \
+            exit 1; \
+        else \
+            echo "trunk not found; installing via cargo..."; \
+            cargo install --locked trunk; \
+        fi; \
+    fi
 
 # The server binds two ports by default: HTTP on 8080 (KStars-facing) and
 # HTTPS on 8443 (browser-facing — required by iOS Safari for WebGPU). A
