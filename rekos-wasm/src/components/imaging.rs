@@ -24,7 +24,7 @@ use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting, send_
 const GHOST_BTN: &str = "btn btn--sm btn-ghost text-text-blue";
 const ACTION_BTN: &str = "btn btn--sm !border-[color:var(--btn-color,var(--text-blue))] text-[color:var(--btn-color,var(--text-blue))]";
 const FIELD_INPUT: &str = "input input--sm flex-1 min-w-0 font-mono";
-const FIELD_LABEL: &str = "basis-[120px] grow-0 shrink-0 text-text-blue overflow-hidden text-ellipsis whitespace-nowrap";
+const FIELD_LABEL: &str = "basis-[120px] grow-0 shrink-0 text-text-blue overflow-hidden text-ellipsis whitespace-nowrap max-[479px]:basis-auto max-[479px]:text-xs";
 const PANEL_CLS: &str = "border border-border-base bg-[rgba(10,12,20,0.55)] rounded-[3px] overflow-hidden";
 const SUMMARY_CLS: &str = "list-none cursor-pointer py-sp-2 px-3 text-text-blue text-sm font-bold uppercase tracking-[0.08em] flex items-center gap-sp-2 select-none hover:bg-[rgba(20,24,40,0.7)] [&::-webkit-details-marker]:hidden";
 const PANEL_BODY: &str = "py-sp-3 px-3 pb-3 border-t border-[#1a1c28]";
@@ -244,7 +244,7 @@ pub fn ImagingTab(
         <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] overflow-hidden [-webkit-tap-highlight-color:rgba(136,170,255,0.25)]">
 
             // ── Header ────────────────────────────────────────────────────
-            <div class="flex flex-wrap items-center gap-y-[10px] gap-x-[18px] py-[10px] pl-20 pr-5 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md min-h-[44px] max-[759px]:py-sp-2 max-[759px]:px-3 max-[759px]:gap-y-[6px] max-[759px]:gap-x-3 max-[759px]:text-sm">
+            <div class="flex flex-wrap items-center gap-y-[10px] gap-x-[18px] py-[10px] pl-20 pr-5 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md min-h-[44px] max-[759px]:py-sp-2 max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:gap-y-[6px] max-[759px]:gap-x-3 max-[759px]:text-sm max-[374px]:gap-x-2 max-[374px]:gap-y-[4px]">
                 <span
                     class="inline-block py-sp-1 px-sp-3 rounded-[14px] text-sm border border-current"
                     style=move || format!(
@@ -269,7 +269,7 @@ pub fn ImagingTab(
                         .map(|v| format!("{:.1}°C", v))
                         .unwrap_or_else(|| "—".into()))}</span>
                 </span>
-                <span class="inline-flex items-center gap-[6px]">
+                <span class="inline-flex items-center gap-[6px] max-[759px]:hidden">
                     <span class=stat_label>{move || tr().imaging_cooler}</span>
                     <span
                         style=move || {
@@ -283,7 +283,7 @@ pub fn ImagingTab(
                         }}
                     </span>
                 </span>
-                <span class="inline-flex items-center gap-[6px]">
+                <span class="inline-flex items-center gap-[6px] max-[759px]:hidden">
                     <span class=stat_label>{move || tr().imaging_sensor}</span>
                     <span>{move || camera.with(|c| match (c.sensor_width, c.sensor_height) {
                         (Some(w), Some(h)) => format!("{}×{}", w, h),
@@ -308,14 +308,14 @@ pub fn ImagingTab(
             // ── Body: responsive grid (1199px shrinks to 2-col, 759px stacks) ──
             <div class=move || {
                 let shared = "min-h-0 overflow-y-auto items-start \
-                              max-[759px]:flex max-[759px]:flex-col";
+                              max-[899px]:flex max-[899px]:flex-col";
                 let cols = if preview_visible.get() {
                     "grid grid-cols-[minmax(0,1fr)_340px_320px] \
-                     max-[1199px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] \
-                     max-[1199px]:grid-rows-[minmax(220px,45%)_auto]"
+                     [@media(min-width:900px)_and_(max-width:1199px)]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] \
+                     [@media(min-width:900px)_and_(max-width:1199px)]:grid-rows-[minmax(220px,45%)_auto]"
                 } else {
                     "grid grid-cols-[minmax(0,1fr)_320px] \
-                     max-[1199px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                     [@media(min-width:900px)_and_(max-width:1199px)]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
                 };
                 format!("{shared} {cols}")
             }>
@@ -325,7 +325,7 @@ pub fn ImagingTab(
                         let base = "min-w-0 h-full overflow-hidden flex items-center justify-center bg-bg-input-deep border-r border-border-base \
                                     sticky top-0 \
                                     max-[1199px]:col-span-full max-[1199px]:relative max-[1199px]:h-auto max-[1199px]:border-r-0 max-[1199px]:border-b max-[1199px]:border-border-base \
-                                    max-[759px]:col-auto max-[759px]:shrink-0 max-[759px]:min-h-[200px] max-[759px]:max-h-[40vh]";
+                                    max-[899px]:col-auto max-[899px]:shrink-0 max-[899px]:min-h-[200px] max-[899px]:max-h-[40vh]";
                         if preview_visible.get() { base.to_string() } else { format!("{base} hidden") }
                     }>
                     {move || match capture.with(|c| c.preview_url.clone()) {
@@ -341,10 +341,10 @@ pub fn ImagingTab(
                 </div>
 
                 // ─ Settings ──────────────────────────────────────────────
-                <div class="flex flex-col min-w-0 p-sp-4 gap-sp-4 border-r border-border-base max-[759px]:border-r-0 max-[759px]:border-b max-[759px]:border-border-base max-[759px]:p-sp-3 max-[759px]:gap-sp-3 max-[759px]:overflow-y-visible max-[759px]:shrink-0">
+                <div class="flex flex-col min-w-0 p-sp-4 gap-sp-4 border-r border-border-base max-[899px]:border-r-0 max-[899px]:border-b max-[899px]:border-border-base max-[899px]:p-sp-3 max-[899px]:gap-sp-3 max-[899px]:overflow-y-visible max-[899px]:shrink-0">
 
                     // Toolbar: collapse / expand all panels
-                    <div class="flex items-center justify-between gap-sp-2 pb-[6px] border-b border-[#1a1c28] mb-sp-1">
+                    <div class="flex flex-wrap items-center justify-between gap-sp-2 pb-[6px] border-b border-[#1a1c28] mb-sp-1">
                         <span class="text-text-blue text-xs uppercase tracking-[0.08em]">{move || tr().imaging_capture_controls}</span>
                         <div class="flex gap-[6px]">
                             <button class=GHOST_BTN on:click=on_collapse_all>{move || tr().imaging_collapse_all}</button>
@@ -379,7 +379,7 @@ pub fn ImagingTab(
                             {move || tr().imaging_cooling}
                         </summary>
                         <div class=PANEL_BODY>
-                            <div class="flex items-center gap-sp-2 mb-sp-2">
+                            <div class="flex items-center gap-sp-2 mb-sp-2 max-[479px]:flex-wrap">
                                 <span class=FIELD_LABEL>{move || tr().imaging_target_c}</span>
                                 <input
                                     type="number"
@@ -504,10 +504,10 @@ pub fn ImagingTab(
                 </div>
 
                 // ─ Sequence queue ────────────────────────────────────────
-                <div class="sticky top-0 flex flex-col min-w-0 max-h-screen overflow-hidden max-[1199px]:relative max-[1199px]:max-h-none max-[1199px]:overflow-y-auto max-[759px]:shrink-0 max-[759px]:overflow-visible">
-                    <div class="flex items-center justify-between gap-sp-2 pt-3 pb-sp-2 px-sp-4 border-b border-border-base">
+                <div class="sticky top-0 flex flex-col min-w-0 max-h-screen overflow-hidden max-[1199px]:relative max-[1199px]:max-h-none max-[1199px]:overflow-y-auto max-[899px]:shrink-0 max-[899px]:overflow-visible">
+                    <div class="flex flex-wrap items-center justify-between gap-sp-2 pt-3 pb-sp-2 px-sp-4 border-b border-border-base max-[899px]:flex-col max-[899px]:items-stretch">
                         <span class="text-text-blue text-sm uppercase tracking-[0.08em]">{move || tr().imaging_sequence_queue}</span>
-                        <div class="flex gap-[6px]">
+                        <div class="flex flex-wrap gap-[6px] max-[479px]:grid max-[479px]:grid-cols-2 max-[479px]:gap-sp-2 max-[479px]:w-full">
                             <button on:click=on_add_job   class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().imaging_add_job}</button>
                             <button on:click=on_clear_seq class=ACTION_BTN style="--btn-color:var(--state-err);">{move || tr().seq_clear}</button>
                             <button
@@ -569,7 +569,7 @@ pub fn ImagingTab(
                             <button class=ACTION_BTN style="--btn-color:var(--text-faint);" on:click=move |_| load_open.set(false)>"✕"</button>
                         </div>
                     </Show>
-                    <div class="flex-1 min-h-0 overflow-y-auto py-sp-2 px-sp-3 max-[759px]:overflow-y-visible max-[759px]:max-h-none">
+                    <div class="flex-1 min-h-0 overflow-y-auto py-sp-2 px-sp-3 max-[899px]:overflow-y-visible max-[899px]:max-h-none">
                         {move || {
                             let rows = sequence_rows();
                             if rows.is_empty() {
@@ -729,7 +729,7 @@ fn render_field(
 
     let label_fn = field.label;
     view! {
-        <div class="flex items-center gap-sp-2 text-sm">
+        <div class="flex items-center gap-sp-2 text-sm max-[479px]:flex-col max-[479px]:items-stretch max-[479px]:gap-[2px]">
             <span class=FIELD_LABEL>{move || label_fn(t(lang.get()))}</span>
             {editor}
         </div>
