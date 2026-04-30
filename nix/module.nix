@@ -5,6 +5,29 @@ with lib;
 let
   cfg = config.services.rekos-web;
   portOf = addr: toInt (last (splitString ":" addr));
+
+  certDir  = "/var/lib/rekos-web/certs";
+  certPath = "${certDir}/cert.pem";
+  keyPath  = "${certDir}/key.pem";
+
+  # subjectAltName list (comma-joined) fed to `openssl req -addext`.
+  sanList = concatStringsSep "," cfg.tls.subjectAltNames;
+
+  # Generates a self-signed cert under StateDirectory if missing. Idempotent —
+  # subsequent starts skip the openssl call. Delete the dir to force renewal.
+  generateCertScript = pkgs.writeShellScript "rekos-web-gen-cert" ''
+    set -eu
+    install -d -m 0700 ${certDir}
+    if [ ! -s ${certPath} ] || [ ! -s ${keyPath} ]; then
+      echo "rekos-web: generating self-signed TLS cert at ${certDir}"
+      ${pkgs.openssl}/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -subj "/CN=rekos-web" \
+        -addext "subjectAltName=${sanList}" \
+        -keyout ${keyPath} \
+        -out    ${certPath}
+      chmod 0600 ${keyPath} ${certPath}
+    fi
+  '';
 in
 {
   options.services.rekos-web = {
@@ -35,8 +58,7 @@ in
       example = "0.0.0.0:8443";
       description = ''
         HTTPS listen address — used by the browser UI. iOS Safari requires
-        TLS to expose WebGPU. A self-signed cert is auto-generated into the
-        service's StateDirectory (.certs/) on first run.
+        TLS to expose WebGPU.
       '';
     };
 
@@ -58,48 +80,109 @@ in
       '';
     };
 
+    tls = {
+      autoGenerate = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Generate a self-signed TLS cert + key into ${certDir} on first
+          start (and reuse them afterwards). Set to false if you want to
+          supply your own cert via tls.cert / tls.key.
+        '';
+      };
+
+      subjectAltNames = mkOption {
+        type = types.listOf types.str;
+        default = [ "DNS:localhost" "IP:127.0.0.1" ];
+        example = [ "DNS:localhost" "IP:127.0.0.1" "IP:192.168.1.10" "DNS:nas.lan" ];
+        description = ''
+          subjectAltName entries baked into the auto-generated cert.
+          Add an `IP:` entry for every address a browser will hit
+          (e.g. the host's LAN IP) so iOS Safari accepts the cert.
+        '';
+      };
+
+      cert = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          Path to a PEM-encoded TLS certificate. When set together with
+          tls.key, overrides the auto-generated cert. Must be readable by
+          the service user (DynamicUser-friendly: world-readable, or
+          deployed via systemd LoadCredential).
+        '';
+      };
+
+      key = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          Path to the PEM-encoded TLS private key matching tls.cert.
+        '';
+      };
+    };
+
     extraArgs = mkOption {
       type = types.listOf types.str;
       default = [ ];
       example = [ "--captures-dir" "/srv/astro/captures" ];
       description = ''
         Additional command-line arguments passed verbatim to rekos-server.
-        Useful for --captures-dir, --tls-cert, --tls-key.
       '';
     };
   };
 
   config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.tls.autoGenerate || (cfg.tls.cert != null && cfg.tls.key != null);
+        message = "services.rekos-web: either tls.autoGenerate must be true, or both tls.cert and tls.key must be set.";
+      }
+    ];
+
     systemd.services.rekos-web = {
       description = "rekos-web KStars Ekos Live relay server";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
-      serviceConfig = {
-        ExecStart = concatStringsSep " " (
-          [ "${cfg.package}/bin/rekos-server"
-            "--http-addr" cfg.httpAddr
-          ]
-          ++ optionals cfg.enableHttps [ "--https-addr" cfg.httpsAddr ]
-          ++ optional (!cfg.enableHttps) "--no-https"
-          ++ map escapeShellArg cfg.extraArgs
-        );
-        Restart = "on-failure";
-        RestartSec = "5s";
+      serviceConfig =
+        let
+          effectiveCert = if cfg.tls.cert != null then cfg.tls.cert else certPath;
+          effectiveKey  = if cfg.tls.key  != null then cfg.tls.key  else keyPath;
 
-        # The server auto-generates .certs/ in its working directory on
-        # first run; StateDirectory gives DynamicUser a writable location
-        # that survives restarts.
-        StateDirectory = "rekos-web";
-        WorkingDirectory = "/var/lib/rekos-web";
+          tlsArgs = optionals cfg.enableHttps [
+            "--tls-cert" effectiveCert
+            "--tls-key"  effectiveKey
+          ];
+        in
+        {
+          ExecStart = concatStringsSep " " (
+            [ "${cfg.package}/bin/rekos-server"
+              "--http-addr" cfg.httpAddr
+            ]
+            ++ optionals cfg.enableHttps [ "--https-addr" cfg.httpsAddr ]
+            ++ optional (!cfg.enableHttps) "--no-https"
+            ++ tlsArgs
+            ++ map escapeShellArg cfg.extraArgs
+          );
 
-        DynamicUser = true;
-        PrivateTmp = true;
-        ProtectSystem = "strict";
-        ProtectHome = true;
-        NoNewPrivileges = true;
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
-      };
+          ExecStartPre = mkIf (cfg.enableHttps && cfg.tls.autoGenerate && cfg.tls.cert == null)
+            [ "${generateCertScript}" ];
+
+          Restart = "on-failure";
+          RestartSec = "5s";
+
+          StateDirectory = "rekos-web";
+          StateDirectoryMode = "0750";
+          WorkingDirectory = "/var/lib/rekos-web";
+
+          DynamicUser = true;
+          PrivateTmp = true;
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          NoNewPrivileges = true;
+          RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+        };
     };
 
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall (
