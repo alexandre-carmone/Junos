@@ -14,9 +14,21 @@ use wasm_bindgen::JsCast;
 use web_sys::Event;
 
 use crate::i18n::{t, Lang};
-use crate::ws::{ProfileInfo, SendCmd};
+use crate::ws::{DriverInfo, ProfileInfo, SendCmd};
 
 const GUIDING_LABELS: [&str; 4] = ["Internal", "PHD2", "LinGuider", "SEP"];
+
+// `family` strings as KStars emits them — see indicommon.h:143 (DeviceFamilyLabels).
+const FAM_TELESCOPE: &str = "Telescopes";
+const FAM_CCD:       &str = "CCDs";
+const FAM_FOCUSER:   &str = "Focusers";
+const FAM_FILTER:    &str = "Filter Wheels";
+const FAM_AO:        &str = "Adaptive Optics";
+const FAM_DOME:      &str = "Domes";
+const FAM_WEATHER:   &str = "Weather";
+const AUX_FAMILIES: &[&str] = &[
+    "Auxiliary", "Spectrographs", "Detectors", "Rotators", "Power",
+];
 
 // Class names for row-action buttons. Visual primitives live in base.css;
 // state intent is expressed via `.btn-{primary,danger,ghost}` modifiers.
@@ -31,6 +43,7 @@ const BTN_DELETE: &str = "btn-danger";
 pub fn ProfilesTab(
     profiles: RwSignal<Vec<ProfileInfo>>,
     selected_profile: RwSignal<Option<String>>,
+    drivers: RwSignal<Vec<DriverInfo>>,
     online: RwSignal<bool>,
     connected: RwSignal<bool>,
     send: SendCmd,
@@ -64,6 +77,7 @@ pub fn ProfilesTab(
     let on_refresh_send = send_arc.clone();
     let on_refresh = move |_| {
         on_refresh_send(r#"{"type":"get_profiles","payload":{}}"#.to_string());
+        on_refresh_send(r#"{"type":"get_drivers","payload":{}}"#.to_string());
     };
 
     view! {
@@ -96,6 +110,7 @@ pub fn ProfilesTab(
                         <ProfileForm
                             editing=editing
                             profiles=profiles
+                            drivers=drivers
                             send=send_for_form.clone()
                         />
                     }
@@ -366,6 +381,7 @@ impl EditorState {
 fn ProfileForm(
     editing: RwSignal<Option<EditorState>>,
     profiles: RwSignal<Vec<ProfileInfo>>,
+    drivers: RwSignal<Vec<DriverInfo>>,
     send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -545,18 +561,18 @@ fn ProfileForm(
                 {move || tr().profiles_drivers}
             </div>
             <div class="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-y-sp-2 gap-x-sp-4 mb-sp-3">
-                <DrvField label="Mount" value=mount/>
-                <DrvField label="CCD" value=ccd/>
-                <DrvField label="Guider" value=guider_drv/>
-                <DrvField label="Focuser" value=focuser/>
-                <DrvField label="Filter" value=filter/>
-                <DrvField label="AO" value=ao/>
-                <DrvField label="Dome" value=dome/>
-                <DrvField label="Weather" value=weather/>
-                <DrvField label="Aux 1" value=aux1/>
-                <DrvField label="Aux 2" value=aux2/>
-                <DrvField label="Aux 3" value=aux3/>
-                <DrvField label="Aux 4" value=aux4/>
+                <DriverSelect label="Mount"   value=mount      drivers=drivers families=&[FAM_TELESCOPE]/>
+                <DriverSelect label="CCD"     value=ccd        drivers=drivers families=&[FAM_CCD]/>
+                <DriverSelect label="Guider"  value=guider_drv drivers=drivers families=&[FAM_CCD]/>
+                <DriverSelect label="Focuser" value=focuser    drivers=drivers families=&[FAM_FOCUSER]/>
+                <DriverSelect label="Filter"  value=filter     drivers=drivers families=&[FAM_FILTER]/>
+                <DriverSelect label="AO"      value=ao         drivers=drivers families=&[FAM_AO]/>
+                <DriverSelect label="Dome"    value=dome       drivers=drivers families=&[FAM_DOME]/>
+                <DriverSelect label="Weather" value=weather    drivers=drivers families=&[FAM_WEATHER]/>
+                <DriverSelect label="Aux 1"   value=aux1       drivers=drivers families=AUX_FAMILIES/>
+                <DriverSelect label="Aux 2"   value=aux2       drivers=drivers families=AUX_FAMILIES/>
+                <DriverSelect label="Aux 3"   value=aux3       drivers=drivers families=AUX_FAMILIES/>
+                <DriverSelect label="Aux 4"   value=aux4       drivers=drivers families=AUX_FAMILIES/>
             </div>
             <Field label=tr().profiles_remote_drivers>
                 <TextInput value=remote placeholder="indi_eqmod_telescope,..."/>
@@ -587,11 +603,70 @@ fn Field(label: &'static str, children: Children) -> impl IntoView {
 }
 
 #[component]
-fn DrvField(label: &'static str, value: RwSignal<String>) -> impl IntoView {
+fn DriverSelect(
+    label: &'static str,
+    value: RwSignal<String>,
+    drivers: RwSignal<Vec<DriverInfo>>,
+    families: &'static [&'static str],
+) -> impl IntoView {
     view! {
         <div class="flex flex-col gap-[3px] min-w-0">
             <span class="text-xs text-[#778] tracking-[0.05em]">{label}</span>
-            <TextInput value=value placeholder="--"/>
+            <select
+                class="input input--sm w-full min-w-0"
+                on:change=move |ev: Event| {
+                    if let Some(t) = ev.target() {
+                        if let Ok(sel) = t.dyn_into::<web_sys::HtmlSelectElement>() {
+                            value.set(sel.value());
+                        }
+                    }
+                }
+            >
+                <option value="" selected=move || value.get().is_empty()>"--"</option>
+                {move || {
+                    // Filter installed drivers by family, sort by label.
+                    let mut list: Vec<String> = drivers.get().into_iter()
+                        .filter(|d| families.contains(&d.family.as_str()))
+                        .map(|d| d.label)
+                        .filter(|l| !l.is_empty())
+                        .collect();
+                    list.sort();
+                    list.dedup();
+
+                    // If the current value isn't in the filtered list (e.g.
+                    // an old profile referencing an uninstalled driver, or
+                    // the family-filter excludes it), keep it as a sticky
+                    // option so save doesn't silently drop it.
+                    let current = value.get();
+                    let sticky = if !current.is_empty() && !list.iter().any(|l| l == &current) {
+                        Some(current)
+                    } else {
+                        None
+                    };
+
+                    view! {
+                        {sticky.map(|s| {
+                            let v = s.clone();
+                            view! {
+                                <option
+                                    value=v
+                                    selected=move || value.get() == s
+                                >{format!("{s} (missing)")}</option>
+                            }
+                        })}
+                        {list.into_iter().map(|l| {
+                            let v = l.clone();
+                            let sel_l = l.clone();
+                            view! {
+                                <option
+                                    value=v
+                                    selected=move || value.get() == sel_l
+                                >{l}</option>
+                            }
+                        }).collect_view()}
+                    }
+                }}
+            </select>
         </div>
     }
 }

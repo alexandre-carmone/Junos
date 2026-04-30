@@ -152,6 +152,7 @@ pub fn TabContent(
                 <ProfilesTab
                     profiles=store.profiles
                     selected_profile=store.selected_profile
+                    drivers=store.drivers
                     online=store.online
                     connected=store.connected
                     send=Arc::clone(&send_profiles)

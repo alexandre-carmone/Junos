@@ -96,6 +96,27 @@ pub struct ScopeInfo {
     pub aperture_mm: f64,
 }
 
+/// INDI driver descriptor mirrored from KStars `get_drivers` responses.
+///
+/// Wire shape: `kstars/indi/driverinfo.h::toJson` (~line 57). Profile slots
+/// reference drivers by `label`, not `name` — see `profileeditor.cpp:531`.
+#[derive(Debug, Clone, Default)]
+pub struct DriverInfo {
+    pub name:   String, // executable, e.g. indi_eqmod_telescope
+    pub label:  String, // human, e.g. "EQMod Mount"
+    pub family: String, // "Telescopes", "CCDs", ...
+}
+
+impl DriverInfo {
+    pub(super) fn from_json(v: &serde_json::Value) -> Self {
+        Self {
+            name:   v["name"].as_str().unwrap_or("").to_string(),
+            label:  v["label"].as_str().unwrap_or("").to_string(),
+            family: v["family"].as_str().unwrap_or("").to_string(),
+        }
+    }
+}
+
 /// Equipment profile mirrored from KStars `get_profiles` responses.
 ///
 /// Wire shape: `kstars/profileinfo.cpp::toJson` (~line 135). We model the

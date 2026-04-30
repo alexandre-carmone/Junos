@@ -103,6 +103,7 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
         Effect::new(move |_| {
             if connected_sig.get() {
                 prime_send(r#"{"type":"get_profiles","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"get_drivers","payload":{}}"#.to_string());
             }
         });
     }

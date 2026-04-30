@@ -50,6 +50,9 @@ pub struct DeviceStore {
     pub profiles:             RwSignal<Vec<ProfileInfo>>,
     /// Name of the currently-selected profile in KStars (`selectedProfile`).
     pub selected_profile:     RwSignal<Option<String>>,
+    /// Installed INDI drivers reported by `get_drivers`. Available before
+    /// `online == true` (same gate as `get_profiles`).
+    pub drivers:              RwSignal<Vec<DriverInfo>>,
 }
 
 impl DeviceStore {
@@ -87,6 +90,7 @@ impl DeviceStore {
             livestacker_settings: RwSignal::new(serde_json::Value::Null),
             profiles:             RwSignal::new(Vec::new()),
             selected_profile:     RwSignal::new(None),
+            drivers:              RwSignal::new(Vec::new()),
         }
     }
 
@@ -175,6 +179,16 @@ impl DeviceStore {
                 }
                 if let Some(s) = payload["selectedProfile"].as_str() {
                     self.selected_profile.set(if s.is_empty() { None } else { Some(s.to_string()) });
+                }
+            }
+
+            "get_drivers" => {
+                // INDI driver list. Wire shape: payload is an array of
+                // {name, label, binary, version, manufacturer, skel, family}
+                // (driverinfo.h:57). We keep only the fields the UI needs.
+                if let Some(arr) = payload.as_array() {
+                    let list: Vec<DriverInfo> = arr.iter().map(DriverInfo::from_json).collect();
+                    self.drivers.set(list);
                 }
             }
 
