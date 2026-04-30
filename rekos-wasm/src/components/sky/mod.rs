@@ -49,7 +49,6 @@ use controls::SkyControls;
 use info_popup::SkyInfoPopup;
 use render::{HitItem, MosaicPlanRender, MosaicTileRender, RenderParams, SchedulerJobRender};
 use search::SkySearch;
-use utils::event_target_value;
 
 // ---------------------------------------------------------------------------
 // Toggles bundle — passed as a single prop to SkyControls / consumed by the
@@ -1484,32 +1483,6 @@ pub fn SkyTab(
                 set_site_location=set_site_location_fn.clone()
             />
 
-            // ── Zoom bar (right side, vertical) ─────────────────────────────
-            <div class="absolute right-2 top-[50px] bottom-10 max-md:top-[72px] max-md:bottom-[150px] flex flex-col items-center gap-1 z-30"
-                 on:click=move |ev| ev.stop_propagation()>
-                <span class="text-sm text-text-faint whitespace-nowrap">
-                    {move || {
-                        let fov = fov_radius.get() * 2.0;
-                        if fov >= 10.0 { format!("{:.0}\u{00b0}", fov) }
-                        else if fov >= 1.0 { format!("{:.1}\u{00b0}", fov) }
-                        else { format!("{:.2}\u{00b0}", fov) }
-                    }}
-                </span>
-                <input type="range"
-                       class="flex-1 [accent-color:var(--text-blue)] [writing-mode:vertical-lr] [direction:rtl] [-webkit-appearance:slider-vertical] w-5 cursor-pointer"
-                       min="-1000" max="1954" step="10"
-                       prop:value=move || format!("{}", (fov_radius.get().log10() * 1000.0) as i32)
-                       on:mousedown=|ev| ev.stop_propagation()
-                       on:input=move |ev| {
-                           if let Ok(v) = event_target_value(&ev).parse::<f64>() {
-                               let new_fov = 10_f64.powf(v / 1000.0).clamp(0.1, 90.0);
-                               set_fov_radius.set(new_fov);
-                               let auto_mag = (11.0 + 3.0 * (10.0_f64 / new_fov).log10()).clamp(4.0, 20.0);
-                               dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
-                           }
-                       }
-                />
-            </div>
 
             // ── Context menu ────────────────────────────────────────────────
             <SkyContextMenu
