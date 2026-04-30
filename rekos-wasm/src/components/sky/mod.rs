@@ -167,7 +167,7 @@ pub fn SkyTab(
 
     // ── Local reactive state ───────────────────────────────────────────────
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
-    let _tr = move || t(lang.get());
+    let tr = move || t(lang.get());
     let tab_ctx = use_context::<ActiveTabCtx>();
 
     let catalog_sig = use_context::<RwSignal<Option<Arc<CatalogData>>>>()
@@ -196,7 +196,7 @@ pub fn SkyTab(
         }
     });
 
-    let (time_offset_s, _set_time_offset_s) = signal(0.0_f64);
+    let (time_offset_s, set_time_offset_s) = signal(0.0_f64);
     // Persist focal length override in localStorage
     let stored_fl = web_sys::window()
         .and_then(|w| w.local_storage().ok().flatten())
@@ -1406,6 +1406,46 @@ pub fn SkyTab(
                     {"Click on the sky to set mosaic center"}
                 </div>
             })}
+
+            // ── Time-shift panel (bottom-left) ─────────────────────────────
+            <div class="absolute bottom-2 left-2 z-[90] flex items-center gap-1 px-2 py-1 \
+                        bg-bg-panel-glass border border-border-accent rounded-md \
+                        font-mono text-xs text-text-blue select-none">
+                {
+                    let bump = move |delta: f64| {
+                        set_time_offset_s.update(|t| *t += delta);
+                    };
+                    let btn_cls = "px-1.5 py-0.5 bg-bg-button hover:bg-bg-button-info \
+                                   border border-border-accent rounded cursor-pointer \
+                                   text-text-blue-bright";
+                    view! {
+                        <button class=btn_cls on:click=move |_| bump(-3600.0)>"-1h"</button>
+                        <button class=btn_cls on:click=move |_| bump(-600.0)>"-10m"</button>
+                        <button class=btn_cls on:click=move |_| bump(-60.0)>"-1m"</button>
+                        <span class="min-w-[64px] text-center px-1">
+                            {move || {
+                                let t = time_offset_s.get();
+                                if t.abs() < 0.5 { tr().now.to_string() }
+                                else {
+                                    let sign = if t < 0.0 { "-" } else { "+" };
+                                    let a = t.abs();
+                                    let h = (a / 3600.0) as i64;
+                                    let m = ((a % 3600.0) / 60.0) as i64;
+                                    format!("{sign}{h:02}h{m:02}m")
+                                }
+                            }}
+                        </span>
+                        <button class=btn_cls on:click=move |_| bump(60.0)>"+1m"</button>
+                        <button class=btn_cls on:click=move |_| bump(600.0)>"+10m"</button>
+                        <button class=btn_cls on:click=move |_| bump(3600.0)>"+1h"</button>
+                        <button class=btn_cls
+                                title=move || tr().reset.to_string()
+                                on:click=move |_| set_time_offset_s.set(0.0)>
+                            "⟲"
+                        </button>
+                    }
+                }
+            </div>
 
             // ── Object search box ──────────────────────────────────────────
             <SkySearch
