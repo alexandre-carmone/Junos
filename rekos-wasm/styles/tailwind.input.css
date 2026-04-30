@@ -1,2 +1,17 @@
-/* No @tailwind base — base.css owns resets. */
+/* No @tailwind base — base.css owns resets. We still need the transform
+   variable defaults preflight would normally inject, otherwise utilities
+   like `-translate-y-1/2` and `-translate-x-1/2` produce a shorthand
+   `transform: translate(var(--tw-translate-x), var(--tw-translate-y)) …`
+   whose vars are undefined → the entire declaration is invalid and the
+   element doesn't move (broke tab-wheel centring). */
+*, ::before, ::after {
+    --tw-translate-x: 0;
+    --tw-translate-y: 0;
+    --tw-rotate: 0;
+    --tw-skew-x: 0;
+    --tw-skew-y: 0;
+    --tw-scale-x: 1;
+    --tw-scale-y: 1;
+}
+
 @tailwind utilities;
