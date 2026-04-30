@@ -88,11 +88,10 @@ pub fn SkyHud(
     };
 
     view! {
-        <div style="position:absolute;left:0;bottom:0;width:360px;\
-                    background:rgba(10,10,20,0.75);color:#aabbcc;\
-                    font:11px monospace;padding:8px 8px 6px 8px;\
-                    line-height:16px;pointer-events:none;\
-                    box-sizing:border-box;">
+        <div class="panel-glass absolute left-sp-3 bottom-sp-3 w-[360px] \
+                    text-text-muted font-mono text-sm leading-4 \
+                    px-sp-3 py-sp-2 pointer-events-none box-border"
+             style="border-bottom-left-radius:0;">
             <div>{line_lst_fov}</div>
             <div>{line_center}</div>
             <div>{line_mount}</div>

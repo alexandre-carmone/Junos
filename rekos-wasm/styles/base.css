@@ -1,5 +1,6 @@
-/* Global resets, viewport lock, and touch-friendly element defaults.
-   Migrated from the inline <style> block in index.html (no rule changes). */
+/* Global resets, viewport lock, touch-friendly defaults, and the small
+   primitives layer (.panel, .panel-glass, .btn family, .input, .badge,
+   .chip, focus-visible ring). Token-driven via tokens.css. */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -16,11 +17,15 @@ html, body {
 }
 
 body {
-    font-family: var(--font-mono);
+    /* Default to UI sans for labels/buttons/titles. Mono is opt-in via
+       `.font-mono` (Tailwind) for numerical readouts. */
+    font-family: var(--font-ui);
     background: var(--bg);
     color: var(--text);
     position: fixed;
     inset: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 #app { width: 100%; height: 100%; }
@@ -62,3 +67,164 @@ input, select, textarea {
     from { transform: rotate(0deg); }
     to   { transform: rotate(360deg); }
 }
+
+/* ── Focus ring ─────────────────────────────────────────────────── */
+/* Keyboard-only focus ring; the :focus-visible pseudo-class skips
+   pointer focus, so the ring doesn't flash on every click. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible {
+    outline: none;
+    box-shadow: var(--ring);
+}
+
+/* ── Surface primitives ─────────────────────────────────────────── */
+
+.panel {
+    background: var(--bg-elev-1);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-2);
+}
+
+/* Floating-over-canvas surface. Used for sky HUD/controls/popups,
+   tab wheel, top status strip. */
+.panel-glass {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-3);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+}
+
+.panel-glass--strong {
+    background: var(--glass-bg-strong);
+}
+
+/* ── Button primitives ──────────────────────────────────────────── */
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+    height: 36px;
+    min-height: 36px;
+    padding: 0 var(--sp-4);
+    border-radius: var(--r-md);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elev-2);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: var(--fs-md);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out),
+                border-color var(--dur-fast) var(--ease-out),
+                color var(--dur-fast) var(--ease-out),
+                box-shadow var(--dur-fast) var(--ease-out),
+                transform var(--dur-fast) var(--ease-out);
+}
+.btn:hover {
+    background: var(--bg-elev-3);
+    border-color: var(--border-mid);
+}
+.btn:active {
+    transform: scale(0.98);
+    opacity: 1;
+}
+
+.btn-primary {
+    background: color-mix(in srgb, var(--accent-cyan) 18%, var(--bg-elev-2));
+    border-color: color-mix(in srgb, var(--accent-cyan) 55%, var(--border-strong));
+    color: var(--text-dim);
+}
+.btn-primary:hover {
+    background: color-mix(in srgb, var(--accent-cyan) 28%, var(--bg-elev-2));
+    border-color: var(--accent-cyan);
+}
+
+.btn-ghost {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--text-muted);
+}
+.btn-ghost:hover {
+    background: var(--bg-elev-1);
+    color: var(--text);
+}
+
+.btn-danger {
+    background: color-mix(in srgb, var(--state-err) 14%, var(--bg-elev-2));
+    border-color: color-mix(in srgb, var(--state-err) 50%, var(--border-strong));
+    color: var(--text-dim);
+}
+.btn-danger:hover {
+    background: color-mix(in srgb, var(--state-err) 24%, var(--bg-elev-2));
+    border-color: var(--state-err);
+}
+
+/* ── Input primitive ────────────────────────────────────────────── */
+
+.input {
+    height: 36px;
+    padding: 0 var(--sp-3);
+    background: var(--bg-input);
+    border: 1px solid var(--border-input);
+    border-radius: var(--r-md);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: var(--fs-md);
+    transition: border-color var(--dur-fast) var(--ease-out),
+                background var(--dur-fast) var(--ease-out);
+}
+.input:hover { border-color: var(--border-mid); }
+.input:focus { outline: none; border-color: var(--accent-cyan); }
+
+/* ── Badges / chips ─────────────────────────────────────────────── */
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-1);
+    height: 20px;
+    min-height: 20px;
+    padding: 0 var(--sp-2);
+    border-radius: var(--r-pill);
+    background: var(--bg-elev-2);
+    border: 1px solid var(--border-strong);
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1;
+}
+.badge--ok   { color: var(--state-ok);   border-color: color-mix(in srgb, var(--state-ok)   55%, var(--border-strong)); }
+.badge--warn { color: var(--state-warn); border-color: color-mix(in srgb, var(--state-warn) 55%, var(--border-strong)); }
+.badge--err  { color: var(--state-err);  border-color: color-mix(in srgb, var(--state-err)  55%, var(--border-strong)); }
+.badge--info { color: var(--state-info); border-color: color-mix(in srgb, var(--state-info) 55%, var(--border-strong)); }
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    min-height: 24px;
+    padding: 0 var(--sp-3);
+    border-radius: var(--r-pill);
+    background: var(--bg-elev-1);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: var(--fs-sm);
+}
+
+/* Numeric readouts inside otherwise-sans surfaces. Class hook so
+   components can opt back into mono for RA/Dec / exposure / FOV without
+   restating the font stack. */
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }

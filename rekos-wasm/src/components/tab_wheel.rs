@@ -347,8 +347,8 @@ pub fn TabWheel() -> impl IntoView {
                 node_ref=disc_ref
                 class=move || {
                     let base = "absolute left-0 top-0 w-[290px] h-[290px] rounded-full \
-                                border border-border-base touch-none \
-                                bg-[radial-gradient(circle_at_30%_50%,rgba(20,24,40,0.7),rgba(6,6,15,0.55))] \
+                                border border-glass-border backdrop-blur-glass shadow-3 touch-none \
+                                bg-[radial-gradient(circle_at_30%_50%,rgba(28,34,60,0.55),rgba(8,10,20,0.45))] \
                                 [transform:translateX(var(--tw-bx,0px))_rotate(var(--tw-rot,0deg))]";
                     let visibility = if expanded.get() {
                         "opacity-100 pointer-events-auto"
@@ -440,9 +440,11 @@ pub fn TabWheel() -> impl IntoView {
             <button
                 class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 \
                        w-[68px] h-[68px] rounded-full border-2 border-text-blue \
-                       bg-bg-wheel text-text-dim font-mono font-bold text-base leading-none tracking-[0.06em] \
+                       bg-bg-wheel backdrop-blur-glass text-text-dim font-ui font-bold text-base leading-none tracking-[0.06em] \
                        cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] \
-                       shadow-[0_0_10px_rgba(0,0,0,0.5)] pointer-events-auto \
+                       shadow-3 pointer-events-auto \
+                       transition-[background,border-color,box-shadow,transform] duration-fast ease-out \
+                       hover:border-accent-cyan active:scale-[0.97] \
                        flex items-center justify-center min-w-0"
                 title=move || tab_title(active.get(), &tr())
                 on:click=on_knob_click

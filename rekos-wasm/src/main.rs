@@ -189,7 +189,7 @@ fn App() -> impl IntoView {
     provide_context(ActiveTabCtx(active_tab));
 
     view! {
-        <div id="rekos-app" style="position:fixed; inset:0; background:#0a0a0f; color:#c0c0d0; font-family:monospace; overflow:hidden;">
+        <div id="rekos-app" class="fixed inset-0 bg-bg text-[var(--text)] font-ui overflow-hidden">
             <TabContent
                 store=store.clone()
                 send=Arc::clone(&send)

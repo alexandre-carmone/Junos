@@ -3,8 +3,11 @@
 
 :root {
     /* Background / surfaces */
-    --bg:               #0a0a0f;
-    --bg-input:         #111;
+    --bg:               #07080d;
+    --bg-elev-1:        #0c0e16;
+    --bg-elev-2:        #121524;
+    --bg-elev-3:        #1a1d30;
+    --bg-input:         #0e1018;
     --bg-input-deep:    #06060c;
     --bg-panel:         rgba(20, 26, 60, 0.92);
     --bg-panel-dim:     rgba(10, 10, 20, 0.75);
@@ -15,51 +18,96 @@
     --bg-button-info:   #0a1a2a;
     --bg-button-ok:     #1a2a1a;
     --bg-banner:        rgba(0, 30, 50, 0.92);
-    --bg-wheel:         rgba(12, 14, 24, 0.90);
+    --bg-wheel:         rgba(12, 14, 24, 0.72);
+
+    /* Glass surfaces (floating-over-canvas: sky HUD/controls/popups,
+       tab wheel, top status strip). Min opacity 0.7 so glass stays
+       readable over bright lunar scenes. */
+    --glass-bg:         rgba(12, 14, 26, 0.62);
+    --glass-bg-strong:  rgba(12, 14, 26, 0.78);
+    --glass-border:     rgba(170, 200, 255, 0.14);
+    --glass-blur:       blur(14px) saturate(140%);
 
     /* Text */
-    --text:             #c0c0d0;
+    --text:             #c8ccdc;
     --text-dim:         #cfe0ff;
-    --text-muted:       #aaa;
-    --text-faint:       #888;
+    --text-muted:       #9aa3b8;
+    --text-faint:       #777e90;
     --text-blue:        #88aaff;
 
     /* Accents */
-    --accent-cyan:        #00ffff;
-    --accent-cyan-dim:    #00cccc;
+    --accent-cyan:        #5beaff;
+    --accent-cyan-dim:    #3ab8c8;
+    --accent-violet:      #9b8cff;
     --accent-amber:       #ffd060;
     --accent-green:       #7affa0;
     --accent-green-soft:  #8f8;
-    --accent-blue-active: rgba(60, 90, 160, 0.95);
-    --text-blue-bright:   #a8c2ff;
+    --accent-blue-active: rgba(80, 120, 220, 0.95);
+    --text-blue-bright:   #c1d2ff;
+
+    /* Semantic state */
+    --state-ok:         #3ee08a;
+    --state-warn:       #ffc857;
+    --state-err:        #ff5c6c;
+    --state-info:       #5beaff;
 
     /* Borders */
-    --border:           #222;
-    --border-strong:    #2a2a3a;
-    --border-mid:       #333;
-    --border-input:     #444;
-    --border-accent:    #446;
-    --border-accent-2:  #4466cc;
-    --border-ok:        #484;
-    --border-info:      #0a6060;
+    --border:           #1c1e2c;
+    --border-strong:    #2a2d44;
+    --border-mid:       #353852;
+    --border-input:     #3a3e58;
+    --border-accent:    #4a5380;
+    --border-accent-2:  #5a78dd;
+    --border-ok:        #3a8a5a;
+    --border-info:      #2a8a8a;
 
     /* Spacing scale */
+    --sp-0:             2px;
     --sp-1:             4px;
     --sp-2:             8px;
     --sp-3:             10px;
     --sp-4:             14px;
     --sp-5:             18px;
+    --sp-6:             24px;
+    --sp-7:             32px;
 
     /* Radii */
     --r-sm:             4px;
-    --r-md:             6px;
-    --r-lg:             8px;
+    --r-md:             8px;
+    --r-lg:             12px;
+    --r-xl:             16px;
+    --r-pill:           999px;
 
     /* Fonts */
-    --font-mono:        'Courier New', monospace;
+    --font-ui:          'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono:        ui-monospace, 'JetBrains Mono', 'SF Mono', 'Courier New', monospace;
     --fs-xs:            10px;
     --fs-sm:            11px;
     --fs-md:            13px;
     --fs-base:          14px;
     --fs-lg:            16px;
+    --fs-xl:            18px;
+    --fs-2xl:           22px;
+
+    /* Elevation. Layered shadows with a subtle cool inner highlight so
+       panels look lit by the cyan accent rather than just dropped on the
+       background. */
+    --shadow-1:         0 1px 2px rgba(0,0,0,0.45),
+                        0 0 0 1px rgba(120,160,255,0.04);
+    --shadow-2:         0 4px 14px rgba(0,0,0,0.55),
+                        0 1px 0 rgba(120,160,255,0.06) inset;
+    --shadow-3:         0 12px 32px rgba(0,0,0,0.65),
+                        0 1px 0 rgba(120,160,255,0.08) inset;
+
+    /* Motion */
+    --dur-fast:         120ms;
+    --dur-base:         180ms;
+    --dur-slow:         280ms;
+    --ease-out:         cubic-bezier(0.2, 0.8, 0.2, 1);
+    --ease-spring:      cubic-bezier(0.34, 1.56, 0.64, 1);
+
+    /* Focus ring (keyboard focus-visible). Double layer so the ring stays
+       legible regardless of the underlying surface. */
+    --ring:             0 0 0 2px var(--bg),
+                        0 0 0 4px var(--accent-cyan);
 }
