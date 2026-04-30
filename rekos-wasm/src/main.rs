@@ -20,6 +20,7 @@ use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
 use components::sky::dso_index::DsoIndex;
 use components::sky::MosaicPlannerState;
+use components::tab_bar::TabBar;
 use components::tab_wheel::TabWheel;
 use components::tabs::TabContent;
 use i18n::Lang;
@@ -202,6 +203,7 @@ fn App() -> impl IntoView {
             // Tab switcher lives at the app root so it stays visible on
             // every tab (SkyTab is hidden when another tab is active).
             <TabWheel />
+            <TabBar />
         </div>
     }
 }

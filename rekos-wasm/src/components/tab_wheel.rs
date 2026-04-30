@@ -33,7 +33,7 @@ use crate::{ActiveTabCtx, Tab};
 
 use crate::components::tab_wheel_icons::tab_icon;
 
-const TABS: [Tab; 10] = [
+pub const TABS: [Tab; 10] = [
     Tab::Profiles,
     Tab::Sky,
     Tab::Mount,
@@ -66,7 +66,7 @@ fn base_angle(i: usize) -> f32 {
     ARC_START_DEG + (i as f32) * step
 }
 
-fn tab_title(tab: Tab, s: &crate::i18n::Translations) -> &'static str {
+pub fn tab_title(tab: Tab, s: &crate::i18n::Translations) -> &'static str {
     match tab {
         Tab::Sky        => s.tab_sky,
         Tab::Mount      => s.tab_mount,
@@ -333,7 +333,7 @@ pub fn TabWheel() -> impl IntoView {
     // (--tw-rot, --tw-bx) and class toggles.
     view! {
         <div
-            class="absolute right-[-107px] top-1/2 -translate-y-1/2 z-[60] pointer-events-none w-[290px] h-[290px] flex items-center justify-center"
+            class="absolute right-[-107px] top-1/2 -translate-y-1/2 z-[60] pointer-events-none w-[290px] h-[290px] flex items-center justify-center md:hidden"
             on:pointerenter=on_pointer_enter
             on:pointerleave=on_pointer_leave
             on:pointerdown=on_pointer_down
