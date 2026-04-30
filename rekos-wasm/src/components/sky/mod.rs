@@ -315,6 +315,7 @@ pub fn SkyTab(
     let (show_sky_section,      set_show_sky_section)      = signal(false);
     let (show_objects_section,  set_show_objects_section)  = signal(false);
     let (show_settings_section, set_show_settings_section) = signal(false);
+    let (time_shift_open,       set_time_shift_open)       = signal(false);
 
     // Controls panel visibility (collapsed by default on narrow screens)
     let (show_controls, set_show_controls) = signal({
@@ -1403,22 +1404,44 @@ pub fn SkyTab(
 
             // ── Bottom-left stack: time-shift on top, HUD below ────────────
             <div class="absolute left-sp-3 bottom-sp-3 z-[90] flex flex-col gap-sp-2 items-start pointer-events-none">
+            // ── Time-shift toggle (visible on <md only, when row is collapsed) ──
+            <button
+                class=move || {
+                    let base = "md:hidden pointer-events-auto px-2 py-1 \
+                                bg-bg-panel-glass border border-border-accent rounded-md \
+                                font-mono text-xs text-text-blue-bright cursor-pointer";
+                    if time_shift_open.get() { format!("{base} hidden") } else { base.to_string() }
+                }
+                on:click=move |_| set_time_shift_open.set(true)
+            >
+                "🕒"
+            </button>
             // ── Time-shift panel ───────────────────────────────────────────
-            <div class="flex items-center gap-1 px-2 py-1 pointer-events-auto \
-                        bg-bg-panel-glass border border-border-accent rounded-md \
-                        font-mono text-xs text-text-blue select-none">
+            <div
+                class=move || {
+                    let base = "flex items-center gap-1 max-md:gap-0.5 px-2 max-md:px-1 py-1 max-md:py-0.5 \
+                                max-w-[calc(100vw-16px)] flex-wrap pointer-events-auto \
+                                bg-bg-panel-glass border border-border-accent rounded-md \
+                                font-mono text-xs max-md:text-[10px] text-text-blue select-none";
+                    if time_shift_open.get() { base.to_string() } else { format!("{base} max-md:hidden") }
+                }
+            >
                 {
                     let bump = move |delta: f64| {
                         set_time_offset_s.update(|t| *t += delta);
                     };
-                    let btn_cls = "px-1.5 py-0.5 bg-bg-button hover:bg-bg-button-info \
+                    let btn_cls = "min-w-0 px-1.5 max-md:px-1 py-0.5 bg-bg-button hover:bg-bg-button-info \
                                    border border-border-accent rounded cursor-pointer \
                                    text-text-blue-bright";
                     view! {
+                        <button class=format!("{btn_cls} md:hidden")
+                                on:click=move |_| set_time_shift_open.set(false)>
+                            "×"
+                        </button>
                         <button class=btn_cls on:click=move |_| bump(-3600.0)>"-1h"</button>
                         <button class=btn_cls on:click=move |_| bump(-600.0)>"-10m"</button>
                         <button class=btn_cls on:click=move |_| bump(-60.0)>"-1m"</button>
-                        <span class="min-w-[64px] text-center px-1">
+                        <span class="min-w-[64px] max-md:min-w-[52px] text-center px-1 max-md:px-0 max-md:text-[10px]">
                             {move || {
                                 let t = time_offset_s.get();
                                 if t.abs() < 0.5 { tr().now.to_string() }
