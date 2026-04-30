@@ -36,13 +36,13 @@ use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
 type LabelFn = fn(&Translations) -> &'static str;
 
 // ── Shared Tailwind class fragments ───────────────────────────────────────────
-const GUIDE_INPUT: &str = "flex-1 min-w-0 bg-bg-input-deep text-text-dim border border-border-base py-1 px-[6px] font-mono text-sm";
+const GUIDE_INPUT: &str = "input input--sm flex-1 min-w-0 font-mono";
 const GUIDE_FIELD_LABEL: &str = "basis-[clamp(100px,25%,200px)] grow-0 shrink-0 text-text-blue text-sm";
-const GUIDE_SECTION: &str = "border border-border-base py-sp-3 px-sp-4 m-0";
-const GUIDE_DETAILS: &str = "border border-border-base";
-const GUIDE_LEGEND: &str = "text-text-blue px-sp-1 text-sm cursor-pointer";
+const GUIDE_SECTION: &str = "fieldset m-0";
+const GUIDE_DETAILS: &str = "fieldset !p-0";
+const GUIDE_LEGEND: &str = "fieldset__legend cursor-pointer";
 const GUIDE_DETAILS_BODY: &str = "py-sp-3 px-sp-4 flex flex-col gap-sp-2";
-const GUIDE_BTN_BASE: &str = "py-sp-2 px-sp-3 bg-[rgba(12,14,24,0.9)] border cursor-pointer font-mono text-sm disabled:!border-[#444] disabled:!text-[#666] disabled:opacity-55 disabled:cursor-not-allowed";
+const GUIDE_BTN_BASE: &str = "btn";
 
 mod timeline;
 use timeline::drift_plot;
@@ -117,17 +117,17 @@ fn event_target_checked(ev: &web_sys::Event) -> bool {
 
 fn stage_color(status: &str) -> &'static str {
     match status {
-        "" | "Idle" | "Aborted" | "Disconnected"        => "#808090",
+        "" | "Idle" | "Aborted" | "Disconnected"        => "var(--text-muted)",
         "Calibrating" | "Selecting star" | "Looping"
         | "Capturing" | "Subtracting" | "Subframing"
-        | "Reacquiring"                                 => "#ffd060",
-        "Calibrated" | "Connected"                      => "#88aaff",
-        "Guiding"                                       => "#7affa0",
+        | "Reacquiring"                                 => "var(--state-warn)",
+        "Calibrated" | "Connected"                      => "var(--state-info)",
+        "Guiding"                                       => "var(--state-ok)",
         "Dithering" | "Dithering successful"
-        | "Manual Dithering" | "Settling"               => "#66e0e0",
+        | "Manual Dithering" | "Settling"               => "var(--accent-cyan-dim)",
         "Calibration error" | "Dithering error"
-        | "Suspended"                                   => "#ff6a6a",
-        _                                               => "#c0c0d0",
+        | "Suspended"                                   => "var(--state-err)",
+        _                                               => "var(--text)",
     }
 }
 
@@ -498,31 +498,31 @@ pub fn GuideTab(
                         <button
                             on:click=on_start.clone()
                             disabled=move || !btn_start()
-                            class=format!("{GUIDE_BTN_BASE} border-accent-green text-accent-green")>
+                            class="btn btn-primary">
                             {move || tr().guide_start}
                         </button>
                         <button
                             on:click=on_stop.clone()
                             disabled=move || !btn_stop()
-                            class=format!("{GUIDE_BTN_BASE} border-[#ff6a6a] text-[#ff6a6a]")>
+                            class="btn btn-danger">
                             {move || tr().stop}
                         </button>
                         <button
                             on:click=on_capture.clone()
                             disabled=move || !btn_capture()
-                            class=format!("{GUIDE_BTN_BASE} border-text-blue text-text-blue")>
+                            class="btn btn-ghost text-text-blue !border-text-blue">
                             {move || tr().guide_capture}
                         </button>
                         <button
                             on:click=on_loop.clone()
                             disabled=move || !btn_loop()
-                            class=format!("{GUIDE_BTN_BASE} border-text-blue text-text-blue")>
+                            class="btn btn-ghost text-text-blue !border-text-blue">
                             {move || tr().guide_loop}
                         </button>
                         <button
                             on:click=on_clear.clone()
                             disabled=move || !btn_clear()
-                            class=format!("{GUIDE_BTN_BASE} border-accent-amber text-accent-amber")>
+                            class="btn btn-ghost text-accent-amber !border-accent-amber">
                             {move || tr().guide_clear_cal}
                         </button>
                     </div>

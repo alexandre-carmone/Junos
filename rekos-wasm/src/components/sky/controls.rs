@@ -13,9 +13,9 @@ use super::SkyToggles;
 use super::utils::{event_target_checked, event_target_value};
 
 const CHECKBOX_ROW: &str = "flex items-center gap-[6px] cursor-pointer [&>svg]:shrink-0";
-const CONTROLS_INPUT: &str = "bg-bg-input text-[#ccc] border border-border-input font-mono text-sm p-[2px]";
-const SECTION_HDR: &str = "py-[7px] px-[10px] w-full text-left border-0 border-b border-border-strong bg-bg-section-hdr text-text-blue font-bold text-sm font-mono uppercase tracking-[0.06em] cursor-pointer flex justify-between items-center min-h-[36px]";
-const CONTROLS_BTN: &str = "bg-bg-button text-text-blue border border-border-input py-1 px-sp-2 cursor-pointer font-mono text-sm";
+const CONTROLS_INPUT: &str = "input input--sm font-mono";
+const SECTION_HDR: &str = "py-[7px] px-[10px] w-full text-left border-0 border-b border-border-strong bg-bg-section-hdr text-text-blue font-semibold text-sm uppercase tracking-[0.06em] cursor-pointer flex justify-between items-center min-h-[36px]";
+const CONTROLS_BTN: &str = "btn btn--sm btn-ghost text-text-blue";
 const SETTINGS_ROW: &str = "text-sm flex items-center gap-1";
 
 #[component]
@@ -50,11 +50,11 @@ pub fn SkyControls(
             // Toggle button
             <button
                 class=move || {
-                    let base = "text-text-blue border border-border-accent rounded-sm py-1 px-[10px] cursor-pointer font-mono text-base leading-none min-h-[32px]";
+                    let base = "btn-icon text-text-blue !border-border-accent";
                     if show_controls.get() {
-                        format!("{base} bg-[rgba(26,26,46,0.92)]")
+                        format!("{base} btn--active")
                     } else {
-                        format!("{base} bg-bg-panel-dim")
+                        base.to_string()
                     }
                 }
                 on:click=move |_| set_show_controls.update(|v| *v = !*v)
@@ -64,7 +64,7 @@ pub fn SkyControls(
 
             // Collapsible panel
             {move || show_controls.get().then(|| view! {
-                <div class="bg-bg-panel-glass border border-border-mid rounded-sm text-[12px] overflow-hidden min-w-[180px] max-w-[calc(100vw-16px)] max-h-[calc(100dvh-120px)] overflow-y-auto [overscroll-behavior:contain] md:max-lg:min-w-[160px] max-md:!min-w-0 max-md:w-[calc(100vw-16px)] max-md:max-h-[calc(100dvh-160px)]">
+                <div class="panel-glass text-[12px] overflow-hidden min-w-[180px] max-w-[calc(100vw-16px)] max-h-[calc(100dvh-120px)] overflow-y-auto [overscroll-behavior:contain] md:max-lg:min-w-[160px] max-md:!min-w-0 max-md:w-[calc(100vw-16px)] max-md:max-h-[calc(100dvh-160px)]">
 
                     // ── Part 1 : Sky display ───────────────────────────
                     <button class=SECTION_HDR

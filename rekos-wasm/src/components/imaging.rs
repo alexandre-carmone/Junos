@@ -21,9 +21,9 @@ use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting, send_
 // ── Shared Tailwind class fragments ───────────────────────────────────────────
 // Repeating chrome — buttons, inputs, foldable panels — kept here so each
 // `view! {}` doesn't carry the same long string 4× over.
-const GHOST_BTN: &str = "bg-[rgba(12,14,24,0.9)] border border-[#334] text-text-blue py-sp-1 px-sp-3 cursor-pointer font-mono text-sm rounded-[3px] hover:bg-[rgba(24,30,50,0.95)] hover:border-text-blue";
-const ACTION_BTN: &str = "py-sp-2 px-sp-3 bg-[rgba(12,14,24,0.9)] border border-[var(--btn-color,var(--text-blue))] text-[color:var(--btn-color,var(--text-blue))] cursor-pointer font-mono text-sm";
-const FIELD_INPUT: &str = "flex-1 min-w-0 bg-bg-input-deep text-text-dim border border-border-base py-1 px-[6px] font-mono text-sm";
+const GHOST_BTN: &str = "btn btn--sm btn-ghost text-text-blue";
+const ACTION_BTN: &str = "btn btn--sm !border-[color:var(--btn-color,var(--text-blue))] text-[color:var(--btn-color,var(--text-blue))]";
+const FIELD_INPUT: &str = "input input--sm flex-1 min-w-0 font-mono";
 const FIELD_LABEL: &str = "basis-[120px] grow-0 shrink-0 text-text-blue overflow-hidden text-ellipsis whitespace-nowrap";
 const PANEL_CLS: &str = "border border-border-base bg-[rgba(10,12,20,0.55)] rounded-[3px] overflow-hidden";
 const SUMMARY_CLS: &str = "list-none cursor-pointer py-sp-2 px-3 text-text-blue text-sm font-bold uppercase tracking-[0.08em] flex items-center gap-sp-2 select-none hover:bg-[rgba(20,24,40,0.7)] [&::-webkit-details-marker]:hidden";
@@ -31,12 +31,12 @@ const PANEL_BODY: &str = "py-sp-3 px-3 pb-3 border-t border-[#1a1c28]";
 
 fn status_color(status: &str) -> &'static str {
     let s = status.to_lowercase();
-    if s.contains("error") || s.contains("abort") || s.contains("fail") { "#ff6a6a" }
-    else if s.contains("complete")  { "#7affa0" }
-    else if s.contains("capturing") || s.contains("progress") { "#88aaff" }
-    else if s.contains("image received") || s.contains("frame")  { "#88aaff" }
-    else if s.contains("waiting") || s.contains("pause") { "#ffd060" }
-    else { "#808090" }
+    if s.contains("error") || s.contains("abort") || s.contains("fail") { "var(--state-err)" }
+    else if s.contains("complete")  { "var(--state-ok)" }
+    else if s.contains("capturing") || s.contains("progress") { "var(--state-info)" }
+    else if s.contains("image received") || s.contains("frame")  { "var(--state-info)" }
+    else if s.contains("waiting") || s.contains("pause") { "var(--state-warn)" }
+    else { "var(--text-muted)" }
 }
 
 /// Maps a KStars widget objectName to a human label. The widgets are defined
@@ -274,7 +274,7 @@ pub fn ImagingTab(
                     <span
                         style=move || {
                             let on = camera.with(|c| c.cooler_on).unwrap_or(false);
-                            format!("color:{};", if on { "#7affa0" } else { "#808090" })
+                            format!("color:{};", if on { "var(--state-ok)" } else { "var(--text-muted)" })
                         }>
                         {move || match camera.with(|c| c.cooler_on) {
                             Some(true)  => tr().imaging_cooler_on_val.to_string(),
@@ -356,10 +356,10 @@ pub fn ImagingTab(
                     <fieldset class="border border-border-base py-sp-3 px-3">
                         <legend class="text-text-blue px-[6px] text-sm uppercase tracking-[0.06em]">{move || tr().imaging_actions}</legend>
                         <div class="grid grid-cols-2 gap-sp-2">
-                            <button on:click=on_start   class=ACTION_BTN style="--btn-color:#7affa0;">{move || tr().start}</button>
-                            <button on:click=on_stop    class=ACTION_BTN style="--btn-color:#ff6a6a;">{move || tr().stop}</button>
-                            <button on:click=on_preview class=ACTION_BTN style="--btn-color:#88aaff;">{move || tr().preview}</button>
-                            <button on:click=on_loop    class=ACTION_BTN style="--btn-color:#88aaff;">{move || tr().focus_loop_btn}</button>
+                            <button on:click=on_start   class=ACTION_BTN style="--btn-color:var(--state-ok);">{move || tr().start}</button>
+                            <button on:click=on_stop    class=ACTION_BTN style="--btn-color:var(--state-err);">{move || tr().stop}</button>
+                            <button on:click=on_preview class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().preview}</button>
+                            <button on:click=on_loop    class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().focus_loop_btn}</button>
                         </div>
                     </fieldset>
 
@@ -391,11 +391,11 @@ pub fn ImagingTab(
                                     }
                                     class=FIELD_INPUT
                                 />
-                                <button on:click=on_set_temp class=ACTION_BTN style="--btn-color:#88aaff;">{move || tr().imaging_set}</button>
+                                <button on:click=on_set_temp class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().imaging_set}</button>
                             </div>
                             <div class="grid grid-cols-2 gap-sp-2">
-                                <button on:click=on_cooler_on  class=ACTION_BTN style="--btn-color:#7affa0;">{move || tr().cooler_on}</button>
-                                <button on:click=on_cooler_off class=ACTION_BTN style="--btn-color:#ff6a6a;">{move || tr().cooler_off}</button>
+                                <button on:click=on_cooler_on  class=ACTION_BTN style="--btn-color:var(--state-ok);">{move || tr().cooler_on}</button>
+                                <button on:click=on_cooler_off class=ACTION_BTN style="--btn-color:var(--state-err);">{move || tr().cooler_off}</button>
                             </div>
                         </div>
                     </details>
@@ -508,17 +508,17 @@ pub fn ImagingTab(
                     <div class="flex items-center justify-between gap-sp-2 pt-3 pb-sp-2 px-sp-4 border-b border-border-base">
                         <span class="text-text-blue text-sm uppercase tracking-[0.08em]">{move || tr().imaging_sequence_queue}</span>
                         <div class="flex gap-[6px]">
-                            <button on:click=on_add_job   class=ACTION_BTN style="--btn-color:#88aaff;">{move || tr().imaging_add_job}</button>
-                            <button on:click=on_clear_seq class=ACTION_BTN style="--btn-color:#ff6a6a;">{move || tr().seq_clear}</button>
+                            <button on:click=on_add_job   class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().imaging_add_job}</button>
+                            <button on:click=on_clear_seq class=ACTION_BTN style="--btn-color:var(--state-err);">{move || tr().seq_clear}</button>
                             <button
                                 class=ACTION_BTN
-                                style="--btn-color:#aaffcc;"
+                                style="--btn-color:var(--state-ok);"
                                 on:click=move |_| { save_open.update(|v| *v = !*v); load_open.set(false); }>
                                 {move || tr().save_profile}
                             </button>
                             <button
                                 class=ACTION_BTN
-                                style="--btn-color:#ffcc88;"
+                                style="--btn-color:var(--state-warn);"
                                 on:click=move |_| { load_open.update(|v| *v = !*v); save_open.set(false); }>
                                 {move || tr().load_profile}
                             </button>
@@ -534,14 +534,14 @@ pub fn ImagingTab(
                                 on:input=move |ev| save_path.set(event_target_value(&ev))
                                 class="flex-1 bg-bg-input text-[#c0ffd0] border border-[#335544] py-1 px-sp-2 font-mono text-sm"
                             />
-                            <button class=ACTION_BTN style="--btn-color:#aaffcc;" on:click=move |_| {
+                            <button class=ACTION_BTN style="--btn-color:var(--state-ok);" on:click=move |_| {
                                 let path = save_path.get_untracked();
                                 if !path.is_empty() {
                                     sv_save.with_value(|s| send_cmd(s, "capture_save_sequence_file", serde_json::json!({"filepath": path})));
                                     save_open.set(false);
                                 }
                             }>"✓"</button>
-                            <button class=ACTION_BTN style="--btn-color:#555;" on:click=move |_| save_open.set(false)>"✕"</button>
+                            <button class=ACTION_BTN style="--btn-color:var(--text-faint);" on:click=move |_| save_open.set(false)>"✕"</button>
                         </div>
                     </Show>
                     // Load inline row
@@ -554,7 +554,7 @@ pub fn ImagingTab(
                                 on:input=move |ev| load_path.set(event_target_value(&ev))
                                 class="flex-1 bg-bg-input text-[#ffd0aa] border border-[#554433] py-1 px-sp-2 font-mono text-sm"
                             />
-                            <button class=ACTION_BTN style="--btn-color:#ffcc88;" on:click=move |_| {
+                            <button class=ACTION_BTN style="--btn-color:var(--state-warn);" on:click=move |_| {
                                 let path = load_path.get_untracked();
                                 if !path.is_empty() {
                                     sv_load.with_value(|s| send_cmd(s, "capture_load_sequence_file", serde_json::json!({"filepath": path})));
@@ -566,7 +566,7 @@ pub fn ImagingTab(
                                     });
                                 }
                             }>"✓"</button>
-                            <button class=ACTION_BTN style="--btn-color:#555;" on:click=move |_| load_open.set(false)>"✕"</button>
+                            <button class=ACTION_BTN style="--btn-color:var(--text-faint);" on:click=move |_| load_open.set(false)>"✕"</button>
                         </div>
                     </Show>
                     <div class="flex-1 min-h-0 overflow-y-auto py-sp-2 px-sp-3 max-[759px]:overflow-y-visible max-[759px]:max-h-none">
@@ -594,7 +594,7 @@ pub fn ImagingTab(
                                                 {r.status}
                                             </span>
                                             <button
-                                                class="bg-transparent border border-[#443] text-[#ff6a6a] py-[2px] px-sp-2 cursor-pointer font-mono text-sm"
+                                                class="btn btn--sm btn-ghost text-state-err"
                                                 title=tr().imaging_remove_job
                                                 on:click=move |_| on_remove(idx)>
                                                 "×"
@@ -648,10 +648,10 @@ struct SequenceRow {
 
 fn job_status_color(s: &str) -> &'static str {
     let lo = s.to_lowercase();
-    if lo == "complete"                                     { "#7affa0" }
-    else if lo == "capturing" || lo == "in progress"        { "#88aaff" }
-    else if lo.contains("abort") || lo.contains("error")   { "#ff6a6a" }
-    else                                                    { "#808090" }
+    if lo == "complete"                                     { "var(--state-ok)" }
+    else if lo == "capturing" || lo == "in progress"        { "var(--state-info)" }
+    else if lo.contains("abort") || lo.contains("error")   { "var(--state-err)" }
+    else                                                    { "var(--text-muted)" }
 }
 
 // ── Shared render helpers ────────────────────────────────────────────────

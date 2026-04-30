@@ -66,9 +66,9 @@ struct FitsRow {
 // ── Tailwind class fragments ─────────────────────────────────────────────────
 const FILES_ROW: &str = "flex items-center gap-[6px] w-full text-left py-[6px] px-sp-2 mb-[2px] bg-transparent text-text border border-transparent rounded-sm cursor-pointer hover:bg-[rgba(136,170,255,0.08)] hover:border-border-strong";
 const FILES_THUMB_BASE: &str = "bg-bg-input-deep border border-border-strong rounded-sm overflow-hidden cursor-pointer p-0 text-inherit flex flex-col hover:border-text-blue";
-const FILES_BTN: &str = "bg-bg-button text-text-dim border border-border-strong py-[5px] px-sp-3 rounded-sm text-[12px] cursor-pointer hover:border-text-blue";
+const FILES_BTN: &str = "btn btn--sm btn-ghost";
 const FILES_FIELD: &str = "flex flex-col gap-[3px] text-sm text-text-blue";
-const FILES_FIELD_INPUT: &str = "bg-bg-input-deep text-text border border-border-strong py-1 px-[6px] rounded-sm text-[12px] focus:outline-none focus:border-text-blue";
+const FILES_FIELD_INPUT: &str = "input input--sm";
 const FILES_SECTION: &str = "text-text-blue text-sm uppercase tracking-[0.06em] mt-[14px] mb-[6px] font-semibold";
 const FILES_KV: &str = "flex justify-between gap-sp-2";
 
@@ -406,7 +406,7 @@ fn LiveStackSettings(settings: RwSignal<Value>, send: SendCmd) -> impl IntoView 
                     on:input=move |ev| high_sigma.set(event_value(&ev))
                 />
             </label>
-            <button class=format!("{FILES_BTN} bg-[rgba(40,60,110,0.95)] border-text-blue") on:click=on_apply>
+            <button class="btn btn--sm btn-primary" on:click=on_apply>
                 {move || tr().livestack_apply}
             </button>
         </div>

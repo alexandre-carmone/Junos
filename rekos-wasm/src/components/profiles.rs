@@ -18,16 +18,14 @@ use crate::ws::{ProfileInfo, SendCmd};
 
 const GUIDING_LABELS: [&str; 4] = ["Internal", "PHD2", "LinGuider", "SEP"];
 
-// Tailwind class fragments for the small row-action buttons. Kept as
-// constants only to avoid bug-prone copy/paste between the row, modal,
-// and form footer. The base spacing/typography is shared; the colour
-// triplet (border / bg / text) varies by intent.
-const BTN_BASE: &str = "px-3 py-[5px] rounded-[5px] font-mono font-semibold text-sm cursor-pointer";
-const BTN_LAUNCH: &str = "border border-[#3a5a3a] bg-[#0a1a0a] text-[#44ee88]";
-const BTN_STOP: &str = "border border-[#5a2a2a] bg-[#1a0a0a] text-[#ee4444]";
-const BTN_STARTING: &str = "border border-[#3a3a5a] bg-[#0a0a14] text-[#ffcc44]";
-const BTN_EDIT: &str = "border border-border-strong bg-[#0a0a14] text-text-blue";
-const BTN_DELETE: &str = "border border-[#5a2a2a] bg-[#1a0a0a] text-[#ee4444] disabled:text-[#5a3a3a] disabled:cursor-not-allowed disabled:opacity-50";
+// Class names for row-action buttons. Visual primitives live in base.css;
+// state intent is expressed via `.btn-{primary,danger,ghost}` modifiers.
+const BTN_BASE: &str = "btn btn--sm";
+const BTN_LAUNCH: &str = "btn-primary";
+const BTN_STOP: &str = "btn-danger";
+const BTN_STARTING: &str = "btn-ghost text-state-warn";
+const BTN_EDIT: &str = "btn-ghost";
+const BTN_DELETE: &str = "btn-danger";
 
 #[component]
 pub fn ProfilesTab(
@@ -78,14 +76,11 @@ pub fn ProfilesTab(
                     {move || format!("({})", profiles.get().len())}
                 </span>
                 <span class="flex-1"></span>
-                <button
-                    class="px-[14px] py-[5px] rounded-md font-mono font-semibold text-sm cursor-pointer border border-[#3a5a3a] bg-[#0a1a0a] text-[#44ee88]"
-                    on:click=on_add
-                >
+                <button class="btn btn-primary" on:click=on_add>
                     "+ " {move || tr().profiles_add}
                 </button>
                 <button
-                    class="px-[14px] py-[5px] rounded-md font-mono font-semibold text-sm cursor-pointer border border-border-strong bg-[#0a0a14] text-text-blue"
+                    class="btn-icon"
                     on:click=on_refresh
                     title=move || if connected.get() { "" } else { "WS not connected" }
                 >
@@ -293,7 +288,7 @@ fn ProfileRow(
                     <span class="text-md text-text-dim font-semibold">{name.clone()}</span>
                     {move || if is_active() {
                         view! {
-                            <span class="px-2 py-[2px] rounded-[10px] text-xs font-semibold tracking-[0.05em] bg-[rgba(60,150,80,0.18)] text-[#44ee88]">
+                            <span class="badge badge--ok">
                                 {tr().profiles_active}
                             </span>
                         }.into_any()
@@ -468,7 +463,7 @@ fn ProfileForm(
     let mode_for_remote = mode;
     let is_remote = move || mode_for_remote.get() == "remote";
 
-    let select_cls = "bg-[#0a0a14] text-text-dim border border-border-strong px-2 py-1 rounded-sm font-mono font-semibold text-sm";
+    let select_cls = "input input--sm";
 
     view! {
         <div class="border border-[#3a3a5a] rounded-lg pt-sp-4 pr-4 pb-sp-4 pl-4 mb-sp-4 bg-[rgba(20,24,40,0.4)]">
@@ -608,7 +603,7 @@ fn TextInput(
 ) -> impl IntoView {
     view! {
         <input
-            class="bg-[#0a0a14] text-text-dim border border-border-strong px-2 py-1 rounded-sm font-mono font-normal text-sm min-w-0 w-full"
+            class="input input--sm w-full min-w-0"
             type="text"
             prop:value=move || value.get()
             placeholder=placeholder

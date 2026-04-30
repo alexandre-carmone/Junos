@@ -66,15 +66,15 @@ fn dispatch_align_setting(send: &SendCmd, key: &str, value: serde_json::Value) {
 
 fn stage_color(stage: &str) -> &'static str {
     match stage {
-        "" | "Idle" => "#808090",
+        "" | "Idle" => "var(--text-muted)",
         "First Capture" | "First Solve"
         | "Second Capture" | "Second Solve"
-        | "Third Capture" | "Third Solve" => "#88aaff",
+        | "Third Capture" | "Third Solve" => "var(--state-info)",
         "First Rotation" | "Second Rotation"
         | "First Settle" | "Second Settle"
-        | "Finding CP" | "Select Star" => "#ffd060",
-        "Refreshing" | "Refresh Complete" => "#7affa0",
-        _ => "#c0c0d0",
+        | "Finding CP" | "Select Star" => "var(--state-warn)",
+        "Refreshing" | "Refresh Complete" => "var(--state-ok)",
+        _ => "var(--text)",
     }
 }
 
@@ -348,12 +348,12 @@ pub fn PolarAlignTab(
     };
     let refresh_visible = move || polar.with(|p| is_refresh_stage(&p.stage));
 
-    const POLAR_INPUT: &str = "flex-1 bg-bg-input-deep text-text-dim border border-border-base py-1 px-[6px] font-mono text-sm";
+    const POLAR_INPUT: &str = "input input--sm flex-1 font-mono";
     const FIELD_LABEL: &str = "basis-[clamp(80px,22%,120px)] grow-0 shrink-0 text-text-blue text-sm";
-    const SECTION_CLS: &str = "border border-border-base p-sp-4";
-    const BTN_START: &str = "py-sp-2 px-sp-4 bg-[rgba(12,14,24,0.9)] border border-accent-green text-accent-green cursor-pointer font-mono text-sm";
-    const BTN_STOP: &str = "py-sp-2 px-sp-4 bg-[rgba(12,14,24,0.9)] border border-[#ff6a6a] text-[#ff6a6a] cursor-pointer font-mono text-sm";
-    const BTN_ROTATION: &str = "py-sp-2 px-sp-4 bg-[rgba(12,14,24,0.9)] border border-accent-amber text-accent-amber cursor-pointer font-mono text-sm";
+    const SECTION_CLS: &str = "fieldset";
+    const BTN_START: &str = "btn btn-primary";
+    const BTN_STOP: &str = "btn btn-danger";
+    const BTN_ROTATION: &str = "btn btn-ghost text-accent-amber !border-accent-amber";
     const HEADER_LABEL: &str = "text-text-blue";
 
     view! {
@@ -484,7 +484,7 @@ pub fn PolarAlignTab(
                             // Meridian-crossing warning — mirrors
                             // PolarAlignmentAssistant::checkPAHForMeridianCrossing().
                             <Show when=move || meridian_warning().is_some()>
-                                <div class="mt-sp-1 py-sp-2 px-sp-3 border border-[#ff9a3a] bg-[rgba(80,40,10,0.4)] text-[#ffb070] text-sm leading-[1.4]">
+                                <div class="mt-sp-1 py-sp-2 px-sp-3 border border-state-warn/60 bg-state-warn/10 text-state-warn text-sm leading-[1.4]">
                                     {move || meridian_warning().unwrap_or_default()}
                                 </div>
                             </Show>

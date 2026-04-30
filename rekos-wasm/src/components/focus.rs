@@ -22,13 +22,13 @@ use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
 
 fn status_color(status: &str) -> &'static str {
     let s = status.to_lowercase();
-    if s.contains("fail") || s.contains("abort") { "#ff6a6a" }
-    else if s.contains("complete")                { "#7affa0" }
-    else if s.contains("progress")                { "#88aaff" }
-    else if s.contains("framing")                 { "#ffd060" }
-    else if s.contains("changing")                { "#ffd060" }
-    else if s.contains("user input")              { "#ffd060" }
-    else                                           { "#808090" }
+    if s.contains("fail") || s.contains("abort") { "var(--state-err)" }
+    else if s.contains("complete")                { "var(--state-ok)" }
+    else if s.contains("progress")                { "var(--state-info)" }
+    else if s.contains("framing")                 { "var(--state-warn)" }
+    else if s.contains("changing")                { "var(--state-warn)" }
+    else if s.contains("user input")              { "var(--state-warn)" }
+    else                                           { "var(--text-muted)" }
 }
 
 /// Subset of `focus_get_all_settings` keys this first cut knows how to render.
@@ -162,11 +162,10 @@ pub fn FocusTab(
         rows
     };
 
-    let btn_base = "py-sp-2 px-sp-3 bg-[rgba(12,14,24,0.9)] border border-border-base text-text font-mono text-sm cursor-pointer";
-    let btn_action = format!("{btn_base} !border-text-blue !text-text-blue");
+    let btn_action = "btn btn-ghost text-text-blue !border-text-blue".to_string();
     let btn_action_clone = btn_action.clone();
-    let fieldset_cls = "border border-border-base py-sp-3 px-3";
-    let legend_cls = "text-text-blue px-sp-2 text-sm";
+    let fieldset_cls = "fieldset";
+    let legend_cls = "fieldset__legend";
     let header_label = "text-text-blue";
 
     view! {
@@ -241,11 +240,11 @@ pub fn FocusTab(
                     <fieldset class=fieldset_cls>
                         <legend class=legend_cls>{move || tr().focus_actions_section}</legend>
                         <div class="grid grid-cols-2 gap-sp-2">
-                            <button on:click=on_start class=format!("{btn_base} !border-accent-green !text-accent-green")>{move || tr().start}</button>
-                            <button on:click=on_stop  class=format!("{btn_base} !border-[#ff6a6a] !text-[#ff6a6a]")>{move || tr().stop}</button>
+                            <button on:click=on_start class="btn btn-primary">{move || tr().start}</button>
+                            <button on:click=on_stop  class="btn btn-danger">{move || tr().stop}</button>
                             <button on:click=on_capture class=btn_action.clone()>{move || tr().focus_capture_btn}</button>
                             <button on:click=on_loop    class=btn_action.clone()>{move || tr().focus_loop_btn}</button>
-                            <button on:click=on_reset class=format!("{btn_base} col-span-2")>
+                            <button on:click=on_reset class="btn btn-ghost col-span-2">
                                 {move || tr().focus_reset_frame}
                             </button>
                         </div>
@@ -264,7 +263,7 @@ pub fn FocusTab(
                                     let v: i64 = event_target_value(&ev).parse().unwrap_or(100);
                                     step_size.set(v.max(1));
                                 }
-                                class="flex-1 bg-bg-input-deep text-text-dim border border-border-base py-sp-1 px-sp-2 font-mono text-sm"
+                                class="input input--sm flex-1 font-mono"
                             />
                         </div>
                         <div class="grid grid-cols-2 gap-sp-2">
@@ -348,7 +347,7 @@ fn render_setting_row(
                             }
                         }
                     }
-                    class="flex-1 bg-bg-input-deep text-text-dim border border-border-base py-sp-1 px-sp-2 font-mono text-sm"
+                    class="input input--sm flex-1 font-mono"
                 />
             }.into_any()
         }
@@ -362,7 +361,7 @@ fn render_setting_row(
                         let s = event_target_value(&ev);
                         d(static_key, serde_json::Value::String(s));
                     }
-                    class="flex-1 bg-bg-input-deep text-text-dim border border-border-base py-sp-1 px-sp-2 font-mono text-sm"
+                    class="input input--sm flex-1 font-mono"
                 />
             }.into_any()
         }

@@ -168,6 +168,51 @@ textarea:focus-visible,
     border-color: var(--state-err);
 }
 
+/* Size & layout modifiers. */
+.btn--sm { height: 28px; min-height: 28px; padding: 0 var(--sp-3); font-size: var(--fs-sm); }
+.btn--block { width: 100%; }
+
+/* Toggle / segmented selected state. Cyan accent border + tinted bg.
+   Add `.btn--active` alongside any `.btn` / `.btn-ghost` / `.btn-icon`. */
+.btn--active {
+    background: color-mix(in srgb, var(--accent-cyan) 14%, var(--bg-elev-2));
+    border-color: var(--accent-cyan);
+    color: var(--text-dim);
+}
+
+/* Icon-only buttons. Square-by-default; --circle pills it. */
+.btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elev-2);
+    color: var(--text);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out),
+                border-color var(--dur-fast) var(--ease-out),
+                color var(--dur-fast) var(--ease-out),
+                box-shadow var(--dur-fast) var(--ease-out),
+                transform var(--dur-fast) var(--ease-out);
+}
+.btn-icon:hover { background: var(--bg-elev-3); border-color: var(--border-mid); }
+.btn-icon:active { transform: scale(0.97); opacity: 1; }
+.btn-icon--lg { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+.btn-icon--circle { border-radius: var(--r-pill); }
+
+/* Disabled state for both .btn and .btn-icon and .input. */
+.btn:disabled, .btn-icon:disabled, .input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
 /* ── Input primitive ────────────────────────────────────────────── */
 
 .input {
@@ -184,6 +229,37 @@ textarea:focus-visible,
 }
 .input:hover { border-color: var(--border-mid); }
 .input:focus { outline: none; border-color: var(--accent-cyan); }
+
+.input--sm { height: 28px; padding: 0 var(--sp-2); font-size: var(--fs-sm); }
+
+/* Field row: label on the left, input on the right. */
+.field {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+.field > span, .field > label {
+    color: var(--text-muted);
+    font-size: var(--fs-sm);
+}
+
+.fieldset {
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: var(--sp-3) var(--sp-4);
+    background: var(--bg-elev-1);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+}
+.fieldset__legend {
+    color: var(--text-muted);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: var(--sp-1);
+}
 
 /* ── Badges / chips ─────────────────────────────────────────────── */
 

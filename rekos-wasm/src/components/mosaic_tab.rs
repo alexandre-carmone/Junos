@@ -197,7 +197,7 @@ pub fn MosaicTab(
         });
     };
 
-    const INPUT_BASE: &str = "bg-bg-input text-[#ccc] border border-border-input font-mono text-sm py-[3px] px-[5px] box-border";
+    const INPUT_BASE: &str = "input input--sm font-mono";
     const SECTION_TITLE: &str = "text-sm font-bold text-text-blue pt-[6px] pb-1 border-b border-border-strong mb-2";
     const PARAM_LABEL: &str = "text-sm flex items-center gap-1";
     const TARGET_LABEL: &str = "text-sm flex items-center gap-[6px] flex-1 min-w-[200px]";
@@ -231,11 +231,11 @@ pub fn MosaicTab(
                     </label>
                     <button
                         class=move || {
-                            let base = "py-[5px] px-3 cursor-pointer font-mono text-sm rounded-sm whitespace-nowrap";
+                            let base = "btn btn--sm whitespace-nowrap";
                             if planner.picking_center.get() {
-                                format!("{base} bg-[#003030] text-accent-cyan border border-accent-cyan-dim")
+                                format!("{base} btn--active")
                             } else {
-                                format!("{base} bg-bg-button-info text-text-blue border border-border-accent")
+                                format!("{base} btn-primary")
                             }
                         }
                         on:click=on_pick_sky>
@@ -405,7 +405,7 @@ pub fn MosaicTab(
                                            });
                                        } />
                                 <button
-                                    class="bg-[#1a0a0a] text-[#cc4444] border border-[#422] cursor-pointer font-mono text-md rounded-[2px] px-1 leading-none"
+                                    class="btn-icon btn-danger !w-7 !h-7 !min-w-7 !min-h-7"
                                     on:click=move |_| {
                                         seq_frames.update(|fs| {
                                             if fs.len() > 1 { fs.remove(idx); }
@@ -420,7 +420,7 @@ pub fn MosaicTab(
 
                 // Add filter row
                 <button
-                    class="self-start mt-1 py-[3px] px-[10px] bg-[#0a1a0a] text-[#44cc44] border border-[#264] cursor-pointer font-mono text-sm rounded-sm"
+                    class="btn btn--sm btn-primary self-start mt-1"
                     on:click=move |_| {
                         seq_frames.update(|fs| fs.push(SeqFrame::default()));
                     }>
@@ -491,13 +491,13 @@ pub fn MosaicTab(
 
             // ── Error ──────────────────────────────────────────────────────────
             {move || form_error.get().map(|e| view! {
-                <div class="text-[#ff6666] text-sm py-1">{e}</div>
+                <div class="text-state-err text-sm py-1">{e}</div>
             })}
 
             // ── Send button ────────────────────────────────────────────────────
             <div class="flex justify-end pb-6">
                 <button
-                    class="py-[10px] px-7 bg-bg-button-info text-text-blue border border-border-accent cursor-pointer font-mono text-md font-bold rounded-sm disabled:bg-bg-input disabled:text-[#445] disabled:border-border-mid disabled:cursor-not-allowed"
+                    class="btn btn-primary px-7 font-bold"
                     disabled=move || planner.center.get().is_none()
                     on:click=on_send>
                     {move || tr().mosaic_send_scheduler}

@@ -37,10 +37,11 @@ fn fmt_az(deg: f64) -> String {
 
 const RATE_LABELS: [&str; 8] = ["G", "1×", "2×", "4×", "8×", "16×", "32×", "MAX"];
 
-// Shared button style. Border/text colour comes from `currentColor`, so
-// individual buttons just override `text-*` to recolour the chrome.
-const MOUNT_BTN: &str = "py-sp-2 px-3 rounded-md border border-current bg-[rgba(20,22,40,0.92)] font-mono font-bold text-[12px] cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] min-h-[40px] w-full";
-const SECTION_TITLE: &str = "font-mono font-bold text-sm text-text-blue tracking-[0.1em] border-b border-[#223] pb-sp-1 mb-sp-3";
+// Shared button class fragment: .btn primitive, full-width, slightly taller
+// touch target. Individual call sites add a state colour modifier.
+const MOUNT_BTN: &str = "btn btn--block min-h-[40px]";
+const SECTION_TITLE: &str = "font-ui font-semibold text-sm text-text-blue tracking-[0.1em] border-b border-border-base pb-sp-1 mb-sp-3";
+const DPAD_BTN: &str = "btn-icon btn-icon--lg !rounded-lg border-border-accent-2 text-text-blue text-[18px] font-bold leading-none touch-none select-none";
 
 // ── MountTab ──────────────────────────────────────────────────────────────────
 
@@ -170,7 +171,7 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
             {move || {
                 let m = mount.get();
                 (!m.meridian_flip_status.is_empty()).then(|| view! {
-                    <div class="px-sp-4 py-sp-1 font-mono text-sm bg-[rgba(60,40,0,0.6)] border-b border-[#664] text-[#ffcc88]">
+                    <div class="px-sp-4 py-sp-1 font-ui text-sm bg-state-warn/10 border-b border-state-warn/40 text-state-warn">
                         {tr().mount_meridian_flip}{": "}{m.meridian_flip_status}
                     </div>
                 })
@@ -178,7 +179,7 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
             {move || {
                 let m = mount.get();
                 (!m.auto_park_countdown.is_empty()).then(|| view! {
-                    <div class="px-sp-4 py-sp-1 font-mono text-sm bg-[rgba(20,40,80,0.6)] border-b border-[#336] text-text-blue">
+                    <div class="px-sp-4 py-sp-1 font-ui text-sm bg-state-info/10 border-b border-state-info/40 text-state-info">
                         {tr().mount_autopark}{": "}{m.auto_park_countdown}
                     </div>
                 })
@@ -257,7 +258,7 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                             <div>
                                 <label class="font-mono text-sm text-text-faint mb-[2px] block">{move || tr().mount_ra_input}</label>
                                 <input
-                                    class="w-full py-[6px] px-sp-2 bg-bg-input text-[#ccc] border border-border-input rounded-sm font-mono text-md box-border"
+                                    class="input w-full font-mono"
                                     type="text"
                                     placeholder="HH MM SS"
                                     prop:value=move || ra_input.get()
@@ -267,7 +268,7 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                             <div>
                                 <label class="font-mono text-sm text-text-faint mb-[2px] block">{move || tr().mount_dec_input}</label>
                                 <input
-                                    class="w-full py-[6px] px-sp-2 bg-bg-input text-[#ccc] border border-border-input rounded-sm font-mono text-md box-border"
+                                    class="input w-full font-mono"
                                     type="text"
                                     placeholder="±DD MM SS"
                                     prop:value=move || dec_input.get()
@@ -277,7 +278,7 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                             <div>
                                 <label class="font-mono text-sm text-text-faint mb-[2px] block">{move || tr().mount_target_input}</label>
                                 <input
-                                    class="w-full py-[6px] px-sp-2 bg-bg-input text-[#ccc] border border-border-input rounded-sm font-mono text-md box-border"
+                                    class="input w-full font-mono"
                                     type="text"
                                     placeholder="M42, NGC1234…"
                                     prop:value=move || tgt_input.get()
@@ -294,7 +295,7 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                             </label>
                             <div class="grid grid-cols-2 gap-[6px]">
                                 <button
-                                    class=format!("{MOUNT_BTN} text-[#44cc88]")
+                                    class=format!("{MOUNT_BTN} btn-primary")
                                     on:click=on_goto.clone()
                                 >{move || tr().mount_goto_btn}</button>
                                 <button
@@ -303,7 +304,7 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                                 >{move || tr().mount_sync_btn}</button>
                             </div>
                             <button
-                                class=format!("{MOUNT_BTN} text-[#66aaee]")
+                                class=format!("{MOUNT_BTN} text-state-info")
                                 on:click=on_goto_target.clone()
                             >{move || tr().mount_goto_target_btn}</button>
                         </div>
@@ -319,7 +320,7 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                             // Row 1: empty, N, empty
                             <div></div>
                             <button
-                                class="w-12 h-12 max-md:w-14 max-md:h-14 rounded-lg border border-border-accent-2 bg-bg-panel text-[#99bbff] font-mono font-bold text-[18px] leading-none cursor-pointer touch-none [-webkit-tap-highlight-color:transparent] flex items-center justify-center select-none"
+                                class=DPAD_BTN
                                 on:pointerdown=dpad_press("N")
                                 on:pointerup=dpad_release("N")
                                 on:pointerleave=dpad_release("N")
@@ -328,20 +329,20 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
 
                             // Row 2: W, abort, E
                             <button
-                                class="w-12 h-12 max-md:w-14 max-md:h-14 rounded-lg border border-border-accent-2 bg-bg-panel text-[#99bbff] font-mono font-bold text-[18px] leading-none cursor-pointer touch-none [-webkit-tap-highlight-color:transparent] flex items-center justify-center select-none"
+                                class=DPAD_BTN
                                 on:pointerdown=dpad_press("W")
                                 on:pointerup=dpad_release("W")
                                 on:pointerleave=dpad_release("W")
                             >"←"</button>
                             <button
-                                class="w-12 h-12 max-md:w-14 max-md:h-14 rounded-full border-2 border-[#ff4444] bg-[rgba(60,10,10,0.92)] text-[#ff8888] font-mono font-bold text-[14px] leading-none cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] flex items-center justify-center select-none"
+                                class="btn-icon btn-icon--lg btn-icon--circle btn-danger text-[14px] font-bold leading-none select-none"
                                 on:click=move |_| {
                                     send_abort2(serde_json::json!({"type":"mount_abort","payload":{}}).to_string());
                                 }
                                 title=move || tr().mount_abort_btn
                             >"●"</button>
                             <button
-                                class="w-12 h-12 max-md:w-14 max-md:h-14 rounded-lg border border-border-accent-2 bg-bg-panel text-[#99bbff] font-mono font-bold text-[18px] leading-none cursor-pointer touch-none [-webkit-tap-highlight-color:transparent] flex items-center justify-center select-none"
+                                class=DPAD_BTN
                                 on:pointerdown=dpad_press("E")
                                 on:pointerup=dpad_release("E")
                                 on:pointerleave=dpad_release("E")
@@ -350,7 +351,7 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                             // Row 3: empty, S, empty
                             <div></div>
                             <button
-                                class="w-12 h-12 max-md:w-14 max-md:h-14 rounded-lg border border-border-accent-2 bg-bg-panel text-[#99bbff] font-mono font-bold text-[18px] leading-none cursor-pointer touch-none [-webkit-tap-highlight-color:transparent] flex items-center justify-center select-none"
+                                class=DPAD_BTN
                                 on:pointerdown=dpad_press("S")
                                 on:pointerup=dpad_release("S")
                                 on:pointerleave=dpad_release("S")
@@ -371,11 +372,11 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                                 view! {
                                     <button
                                         class=move || {
-                                            let base = "min-w-[36px] h-8 px-[6px] rounded-[5px] border font-mono font-bold text-sm cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent]";
+                                            let base = "btn btn--sm font-mono min-w-[36px]";
                                             if mount.get().slew_rate == Some(idx) {
-                                                format!("{base} bg-[rgba(40,60,110,0.95)] border-text-blue text-text-dim")
+                                                format!("{base} btn--active")
                                             } else {
-                                                format!("{base} bg-[rgba(12,14,24,0.85)] border-[#2a2a35] text-text-blue")
+                                                format!("{base} btn-ghost")
                                             }
                                         }
                                         on:click=oc
@@ -394,20 +395,20 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                             }
                         >{move || tr().mount_park_btn}</button>
                         <button
-                            class=format!("{MOUNT_BTN} text-[#66ccaa]")
+                            class=format!("{MOUNT_BTN} text-state-ok")
                             on:click=move |_| {
                                 send_unpark(serde_json::json!({"type":"mount_unpark","payload":{}}).to_string());
                             }
                         >{move || tr().mount_unpark_btn}</button>
                         <button
-                            class=format!("{MOUNT_BTN} text-[#ff5555]")
+                            class=format!("{MOUNT_BTN} btn-danger")
                             on:click=move |_| {
                                 send_abort(serde_json::json!({"type":"mount_abort","payload":{}}).to_string());
                             }
                         >{move || tr().mount_abort_btn}</button>
                         <button
                             class=move || if mount.get().tracking {
-                                format!("{MOUNT_BTN} text-[#44ff88]")
+                                format!("{MOUNT_BTN} btn--active text-state-ok")
                             } else {
                                 format!("{MOUNT_BTN} text-text-faint")
                             }
@@ -433,24 +434,24 @@ fn status_label_color<'a>(
     tr: &'a crate::i18n::Translations,
 ) -> (&'a str, &'static str) {
     if !m.connected {
-        return (tr.disconnected, "#555");
+        return (tr.disconnected, "var(--text-faint)");
     }
     if m.slewing {
-        return (tr.mount_status_slewing, "#ffaa44");
+        return (tr.mount_status_slewing, "var(--state-warn)");
     }
     if m.tracking {
-        return (tr.mount_status_tracking, "#44ff88");
+        return (tr.mount_status_tracking, "var(--state-ok)");
     }
     if m.parked {
-        return (tr.mount_status_parked, "#88aaff");
+        return (tr.mount_status_parked, "var(--text-blue)");
     }
     // Check raw status string for parking
     let s = m.status_str.to_lowercase();
     if s.contains("parking") {
-        return (tr.mount_status_parking, "#6699ff");
+        return (tr.mount_status_parking, "var(--text-blue)");
     }
     if s.contains("error") {
-        return (tr.mount_status_error, "#ff4444");
+        return (tr.mount_status_error, "var(--state-err)");
     }
-    (tr.mount_status_idle, "#666")
+    (tr.mount_status_idle, "var(--text-muted)")
 }
