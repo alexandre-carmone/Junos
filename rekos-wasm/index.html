@@ -4,11 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Junos — Astrophotography Control</title>
-    <!-- Stylesheet bundle. Order matters: tokens → base → components → responsive,
-         so per-component rules can read tokens, and media-query overrides win. -->
+    <!-- Stylesheet bundle. Order matters: tokens → base → tailwind utilities
+         → responsive globals, so utilities can read tokens and media-query
+         overrides win. Per-component CSS files have all been migrated to
+         inline Tailwind utility classes in the .rs sources. -->
+
     <link data-trunk rel="css" href="styles/tokens.css"/>
     <link data-trunk rel="css" href="styles/base.css"/>
-    <link data-trunk rel="css" href="styles/shell.css"/>
     <link data-trunk rel="css" href="styles/tailwind.css"/>
     <link data-trunk rel="css" href="styles/responsive.css"/>
     <!-- Trunk replaces this with the built WASM entry point -->
