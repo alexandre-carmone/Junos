@@ -31,6 +31,16 @@ between KStars and your browser — nothing is sent to the cloud.
 The server does **no protocol translation** — messages flow through opaque.
 All Ekos Live semantics live in the WASM client.
 
+## Repository layout
+
+- **`rekos-server/`** — Axum/Tokio relay (Rust, native).
+- **`rekos-wasm/`** — Leptos 0.7 CSR + WebGPU browser app.
+- **`junos-web/`** — sibling Leptos crate with its own build pipeline
+  (`cd junos-web && trunk build --release`); not part of the Cargo
+  workspace.
+- **`kstars/`** — read-only checkout of the upstream KStars C++ source,
+  kept as the authoritative reference for the Ekos Live wire format.
+
 ## Install
 
 One-time setup (requires `rustup` and `cargo` already on PATH):
@@ -40,6 +50,9 @@ just install
 ```
 
 This adds the `wasm32-unknown-unknown` Rust target and installs `trunk`.
+
+Or, with Nix: `nix develop` (the repo ships a `flake.nix` dev shell with
+the toolchain pre-pinned).
 
 ## Build & run
 
@@ -70,19 +83,25 @@ just clean        # cargo clean + rm rekos-wasm/dist
 
 ## Transports
 
-The server binds two ports by default:
+The server binds two ports by default, configured via two separate flags:
 
-- `http://<host>:8080` — for KStars's Ekos Live connection. Plain HTTP keeps
-  KStars's Qt websocket simple; the link stays on your LAN.
-- `https://<host>:8443` — for the browser UI. iOS Safari (and most modern
-  browsers in the long run) only expose `navigator.gpu` in secure contexts,
-  so the WebGPU planetarium needs HTTPS even on a LAN.
+- `--http-addr` (default `0.0.0.0:8080`) — for KStars's Ekos Live
+  connection. Plain HTTP keeps KStars's Qt websocket simple; the link
+  stays on your LAN.
+- `--https-addr` (default `0.0.0.0:8443`) — for the browser UI. iOS
+  Safari (and most modern browsers in the long run) only expose
+  `navigator.gpu` in secure contexts, so the WebGPU planetarium needs
+  HTTPS even on a LAN.
 
 A self-signed cert is generated on first run into `.certs/cert.pem` +
 `.certs/key.pem`, covering `localhost`, `127.0.0.1`, and the host's
 non-loopback IPv4 addresses. Subsequent runs reuse the same cert so trust
 on the iPhone survives restarts. Drop your own cert in via `--tls-cert` /
 `--tls-key` (or env vars). Pass `--no-https` to disable TLS entirely.
+
+The `Files` tab is backed by `--captures-dir` (env `CAPTURES_DIR`),
+which sandboxes the `/api/files/*` browser. If unset, the server falls
+back to `$HOME/Pictures`, then to the current working directory.
 
 To trust the dev cert on iPhone/iPad:
 
@@ -114,6 +133,9 @@ To trust the dev cert on iPhone/iPad:
 - **Mount**, **Focus**, **Guide**, **Imaging**, **Mosaic**,
   **PolarAlign**, **Scheduler** — Ekos module surfaces, progressively
   reintroduced from the deprecated upstream web client.
+- **Files** — browser for captured frames under `--captures-dir`
+  (defaults to `$HOME/Pictures`).
+- **Profiles** — Ekos equipment profile selector / launcher.
 
 ## Credits
 
