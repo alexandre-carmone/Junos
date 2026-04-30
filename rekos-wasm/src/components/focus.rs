@@ -214,7 +214,7 @@ pub fn FocusTab(
             // Body — 1fr | 320 px on desktop, narrower right column on tablet, stacked on mobile
             <div class="grid grid-cols-[1fr_320px] max-[1199px]:grid-cols-[minmax(0,1fr)_280px] max-[759px]:flex max-[759px]:flex-col min-h-0">
                 // Left — preview + HFR plot
-                <div class="grid grid-rows-[1fr_110px] min-h-0 border-r border-border-base max-[759px]:shrink-0 max-[759px]:min-h-[240px] max-[759px]:max-h-[45vh] max-[759px]:border-r-0 max-[759px]:border-b max-[759px]:border-border-base">
+                <div class="grid grid-rows-[1fr_110px] min-h-0 border-r border-border-base max-[759px]:shrink-0 max-[759px]:min-h-[180px] max-[759px]:max-h-[38vh] max-[759px]:border-r-0 max-[759px]:border-b max-[759px]:border-border-base">
                     <div class="relative min-h-0 overflow-hidden flex items-center justify-center bg-bg-input-deep">
                         {move || match focus.with(|f| f.preview_url.clone()) {
                             Some(url) => view! {
@@ -242,7 +242,7 @@ pub fn FocusTab(
                 </div>
 
                 // Right — controls
-                <div class="flex flex-col min-h-0 overflow-y-auto py-sp-4 px-4 gap-4 max-[759px]:overflow-y-visible max-[759px]:min-h-0 max-[759px]:p-sp-3 max-[759px]:gap-sp-3">
+                <div class="flex flex-col min-h-0 overflow-y-auto py-sp-4 px-4 gap-4 max-[759px]:p-sp-3 max-[759px]:gap-sp-3 max-[759px]:pb-sp-6">
 
                     // Actions
                     <fieldset class=fieldset_cls>
