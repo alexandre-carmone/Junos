@@ -40,3 +40,10 @@ dev-server:
 clean:
     cargo clean
     rm -rf rekos-wasm/dist
+
+# Download the Tailwind v3 standalone binary (re-run to upgrade).
+setup-tailwind:
+    mkdir -p rekos-wasm/bin
+    curl -sLo rekos-wasm/bin/tailwindcss \
+      https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/tailwindcss-linux-x64
+    chmod +x rekos-wasm/bin/tailwindcss

@@ -1,0 +1,2 @@
+/* No @tailwind base — base.css owns resets. */
+@tailwind utilities;

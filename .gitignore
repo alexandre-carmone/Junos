@@ -2,4 +2,6 @@ junos-web
 kstars
 target
 rekos-wasm/dist
+rekos-wasm/styles/tailwind.css
+rekos-wasm/bin/
 .certs

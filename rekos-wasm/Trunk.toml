@@ -3,4 +3,14 @@ target = "index.html"
 dist = "dist"
 
 [watch]
-ignore = ["dist", "target"]
+ignore = ["dist", "target", "styles/tailwind.css"]
+
+[[hooks]]
+stage    = "pre_build"
+command  = "bin/tailwindcss"
+command_arguments = [
+  "--config",  "tailwind.config.js",
+  "--input",   "styles/tailwind.input.css",
+  "--output",  "styles/tailwind.css",
+  "--minify",
+]
