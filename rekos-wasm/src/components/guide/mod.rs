@@ -445,7 +445,7 @@ pub fn GuideTab(
         <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] overflow-hidden">
 
             // ── Header ───────────────────────────────────────────────────
-            <div class="flex items-center gap-y-sp-2 gap-x-sp-4 flex-wrap min-h-[48px] py-sp-2 pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md">
+            <div class="flex items-center gap-y-sp-2 gap-x-sp-4 flex-wrap min-h-[48px] py-sp-2 pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md max-[759px]:py-sp-2 max-[759px]:pl-3 max-[759px]:pr-3 max-[759px]:gap-y-[6px] max-[759px]:gap-x-3 max-[759px]:text-sm">
                 <span class="inline-block py-1 px-sp-3 rounded-[14px] text-sm border border-current"
                       style=move || format!("color:{}", stage_color(&status()))>
                     {move || {
@@ -453,9 +453,9 @@ pub fn GuideTab(
                         if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
-                <span class="text-text-blue">{move || tr().guide_guider_label}</span>
+                <span class="text-text-blue max-[479px]:hidden">{move || tr().guide_guider_label}</span>
                 <span>{move || guider_type_label(guider_type(), t(lang.get()))}</span>
-                <span class="text-text-blue ml-sp-2">{move || tr().guide_rms}</span>
+                <span class="text-text-blue ml-sp-2 max-[479px]:hidden">{move || tr().guide_rms}</span>
                 <span class="text-sm">
                     {move || {
                         let tr_ = tr();
@@ -466,7 +466,7 @@ pub fn GuideTab(
                         })
                     }}
                 </span>
-                <span class="flex-1"></span>
+                <span class="flex-1 max-[759px]:hidden"></span>
                 <span class="text-text-blue">{move || tr().guide_connected}</span>
                 <span>{move || if guide.with(|g| g.connected) { tr().yes } else { tr().no }}</span>
             </div>
@@ -476,12 +476,12 @@ pub fn GuideTab(
 
                 // Preview frame (uuid "+G*" from kstars media.cpp:753)
                 <Show when=move || guide.with(|g| g.preview_url.is_some())>
-                    <div class="flex justify-center items-center bg-bg-input-deep border border-border-base p-sp-2 min-h-[180px] max-h-[400px]">
+                    <div class="flex justify-center items-center bg-bg-input-deep border border-border-base p-sp-2 min-h-[180px] max-h-[400px] max-[759px]:min-h-0 max-[759px]:max-h-[40vh]">
                         <img
                             src=move || guide.with(|g|
                                 g.preview_url.clone().unwrap_or_default())
                             alt="guide frame"
-                            class="max-w-full max-h-[384px] object-contain block [image-rendering:pixelated]"
+                            class="max-w-full max-h-[384px] object-contain block [image-rendering:pixelated] max-[759px]:max-h-[40vh]"
                         />
                     </div>
                 </Show>

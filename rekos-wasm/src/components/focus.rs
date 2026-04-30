@@ -171,7 +171,7 @@ pub fn FocusTab(
     view! {
         <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[56px_1fr] overflow-hidden">
             // Header
-            <div class="flex items-center gap-sp-5 pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md">
+            <div class="flex flex-wrap items-center gap-y-[10px] gap-x-[18px] py-[10px] pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md min-h-[44px] max-[759px]:py-sp-2 max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:gap-x-3 max-[759px]:gap-y-[6px] max-[759px]:text-sm">
                 <span
                     class="inline-block py-sp-1 px-sp-3 rounded-[14px] border border-current text-sm"
                     style=move || format!(
@@ -184,29 +184,37 @@ pub fn FocusTab(
                         if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
-                <span class=header_label>{move || tr().focus_header_focuser}</span>
-                <span>{move || {
-                    let d = focus.with(|f| f.device.clone());
-                    if d.is_empty() { "—".to_string() } else { d }
-                }}</span>
-                <span class=header_label>{move || tr().focus_header_hfr}</span>
-                <span>{move || focus.with(|f| f.hfr
-                    .map(|v| format!("{:.3}", v))
-                    .unwrap_or_else(|| "—".into()))}</span>
-                <span class=header_label>{move || tr().focus_header_position}</span>
-                <span>{move || focus.with(|f| f.position
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "—".into()))}</span>
-                <span class=header_label>{move || tr().focus_header_temperature}</span>
-                <span>{move || focus.with(|f| f.temperature
-                    .map(|v| format!("{:.1}°C", v))
-                    .unwrap_or_else(|| "—".into()))}</span>
+                <span class="inline-flex items-center gap-[6px]">
+                    <span class=header_label>{move || tr().focus_header_focuser}</span>
+                    <span>{move || {
+                        let d = focus.with(|f| f.device.clone());
+                        if d.is_empty() { "—".to_string() } else { d }
+                    }}</span>
+                </span>
+                <span class="inline-flex items-center gap-[6px]">
+                    <span class=header_label>{move || tr().focus_header_hfr}</span>
+                    <span>{move || focus.with(|f| f.hfr
+                        .map(|v| format!("{:.3}", v))
+                        .unwrap_or_else(|| "—".into()))}</span>
+                </span>
+                <span class="inline-flex items-center gap-[6px]">
+                    <span class=header_label>{move || tr().focus_header_position}</span>
+                    <span>{move || focus.with(|f| f.position
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "—".into()))}</span>
+                </span>
+                <span class="inline-flex items-center gap-[6px]">
+                    <span class=header_label>{move || tr().focus_header_temperature}</span>
+                    <span>{move || focus.with(|f| f.temperature
+                        .map(|v| format!("{:.1}°C", v))
+                        .unwrap_or_else(|| "—".into()))}</span>
+                </span>
             </div>
 
-            // Body — 1fr | 320 px on desktop, stacked on tablet
-            <div class="grid grid-cols-[1fr_320px] md:max-lg:grid-cols-[3fr_2fr] min-h-0">
+            // Body — 1fr | 320 px on desktop, narrower right column on tablet, stacked on mobile
+            <div class="grid grid-cols-[1fr_320px] max-[1199px]:grid-cols-[minmax(0,1fr)_280px] max-[759px]:flex max-[759px]:flex-col min-h-0">
                 // Left — preview + HFR plot
-                <div class="grid grid-rows-[1fr_110px] md:max-lg:grid-rows-[1fr_90px] min-h-0 border-r border-border-base">
+                <div class="grid grid-rows-[1fr_110px] min-h-0 border-r border-border-base max-[759px]:shrink-0 max-[759px]:min-h-[240px] max-[759px]:max-h-[45vh] max-[759px]:border-r-0 max-[759px]:border-b max-[759px]:border-border-base">
                     <div class="relative min-h-0 overflow-hidden flex items-center justify-center bg-bg-input-deep">
                         {move || match focus.with(|f| f.preview_url.clone()) {
                             Some(url) => view! {
@@ -226,7 +234,7 @@ pub fn FocusTab(
                     <div class="border-t border-border-base p-sp-2 bg-bg-input-deep">
                         <canvas
                             node_ref=canvas_ref
-                            class="w-full h-[94px] md:max-lg:!h-[76px] block"
+                            class="w-full h-[94px] max-[759px]:h-[72px] block"
                             width="640"
                             height="90"
                         ></canvas>
@@ -234,7 +242,7 @@ pub fn FocusTab(
                 </div>
 
                 // Right — controls
-                <div class="flex flex-col min-h-0 overflow-y-auto py-sp-4 px-4 gap-4">
+                <div class="flex flex-col min-h-0 overflow-y-auto py-sp-4 px-4 gap-4 max-[759px]:overflow-y-visible max-[759px]:min-h-0 max-[759px]:p-sp-3 max-[759px]:gap-sp-3">
 
                     // Actions
                     <fieldset class=fieldset_cls>
@@ -369,8 +377,8 @@ fn render_setting_row(
 
     let title_key = key.clone();
     view! {
-        <div class="flex items-center gap-sp-2 text-sm">
-            <span class="basis-[140px] grow-0 shrink-0 text-text-blue overflow-hidden text-ellipsis whitespace-nowrap" title=title_key>
+        <div class="flex items-center gap-sp-2 text-sm max-[420px]:flex-col max-[420px]:items-stretch">
+            <span class="basis-[140px] grow-0 shrink-0 text-text-blue overflow-hidden text-ellipsis whitespace-nowrap max-[759px]:basis-[110px] max-[420px]:basis-auto" title=title_key>
                 {key}
             </span>
             {field}
