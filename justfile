@@ -41,6 +41,19 @@ clean:
     cargo clean
     rm -rf rekos-wasm/dist
 
+# Generate a self-signed TLS cert into .certs/ covering localhost + the
+# host's first non-loopback IPv4. Same shape the server would auto-create
+# on first run; useful for pre-seeding (e.g. inside a Docker image).
+gen-cert:
+    mkdir -p .certs
+    HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}'); \
+    SAN="DNS:localhost,IP:127.0.0.1$([ -n "$HOST_IP" ] && echo ,IP:$HOST_IP)"; \
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -subj "/CN=rekos-web" \
+        -addext "subjectAltName=$SAN" \
+        -keyout .certs/key.pem -out .certs/cert.pem
+    @echo "Wrote .certs/cert.pem and .certs/key.pem"
+
 # Download the Tailwind v3 standalone binary (re-run to upgrade).
 setup-tailwind:
     mkdir -p rekos-wasm/bin
