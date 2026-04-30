@@ -52,7 +52,7 @@ const ARC_END_DEG: f32 = 270.0;           // bottom (going through left = 180°)
 const RADIUS_PX: f32 = 115.0;
 const BOX_PX: f32 = 290.0;
 const KNOB_PX: f32 = 68.0;
-const COLLAPSE_MS: i32 = 2500;
+const COLLAPSE_MS: i32 = 1000;
 // Negative `right` offset so the wheel's center sits just inside the right
 // edge — the knob hugs the border and the arc fans into the screen.
 const RIGHT_OFFSET_PX: f32 = -(BOX_PX * 0.5) + KNOB_PX * 0.5 + 4.0;
@@ -436,16 +436,39 @@ pub fn TabWheel() -> impl IntoView {
                 }
             />
 
-            // Centre knob — always visible. Tapping toggles expanded state.
+            // Touch-only right-edge hit strip — restores the wheel after it
+            // idles out. Mouse users get hover via the container's
+            // `pointerenter`; this strip ignores mouse pointers so it doesn't
+            // steal sky-canvas hover.
+            <div
+                class="absolute right-0 top-1/2 -translate-y-1/2 w-[80px] h-[300px] pointer-events-auto"
+                on:pointerdown={
+                    let clear_timer = Rc::clone(&clear_timer);
+                    let arm_timer = Rc::clone(&arm_timer);
+                    move |ev: PointerEvent| {
+                        if ev.pointer_type() != "touch" { return; }
+                        expanded.set(true);
+                        clear_timer();
+                        arm_timer();
+                    }
+                }
+            />
+
+            // Centre knob — always visible (faded when idle). Tapping toggles
+            // expanded state.
             <button
-                class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 \
-                       w-[68px] h-[68px] rounded-full border-2 border-text-blue \
-                       bg-bg-wheel backdrop-blur-glass text-text-dim font-ui font-bold text-base leading-none tracking-[0.06em] \
-                       cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] \
-                       shadow-3 pointer-events-auto \
-                       transition-[background,border-color,box-shadow,transform] duration-fast ease-out \
-                       hover:border-accent-cyan active:scale-[0.97] \
-                       flex items-center justify-center min-w-0"
+                class=move || {
+                    let base = "absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 \
+                                w-[68px] h-[68px] rounded-full border-2 border-text-blue \
+                                bg-bg-wheel backdrop-blur-glass text-text-dim font-ui font-bold text-base leading-none tracking-[0.06em] \
+                                cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] \
+                                shadow-3 pointer-events-auto \
+                                transition-[background,border-color,box-shadow,transform,opacity] duration-300 ease-out \
+                                hover:border-accent-cyan active:scale-[0.97] \
+                                flex items-center justify-center min-w-0";
+                    let fade = if expanded.get() { "opacity-100" } else { "opacity-25 hover:opacity-100" };
+                    format!("{base} {fade}")
+                }
                 title=move || tab_title(active.get(), &tr())
                 on:click=on_knob_click
                 on:wheel={ let w = Rc::clone(&on_wheel); move |ev| w(ev) }
