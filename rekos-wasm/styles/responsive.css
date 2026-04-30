@@ -183,6 +183,4 @@
     }
     .sky-search { width: calc(100vw - 72px) !important; }
     .status-strip { font-size: 9px !important; }
-    .polar-header { padding-left: 48px !important; font-size: 11px !important; }
-    .polar-stage-badge { font-size: 10px !important; padding: 3px 8px !important; }
 }
