@@ -328,24 +328,40 @@ pub fn TabWheel() -> impl IntoView {
     let on_disc_pointer_cancel = make_on_disc_pointer_up();
 
     // Container — uses pointer events so hover works on both mouse and touch.
-    // Static layout/colours live in styles/components/tab_wheel.css; the
-    // dynamic transform/opacity for the rotating disc is passed via CSS
-    // custom properties (--tw-rot, --tw-bx) and state classes.
+    // Tailwind utilities own static layout/colours; the dynamic transform /
+    // opacity for the rotating disc is passed via CSS custom properties
+    // (--tw-rot, --tw-bx) and class toggles.
     view! {
         <div
-            class="tab-wheel-container"
+            class="absolute right-[-107px] top-1/2 -translate-y-1/2 z-[60] pointer-events-none w-[290px] h-[290px] flex items-center justify-center"
             on:pointerenter=on_pointer_enter
             on:pointerleave=on_pointer_leave
             on:pointerdown=on_pointer_down
             on:pointerup=on_pointer_up
             on:click=|ev: MouseEvent| ev.stop_propagation()
         >
-            // Rotating arc layer — visible only when expanded.
+            // Rotating arc layer — visible only when expanded. The bouncy
+            // spring transition is swapped for a tight 80 ms ease-out while
+            // the user drags so the disc tracks the finger 1:1.
             <div
                 node_ref=disc_ref
-                class="tab-wheel-disc"
-                class:tab-wheel-disc--expanded=move || expanded.get()
-                class:tab-wheel-disc--dragging=move || dragging.get()
+                class=move || {
+                    let base = "absolute left-0 top-0 w-[290px] h-[290px] rounded-full \
+                                border border-border-base touch-none \
+                                bg-[radial-gradient(circle_at_30%_50%,rgba(20,24,40,0.7),rgba(6,6,15,0.55))] \
+                                [transform:translateX(var(--tw-bx,0px))_rotate(var(--tw-rot,0deg))]";
+                    let visibility = if expanded.get() {
+                        "opacity-100 pointer-events-auto"
+                    } else {
+                        "opacity-0 pointer-events-none"
+                    };
+                    let transition = if dragging.get() {
+                        "transition-[transform,opacity] duration-[80ms] ease-out"
+                    } else {
+                        "transition-[transform,opacity] duration-[320ms] ease-[cubic-bezier(0.34,1.56,0.64,1)]"
+                    };
+                    format!("{base} {visibility} {transition}")
+                }
                 style=move || format!(
                     "--tw-rot:{rot}deg; --tw-bx:{bx}px;",
                     rot = rotation.get(),
@@ -370,8 +386,19 @@ pub fn TabWheel() -> impl IntoView {
                     );
                     view! {
                         <button
-                            class="tab-wheel-button"
-                            class:tab-wheel-button--active=move || active.get() == tab
+                            class=move || {
+                                let base = "absolute w-[66px] h-[44px] rounded-lg p-0 \
+                                            font-mono font-semibold text-md leading-none tracking-[0.05em] \
+                                            min-w-0 flex items-center justify-center cursor-pointer touch-manipulation \
+                                            [-webkit-tap-highlight-color:transparent] \
+                                            [transform:translate(-50%,-50%)_rotate(var(--tw-cr,0deg))] \
+                                            transition-[background,border-color,box-shadow] duration-150";
+                                if active.get() == tab {
+                                    format!("{base} bg-accent-blue-active border border-text-blue-bright text-text-dim shadow-[0_0_14px_color-mix(in_srgb,var(--text-blue)_45%,transparent)]")
+                                } else {
+                                    format!("{base} bg-bg-wheel border border-border-strong text-text-blue shadow-none")
+                                }
+                            }
                             style=btn_style
                             title=move || tab_title(tab, &tr())
                             on:click=move |ev: MouseEvent| {
@@ -382,7 +409,10 @@ pub fn TabWheel() -> impl IntoView {
                             }
                         >
                             <span
-                                class="tab-wheel-button-icon"
+                                class=move || {
+                                    let s = if active.get() == tab { "w-[70%] h-[70%]" } else { "w-[56%] h-[56%]" };
+                                    format!("inline-block pointer-events-none {s}")
+                                }
                                 inner_html=tab_icon(tab)
                             />
                         </button>
@@ -394,19 +424,32 @@ pub fn TabWheel() -> impl IntoView {
             // slot, sitting outside the rotating layer so it stays put while
             // the wheel turns. Acts as a "dock" the active tab snaps into.
             <div
-                class="tab-wheel-indicator"
-                class:tab-wheel-indicator--visible=move || expanded.get()
+                class=move || {
+                    let base = "absolute left-[30px] top-1/2 -translate-x-1/2 -translate-y-1/2 \
+                                w-[78px] h-[54px] rounded-[10px] pointer-events-none \
+                                border border-[color-mix(in_srgb,var(--text-blue)_55%,transparent)] \
+                                bg-[radial-gradient(ellipse_at_center,color-mix(in_srgb,var(--text-blue)_18%,transparent),transparent_70%)] \
+                                shadow-[inset_0_0_18px_color-mix(in_srgb,var(--text-blue)_35%,transparent)] \
+                                transition-opacity duration-150";
+                    let vis = if expanded.get() { "opacity-100" } else { "opacity-0" };
+                    format!("{base} {vis}")
+                }
             />
 
             // Centre knob — always visible. Tapping toggles expanded state.
             <button
-                class="tab-wheel-knob"
+                class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 \
+                       w-[68px] h-[68px] rounded-full border-2 border-text-blue \
+                       bg-bg-wheel text-text-dim font-mono font-bold text-base leading-none tracking-[0.06em] \
+                       cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] \
+                       shadow-[0_0_10px_rgba(0,0,0,0.5)] pointer-events-auto \
+                       flex items-center justify-center min-w-0"
                 title=move || tab_title(active.get(), &tr())
                 on:click=on_knob_click
                 on:wheel={ let w = Rc::clone(&on_wheel); move |ev| w(ev) }
             >
                 <span
-                    class="tab-wheel-knob-icon"
+                    class="inline-block w-[60%] h-[60%] pointer-events-none"
                     inner_html=move || tab_icon(active.get())
                 />
             </button>
@@ -414,8 +457,16 @@ pub fn TabWheel() -> impl IntoView {
             // Lang toggle — small chip just below the knob, only visible
             // when expanded.
             <button
-                class="tab-wheel-lang"
-                class:tab-wheel-lang--visible=move || expanded.get()
+                class=move || {
+                    let base = "absolute left-1/2 top-[calc(50%+42px)] -translate-x-1/2 \
+                                min-w-[32px] h-[22px] min-h-[22px] px-2 \
+                                rounded-[11px] border border-text-blue bg-bg-wheel text-text-blue \
+                                font-mono font-semibold text-xs leading-none tracking-[0.05em] \
+                                cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] \
+                                transition-opacity duration-150";
+                    let vis = if expanded.get() { "opacity-100 pointer-events-auto" } else { "opacity-0 pointer-events-none" };
+                    format!("{base} {vis}")
+                }
                 title=move || lang.get().toggle().label()
                 on:click=move |ev: MouseEvent| {
                     ev.stop_propagation();
