@@ -1395,11 +1395,6 @@ pub fn SkyTab(
                 on:touchcancel=move |_: TouchEvent| { *longpress_timer.borrow_mut() = None; dragging.set_value(false); pinch_start_dist.set_value(0.0); }
             />
 
-            // ── DOM HUD (replaces render_info_overlay when GPU is up) ──────
-            {move || gpu_ready.get().then(|| view! {
-                <hud::SkyHud hud=hud_data lang=lang.read_only() />
-            })}
-
             // ── Mosaic center-pick banner ──────────────────────────────────
             {move || planner.picking_center.get().then(|| view! {
                 <div class="absolute top-2 left-1/2 -translate-x-1/2 z-[100] pointer-events-none py-2 px-[18px] bg-bg-banner border border-accent-cyan-dim text-accent-cyan font-mono text-md rounded-md whitespace-nowrap">
@@ -1407,8 +1402,10 @@ pub fn SkyTab(
                 </div>
             })}
 
-            // ── Time-shift panel (bottom-left) ─────────────────────────────
-            <div class="absolute bottom-2 left-2 z-[90] flex items-center gap-1 px-2 py-1 \
+            // ── Bottom-left stack: time-shift on top, HUD below ────────────
+            <div class="absolute left-sp-3 bottom-sp-3 z-[90] flex flex-col gap-sp-2 items-start pointer-events-none">
+            // ── Time-shift panel ───────────────────────────────────────────
+            <div class="flex items-center gap-1 px-2 py-1 pointer-events-auto \
                         bg-bg-panel-glass border border-border-accent rounded-md \
                         font-mono text-xs text-text-blue select-none">
                 {
@@ -1445,6 +1442,12 @@ pub fn SkyTab(
                         </button>
                     }
                 }
+            </div>
+
+            // ── DOM HUD (replaces render_info_overlay when GPU is up) ──────
+            {move || gpu_ready.get().then(|| view! {
+                <hud::SkyHud hud=hud_data lang=lang.read_only() />
+            })}
             </div>
 
             // ── Object search box ──────────────────────────────────────────
