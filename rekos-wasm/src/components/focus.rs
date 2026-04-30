@@ -162,14 +162,21 @@ pub fn FocusTab(
         rows
     };
 
+    let btn_base = "py-sp-2 px-sp-3 bg-[rgba(12,14,24,0.9)] border border-border-base text-text font-mono text-sm cursor-pointer";
+    let btn_action = format!("{btn_base} !border-text-blue !text-text-blue");
+    let btn_action_clone = btn_action.clone();
+    let fieldset_cls = "border border-border-base py-sp-3 px-3";
+    let legend_cls = "text-text-blue px-sp-2 text-sm";
+    let header_label = "text-text-blue";
+
     view! {
-        <div class="focus-tab-root">
+        <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[56px_1fr] overflow-hidden">
             // Header
-            <div class="focus-header">
+            <div class="flex items-center gap-sp-5 pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md">
                 <span
-                    class="focus-status-pill"
+                    class="inline-block py-sp-1 px-sp-3 rounded-[14px] border border-current text-sm"
                     style=move || format!(
-                        "--focus-status-color:{};",
+                        "color:{};",
                         status_color(&focus.with(|f| f.status.clone()))
                     )
                 >
@@ -178,49 +185,49 @@ pub fn FocusTab(
                         if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
-                <span class="focus-header-label">{move || tr().focus_header_focuser}</span>
+                <span class=header_label>{move || tr().focus_header_focuser}</span>
                 <span>{move || {
                     let d = focus.with(|f| f.device.clone());
                     if d.is_empty() { "—".to_string() } else { d }
                 }}</span>
-                <span class="focus-header-label">{move || tr().focus_header_hfr}</span>
+                <span class=header_label>{move || tr().focus_header_hfr}</span>
                 <span>{move || focus.with(|f| f.hfr
                     .map(|v| format!("{:.3}", v))
                     .unwrap_or_else(|| "—".into()))}</span>
-                <span class="focus-header-label">{move || tr().focus_header_position}</span>
+                <span class=header_label>{move || tr().focus_header_position}</span>
                 <span>{move || focus.with(|f| f.position
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into()))}</span>
-                <span class="focus-header-label">{move || tr().focus_header_temperature}</span>
+                <span class=header_label>{move || tr().focus_header_temperature}</span>
                 <span>{move || focus.with(|f| f.temperature
                     .map(|v| format!("{:.1}°C", v))
                     .unwrap_or_else(|| "—".into()))}</span>
             </div>
 
-            // Body
-            <div class="focus-body">
+            // Body — 1fr | 320 px on desktop, stacked on tablet
+            <div class="grid grid-cols-[1fr_320px] md:max-lg:grid-cols-[3fr_2fr] min-h-0">
                 // Left — preview + HFR plot
-                <div class="focus-left-col">
-                    <div class="focus-preview">
+                <div class="grid grid-rows-[1fr_110px] md:max-lg:grid-rows-[1fr_90px] min-h-0 border-r border-border-base">
+                    <div class="relative min-h-0 overflow-hidden flex items-center justify-center bg-bg-input-deep">
                         {move || match focus.with(|f| f.preview_url.clone()) {
                             Some(url) => view! {
                                 <img
                                     src=url
-                                    class="focus-preview-img"
+                                    class="max-w-full max-h-full object-contain cursor-crosshair [image-rendering:pixelated]"
                                     on:click=on_preview_click.clone()
                                 />
                             }.into_any(),
                             None => view! {
-                                <div class="focus-no-frame">
+                                <div class="text-[#444] text-sm text-center px-3">
                                     {move || tr().focus_no_frame}
                                 </div>
                             }.into_any(),
                         }}
                     </div>
-                    <div class="focus-hfr-pane">
+                    <div class="border-t border-border-base p-sp-2 bg-bg-input-deep">
                         <canvas
                             node_ref=canvas_ref
-                            class="focus-hfr-canvas"
+                            class="w-full h-[94px] md:max-lg:!h-[76px] block"
                             width="640"
                             height="90"
                         ></canvas>
@@ -228,27 +235,27 @@ pub fn FocusTab(
                 </div>
 
                 // Right — controls
-                <div class="focus-right-col">
+                <div class="flex flex-col min-h-0 overflow-y-auto py-sp-4 px-4 gap-4">
 
                     // Actions
-                    <fieldset class="focus-fieldset">
-                        <legend class="focus-legend">{move || tr().focus_actions_section}</legend>
-                        <div class="focus-actions-grid">
-                            <button on:click=on_start class="focus-btn focus-btn--start">{move || tr().start}</button>
-                            <button on:click=on_stop  class="focus-btn focus-btn--stop">{move || tr().stop}</button>
-                            <button on:click=on_capture class="focus-btn focus-btn--action">{move || tr().focus_capture_btn}</button>
-                            <button on:click=on_loop    class="focus-btn focus-btn--action">{move || tr().focus_loop_btn}</button>
-                            <button on:click=on_reset class="focus-btn focus-btn--wide">
+                    <fieldset class=fieldset_cls>
+                        <legend class=legend_cls>{move || tr().focus_actions_section}</legend>
+                        <div class="grid grid-cols-2 gap-sp-2">
+                            <button on:click=on_start class=format!("{btn_base} !border-accent-green !text-accent-green")>{move || tr().start}</button>
+                            <button on:click=on_stop  class=format!("{btn_base} !border-[#ff6a6a] !text-[#ff6a6a]")>{move || tr().stop}</button>
+                            <button on:click=on_capture class=btn_action.clone()>{move || tr().focus_capture_btn}</button>
+                            <button on:click=on_loop    class=btn_action.clone()>{move || tr().focus_loop_btn}</button>
+                            <button on:click=on_reset class=format!("{btn_base} col-span-2")>
                                 {move || tr().focus_reset_frame}
                             </button>
                         </div>
                     </fieldset>
 
                     // Manual
-                    <fieldset class="focus-fieldset">
-                        <legend class="focus-legend">{move || tr().focus_manual_section}</legend>
-                        <div class="focus-step-row">
-                            <span class="focus-step-label">{move || tr().focus_step_label}</span>
+                    <fieldset class=fieldset_cls>
+                        <legend class=legend_cls>{move || tr().focus_manual_section}</legend>
+                        <div class="flex items-center gap-sp-2 mb-sp-2">
+                            <span class="text-sm text-text-blue">{move || tr().focus_step_label}</span>
                             <input
                                 type="number"
                                 min="1"
@@ -257,24 +264,24 @@ pub fn FocusTab(
                                     let v: i64 = event_target_value(&ev).parse().unwrap_or(100);
                                     step_size.set(v.max(1));
                                 }
-                                class="focus-input"
+                                class="flex-1 bg-bg-input-deep text-text-dim border border-border-base py-sp-1 px-sp-2 font-mono text-sm"
                             />
                         </div>
-                        <div class="focus-manual-grid">
-                            <button on:click=on_in  class="focus-btn focus-btn--action">{move || tr().focus_in_btn}</button>
-                            <button on:click=on_out class="focus-btn focus-btn--action">{move || tr().focus_out_btn}</button>
+                        <div class="grid grid-cols-2 gap-sp-2">
+                            <button on:click=on_in  class=btn_action_clone.clone()>{move || tr().focus_in_btn}</button>
+                            <button on:click=on_out class=btn_action_clone>{move || tr().focus_out_btn}</button>
                         </div>
                     </fieldset>
 
                     // Settings
-                    <fieldset class="focus-fieldset">
-                        <legend class="focus-legend">{move || tr().focus_settings_section}</legend>
-                        <div class="focus-settings-list">
+                    <fieldset class=fieldset_cls>
+                        <legend class=legend_cls>{move || tr().focus_settings_section}</legend>
+                        <div class="flex flex-col gap-sp-2">
                             {move || {
                                 let rows = settings_rows();
                                 if rows.is_empty() {
                                     return view! {
-                                        <div class="focus-settings-empty">
+                                        <div class="text-[#555] text-sm">
                                             {tr().focus_settings_not_loaded}
                                         </div>
                                     }.into_any();
@@ -341,7 +348,7 @@ fn render_setting_row(
                             }
                         }
                     }
-                    class="focus-input"
+                    class="flex-1 bg-bg-input-deep text-text-dim border border-border-base py-sp-1 px-sp-2 font-mono text-sm"
                 />
             }.into_any()
         }
@@ -355,7 +362,7 @@ fn render_setting_row(
                         let s = event_target_value(&ev);
                         d(static_key, serde_json::Value::String(s));
                     }
-                    class="focus-input"
+                    class="flex-1 bg-bg-input-deep text-text-dim border border-border-base py-sp-1 px-sp-2 font-mono text-sm"
                 />
             }.into_any()
         }
@@ -363,8 +370,8 @@ fn render_setting_row(
 
     let title_key = key.clone();
     view! {
-        <div class="focus-setting-row">
-            <span class="focus-setting-key" title=title_key>
+        <div class="flex items-center gap-sp-2 text-sm">
+            <span class="basis-[140px] grow-0 shrink-0 text-text-blue overflow-hidden text-ellipsis whitespace-nowrap" title=title_key>
                 {key}
             </span>
             {field}

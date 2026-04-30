@@ -4,9 +4,6 @@
 /* ── TABLET  768 – 1023 px ───────────────────────────────────────── */
 @media (min-width: 768px) and (max-width: 1023px) {
     .sky-controls-panel { min-width: 160px; }
-    .focus-body { grid-template-columns: 3fr 2fr; }
-    .focus-left-col { grid-template-rows: 1fr 90px; }
-    .focus-hfr-pane canvas { height: 76px !important; }
 }
 
 /* ── SMARTPHONE  ≤ 767 px  (iPhone SE → 14 Pro Max) ─────────────── */
