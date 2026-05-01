@@ -122,10 +122,24 @@ in
       };
     };
 
+    capturesDir = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = "/srv/astro/captures";
+      description = ''
+        Root directory exposed by the Files tab (`/api/files/*`). Browser
+        requests are sandboxed inside this folder. When null the server
+        falls back to $HOME/Pictures and finally cwd — but DynamicUser +
+        ProtectHome means $HOME doesn't exist for the service, so set this
+        explicitly. The path is added to ReadWritePaths so the hardened
+        unit can reach it.
+      '';
+    };
+
     extraArgs = mkOption {
       type = types.listOf types.str;
       default = [ ];
-      example = [ "--captures-dir" "/srv/astro/captures" ];
+      example = [ "--http-addr" "0.0.0.0:8080" ];
       description = ''
         Additional command-line arguments passed verbatim to rekos-server.
       '';
@@ -154,6 +168,9 @@ in
             "--tls-cert" effectiveCert
             "--tls-key"  effectiveKey
           ];
+
+          capturesArgs = optionals (cfg.capturesDir != null)
+            [ "--captures-dir" (toString cfg.capturesDir) ];
         in
         {
           ExecStart = concatStringsSep " " (
@@ -163,8 +180,11 @@ in
             ++ optionals cfg.enableHttps [ "--https-addr" cfg.httpsAddr ]
             ++ optional (!cfg.enableHttps) "--no-https"
             ++ tlsArgs
+            ++ capturesArgs
             ++ map escapeShellArg cfg.extraArgs
           );
+
+          ReadWritePaths = optional (cfg.capturesDir != null) (toString cfg.capturesDir);
 
           ExecStartPre = mkIf (cfg.enableHttps && cfg.tls.autoGenerate && cfg.tls.cert == null)
             [ "${generateCertScript}" ];
