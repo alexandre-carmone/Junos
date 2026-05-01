@@ -169,8 +169,13 @@ in
             "--tls-key"  effectiveKey
           ];
 
-          capturesArgs = optionals (cfg.capturesDir != null)
-            [ "--captures-dir" (toString cfg.capturesDir) ];
+          capturesPath = if cfg.capturesDir != null then toString cfg.capturesDir else null;
+          capturesArgs = optionals (capturesPath != null) [ "--captures-dir" capturesPath ];
+
+          # When capturesDir lives under /home, ProtectHome=true would mask
+          # it. Switch ProtectHome to "tmpfs" (still hides every other home)
+          # and bind-mount the captures path so the service can reach it.
+          capturesUnderHome = capturesPath != null && hasPrefix "/home/" capturesPath;
         in
         {
           ExecStart = concatStringsSep " " (
@@ -184,7 +189,8 @@ in
             ++ map escapeShellArg cfg.extraArgs
           );
 
-          ReadWritePaths = optional (cfg.capturesDir != null) (toString cfg.capturesDir);
+          ReadWritePaths = optional (capturesPath != null && !capturesUnderHome) capturesPath;
+          BindPaths      = optional capturesUnderHome capturesPath;
 
           ExecStartPre = mkIf (cfg.enableHttps && cfg.tls.autoGenerate && cfg.tls.cert == null)
             [ "${generateCertScript}" ];
@@ -199,7 +205,7 @@ in
           DynamicUser = true;
           PrivateTmp = true;
           ProtectSystem = "strict";
-          ProtectHome = true;
+          ProtectHome = if capturesUnderHome then "tmpfs" else true;
           NoNewPrivileges = true;
           RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
         };
