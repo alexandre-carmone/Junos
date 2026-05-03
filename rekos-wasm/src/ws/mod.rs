@@ -41,7 +41,7 @@ use wasm_bindgen_futures::spawn_local;
 pub use store::DeviceStore;
 pub use types::*;
 
-use retry::{spawn_refresh_loop, spawn_retry_property};
+use retry::{spawn_refresh_loop, spawn_retry_property, spawn_retry_property_with};
 
 /// Type-erased command sink. Components dispatch raw Ekos Live JSON strings.
 pub type SendCmd = Arc<dyn Fn(String) + Send + Sync>;
@@ -120,8 +120,14 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
         let Some(train) = trains.first() else { return };
         if train.scope.is_empty() || scopes.is_empty() { return; }
         if let Some(s) = scopes.iter().find(|s| s.name == train.scope) {
+            // Apply the per-train focal reducer, mirroring KStars' framing
+            // assistant (`framingassistantui.cpp:422`:
+            // `reducedFocalLength = focalLen * focalReducer`). Without this,
+            // the FOV preview overlay (mosaic + center reticle) would show
+            // a smaller field than the actual capture / scheduler layout.
+            let effective_focal = s.focal_length_mm * train.reducer;
             telescope_sig.update(|t| {
-                t.focal_length_mm = Some(s.focal_length_mm);
+                t.focal_length_mm = Some(effective_focal);
                 t.aperture_mm     = Some(s.aperture_mm);
             });
         }
@@ -140,9 +146,11 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
         let camera_sig  = store.camera_status;
         let mount_sig   = store.mount_status;
         let focus_sig   = store.focus_status;
+        let filter_sig  = store.filter_wheel_status;
         let last_cam     = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let last_mount   = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let last_focuser = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let last_filter  = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let send_for_effect = send_fn.clone();
         Effect::new(move |_| {
             let trains = trains_sig2.get();
@@ -172,6 +180,61 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                     "CCD_COOLER",
                     camera_sig,
                     |cs| cs.as_ref().and_then(|c| c.cooler_on).is_some(),
+                );
+                // Switch properties whose option list is the human label
+                // (compact:false). ISO is DSLR-only — give up gracefully.
+                spawn_retry_property_with(
+                    send_for_effect.clone(),
+                    train.camera.clone(),
+                    "CCD_CAPTURE_FORMAT",
+                    false,
+                    camera_sig,
+                    |cs| cs.as_ref().map_or(false, |c| !c.capture_format_options.is_empty()),
+                );
+                spawn_retry_property_with(
+                    send_for_effect.clone(),
+                    train.camera.clone(),
+                    "CCD_TRANSFER_FORMAT",
+                    false,
+                    camera_sig,
+                    |cs| cs.as_ref().map_or(false, |c| !c.transfer_format_options.is_empty()),
+                );
+                spawn_retry_property_with(
+                    send_for_effect.clone(),
+                    train.camera.clone(),
+                    "CCD_FRAME_TYPE",
+                    false,
+                    camera_sig,
+                    |cs| cs.as_ref().map_or(false, |c| !c.frame_type_options.is_empty()),
+                );
+                spawn_retry_property_with(
+                    send_for_effect.clone(),
+                    train.camera.clone(),
+                    "CCD_ISO",
+                    false,
+                    camera_sig,
+                    |cs| cs.as_ref().map_or(false, |c| !c.iso_options.is_empty()),
+                );
+            }
+
+            if !train.filterwheel.is_empty() && train.filterwheel != "--"
+                && *last_filter.borrow() != train.filterwheel
+            {
+                *last_filter.borrow_mut() = train.filterwheel.clone();
+                spawn_retry_property_with(
+                    send_for_effect.clone(),
+                    train.filterwheel.clone(),
+                    "FILTER_NAME",
+                    false,
+                    filter_sig,
+                    |fs| fs.as_ref().map_or(false, |f| !f.filter_names.is_empty()),
+                );
+                spawn_retry_property(
+                    send_for_effect.clone(),
+                    train.filterwheel.clone(),
+                    "FILTER_SLOT",
+                    filter_sig,
+                    |fs| fs.as_ref().and_then(|f| f.current_slot).is_some(),
                 );
             }
 

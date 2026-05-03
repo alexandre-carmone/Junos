@@ -12,8 +12,8 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::astro;
-use crate::compat::CameraSnapshot;
-use crate::components::scheduler::{SeqFrame, build_esq_xml};
+use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
+use crate::components::sequence_editor::{SeqFrame, SequenceEditor, build_esq_xml};
 use crate::i18n::{Lang, t};
 use crate::ws::SendCmd;
 use crate::{ActiveTabCtx, MosaicPlannerCtx, Tab};
@@ -53,6 +53,7 @@ fn fmt_dms(dec_deg: f64) -> String {
 #[component]
 pub fn MosaicTab(
     #[prop(into)] camera: Signal<CameraSnapshot>,
+    #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
     #[prop(into)] focal_length_mm: Signal<Option<f64>>,
     #[prop(into)] home_dir: Signal<String>,
     mosaic_tiles: RwSignal<Option<serde_json::Value>>,
@@ -74,6 +75,19 @@ pub fn MosaicTab(
     let step_focus = RwSignal::new(false);
     let step_align = RwSignal::new(false);
     let step_guide = RwSignal::new(true);
+
+    // ── Per-job scheduler options ──────────────────────────────────────────
+    // Start: "asap" | "at"
+    let startup_cond = RwSignal::new("asap".to_string());
+    let startup_at   = RwSignal::new(String::new());
+    // Completion: "sequence" | "repeat" | "loop"
+    // KStars' FramingAssistant::importMosaic only honors FinishSequence /
+    // FinishRepeat / FinishLoop — no FinishAt — so we don't expose that option.
+    let completion_cond  = RwSignal::new("sequence".to_string());
+    let completion_count = RwSignal::new("1".to_string());
+    // Constraints
+    let min_alt  = RwSignal::new("30".to_string());
+    let min_moon = RwSignal::new("0".to_string());
 
     // ── Error display ──────────────────────────────────────────────────────
     let form_error: RwSignal<Option<String>> = RwSignal::new(None);
@@ -168,6 +182,30 @@ pub fn MosaicTab(
         send_cmd(&send_s, "scheduler_save_sequence_file",
             serde_json::json!({"path": rel_path, "filedata": xml}));
 
+        // Resolve start-condition & completion-condition fields.
+        let sc = startup_cond.get_untracked();
+        let (asap_r, start_time_r, start_time_val) = if sc == "at" {
+            (false, true, startup_at.get_untracked())
+        } else {
+            (true, false, String::new())
+        };
+        let (cc_literal, cc_arg) = match completion_cond.get_untracked().as_str() {
+            "repeat" => ("FinishRepeat", completion_count.get_untracked()),
+            "loop"   => ("FinishLoop",   "1".to_string()),
+            _        => ("FinishSequence", "1".to_string()),
+        };
+
+        // Pre-load fields not accepted by `scheduler_import_mosaic` directly:
+        // start condition + altitude/moon constraints land in the form first,
+        // then importMosaic snapshots them into each tile job.
+        send_cmd(&send_s, "scheduler_set_all_settings", serde_json::json!({
+            "asapConditionR":        asap_r,
+            "startupTimeConditionR": start_time_r,
+            "startupTimeEdit":       start_time_val,
+            "minAltitude":           min_alt.get_untracked().parse::<f64>().unwrap_or(30.0),
+            "minMoonSeparation":     min_moon.get_untracked().parse::<f64>().unwrap_or(0.0),
+        }));
+
         send_cmd(&send_s, "scheduler_import_mosaic", serde_json::json!({
             "csv":      csv,
             "sequence": abs_path,
@@ -177,8 +215,8 @@ pub fn MosaicTab(
             "focus":    step_focus.get_untracked(),
             "align":    step_align.get_untracked(),
             "guide":    step_guide.get_untracked(),
-            "completionCondition":    "sequence",
-            "completionConditionArg": "1",
+            "completionCondition":    cc_literal,
+            "completionConditionArg": cc_arg,
         }));
 
         form_error.set(None);
@@ -324,11 +362,16 @@ pub fn MosaicTab(
                     </label>
                 </div>
 
-                // FOV hint from camera
+                // FOV hint from camera + KStars persisted-equipment caveat.
+                // KStars' parseMosaicCSV ignores the FOV columns we send; the
+                // framing assistant computes spacing from its own persisted
+                // focal length/pixel size/sensor size. Surface our values so
+                // the user can cross-check, and warn about the mismatch path.
                 {move || {
                     let cam = camera.get();
                     let fl  = focal_length_mm.get();
                     let no_fov_msg = tr().mosaic_cam_no_fov.to_string();
+                    let kstars_note = tr().mosaic_kstars_fov_note.to_string();
                     if let (Some(fl_mm), Some(px_um), Some(sw), Some(sh)) =
                         (fl, cam.pixel_size_um, cam.sensor_width, cam.sensor_height)
                     {
@@ -337,18 +380,26 @@ pub fn MosaicTab(
                         let gw = planner.grid_w.get() as f64;
                         let gh = planner.grid_h.get() as f64;
                         view! {
-                            <div class="text-sm text-[#557] py-[2px]">
-                                {format!("Tile: {fw:.0}\u{2019}\u{00d7}{fh:.0}\u{2019}   \
-                                          Full field: {:.0}\u{2019}\u{00d7}{:.0}\u{2019}",
-                                          fw * gw, fh * gh)}
+                            <div class="flex flex-col gap-[2px] py-[2px]">
+                                <div class="text-sm text-[#557]">
+                                    {format!("Tile: {fw:.1}\u{2019}\u{00d7}{fh:.1}\u{2019}   \
+                                              Full field: {:.0}\u{2019}\u{00d7}{:.0}\u{2019}",
+                                              fw * gw, fh * gh)}
+                                </div>
+                                <div class="text-sm text-[#557]">
+                                    {format!("FL {fl_mm:.0} mm  \u{00b7}  Sensor {sw}\u{00d7}{sh} px @ {px_um:.2} \u{00b5}m")}
+                                </div>
+                                <div class="text-[12px] text-[#777] leading-snug">
+                                    {kstars_note}
+                                </div>
                             </div>
-                        }
+                        }.into_any()
                     } else {
                         view! {
                             <div class="text-sm text-[#555] py-[2px]">
                                 {no_fov_msg}
                             </div>
-                        }
+                        }.into_any()
                     }
                 }}
             </div>
@@ -356,76 +407,7 @@ pub fn MosaicTab(
             // ── Capture Sequence ─────────────────────────────────────────────
             <div class="flex flex-col gap-2">
                 <div class=SECTION_TITLE>{move || tr().mosaic_capture_seq}</div>
-
-                // Column headers
-                <div class="grid grid-cols-[1fr_80px_60px_28px] gap-1 text-sm text-[#666] px-[2px] pb-1">
-                    <span>{move || tr().mosaic_filter_col}</span>
-                    <span>{move || tr().mosaic_exp_col}</span>
-                    <span>{move || tr().mosaic_count_col}</span>
-                    <span></span>
-                </div>
-
-                // Rows — re-rendered when frames list changes (add/remove)
-                {move || {
-                    seq_frames.get().into_iter().enumerate().map(|(idx, frame)| {
-                        let fi = frame.filter.clone();
-                        let ex = frame.exposure.clone();
-                        let co = frame.count.clone();
-                        view! {
-                            <div class="grid grid-cols-[1fr_80px_60px_28px] gap-1 mb-[2px]">
-                                <input type="text"
-                                       class=format!("{INPUT_BASE} w-full")
-                                       placeholder=move || tr().mosaic_filter_placeholder
-                                       prop:value=fi
-                                       on:input=move |ev| {
-                                           let v = ev.target().unwrap()
-                                               .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                           seq_frames.update(|fs| {
-                                               if let Some(f) = fs.get_mut(idx) { f.filter = v; }
-                                           });
-                                       } />
-                                <input type="number" min="1" step="1"
-                                       class=format!("{INPUT_BASE} w-full")
-                                       prop:value=ex
-                                       on:input=move |ev| {
-                                           let v = ev.target().unwrap()
-                                               .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                           seq_frames.update(|fs| {
-                                               if let Some(f) = fs.get_mut(idx) { f.exposure = v; }
-                                           });
-                                       } />
-                                <input type="number" min="1"
-                                       class=format!("{INPUT_BASE} w-full")
-                                       prop:value=co
-                                       on:input=move |ev| {
-                                           let v = ev.target().unwrap()
-                                               .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                           seq_frames.update(|fs| {
-                                               if let Some(f) = fs.get_mut(idx) { f.count = v; }
-                                           });
-                                       } />
-                                <button
-                                    class="btn-icon btn-danger !w-7 !h-7 !min-w-7 !min-h-7"
-                                    on:click=move |_| {
-                                        seq_frames.update(|fs| {
-                                            if fs.len() > 1 { fs.remove(idx); }
-                                        });
-                                    }>
-                                    {"\u{00d7}"}
-                                </button>
-                            </div>
-                        }
-                    }).collect::<Vec<_>>()
-                }}
-
-                // Add filter row
-                <button
-                    class="btn btn--sm btn-primary self-start mt-1"
-                    on:click=move |_| {
-                        seq_frames.update(|fs| fs.push(SeqFrame::default()));
-                    }>
-                    {move || tr().mosaic_add_filter}
-                </button>
+                <SequenceEditor frames=seq_frames camera=camera filter_wheel=filter_wheel />
 
                 // Startup flags
                 <div class="flex gap-4 flex-wrap text-sm pt-1">
@@ -468,6 +450,107 @@ pub fn MosaicTab(
                                    step_guide.set(c);
                                } />
                         {move || tr().mosaic_step_guide}
+                    </label>
+                </div>
+            </div>
+
+            // ── Scheduler options ────────────────────────────────────────────
+            <div class="flex flex-col gap-2">
+                <div class=SECTION_TITLE>{move || tr().mosaic_scheduler_opts}</div>
+
+                // Start when
+                <div class="flex items-center gap-[14px] flex-wrap">
+                    <label class=PARAM_LABEL>
+                        {move || tr().sched_start_when}
+                        <select class=format!("{INPUT_BASE} w-[140px]")
+                                prop:value=move || startup_cond.get()
+                                on:change=move |ev| {
+                                    let v = ev.target().unwrap()
+                                        .unchecked_into::<web_sys::HtmlSelectElement>().value();
+                                    startup_cond.set(v);
+                                }>
+                            <option value="asap" selected=move || startup_cond.get() == "asap">
+                                {move || tr().sched_cond_asap}
+                            </option>
+                            <option value="at" selected=move || startup_cond.get() == "at">
+                                {move || tr().sched_cond_at_time}
+                            </option>
+                        </select>
+                    </label>
+                    {move || (startup_cond.get() == "at").then(|| view! {
+                        <input type="datetime-local"
+                               class=format!("{INPUT_BASE} w-[200px]")
+                               prop:value=move || startup_at.get()
+                               on:input=move |ev| {
+                                   let v = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
+                                   startup_at.set(v);
+                               } />
+                    })}
+                </div>
+
+                // Complete when
+                <div class="flex items-center gap-[14px] flex-wrap">
+                    <label class=PARAM_LABEL>
+                        {move || tr().sched_complete_when}
+                        <select class=format!("{INPUT_BASE} w-[160px]")
+                                prop:value=move || completion_cond.get()
+                                on:change=move |ev| {
+                                    let v = ev.target().unwrap()
+                                        .unchecked_into::<web_sys::HtmlSelectElement>().value();
+                                    completion_cond.set(v);
+                                }>
+                            <option value="sequence" selected=move || completion_cond.get() == "sequence">
+                                {move || tr().sched_cond_seq}
+                            </option>
+                            <option value="repeat" selected=move || completion_cond.get() == "repeat">
+                                {move || tr().sched_cond_repeat}
+                            </option>
+                            <option value="loop" selected=move || completion_cond.get() == "loop">
+                                {move || tr().sched_cond_loop}
+                            </option>
+                        </select>
+                    </label>
+                    {move || (completion_cond.get() == "repeat").then(|| view! {
+                        <label class=PARAM_LABEL>
+                            <input type="number" min="1" step="1"
+                                   class=format!("{INPUT_BASE} w-[60px]")
+                                   prop:value=move || completion_count.get()
+                                   on:input=move |ev| {
+                                       let v = ev.target().unwrap()
+                                           .unchecked_into::<web_sys::HtmlInputElement>().value();
+                                       completion_count.set(v);
+                                   } />
+                            {move || tr().sched_times_unit}
+                        </label>
+                    })}
+                </div>
+
+                // Constraints
+                <div class="flex items-center gap-[14px] flex-wrap">
+                    <label class=PARAM_LABEL>
+                        {move || tr().sched_min_alt}
+                        <input type="number" min="0" max="90" step="1"
+                               class=format!("{INPUT_BASE} w-[56px]")
+                               prop:value=move || min_alt.get()
+                               on:input=move |ev| {
+                                   let v = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
+                                   min_alt.set(v);
+                               } />
+                        {"\u{00b0}"}
+                    </label>
+                    <label class=PARAM_LABEL>
+                        {move || tr().sched_moon_sep}
+                        <input type="number" min="0" max="180" step="1"
+                               class=format!("{INPUT_BASE} w-[56px]")
+                               prop:value=move || min_moon.get()
+                               on:input=move |ev| {
+                                   let v = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
+                                   min_moon.set(v);
+                               } />
+                        {"\u{00b0}"}
                     </label>
                 </div>
             </div>

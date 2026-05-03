@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 
-use crate::compat::{self, MosaicSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot};
+use crate::compat::{self, FilterWheelSnapshot, MosaicSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot};
 use crate::components::files::FilesTab;
 use crate::components::focus::FocusTab;
 use crate::components::guide::GuideTab;
@@ -39,6 +39,7 @@ pub fn TabContent(
     // Derive snapshots from the store once.
     let mount: Signal<MountSnapshot> = compat::derive_mount(&store);
     let camera = compat::derive_camera(&store);
+    let filter_wheel: Signal<FilterWheelSnapshot> = compat::derive_filter_wheel(&store);
     let solve: Signal<SolveSnapshot> = compat::derive_solve(&store);
     let mosaic: Signal<MosaicSnapshot> = compat::derive_mosaic(&store);
     let focus_snapshot = compat::derive_focus(&store);
@@ -109,7 +110,7 @@ pub fn TabContent(
         </Show>
         <Show when=imaging_visible>
             <div style="position:absolute; inset:0; z-index:40;">
-                <ImagingTab capture=capture_snapshot camera=camera send=Arc::clone(&send_imaging) />
+                <ImagingTab capture=capture_snapshot camera=camera filter_wheel=filter_wheel send=Arc::clone(&send_imaging) />
             </div>
         </Show>
         <Show when=files_visible>
@@ -133,13 +134,14 @@ pub fn TabContent(
         </Show>
         <Show when=scheduler_visible>
             <div style="position:absolute; inset:0; z-index:40;">
-                <SchedulerTab scheduler=scheduler_snapshot send=Arc::clone(&send_scheduler) />
+                <SchedulerTab scheduler=scheduler_snapshot camera=camera filter_wheel=filter_wheel send=Arc::clone(&send_scheduler) />
             </div>
         </Show>
         <Show when=mosaic_visible>
             <div style="position:absolute; inset:0; z-index:40;">
                 <MosaicTab
                     camera=camera
+                    filter_wheel=filter_wheel
                     focal_length_mm=focal_length_mm
                     home_dir=home_dir
                     mosaic_tiles=store.mosaic_tiles

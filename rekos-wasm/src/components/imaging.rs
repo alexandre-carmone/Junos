@@ -13,7 +13,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::compat::{CameraSnapshot, CaptureSnapshot};
+use crate::compat::{CameraSnapshot, CaptureSnapshot, FilterWheelSnapshot};
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting, send_device_property_set};
@@ -39,11 +39,26 @@ fn status_color(status: &str) -> &'static str {
     else { "var(--text-muted)" }
 }
 
-/// Maps a KStars widget objectName to a human label. The widgets are defined
-/// in `kstars/ekos/capture/camera.ui`; the keys are what comes back from
-/// `capture_get_all_settings` and what `capture_set_all_settings` expects.
+// Field declarations: maps a KStars widget objectName (defined in
+// `kstars/ekos/capture/camera.ui`) to a human label and editor kind. The keys
+// are what comes back from `capture_get_all_settings` and what
+// `capture_set_all_settings` expects.
+//
+// Light/Dark/Bias/Flat are KStars' canonical frame-type strings (matches
+// Scheduler's frame-type select and `SequenceJob` XML).
+const FRAME_TYPE_FALLBACK: &[&str] = &["Light", "Dark", "Bias", "Flat"];
+
 #[derive(Clone, Copy)]
-enum Kind { Number, Text, Combo, Bool }
+enum Kind {
+    Number,
+    Text,
+    Bool,
+    /// Dropdown whose options come from the active camera / filter wheel.
+    /// The closure receives both snapshots and returns the option list — if
+    /// it returns empty, the field renders as a free text input so the user
+    /// can still type a value before the device pushes its property.
+    ComboDynamic(fn(&CameraSnapshot, &FilterWheelSnapshot) -> Vec<String>),
+}
 
 #[derive(Clone, Copy)]
 struct Field {
@@ -54,7 +69,12 @@ struct Field {
 
 const EXPOSURE_FIELDS: &[Field] = &[
     Field { key: "captureExposureN", label: |t| t.field_exposure_s, kind: Kind::Number },
-    Field { key: "captureTypeS",     label: |t| t.field_frame_type, kind: Kind::Combo  },
+    Field { key: "captureTypeS",     label: |t| t.field_frame_type,
+            kind: Kind::ComboDynamic(|c, _| {
+                if c.frame_type_options.is_empty() {
+                    FRAME_TYPE_FALLBACK.iter().map(|s| s.to_string()).collect()
+                } else { c.frame_type_options.clone() }
+            }) },
     Field { key: "captureCountN",    label: |t| t.field_count,      kind: Kind::Number },
     Field { key: "captureDelayN",    label: |t| t.field_delay_s,    kind: Kind::Number },
 ];
@@ -62,18 +82,22 @@ const EXPOSURE_FIELDS: &[Field] = &[
 const FRAME_FIELDS: &[Field] = &[
     Field { key: "captureBinHN",    label: |t| t.field_bin_x,    kind: Kind::Number },
     Field { key: "captureBinVN",    label: |t| t.field_bin_y,    kind: Kind::Number },
-    Field { key: "captureFormatS",  label: |t| t.field_format,   kind: Kind::Combo  },
-    Field { key: "captureEncodingS",label: |t| t.field_encoding, kind: Kind::Combo  },
+    Field { key: "captureFormatS",  label: |t| t.field_format,
+            kind: Kind::ComboDynamic(|c, _| c.capture_format_options.clone()) },
+    Field { key: "captureEncodingS",label: |t| t.field_encoding,
+            kind: Kind::ComboDynamic(|c, _| c.transfer_format_options.clone()) },
 ];
 
 const GAIN_FIELDS: &[Field] = &[
     Field { key: "captureGainN",   label: |t| t.field_gain,   kind: Kind::Number },
     Field { key: "captureOffsetN", label: |t| t.field_offset, kind: Kind::Number },
-    Field { key: "captureISOS",    label: |t| t.field_iso,    kind: Kind::Combo  },
+    Field { key: "captureISOS",    label: |t| t.field_iso,
+            kind: Kind::ComboDynamic(|c, _| c.iso_options.clone()) },
 ];
 
 const FILTER_FIELDS: &[Field] = &[
-    Field { key: "FilterPosCombo", label: |t| t.field_filter, kind: Kind::Combo },
+    Field { key: "FilterPosCombo", label: |t| t.field_filter,
+            kind: Kind::ComboDynamic(|_, fw| fw.filter_names.clone()) },
 ];
 
 const TARGET_FIELDS: &[Field] = &[
@@ -88,9 +112,10 @@ const ENFORCE_TEMP_FIELDS: &[Field] = &[
 
 #[component]
 pub fn ImagingTab(
-    #[prop(into)] capture: Signal<CaptureSnapshot>,
-    #[prop(into)] camera:  Signal<CameraSnapshot>,
-    #[prop(into)] send:    SendCmd,
+    #[prop(into)] capture:      Signal<CaptureSnapshot>,
+    #[prop(into)] camera:       Signal<CameraSnapshot>,
+    #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
+    #[prop(into)] send:         SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
@@ -413,7 +438,7 @@ pub fn ImagingTab(
                             {move || tr().imaging_exposure}
                         </summary>
                         <div class=PANEL_BODY>
-                            {render_group(EXPOSURE_FIELDS, lang, get_setting, dispatch_setting.clone())}
+                            {render_group(EXPOSURE_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
@@ -430,7 +455,7 @@ pub fn ImagingTab(
                             {move || tr().imaging_frame}
                         </summary>
                         <div class=PANEL_BODY>
-                            {render_group(FRAME_FIELDS, lang, get_setting, dispatch_setting.clone())}
+                            {render_group(FRAME_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
@@ -447,7 +472,7 @@ pub fn ImagingTab(
                             {move || tr().imaging_gain_iso}
                         </summary>
                         <div class=PANEL_BODY>
-                            {render_group(GAIN_FIELDS, lang, get_setting, dispatch_setting.clone())}
+                            {render_group(GAIN_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
@@ -464,7 +489,7 @@ pub fn ImagingTab(
                             {move || tr().imaging_filter}
                         </summary>
                         <div class=PANEL_BODY>
-                            {render_group(FILTER_FIELDS, lang, get_setting, dispatch_setting.clone())}
+                            {render_group(FILTER_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
@@ -481,7 +506,7 @@ pub fn ImagingTab(
                             {move || tr().imaging_target}
                         </summary>
                         <div class=PANEL_BODY>
-                            {render_group(TARGET_FIELDS, lang, get_setting, dispatch_setting.clone())}
+                            {render_group(TARGET_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
 
@@ -498,7 +523,7 @@ pub fn ImagingTab(
                             {move || tr().imaging_job_temperature}
                         </summary>
                         <div class=PANEL_BODY>
-                            {render_group(ENFORCE_TEMP_FIELDS, lang, get_setting, dispatch_setting.clone())}
+                            {render_group(ENFORCE_TEMP_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
                         </div>
                     </details>
                 </div>
@@ -659,6 +684,8 @@ fn job_status_color(s: &str) -> &'static str {
 fn render_group(
     fields: &'static [Field],
     lang: RwSignal<Lang>,
+    camera: Signal<CameraSnapshot>,
+    filter_wheel: Signal<FilterWheelSnapshot>,
     get_value: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
     dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
 ) -> leptos::prelude::AnyView {
@@ -666,7 +693,7 @@ fn render_group(
         <div class="flex flex-col gap-[6px]">
             {fields.iter().map(|f| {
                 let d = dispatch.clone();
-                render_field(*f, lang, get_value, d)
+                render_field(*f, lang, camera, filter_wheel, get_value, d)
             }).collect::<Vec<_>>()}
         </div>
     }.into_any()
@@ -675,6 +702,8 @@ fn render_group(
 fn render_field(
     field: Field,
     lang: RwSignal<Lang>,
+    camera: Signal<CameraSnapshot>,
+    filter_wheel: Signal<FilterWheelSnapshot>,
     get_value: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
     dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
 ) -> leptos::prelude::AnyView {
@@ -712,7 +741,7 @@ fn render_field(
                 />
             }.into_any()
         }
-        Kind::Text | Kind::Combo => {
+        Kind::Text => {
             let d = dispatch.clone();
             view! {
                 <input
@@ -725,6 +754,11 @@ fn render_field(
                 />
             }.into_any()
         }
+        Kind::ComboDynamic(get_opts) => {
+            // Reactive option list: re-derived when camera/filter_wheel change.
+            let opts_fn = move || get_opts(&camera.get(), &filter_wheel.get());
+            render_select_dynamic(field.key, opts_fn, current, dispatch.clone())
+        }
     };
 
     let label_fn = field.label;
@@ -733,6 +767,81 @@ fn render_field(
             <span class=FIELD_LABEL>{move || label_fn(t(lang.get()))}</span>
             {editor}
         </div>
+    }.into_any()
+}
+
+/// Render a `<select>` whose options are a fixed `Vec<String>`. If the
+/// current value isn't in the list, prepend a disabled placeholder option
+/// so we don't silently drop state.
+fn render_select(
+    key: &'static str,
+    opts: Vec<String>,
+    current: impl Fn() -> serde_json::Value + Copy + Send + Sync + 'static,
+    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
+) -> leptos::prelude::AnyView {
+    let d = dispatch.clone();
+    let opts_for_render = opts.clone();
+    view! {
+        <select
+            class=FIELD_INPUT
+            prop:value=move || value_to_display(&current())
+            on:change=move |ev| {
+                d(key, serde_json::Value::String(event_target_value(&ev)));
+            }
+        >
+            {move || {
+                let cur = value_to_display(&current());
+                let mut items: Vec<leptos::prelude::AnyView> = Vec::new();
+                if !cur.is_empty() && !opts_for_render.iter().any(|o| o == &cur) {
+                    let cur2 = cur.clone();
+                    items.push(view! {
+                        <option value=cur.clone() disabled=true selected=true>{cur2}</option>
+                    }.into_any());
+                }
+                for o in &opts_for_render {
+                    let v = o.clone();
+                    let label = o.clone();
+                    let is_sel = *o == cur;
+                    items.push(view! {
+                        <option value=v selected=is_sel>{label}</option>
+                    }.into_any());
+                }
+                items
+            }}
+        </select>
+    }.into_any()
+}
+
+/// Like `render_select`, but the option list is reactive — re-derived from
+/// device snapshots on each render. Falls back to a free text input when
+/// the option list is empty (e.g., no filter wheel attached).
+fn render_select_dynamic(
+    key: &'static str,
+    opts_fn: impl Fn() -> Vec<String> + Copy + Send + Sync + 'static,
+    current: impl Fn() -> serde_json::Value + Copy + Send + Sync + 'static,
+    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
+) -> leptos::prelude::AnyView {
+    let d_text = dispatch.clone();
+    let d_select = dispatch.clone();
+    view! {
+        {move || {
+            let opts = opts_fn();
+            if opts.is_empty() {
+                let d = d_text.clone();
+                view! {
+                    <input
+                        type="text"
+                        prop:value=move || value_to_display(&current())
+                        on:change=move |ev| {
+                            d(key, serde_json::Value::String(event_target_value(&ev)));
+                        }
+                        class=FIELD_INPUT
+                    />
+                }.into_any()
+            } else {
+                render_select(key, opts, current, d_select.clone())
+            }
+        }}
     }.into_any()
 }
 

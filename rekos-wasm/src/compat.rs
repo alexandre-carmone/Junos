@@ -39,6 +39,17 @@ pub struct CameraSnapshot {
     pub sensor_height: Option<u32>,
     pub temperature: Option<f64>,
     pub cooler_on: Option<bool>,
+    pub capture_format_options:  Vec<String>,
+    pub transfer_format_options: Vec<String>,
+    pub iso_options:             Vec<String>,
+    pub frame_type_options:      Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FilterWheelSnapshot {
+    pub device:       String,
+    pub filter_names: Vec<String>,
+    pub current_slot: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -167,8 +178,26 @@ pub fn derive_camera(store: &DeviceStore) -> Signal<CameraSnapshot> {
                 sensor_height: cs.sensor_height,
                 temperature: cs.temperature,
                 cooler_on: cs.cooler_on,
+                capture_format_options:  cs.capture_format_options,
+                transfer_format_options: cs.transfer_format_options,
+                iso_options:             cs.iso_options,
+                frame_type_options:      cs.frame_type_options,
             },
             None => CameraSnapshot::default(),
+        }
+    })
+}
+
+pub fn derive_filter_wheel(store: &DeviceStore) -> Signal<FilterWheelSnapshot> {
+    let fw = store.filter_wheel_status;
+    Signal::derive(move || {
+        match fw.get() {
+            Some(s) => FilterWheelSnapshot {
+                device: s.device,
+                filter_names: s.filter_names,
+                current_slot: s.current_slot,
+            },
+            None => FilterWheelSnapshot::default(),
         }
     })
 }

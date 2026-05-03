@@ -27,6 +27,25 @@ where
     T: Clone + Send + Sync + 'static,
     F: Fn(&T) -> bool + 'static,
 {
+    spawn_retry_property_with(send, device, property, true, signal, done_pred);
+}
+
+/// Like `spawn_retry_property`, but lets the caller request `compact: false`
+/// so switch/text element labels come back. Needed for properties whose
+/// option list uses human labels (CCD_CAPTURE_FORMAT, CCD_TRANSFER_FORMAT,
+/// CCD_ISO, FILTER_NAME).
+pub(super) fn spawn_retry_property_with<T, F>(
+    send: SendCmd,
+    device: String,
+    property: &'static str,
+    compact: bool,
+    signal: RwSignal<T>,
+    done_pred: F,
+)
+where
+    T: Clone + Send + Sync + 'static,
+    F: Fn(&T) -> bool + 'static,
+{
     use gloo_timers::future::TimeoutFuture;
     spawn_local(async move {
         leptos::logging::log!("[ws] retry_property start device={} prop={}", device, property);
@@ -37,7 +56,7 @@ where
         }).to_string();
         let get = serde_json::json!({
             "type":"device_property_get",
-            "payload":{ "device": device, "property": property, "compact": true }
+            "payload":{ "device": device, "property": property, "compact": compact }
         }).to_string();
         send(sub.clone());
         send(get.clone());
@@ -98,6 +117,25 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
                         "payload": { "device": train.camera, "property": prop, "compact": true }
                     }).to_string());
                 }
+                // Combo option lists need labels — compact:false.
+                for prop in ["CCD_CAPTURE_FORMAT", "CCD_TRANSFER_FORMAT", "CCD_FRAME_TYPE", "CCD_ISO"] {
+                    send(serde_json::json!({
+                        "type": "device_property_get",
+                        "payload": { "device": train.camera, "property": prop, "compact": false }
+                    }).to_string());
+                }
+            }
+
+            // ── Filter wheel INDI properties ─────────────────────────
+            if !train.filterwheel.is_empty() && train.filterwheel != "--" {
+                send(serde_json::json!({
+                    "type": "device_property_get",
+                    "payload": { "device": train.filterwheel, "property": "FILTER_NAME", "compact": false }
+                }).to_string());
+                send(serde_json::json!({
+                    "type": "device_property_get",
+                    "payload": { "device": train.filterwheel, "property": "FILTER_SLOT", "compact": true }
+                }).to_string());
             }
 
             // ── Mount INDI properties ────────────────────────────────

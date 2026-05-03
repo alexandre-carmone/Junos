@@ -38,6 +38,21 @@ pub struct CameraStatusData {
     pub temperature: Option<f64>,
     pub target_temperature: Option<f64>,
     pub cooler_on: Option<bool>,
+    // Combo option lists. Sourced from INDI switch labels — fetched with
+    // compact:false because compact mode strips labels.
+    pub capture_format_options:  Vec<String>,  // CCD_CAPTURE_FORMAT
+    pub transfer_format_options: Vec<String>,  // CCD_TRANSFER_FORMAT
+    pub iso_options:             Vec<String>,  // CCD_ISO (DSLR only)
+    pub frame_type_options:      Vec<String>,  // CCD_FRAME_TYPE (Light/Dark/Bias/Flat)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FilterWheelStatusData {
+    pub device:        String,
+    /// Filter labels from INDI `FILTER_NAME` text property — one per slot.
+    pub filter_names:  Vec<String>,
+    /// 1-based current slot index from `FILTER_SLOT` number property.
+    pub current_slot:  Option<i32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -60,7 +75,7 @@ pub struct TelescopeSettingsData {
     pub aperture_mm: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct OpticalTrain {
     pub id: i64,
     pub name: String,
@@ -69,6 +84,22 @@ pub struct OpticalTrain {
     pub scope: String,
     pub guider: String,
     pub focuser: String,
+    pub filterwheel: String,
+    /// Per-train focal reducer ratio (KStars `OpticalTrainManager` default 1.0).
+    /// KStars' framing assistant multiplies focal length by this when computing
+    /// the camera FOV (`framingassistantui.cpp:422`); we must do the same so
+    /// the planetarium FOV preview matches the actual mosaic layout.
+    pub reducer: f64,
+}
+
+impl Default for OpticalTrain {
+    fn default() -> Self {
+        Self {
+            id: 0, name: String::new(), mount: String::new(), camera: String::new(),
+            scope: String::new(), guider: String::new(), focuser: String::new(),
+            filterwheel: String::new(), reducer: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -242,7 +273,8 @@ pub struct PolarStateData {
 
 // Scheduler module state. Two push shapes from manager.cpp:
 //   {:417} {log: string}
-//   {:427} {status: int}  — SchedulerState enum: 0=IDLE 1=RUNNING 2=PAUSED
+//   {:427} {status: int}  — Ekos::SchedulerState (kstars/ekos/ekos.h:185):
+//     0=IDLE 1=STARTUP 2=RUNNING 3=PAUSED 4=SHUTDOWN 5=ABORTED 6=LOADING
 #[derive(Debug, Clone, Default)]
 pub struct SchedulerStatusData {
     pub status: i64,

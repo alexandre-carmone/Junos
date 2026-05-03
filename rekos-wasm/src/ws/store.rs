@@ -17,6 +17,7 @@ pub struct DeviceStore {
     pub home_dir:           RwSignal<String>,
     pub mount_status:       RwSignal<Option<MountStatusData>>,
     pub camera_status:      RwSignal<Option<CameraStatusData>>,
+    pub filter_wheel_status: RwSignal<Option<FilterWheelStatusData>>,
     pub telescope_settings: RwSignal<TelescopeSettingsData>,
     pub optical_trains:     RwSignal<Vec<OpticalTrain>>,
     pub scopes:             RwSignal<Vec<ScopeInfo>>,
@@ -63,6 +64,7 @@ impl DeviceStore {
             home_dir:           RwSignal::new(String::new()),
             mount_status:       RwSignal::new(None),
             camera_status:      RwSignal::new(None),
+            filter_wheel_status: RwSignal::new(None),
             telescope_settings: RwSignal::new(TelescopeSettingsData::default()),
             optical_trains:     RwSignal::new(Vec::new()),
             scopes:             RwSignal::new(Vec::new()),
@@ -113,6 +115,7 @@ impl DeviceStore {
                 if !connected {
                     self.mount_status.set(None);
                     self.camera_status.set(None);
+                    self.filter_wheel_status.set(None);
                     self.focus_status.set(None);
                     self.focus_preview_url.set(None);
                     self.focus_hfr_history.set(Vec::new());
@@ -215,6 +218,10 @@ impl DeviceStore {
                         scope:  t["scope"].as_str().unwrap_or("").to_string(),
                         guider: t["guider"].as_str().unwrap_or("").to_string(),
                         focuser: t["focuser"].as_str().unwrap_or("").to_string(),
+                        filterwheel: t["filterwheel"].as_str().unwrap_or("").to_string(),
+                        // KStars stores reducer as a number; older trains may
+                        // miss the field entirely → default to 1.0 (no reducer).
+                        reducer: t["reducer"].as_f64().filter(|v| *v > 0.0).unwrap_or(1.0),
                     }).collect();
                     for t in &trains {
                         leptos::logging::log!(
@@ -229,6 +236,12 @@ impl DeviceStore {
                             let cs = opt.get_or_insert_with(CameraStatusData::default);
                             if !first.camera.is_empty() { cs.device = first.camera.clone(); }
                         });
+                        if !first.filterwheel.is_empty() && first.filterwheel != "--" {
+                            self.filter_wheel_status.update(|opt| {
+                                let fs = opt.get_or_insert_with(FilterWheelStatusData::default);
+                                fs.device = first.filterwheel.clone();
+                            });
+                        }
                     }
                     self.optical_trains.set(trains);
                 }
@@ -312,6 +325,66 @@ impl DeviceStore {
                         self.camera_status.update(|opt| {
                             let cs = opt.get_or_insert_with(CameraStatusData::default);
                             cs.cooler_on = on;
+                        });
+                    }
+                } else if prop == "CCD_CAPTURE_FORMAT" || prop == "CCD_TRANSFER_FORMAT" || prop == "CCD_ISO" || prop == "CCD_FRAME_TYPE" {
+                    // Switch property — option list comes from element labels
+                    // (compact:false). See indicamera.cpp:141 for the canonical
+                    // example: m_CaptureFormats is built from getLabel().
+                    let mut labels: Vec<String> = Vec::new();
+                    if let Some(arr) = payload["switches"].as_array() {
+                        for el in arr {
+                            if let Some(lbl) = el["label"].as_str() {
+                                if !lbl.is_empty() { labels.push(lbl.to_string()); continue; }
+                            }
+                            // Fallback: switch name (compact-mode payload).
+                            if let Some(n) = el["name"].as_str() {
+                                if !n.is_empty() { labels.push(n.to_string()); }
+                            }
+                        }
+                    }
+                    if !labels.is_empty() {
+                        self.camera_status.update(|opt| {
+                            let cs = opt.get_or_insert_with(CameraStatusData::default);
+                            match prop {
+                                "CCD_CAPTURE_FORMAT"  => cs.capture_format_options  = labels,
+                                "CCD_TRANSFER_FORMAT" => cs.transfer_format_options = labels,
+                                "CCD_ISO"             => cs.iso_options             = labels,
+                                "CCD_FRAME_TYPE"      => cs.frame_type_options      = labels,
+                                _ => {}
+                            }
+                        });
+                    }
+                } else if prop == "FILTER_NAME" {
+                    // Text property — `texts:[{name, text}, …]`. The `text`
+                    // field is the user-visible filter label (e.g. "Ha", "OIII").
+                    let mut names: Vec<String> = Vec::new();
+                    if let Some(arr) = payload["texts"].as_array() {
+                        for el in arr {
+                            if let Some(s) = el["text"].as_str() {
+                                names.push(s.to_string());
+                            }
+                        }
+                    }
+                    if !names.is_empty() {
+                        self.filter_wheel_status.update(|opt| {
+                            let fs = opt.get_or_insert_with(FilterWheelStatusData::default);
+                            if let Some(dev) = payload["device"].as_str() {
+                                if !dev.is_empty() { fs.device = dev.to_string(); }
+                            }
+                            fs.filter_names = names;
+                        });
+                    }
+                } else if prop == "FILTER_SLOT" {
+                    let slot = extract_indi_number(payload, "FILTER_SLOT_VALUE")
+                        .map(|v| v as i32);
+                    if slot.is_some() {
+                        self.filter_wheel_status.update(|opt| {
+                            let fs = opt.get_or_insert_with(FilterWheelStatusData::default);
+                            if let Some(dev) = payload["device"].as_str() {
+                                if !dev.is_empty() { fs.device = dev.to_string(); }
+                            }
+                            fs.current_slot = slot;
                         });
                     }
                 } else if prop == "EQUATORIAL_EOD_COORD" {
@@ -605,6 +678,17 @@ impl DeviceStore {
             // Reply to scheduler_get_jobs — {"jobs": [...]}
             "scheduler_get_jobs" => {
                 if let Some(arr) = payload["jobs"].as_array() {
+                    // KStars only emits `new_scheduler_state` on transitions, so a
+                    // browser that connects after the scheduler started never sees
+                    // RUNNING. Recover by inspecting per-job states: SCHEDJOB_BUSY
+                    // (3) means the scheduler is actively processing that job.
+                    // Only promote when we still hold the default IDLE so a real
+                    // PAUSED/ABORTED push isn't overwritten.
+                    if self.scheduler_status.with(|s| s.status) == 0
+                        && arr.iter().any(|j| j["state"].as_i64() == Some(3))
+                    {
+                        self.scheduler_status.update(|s| s.status = 2);
+                    }
                     self.scheduler_jobs.set(arr.clone());
                 }
             }

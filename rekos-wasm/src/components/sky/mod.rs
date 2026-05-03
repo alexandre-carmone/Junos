@@ -196,12 +196,6 @@ pub fn SkyTab(
     });
 
     let (time_offset_s, set_time_offset_s) = signal(0.0_f64);
-    // Persist focal length override in localStorage
-    let stored_fl = web_sys::window()
-        .and_then(|w| w.local_storage().ok().flatten())
-        .and_then(|ls| ls.get_item("sky_focal_override").ok().flatten())
-        .unwrap_or_default();
-    let (focal_override, set_focal_override) = signal(stored_fl);
     // Read persisted checkbox state from localStorage
     let ls_init = web_sys::window().and_then(|w| w.local_storage().ok().flatten());
     let ls_bool = |key: &str, default: bool| -> bool {
@@ -422,15 +416,6 @@ pub fn SkyTab(
         });
     }
 
-    // ── Effective focal length ─────────────────────────────────────────────
-    let effective_focal = Signal::derive(move || {
-        let ov = focal_override.get();
-        if let Ok(v) = ov.parse::<f64>() {
-            if v > 0.0 { return Some(v); }
-        }
-        focal_length_mm.get()
-    });
-
     // ── GPU init ───────────────────────────────────────────────────────────
     let gpu_for_init = Rc::clone(&gpu_renderer);
     Effect::new(move || {
@@ -492,7 +477,7 @@ pub fn SkyTab(
         let dso_gal = dso_filter_galaxy_cluster.get();
         let dso_mag = dso_mag_limit.get();
         let scheduler_jobs_on = show_scheduler_jobs.get();
-        let fl = effective_focal.get();
+        let fl = focal_length_mm.get();
         let follow = follow_mount.get();
         let has_gpu = gpu_ready.get();
         let cur_lang = lang.get();
@@ -908,6 +893,11 @@ pub fn SkyTab(
         };
 
         // ── In-app mosaic planner preview ──────────────────────────────
+        // Mirrors KStars' MosaicTiles::updateTiles (mosaictiles.cpp:370-435):
+        // tiles are laid out in a planar grid (arcmin), the entire grid is
+        // rotated by PA around the mosaic center, then converted to RA/Dec
+        // with a per-tile cos(dec) correction. This way the preview matches
+        // exactly what `scheduler_import_mosaic` will produce in KStars.
         let mosaic_plan_render: Option<MosaicPlanRender> = (|| {
             if !mosaic_planning_on { return None; }
             let (center_ra_deg, center_dec_deg) = mosaic_center_val?;
@@ -915,23 +905,41 @@ pub fn SkyTab(
             let px_um = cam.pixel_size_um?;
             let sw    = cam.sensor_width?;
             let sh    = cam.sensor_height?;
-            let fov_w = astro::fov_deg(fl_mm, sw as f64, px_um);
-            let fov_h = astro::fov_deg(fl_mm, sh as f64, px_um);
-            let cos_dec = center_dec_deg.to_radians().cos().abs().max(0.01);
-            let step_ra  = fov_w * (1.0 - mosaic_overlap_pct / 100.0) / cos_dec;
-            let step_dec = fov_h * (1.0 - mosaic_overlap_pct / 100.0);
-            let tiles = (0..mosaic_gh).flat_map(|row| {
-                (0..mosaic_gw).map(move |col| MosaicTileRender {
-                    ra_deg:  center_ra_deg + (col as f64 - (mosaic_gw as f64 - 1.0) / 2.0) * step_ra,
-                    dec_deg: center_dec_deg + (row as f64 - (mosaic_gh as f64 - 1.0) / 2.0) * step_dec,
-                    rotation: 0.0,
+            let fov_w_deg = astro::fov_deg(fl_mm, sw as f64, px_um);
+            let fov_h_deg = astro::fov_deg(fl_mm, sh as f64, px_um);
+            let fov_w_am  = fov_w_deg * 60.0;
+            let fov_h_am  = fov_h_deg * 60.0;
+            let x_off = fov_w_am * (1.0 - mosaic_overlap_pct / 100.0);
+            let y_off = fov_h_am * (1.0 - mosaic_overlap_pct / 100.0);
+            let init_x = (x_off * (mosaic_gw as f64 - 1.0) - fov_w_am) / 2.0;
+            let init_y = -(fov_h_am + y_off * (mosaic_gh as f64 - 1.0)) / 2.0;
+            // KStars rotatePoint uses angle = -PA (after wrapping PA into [0,360)).
+            let pa_norm = ((mosaic_pa_val % 360.0) + 360.0) % 360.0;
+            let ang = -pa_norm.to_radians();
+            let cp = ang.cos();
+            let sp = ang.sin();
+            let tiles = (0..mosaic_gw).flat_map(|col| {
+                (0..mosaic_gh).map(move |row| {
+                    let x = init_x - col as f64 * x_off;
+                    let y = init_y + row as f64 * y_off;
+                    let tx = x + fov_w_am / 2.0;
+                    let ty = y + fov_h_am / 2.0;
+                    let rx = cp * tx - sp * ty;
+                    let ry = sp * tx + cp * ty;
+                    // skyLocation = (0,0) - rotatePoint(...): negate.
+                    let sky_x_am = -rx;
+                    let sky_y_am = -ry;
+                    let dec_t = center_dec_deg + sky_y_am / 60.0;
+                    let cos_dec_t = dec_t.to_radians().cos().abs().max(0.01);
+                    let ra_t = center_ra_deg + (sky_x_am / 60.0) / cos_dec_t;
+                    MosaicTileRender { ra_deg: ra_t, dec_deg: dec_t, rotation: 0.0 }
                 })
             }).collect::<Vec<_>>();
             Some(MosaicPlanRender {
                 target_name: mosaic_target_name.clone(),
                 tiles,
-                fov_w_deg:   fov_w,
-                fov_h_deg:   fov_h,
+                fov_w_deg,
+                fov_h_deg,
                 overlap_pct: mosaic_overlap_pct,
                 pa_deg:      mosaic_pa_val,
             })
@@ -1498,9 +1506,6 @@ pub fn SkyTab(
                 show_settings_section=show_settings_section
                 set_show_settings_section=set_show_settings_section
                 toggles=toggles
-                focal_override=focal_override
-                set_focal_override=set_focal_override
-                focal_length_mm=focal_length_mm
                 set_follow_mount=set_follow_mount
                 site=site
                 set_site_location=set_site_location_fn.clone()

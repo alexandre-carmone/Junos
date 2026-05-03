@@ -12,7 +12,8 @@ use std::sync::Arc;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::compat::SchedulerSnapshot;
+use crate::compat::{CameraSnapshot, FilterWheelSnapshot, SchedulerSnapshot};
+use crate::components::sequence_editor::{SeqFrame, SequenceEditor, build_esq_xml};
 use crate::dso_catalog::DsoCatalogData;
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
@@ -224,25 +225,10 @@ const SCHED_CSS: &str = r#"
     color: var(--sched-blue); font-size: 10px; text-transform: uppercase;
     letter-spacing: 0.05em;
 }
-.sched-seq-table { border-collapse: collapse; font-size: 12px; width: 100%; }
-.sched-seq-table th {
-    color: #556; font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.05em; padding: 4px 6px; text-align: left;
-    border-bottom: 1px solid #1a1a2a;
-}
-.sched-seq-table td { padding: 4px 4px; }
-.sched-seq-row-num { color: #334; font-size: 10px; text-align: center; }
 .sched-seq-total {
     font-size: 10px; color: #4a5a6a; padding: 4px 6px;
     border-top: 1px solid #1a1a2a; text-align: right;
 }
-.sched-seq-add-btn {
-    background: none; border: 1px dashed #3a3a5a; border-radius: 4px;
-    color: var(--sched-blue); font-family: monospace; font-size: 11px;
-    cursor: pointer; padding: 4px 12px; margin-top: 4px;
-    touch-action: manipulation;
-}
-.sched-seq-add-btn:hover { background: rgba(136,170,255,0.08); }
 /* ── Form footer ────────────────────────────────────────────────────────── */
 .sched-form-error { color: var(--sched-red); font-size: 11px; }
 .sched-form-btns  { display: flex; gap: 10px; align-items: center; }
@@ -277,11 +263,16 @@ const SCHED_CSS: &str = r#"
 "#;
 
 fn scheduler_status_label(tr: &'static Translations, status: i64) -> (&'static str, &'static str) {
+    // Mirrors Ekos::SchedulerState in kstars/ekos/ekos.h:185.
     match status {
-        0 => (tr.sched_status_idle,    "sched-badge-idle"),
-        1 => (tr.sched_status_running, "sched-badge-running"),
-        2 => (tr.sched_status_paused,  "sched-badge-paused"),
-        _ => (tr.sched_status_unknown, "sched-badge-idle"),
+        0 => (tr.sched_status_idle,     "sched-badge-idle"),
+        1 => (tr.sched_status_startup,  "sched-badge-running"),
+        2 => (tr.sched_status_running,  "sched-badge-running"),
+        3 => (tr.sched_status_paused,   "sched-badge-paused"),
+        4 => (tr.sched_status_shutdown, "sched-badge-paused"),
+        5 => (tr.sched_status_aborted,  "sched-badge-paused"),
+        6 => (tr.sched_status_loading,  "sched-badge-paused"),
+        _ => (tr.sched_status_unknown,  "sched-badge-idle"),
     }
 }
 
@@ -343,71 +334,11 @@ fn sanitize_name(name: &str) -> String {
         .collect()
 }
 
-/// Generate a minimal ESQ XML from a list of sequence frames.
-pub(crate) fn build_esq_xml(job_name: &str, frames: &[SeqFrame]) -> String {
-    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    xml.push_str("<SequenceQueue version='2.1'>\n");
-    xml.push_str("<GuideDeviation enabled='false'>0</GuideDeviation>\n");
-    xml.push_str("<GuideStartDeviation enabled='false'>0</GuideStartDeviation>\n");
-    xml.push_str("<HFRCheck enabled='false'><HFRDeviation>0.1</HFRDeviation>\
-<HFRCheckAlgorithm>0</HFRCheckAlgorithm><HFRCheckThreshold>0</HFRCheckThreshold>\
-<HFRCheckFrames>1</HFRCheckFrames></HFRCheck>\n");
-    xml.push_str("<RefocusOnTemperatureDelta enabled='false'>1</RefocusOnTemperatureDelta>\n");
-    xml.push_str("<RefocusEveryN enabled='false'>60</RefocusEveryN>\n");
-    xml.push_str("<RefocusOnMeridianFlip enabled='false'/>\n");
-    for f in frames {
-        xml.push_str("<Job>\n");
-        xml.push_str(&format!("<Exposure>{}</Exposure>\n", f.exposure));
-        xml.push_str("<Format>FITS</Format>\n<Encoding>FITS</Encoding>\n");
-        xml.push_str("<Binning><X>1</X><Y>1</Y></Binning>\n");
-        xml.push_str("<Frame><X>0</X><Y>0</Y><W>0</W><H>0</H></Frame>\n");
-        if !f.filter.is_empty() {
-            xml.push_str(&format!("<Filter>{}</Filter>\n", f.filter));
-        }
-        xml.push_str(&format!("<Type>{}</Type>\n", f.frame_type));
-        xml.push_str(&format!("<Count>{}</Count>\n", f.count));
-        xml.push_str("<Delay>0</Delay>\n");
-        if !job_name.is_empty() {
-            xml.push_str(&format!("<TargetName>{}</TargetName>\n", job_name));
-        }
-        xml.push_str("<GuideDitherPerJob>-1</GuideDitherPerJob>\n");
-        xml.push_str("<FITSDirectory></FITSDirectory>\n");
-        xml.push_str("<PlaceholderFormat>/%T/%F/Light/%T_%F_%e_secs_%04d</PlaceholderFormat>\n");
-        xml.push_str("<PlaceholderSuffix>0</PlaceholderSuffix>\n");
-        xml.push_str("<UploadMode>0</UploadMode>\n");
-        xml.push_str("<Properties/>\n");
-        xml.push_str("<Calibration><FlatSource><Type>Manual</Type></FlatSource>\
-<FlatDuration><Type>ADU</Type><Value>0</Value><Tolerance>0</Tolerance></FlatDuration>\
-<PreMountPark>false</PreMountPark><PreDomePark>false</PreDomePark></Calibration>\n");
-        xml.push_str("</Job>\n");
-    }
-    xml.push_str("</SequenceQueue>\n");
-    xml
-}
-
-/// One row in the sequence builder.
-#[derive(Clone)]
-pub(crate) struct SeqFrame {
-    pub(crate) frame_type: String,
-    pub(crate) filter:     String,
-    pub(crate) exposure:   String,
-    pub(crate) count:      String,
-}
-
-impl Default for SeqFrame {
-    fn default() -> Self {
-        Self {
-            frame_type: "Light".into(),
-            filter:     String::new(),
-            exposure:   "120".into(),
-            count:      "10".into(),
-        }
-    }
-}
-
 #[component]
 pub fn SchedulerTab(
     #[prop(into)] scheduler: Signal<SchedulerSnapshot>,
+    #[prop(into)] camera: Signal<CameraSnapshot>,
+    #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -1266,121 +1197,13 @@ pub fn SchedulerTab(
                             // ── Sequence builder ────────────────────────────
                             <div class="sched-seq-section">
                                 <span class="sched-seq-label">{move || tr().sched_seq_label}</span>
-                                <table class="sched-seq-table">
-                                    <thead>
-                                        <tr>
-                                            <th style="width:24px;">"#"</th>
-                                            <th>{move || tr().sched_seq_col_type}</th>
-                                            <th>{move || tr().sched_seq_col_filter}</th>
-                                            <th>{move || tr().sched_seq_col_exp}</th>
-                                            <th>{move || tr().sched_seq_col_count}</th>
-                                            <th></th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {move || {
-                                            seq_frames.get().into_iter().enumerate().map(|(idx, frame)| {
-                                                let ft = frame.frame_type.clone();
-                                                let fi = frame.filter.clone();
-                                                let ex = frame.exposure.clone();
-                                                let co = frame.count.clone();
-                                                view! {
-                                                    <tr>
-                                                        <td class="sched-seq-row-num">{idx + 1}</td>
-                                                        <td>
-                                                            <select
-                                                                class="sched-select"
-                                                                prop:value=ft.clone()
-                                                                on:change=move |ev| {
-                                                                    let v = ev.target().unwrap()
-                                                                        .unchecked_into::<web_sys::HtmlSelectElement>()
-                                                                        .value();
-                                                                    seq_frames.update(|fs| {
-                                                                        if let Some(f) = fs.get_mut(idx) { f.frame_type = v; }
-                                                                    });
-                                                                }>
-                                                                <option value="Light" selected={ft == "Light"}>"Light"</option>
-                                                                <option value="Dark"  selected={ft == "Dark"}>"Dark"</option>
-                                                                <option value="Bias"  selected={ft == "Bias"}>"Bias"</option>
-                                                                <option value="Flat"  selected={ft == "Flat"}>"Flat"</option>
-                                                            </select>
-                                                        </td>
-                                                        <td>
-                                                            <input
-                                                                class="sched-input"
-                                                                style="width:70px;"
-                                                                placeholder="Ha"
-                                                                prop:value=fi
-                                                                on:input=move |ev| {
-                                                                    let v = ev.target().unwrap()
-                                                                        .unchecked_into::<web_sys::HtmlInputElement>()
-                                                                        .value();
-                                                                    seq_frames.update(|fs| {
-                                                                        if let Some(f) = fs.get_mut(idx) { f.filter = v; }
-                                                                    });
-                                                                }
-                                                            />
-                                                        </td>
-                                                        <td>
-                                                            <input
-                                                                class="sched-input"
-                                                                style="width:70px;"
-                                                                prop:value=ex
-                                                                on:input=move |ev| {
-                                                                    let v = ev.target().unwrap()
-                                                                        .unchecked_into::<web_sys::HtmlInputElement>()
-                                                                        .value();
-                                                                    seq_frames.update(|fs| {
-                                                                        if let Some(f) = fs.get_mut(idx) { f.exposure = v; }
-                                                                    });
-                                                                }
-                                                            />
-                                                        </td>
-                                                        <td>
-                                                            <input
-                                                                class="sched-input"
-                                                                style="width:60px;"
-                                                                prop:value=co
-                                                                on:input=move |ev| {
-                                                                    let v = ev.target().unwrap()
-                                                                        .unchecked_into::<web_sys::HtmlInputElement>()
-                                                                        .value();
-                                                                    seq_frames.update(|fs| {
-                                                                        if let Some(f) = fs.get_mut(idx) { f.count = v; }
-                                                                    });
-                                                                }
-                                                            />
-                                                        </td>
-                                                        <td>
-                                                            <button
-                                                                class="sched-remove-btn"
-                                                                on:click=move |_| {
-                                                                    seq_frames.update(|fs| {
-                                                                        if fs.len() > 1 { fs.remove(idx); }
-                                                                    });
-                                                                }>
-                                                                "×"
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                }
-                                            }).collect::<Vec<_>>()
-                                        }}
-                                    </tbody>
-                                </table>
+                                <SequenceEditor frames=seq_frames camera=camera filter_wheel=filter_wheel />
                                 {move || {
                                     let hint = seq_total_hint.get();
                                     (!hint.is_empty()).then(|| view! {
                                         <div class="sched-seq-total">{hint}</div>
                                     })
                                 }}
-                                <button
-                                    class="sched-seq-add-btn"
-                                    on:click=move |_| {
-                                        seq_frames.update(|fs| fs.push(SeqFrame::default()));
-                                    }>
-                                    {move || tr().sched_add_frame}
-                                </button>
                             </div>
 
                             // Form error + action buttons

@@ -29,9 +29,6 @@ pub fn SkyControls(
     show_settings_section: ReadSignal<bool>,
     set_show_settings_section: WriteSignal<bool>,
     toggles: SkyToggles,
-    focal_override: ReadSignal<String>,
-    set_focal_override: WriteSignal<String>,
-    focal_length_mm: Signal<Option<f64>>,
     set_follow_mount: WriteSignal<bool>,
     #[prop(into)] site: Signal<SiteSnapshot>,
     set_site_location: Arc<dyn Fn(f64, f64) + Send + Sync>,
@@ -260,23 +257,6 @@ pub fn SkyControls(
                     </button>
                     {move || show_settings_section.get().then(|| view! {
                         <div class="flex flex-col gap-[6px] py-[6px] px-[10px]">
-                            <label class=format!("{SETTINGS_ROW} [&>input]:w-[60px]")>
-                                {move || tr().fl_mm}
-                                <input type="number"
-                                       class=CONTROLS_INPUT
-                                       prop:value=move || focal_override.get()
-                                       placeholder=move || focal_length_mm.get()
-                                           .map(|v| format!("{v:.0}")).unwrap_or_default()
-                                       on:input=move |ev| {
-                                           let val = event_target_value(&ev);
-                                           if let Some(ls) = web_sys::window()
-                                               .and_then(|w| w.local_storage().ok().flatten())
-                                           {
-                                               let _ = ls.set_item("sky_focal_override", &val);
-                                           }
-                                           set_focal_override.set(val);
-                                       } />
-                            </label>
                             <button class=CONTROLS_BTN
                                     on:click=move |_| {
                                         set_follow_mount.set(true);
