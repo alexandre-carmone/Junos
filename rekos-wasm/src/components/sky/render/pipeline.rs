@@ -13,6 +13,7 @@
 use web_sys::CanvasRenderingContext2d;
 
 use super::layer::{Frame, GpuPrepare, SkyLayer};
+use super::layers::center_crosshair::CenterCrosshairLayer;
 
 pub struct RenderPipeline {
     layers: Vec<Box<dyn SkyLayer>>,
@@ -26,9 +27,13 @@ impl RenderPipeline {
         Self { layers: Vec::new(), gpu_prepare: GpuPrepare::new() }
     }
 
-    /// Future "all layers registered" constructor. Today identical to
-    /// `empty()` — populated as layers are migrated.
-    pub fn standard() -> Self { Self::empty() }
+    /// Pipeline with the standard set of registered layers, in draw
+    /// order. Populated incrementally during the legacy-render migration.
+    pub fn standard() -> Self {
+        let mut p = Self::empty();
+        p.register(Box::new(CenterCrosshairLayer));
+        p
+    }
 
     pub fn register(&mut self, layer: Box<dyn SkyLayer>) {
         self.layers.push(layer);

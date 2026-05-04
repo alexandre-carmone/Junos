@@ -8,6 +8,7 @@
 //! shared types (`HitItem`, `MosaicPlanRender`, `SchedulerJobRender`).
 
 pub mod layer;
+pub mod layers;
 pub mod params;
 pub mod pipeline;
 
@@ -272,9 +273,9 @@ pub fn render_overlay(
     if p.solve_marker_on && !p.lines_on_gpu {
         render_solve_marker(ctx, p, &project);
     }
-    if !p.lines_on_gpu {
-        render_center_crosshair(ctx, cx, cy);
-    }
+    // Center crosshair: now drawn by `layers::center_crosshair::CenterCrosshairLayer`
+    // via the new `RenderPipeline`. In `Gpu` mode it remains in the inline
+    // `gpu_lines::build_center_crosshair` call from mod.rs.
     if p.fov_on && !p.lines_on_gpu {
         render_center_fov(ctx, p, &project, cx, cy);
         render_mount_fov(ctx, p, &project, cx, cy);
@@ -1061,22 +1062,6 @@ fn render_mount_crosshair(
 // ---------------------------------------------------------------------------
 // Center crosshair
 // ---------------------------------------------------------------------------
-
-fn render_center_crosshair(ctx: &CanvasRenderingContext2d, cx: f64, cy: f64) {
-    let arm = 18.0;
-    let gap = 6.0;
-    ctx.set_stroke_style_str("rgba(180,220,255,0.75)");
-    ctx.set_line_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(cx - arm, cy); ctx.line_to(cx - gap, cy);
-    ctx.move_to(cx + gap, cy); ctx.line_to(cx + arm, cy);
-    ctx.move_to(cx, cy - arm); ctx.line_to(cx, cy - gap);
-    ctx.move_to(cx, cy + gap); ctx.line_to(cx, cy + arm);
-    ctx.stroke();
-    ctx.begin_path();
-    let _ = ctx.arc(cx, cy, gap, 0.0, 2.0 * PI);
-    ctx.stroke();
-}
 
 // ---------------------------------------------------------------------------
 // Center FOV rectangle

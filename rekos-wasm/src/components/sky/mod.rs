@@ -48,6 +48,9 @@ use actions::SkyContextMenu;
 use controls::SkyControls;
 use info_popup::SkyInfoPopup;
 use render::{HitItem, MosaicPlanRender, MosaicTileRender, RenderParams, SchedulerJobRender};
+use render::layer::{Catalogs, Frame};
+use render::params::{LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
+use render::pipeline::RenderPipeline;
 use search::SkySearch;
 
 // ---------------------------------------------------------------------------
@@ -376,6 +379,12 @@ pub fn SkyTab(
     let gpu_renderer: Rc<RefCell<Option<SkyRenderer>>> = Rc::new(RefCell::new(None));
     let (gpu_ready, set_gpu_ready) = signal(false);
 
+    // New layered render pipeline. Built once; layers are stateless today.
+    // Runs after the legacy `render::render_overlay` each frame, so layers
+    // already migrated draw on top of the legacy overlay until step 8.
+    let render_pipeline: Rc<RefCell<RenderPipeline>> =
+        Rc::new(RefCell::new(RenderPipeline::standard()));
+
     // Nebulae image cache: URL path → HtmlImageElement (lazily loaded)
     let nebulae_images: Rc<RefCell<HashMap<String, HtmlImageElement>>> =
         Rc::new(RefCell::new(HashMap::new()));
@@ -440,6 +449,7 @@ pub fn SkyTab(
 
     // ── Render function ────────────────────────────────────────────────────
     let gpu_for_render = Rc::clone(&gpu_renderer);
+    let pipeline_for_render = Rc::clone(&render_pipeline);
     let nebulae_for_render = Rc::clone(&nebulae_images);
     let hit_items_for_render = Rc::clone(&hit_items);
     let trail_for_render = Rc::clone(&slew_trail);
@@ -1056,6 +1066,33 @@ pub fn SkyTab(
             &mut hits,
             trail_slice,
         );
+
+        // ── New layered render pipeline ───────────────────────────────
+        // Layers already migrated draw here. Each layer reads its inputs
+        // from the four grouped param structs derived from `params`.
+        let view = ViewParams::from_render_params(&params);
+        let scene = SceneParams::from_render_params(&params);
+        let toggles = LayerToggles::from_render_params(&params);
+        let state = OverlayState::from_render_params(&params);
+        let mode = PipelineMode::from_has_gpu(params.has_gpu);
+        let catalogs = Catalogs {
+            stars: cat.as_ref(),
+            dso: dso_cat.as_ref(),
+            dso_index: dso_idx.as_deref(),
+            nebulae: nb_idx.as_deref(),
+        };
+        let mut frame = Frame {
+            view: &view,
+            scene: &scene,
+            state: &state,
+            toggles: &toggles,
+            mode,
+            catalogs: &catalogs,
+            hit_items: &mut hits,
+        };
+        if let Ok(mut pipe) = pipeline_for_render.try_borrow_mut() {
+            pipe.run(&mut frame, &ctx);
+        }
     });
 
     // ── Slew-complete watcher: fire deferred align_solve when mount stops ─
