@@ -23,7 +23,7 @@ impl SkyLayer for AltAzGridLayer {
     fn name(&self) -> &'static str { "altaz_grid" }
     fn enabled(&self, f: &Frame) -> bool { f.toggles.grid_on }
     fn prepare(&mut self, _f: &mut Frame, _g: Option<&mut GpuPrepare>) {}
-    fn draw_canvas2d(&self, f: &Frame, ctx: &CanvasRenderingContext2d) {
+    fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
         let proj = project(f);
         render_altaz_grid(ctx, f.legacy_params, &proj);
@@ -34,7 +34,7 @@ pub struct MeridianLayer;
 impl SkyLayer for MeridianLayer {
     fn name(&self) -> &'static str { "meridian" }
     fn enabled(&self, f: &Frame) -> bool { f.toggles.meridian_on }
-    fn draw_canvas2d(&self, f: &Frame, ctx: &CanvasRenderingContext2d) {
+    fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
         let proj = project(f);
         render_meridian(ctx, f.legacy_params, &proj);
@@ -45,7 +45,7 @@ pub struct EqGridLayer;
 impl SkyLayer for EqGridLayer {
     fn name(&self) -> &'static str { "eq_grid" }
     fn enabled(&self, f: &Frame) -> bool { f.toggles.eq_grid_on }
-    fn draw_canvas2d(&self, f: &Frame, ctx: &CanvasRenderingContext2d) {
+    fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
         let proj = project(f);
         render_eq_grid(ctx, f.legacy_params, &proj);
@@ -56,7 +56,7 @@ pub struct EclipticLayer;
 impl SkyLayer for EclipticLayer {
     fn name(&self) -> &'static str { "ecliptic" }
     fn enabled(&self, f: &Frame) -> bool { f.toggles.ecliptic_on }
-    fn draw_canvas2d(&self, f: &Frame, ctx: &CanvasRenderingContext2d) {
+    fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
         let proj = project(f);
         render_ecliptic(ctx, f.legacy_params, &proj);

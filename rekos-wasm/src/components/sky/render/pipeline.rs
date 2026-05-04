@@ -14,6 +14,8 @@ use web_sys::CanvasRenderingContext2d;
 
 use super::layer::{Frame, GpuPrepare, SkyLayer};
 use super::layers::center_crosshair::CenterCrosshairLayer;
+use super::layers::constellation_names::ConstellationNamesLayer;
+use super::layers::dso::DsoLayer;
 use super::layers::fov_reticle::FovReticleLayer;
 use super::layers::grids::{AltAzGridLayer, EclipticLayer, EqGridLayer, MeridianLayer};
 use super::layers::ground::GroundLayer;
@@ -22,7 +24,9 @@ use super::layers::mosaic::MosaicLayer;
 use super::layers::mount_crosshair::MountCrosshairLayer;
 use super::layers::scheduler_jobs::SchedulerJobsLayer;
 use super::layers::slew_trail::SlewTrailLayer;
+use super::layers::solar_system::SolarSystemLayer;
 use super::layers::solve_marker::SolveMarkerLayer;
+use super::layers::stars::StarsLayer;
 use super::layers::zenith::ZenithLayer;
 
 pub struct RenderPipeline {
@@ -52,6 +56,15 @@ impl RenderPipeline {
         p.register(Box::new(EclipticLayer));
         // Zenith mark.
         p.register(Box::new(ZenithLayer));
+        // Stars (Canvas2D fallback paints the field; in GPU mode this layer
+        // only paints labels and feeds the named-star hit list).
+        p.register(Box::new(StarsLayer));
+        // Constellation names (GPU-mode label companion).
+        p.register(Box::new(ConstellationNamesLayer));
+        // DSO outlines, labels, nebulae thumbnails, hit items.
+        p.register(Box::new(DsoLayer));
+        // Sun / Moon / planets (skipped in GPU mode when solar_on_gpu).
+        p.register(Box::new(SolarSystemLayer));
         // Slew trail and mount crosshair.
         p.register(Box::new(SlewTrailLayer));
         p.register(Box::new(MountCrosshairLayer));
@@ -83,6 +96,19 @@ impl RenderPipeline {
     pub fn run(&mut self, frame: &mut Frame, ctx: &CanvasRenderingContext2d) {
         self.gpu_prepare.clear();
 
+        // Canvas2D clear: transparent in Gpu mode (the WebGPU canvas sits
+        // underneath), opaque dark in fallback mode. Centralised here so
+        // individual layers don't need to handle it.
+        match frame.mode {
+            super::params::PipelineMode::Gpu => {
+                ctx.clear_rect(0.0, 0.0, frame.view.wf, frame.view.hf);
+            }
+            super::params::PipelineMode::Canvas2dFallback => {
+                ctx.set_fill_style_str("#0a0a14");
+                ctx.fill_rect(0.0, 0.0, frame.view.wf, frame.view.hf);
+            }
+        }
+
         for layer in &mut self.layers {
             if !layer.enabled(frame) { continue; }
             let gpu = if frame.mode.is_gpu() { Some(&mut self.gpu_prepare) } else { None };
@@ -93,5 +119,6 @@ impl RenderPipeline {
             if !layer.enabled(frame) { continue; }
             layer.draw_canvas2d(frame, ctx);
         }
+        let _ = ctx; // silence unused on the empty-pipeline early-return path
     }
 }

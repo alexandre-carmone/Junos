@@ -194,78 +194,29 @@ pub struct RenderParams {
     pub solar_on_gpu: bool,
 }
 
-/// Render the full sky overlay on a Canvas2D context.
-///
-/// `hit_items` is appended-to during render (cleared by the caller before each
-/// frame). The mouse-up handler in `mod.rs` walks the resulting list to map a
-/// click to the nearest hovered object.
+/// Legacy entry point — emptied out as the migration moved every
+/// rendering concern into `RenderPipeline` layers (`render::layers::*`).
+/// Kept here as a no-op until step 8 deletes the call site in `mod.rs`.
+#[allow(clippy::too_many_arguments)]
 pub fn render_overlay(
-    ctx: &CanvasRenderingContext2d,
-    p: &RenderParams,
-    cat: &Option<Arc<CatalogData>>,
-    dso_cat: &Option<Arc<DsoCatalogData>>,
-    dso_index: Option<&DsoIndex>,
-    nebulae_index: Option<&NebulaeIndex>,
-    nebulae_cache: &mut HashMap<String, HtmlImageElement>,
-    hit_items: &mut Vec<HitItem>,
-    slew_trail: &[(f64, f64, f64)],
+    _ctx: &CanvasRenderingContext2d,
+    _p: &RenderParams,
+    _cat: &Option<Arc<CatalogData>>,
+    _dso_cat: &Option<Arc<DsoCatalogData>>,
+    _dso_index: Option<&DsoIndex>,
+    _nebulae_index: Option<&NebulaeIndex>,
+    _nebulae_cache: &mut HashMap<String, HtmlImageElement>,
+    _hit_items: &mut Vec<HitItem>,
+    _slew_trail: &[(f64, f64, f64)],
 ) {
-    let cx = p.wf / 2.0;
-    let cy = p.hf / 2.0;
-    let scale = p.hf.min(p.wf) / 2.0;
-
-    let project = |alt: f64, az: f64| -> Option<(f64, f64)> {
-        astro::project(alt, az, p.c_alt, p.c_az, p.fov)
-            .map(|(x, y)| (cx + x * scale, cy - y * scale))
-    };
-
-    if p.has_gpu {
-        // Clear overlay (transparent — shows GPU canvas underneath)
-        ctx.clear_rect(0.0, 0.0, p.wf, p.hf);
-    } else {
-        // Full Canvas2D fallback rendering
-        ctx.set_fill_style_str("#0a0a14");
-        ctx.fill_rect(0.0, 0.0, p.wf, p.hf);
-        render_fallback_stars(ctx, p, cat, &project, cx, cy, scale, hit_items);
-    }
-
-    // Everything below renders on the Canvas2D overlay (both GPU and fallback).
-    // When `lines_on_gpu` is true, line geometry (horizon arc, grids,
-    // meridian, ecliptic, zenith circle) is drawn by the GPU `LineLayer`;
-    // only the text labels (cardinals, zenith mark) remain on Canvas2D.
-    // Ground, line grids, zenith mark — now drawn by the new
-    // `RenderPipeline` layers (see `render::layers::*`). In `Gpu` mode
-    // the GPU `LineLayer` continues to draw line geometry via the
-    // inline `gpu_lines::*` calls in mod.rs.
-    if p.has_gpu && p.names_on && p.stars_on {
-        render_star_names_gpu(ctx, p, cat, &project, hit_items);
-    } else if p.has_gpu && p.stars_on && !p.picking_on_cpu {
-        // Stars are drawn by the GPU but we still need named-star hit items.
-        push_star_hit_items(p, cat, &project, hit_items);
-    }
-    if p.has_gpu && p.const_on && p.con_names_on {
-        render_constellation_names_gpu(ctx, p, cat, &project);
-    }
-    if p.dso_on {
-        render_dso(ctx, p, dso_cat, dso_index, &project, scale, nebulae_index, nebulae_cache, hit_items);
-    }
-    if p.solar_system_on && !p.solar_on_gpu {
-        render_solar_system(ctx, p, &project, hit_items);
-    }
-    // Slew trail, mount crosshair, solve marker, center crosshair, and
-    // FOV reticles all moved to `RenderPipeline` layers (see
-    // `render::layers::*`). In `Gpu` mode the GPU `LineLayer` keeps
-    // drawing them via inline `gpu_lines::build_*` calls in mod.rs.
-    let _ = slew_trail; // trail data is consumed by `SlewTrailLayer`
-    // Mosaic plans, scheduler jobs, info overlay — moved to the new
-    // `RenderPipeline` layers.
+    // All rendering now flows through `RenderPipeline::run` in `mod.rs`.
 }
 
 // ---------------------------------------------------------------------------
 // Fallback CPU rendering (stars + constellation lines + names)
 // ---------------------------------------------------------------------------
 
-fn render_fallback_stars(
+pub(super) fn render_fallback_stars(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     cat: &Option<Arc<CatalogData>>,
@@ -581,7 +532,7 @@ pub(super) fn render_eq_grid(
 // Star names (GPU path — project only named bright stars on CPU)
 // ---------------------------------------------------------------------------
 
-fn render_star_names_gpu(
+pub(super) fn render_star_names_gpu(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     cat: &Option<Arc<CatalogData>>,
@@ -633,7 +584,7 @@ fn render_star_names_gpu(
 
 /// Push hit items for named stars *without* drawing labels (GPU path when
 /// the user turned labels off but still expects stars to be clickable).
-fn push_star_hit_items(
+pub(super) fn push_star_hit_items(
     p: &RenderParams,
     cat: &Option<Arc<CatalogData>>,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -677,7 +628,7 @@ fn push_star_hit_items(
 // Constellation names (GPU path)
 // ---------------------------------------------------------------------------
 
-fn render_constellation_names_gpu(
+pub(super) fn render_constellation_names_gpu(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     cat: &Option<Arc<CatalogData>>,
@@ -712,7 +663,7 @@ fn render_constellation_names_gpu(
 // Deep-sky objects
 // ---------------------------------------------------------------------------
 
-fn render_dso(
+pub(super) fn render_dso(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     dso_cat: &Option<Arc<DsoCatalogData>>,
@@ -1571,7 +1522,7 @@ pub(super) fn render_solve_marker(
 // Solar system — Sun, Moon, planets via the ephemeris module.
 // ---------------------------------------------------------------------------
 
-fn render_solar_system(
+pub(super) fn render_solar_system(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,

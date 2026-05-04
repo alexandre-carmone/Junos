@@ -1089,6 +1089,7 @@ pub fn SkyTab(
             mode,
             catalogs: &catalogs,
             hit_items: &mut hits,
+            nebulae_cache: &mut nebulae_cache,
             slew_trail: trail_slice,
             legacy_params: &params,
         };

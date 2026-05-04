@@ -11,7 +11,7 @@ pub struct GroundLayer;
 
 impl SkyLayer for GroundLayer {
     fn name(&self) -> &'static str { "ground" }
-    fn draw_canvas2d(&self, f: &Frame, ctx: &CanvasRenderingContext2d) {
+    fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         let proj = |alt: f64, az: f64| f.project(alt, az);
         render_ground(ctx, f.legacy_params, &proj);
     }

@@ -3,6 +3,8 @@
 //! `super::mod` (`render_*`).
 
 pub mod center_crosshair;
+pub mod constellation_names;
+pub mod dso;
 pub mod fov_reticle;
 pub mod grids;
 pub mod ground;
@@ -11,5 +13,7 @@ pub mod mosaic;
 pub mod mount_crosshair;
 pub mod scheduler_jobs;
 pub mod slew_trail;
+pub mod solar_system;
 pub mod solve_marker;
+pub mod stars;
 pub mod zenith;

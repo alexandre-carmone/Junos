@@ -15,7 +15,7 @@ pub struct FovReticleLayer;
 impl SkyLayer for FovReticleLayer {
     fn name(&self) -> &'static str { "fov_reticle" }
     fn enabled(&self, f: &Frame) -> bool { f.toggles.fov_on }
-    fn draw_canvas2d(&self, f: &Frame, ctx: &CanvasRenderingContext2d) {
+    fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
         let proj = |alt: f64, az: f64| f.project(alt, az);
         render_center_fov(ctx, f.legacy_params, &proj, f.view.cx, f.view.cy);

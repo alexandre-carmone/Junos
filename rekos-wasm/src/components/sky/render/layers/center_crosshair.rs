@@ -19,7 +19,7 @@ impl SkyLayer for CenterCrosshairLayer {
 
     fn prepare(&mut self, _f: &mut Frame, _gpu: Option<&mut GpuPrepare>) {}
 
-    fn draw_canvas2d(&self, f: &Frame, ctx: &CanvasRenderingContext2d) {
+    fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
         let cx = f.view.cx;
         let cy = f.view.cy;

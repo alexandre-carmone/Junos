@@ -13,7 +13,7 @@ pub struct MountCrosshairLayer;
 
 impl SkyLayer for MountCrosshairLayer {
     fn name(&self) -> &'static str { "mount_crosshair" }
-    fn draw_canvas2d(&self, f: &Frame, ctx: &CanvasRenderingContext2d) {
+    fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
         let proj = |alt: f64, az: f64| f.project(alt, az);
         render_mount_crosshair(ctx, f.legacy_params, &proj);

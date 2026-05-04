@@ -6,9 +6,10 @@
 //! whether a layer's GPU prepare or its Canvas2D fallback is the source of
 //! truth this frame.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use web_sys::CanvasRenderingContext2d;
+use web_sys::{CanvasRenderingContext2d, HtmlImageElement};
 
 use crate::catalog::CatalogData;
 use crate::dso_catalog::DsoCatalogData;
@@ -77,6 +78,9 @@ pub struct Frame<'a> {
     pub mode:     PipelineMode,
     pub catalogs: &'a Catalogs<'a>,
     pub hit_items: &'a mut Vec<HitItem>,
+    /// Lazy-loaded nebula thumbnails, keyed by URL path. The DSO layer
+    /// inserts on first sight; later frames just reuse the cached image.
+    pub nebulae_cache: &'a mut HashMap<String, HtmlImageElement>,
     /// Slew trail samples (JD, RA deg, Dec deg) for the trail layer.
     pub slew_trail: &'a [(f64, f64, f64)],
     /// Transitional: borrow of the legacy `RenderParams` god-struct so
@@ -112,5 +116,9 @@ pub trait SkyLayer {
 
     /// Paint the Canvas2D overlay. In `Gpu` mode, GPU-capable layers
     /// no-op here. Always-Canvas2D layers ignore `f.mode`. Default: no-op.
-    fn draw_canvas2d(&self, f: &Frame, ctx: &CanvasRenderingContext2d) {}
+    ///
+    /// Takes `&mut Frame` so layers can append to `hit_items` /
+    /// `nebulae_cache`. Layers that don't mutate frame state should still
+    /// match this signature (just don't touch the mut fields).
+    fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {}
 }
