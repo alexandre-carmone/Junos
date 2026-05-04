@@ -1089,6 +1089,8 @@ pub fn SkyTab(
             mode,
             catalogs: &catalogs,
             hit_items: &mut hits,
+            slew_trail: trail_slice,
+            legacy_params: &params,
         };
         if let Ok(mut pipe) = pipeline_for_render.try_borrow_mut() {
             pipe.run(&mut frame, &ctx);

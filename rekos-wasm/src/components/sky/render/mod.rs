@@ -234,18 +234,10 @@ pub fn render_overlay(
     // meridian, ecliptic, zenith circle) is drawn by the GPU `LineLayer`;
     // only the text labels (cardinals, zenith mark) remain on Canvas2D.
     render_ground(ctx, p, &project);
-    if p.grid_on && !p.lines_on_gpu {
-        render_altaz_grid(ctx, p, &project);
-    }
-    if p.meridian_on && !p.lines_on_gpu {
-        render_meridian(ctx, p, &project);
-    }
-    if p.eq_grid_on && !p.lines_on_gpu {
-        render_eq_grid(ctx, p, &project);
-    }
-    if p.ecliptic_on && !p.lines_on_gpu {
-        render_ecliptic(ctx, p, &project);
-    }
+    // Line grids (alt-az / meridian / equatorial / ecliptic) now drawn by
+    // dedicated layers in the new render pipeline. In `Gpu` mode the GPU
+    // `LineLayer` continues to draw them via the inline `gpu_lines::*`
+    // calls in mod.rs.
     if p.zenith_on {
         render_zenith(ctx, p, &project);
     }
@@ -264,22 +256,11 @@ pub fn render_overlay(
     if p.solar_system_on && !p.solar_on_gpu {
         render_solar_system(ctx, p, &project, hit_items);
     }
-    if p.slew_trail_on && !p.lines_on_gpu {
-        render_slew_trail(ctx, p, &project, slew_trail);
-    }
-    if !p.lines_on_gpu {
-        render_mount_crosshair(ctx, p, &project);
-    }
-    if p.solve_marker_on && !p.lines_on_gpu {
-        render_solve_marker(ctx, p, &project);
-    }
-    // Center crosshair: now drawn by `layers::center_crosshair::CenterCrosshairLayer`
-    // via the new `RenderPipeline`. In `Gpu` mode it remains in the inline
-    // `gpu_lines::build_center_crosshair` call from mod.rs.
-    if p.fov_on && !p.lines_on_gpu {
-        render_center_fov(ctx, p, &project, cx, cy);
-        render_mount_fov(ctx, p, &project, cx, cy);
-    }
+    // Slew trail, mount crosshair, solve marker, center crosshair, and
+    // FOV reticles all moved to `RenderPipeline` layers (see
+    // `render::layers::*`). In `Gpu` mode the GPU `LineLayer` keeps
+    // drawing them via inline `gpu_lines::build_*` calls in mod.rs.
+    let _ = slew_trail; // kept until the slew-trail callers also migrate
     if let Some(ref plan) = p.mosaic_kstars.clone() {
         render_mosaic_plan(ctx, p, plan, &project, false);
     }
@@ -480,7 +461,7 @@ fn render_ground(
 // Alt/Az grid
 // ---------------------------------------------------------------------------
 
-fn render_altaz_grid(
+pub(super) fn render_altaz_grid(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -517,7 +498,7 @@ fn render_altaz_grid(
     ctx.stroke();
 }
 
-fn render_meridian(
+pub(super) fn render_meridian(
     ctx: &CanvasRenderingContext2d,
     _p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -544,7 +525,7 @@ fn render_meridian(
 // Equatorial grid
 // ---------------------------------------------------------------------------
 
-fn render_eq_grid(
+pub(super) fn render_eq_grid(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -1032,7 +1013,7 @@ fn render_dso(
 // Mount crosshair
 // ---------------------------------------------------------------------------
 
-fn render_mount_crosshair(
+pub(super) fn render_mount_crosshair(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -1067,7 +1048,7 @@ fn render_mount_crosshair(
 // Center FOV rectangle
 // ---------------------------------------------------------------------------
 
-fn render_center_fov(
+pub(super) fn render_center_fov(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -1136,7 +1117,7 @@ fn render_center_fov(
 // Mount FOV rectangle
 // ---------------------------------------------------------------------------
 
-fn render_mount_fov(
+pub(super) fn render_mount_fov(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -1429,7 +1410,7 @@ fn render_info_overlay(ctx: &CanvasRenderingContext2d, p: &RenderParams) {
 // Ecliptic + zenith
 // ---------------------------------------------------------------------------
 
-fn render_ecliptic(
+pub(super) fn render_ecliptic(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -1492,7 +1473,7 @@ fn render_zenith(
 // Slew trail — fading polyline of recent mount positions.
 // ---------------------------------------------------------------------------
 
-fn render_slew_trail(
+pub(super) fn render_slew_trail(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -1527,7 +1508,7 @@ fn render_slew_trail(
 // Plate-solve result marker
 // ---------------------------------------------------------------------------
 
-fn render_solve_marker(
+pub(super) fn render_solve_marker(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,

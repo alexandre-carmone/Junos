@@ -14,6 +14,11 @@ use web_sys::CanvasRenderingContext2d;
 
 use super::layer::{Frame, GpuPrepare, SkyLayer};
 use super::layers::center_crosshair::CenterCrosshairLayer;
+use super::layers::fov_reticle::FovReticleLayer;
+use super::layers::grids::{AltAzGridLayer, EclipticLayer, EqGridLayer, MeridianLayer};
+use super::layers::mount_crosshair::MountCrosshairLayer;
+use super::layers::slew_trail::SlewTrailLayer;
+use super::layers::solve_marker::SolveMarkerLayer;
 
 pub struct RenderPipeline {
     layers: Vec<Box<dyn SkyLayer>>,
@@ -29,9 +34,22 @@ impl RenderPipeline {
 
     /// Pipeline with the standard set of registered layers, in draw
     /// order. Populated incrementally during the legacy-render migration.
+    /// The order mirrors the legacy `render_overlay` call sequence so
+    /// fallback-mode visuals stack identically.
     pub fn standard() -> Self {
         let mut p = Self::empty();
+        // Line grids (alt-az / meridian / equatorial / ecliptic).
+        p.register(Box::new(AltAzGridLayer));
+        p.register(Box::new(MeridianLayer));
+        p.register(Box::new(EqGridLayer));
+        p.register(Box::new(EclipticLayer));
+        // Slew trail and mount crosshair.
+        p.register(Box::new(SlewTrailLayer));
+        p.register(Box::new(MountCrosshairLayer));
+        // Plate-solve marker, then the center crosshair, then FOV reticles.
+        p.register(Box::new(SolveMarkerLayer));
         p.register(Box::new(CenterCrosshairLayer));
+        p.register(Box::new(FovReticleLayer));
         p
     }
 

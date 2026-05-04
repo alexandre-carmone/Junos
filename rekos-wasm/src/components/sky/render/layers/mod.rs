@@ -3,3 +3,8 @@
 //! `super::mod` (`render_*`).
 
 pub mod center_crosshair;
+pub mod fov_reticle;
+pub mod grids;
+pub mod mount_crosshair;
+pub mod slew_trail;
+pub mod solve_marker;
