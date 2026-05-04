@@ -233,14 +233,10 @@ pub fn render_overlay(
     // When `lines_on_gpu` is true, line geometry (horizon arc, grids,
     // meridian, ecliptic, zenith circle) is drawn by the GPU `LineLayer`;
     // only the text labels (cardinals, zenith mark) remain on Canvas2D.
-    render_ground(ctx, p, &project);
-    // Line grids (alt-az / meridian / equatorial / ecliptic) now drawn by
-    // dedicated layers in the new render pipeline. In `Gpu` mode the GPU
-    // `LineLayer` continues to draw them via the inline `gpu_lines::*`
-    // calls in mod.rs.
-    if p.zenith_on {
-        render_zenith(ctx, p, &project);
-    }
+    // Ground, line grids, zenith mark — now drawn by the new
+    // `RenderPipeline` layers (see `render::layers::*`). In `Gpu` mode
+    // the GPU `LineLayer` continues to draw line geometry via the
+    // inline `gpu_lines::*` calls in mod.rs.
     if p.has_gpu && p.names_on && p.stars_on {
         render_star_names_gpu(ctx, p, cat, &project, hit_items);
     } else if p.has_gpu && p.stars_on && !p.picking_on_cpu {
@@ -260,19 +256,9 @@ pub fn render_overlay(
     // FOV reticles all moved to `RenderPipeline` layers (see
     // `render::layers::*`). In `Gpu` mode the GPU `LineLayer` keeps
     // drawing them via inline `gpu_lines::build_*` calls in mod.rs.
-    let _ = slew_trail; // kept until the slew-trail callers also migrate
-    if let Some(ref plan) = p.mosaic_kstars.clone() {
-        render_mosaic_plan(ctx, p, plan, &project, false);
-    }
-    if let Some(ref plan) = p.mosaic_plan.clone() {
-        render_mosaic_plan(ctx, p, plan, &project, true);
-    }
-    if p.scheduler_jobs_on {
-        render_scheduler_jobs(ctx, p, &project);
-    }
-    if !p.hud_on_dom {
-        render_info_overlay(ctx, p);
-    }
+    let _ = slew_trail; // trail data is consumed by `SlewTrailLayer`
+    // Mosaic plans, scheduler jobs, info overlay — moved to the new
+    // `RenderPipeline` layers.
 }
 
 // ---------------------------------------------------------------------------
@@ -415,7 +401,7 @@ fn render_fallback_stars(
 // Ground + horizon
 // ---------------------------------------------------------------------------
 
-fn render_ground(
+pub(super) fn render_ground(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -1267,7 +1253,7 @@ fn draw_fov_box(
 // Scheduler job FOV overlay
 // ---------------------------------------------------------------------------
 
-fn render_scheduler_jobs(
+pub(super) fn render_scheduler_jobs(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
@@ -1300,7 +1286,7 @@ fn render_scheduler_jobs(
 // Mosaic tile grid rendering (shared for KStars mosaic and in-app planner)
 // ---------------------------------------------------------------------------
 
-fn render_mosaic_plan(
+pub(super) fn render_mosaic_plan(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     plan: &MosaicPlanRender,
@@ -1351,7 +1337,7 @@ fn render_mosaic_plan(
 // Info overlay (bottom-left)
 // ---------------------------------------------------------------------------
 
-fn render_info_overlay(ctx: &CanvasRenderingContext2d, p: &RenderParams) {
+pub(super) fn render_info_overlay(ctx: &CanvasRenderingContext2d, p: &RenderParams) {
     ctx.set_fill_style_str("rgba(10,10,20,0.75)");
     ctx.fill_rect(0.0, p.hf - 128.0, 360.0, 128.0);
     ctx.set_fill_style_str("#aabbcc");
@@ -1447,7 +1433,7 @@ pub(super) fn render_ecliptic(
     ctx.set_line_dash(&js_sys::Array::new()).unwrap();
 }
 
-fn render_zenith(
+pub(super) fn render_zenith(
     ctx: &CanvasRenderingContext2d,
     p: &RenderParams,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,

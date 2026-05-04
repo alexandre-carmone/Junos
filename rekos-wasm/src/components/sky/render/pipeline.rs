@@ -16,9 +16,14 @@ use super::layer::{Frame, GpuPrepare, SkyLayer};
 use super::layers::center_crosshair::CenterCrosshairLayer;
 use super::layers::fov_reticle::FovReticleLayer;
 use super::layers::grids::{AltAzGridLayer, EclipticLayer, EqGridLayer, MeridianLayer};
+use super::layers::ground::GroundLayer;
+use super::layers::info_overlay::InfoOverlayLayer;
+use super::layers::mosaic::MosaicLayer;
 use super::layers::mount_crosshair::MountCrosshairLayer;
+use super::layers::scheduler_jobs::SchedulerJobsLayer;
 use super::layers::slew_trail::SlewTrailLayer;
 use super::layers::solve_marker::SolveMarkerLayer;
+use super::layers::zenith::ZenithLayer;
 
 pub struct RenderPipeline {
     layers: Vec<Box<dyn SkyLayer>>,
@@ -38,11 +43,15 @@ impl RenderPipeline {
     /// fallback-mode visuals stack identically.
     pub fn standard() -> Self {
         let mut p = Self::empty();
+        // Ground first, behind everything else.
+        p.register(Box::new(GroundLayer));
         // Line grids (alt-az / meridian / equatorial / ecliptic).
         p.register(Box::new(AltAzGridLayer));
         p.register(Box::new(MeridianLayer));
         p.register(Box::new(EqGridLayer));
         p.register(Box::new(EclipticLayer));
+        // Zenith mark.
+        p.register(Box::new(ZenithLayer));
         // Slew trail and mount crosshair.
         p.register(Box::new(SlewTrailLayer));
         p.register(Box::new(MountCrosshairLayer));
@@ -50,6 +59,11 @@ impl RenderPipeline {
         p.register(Box::new(SolveMarkerLayer));
         p.register(Box::new(CenterCrosshairLayer));
         p.register(Box::new(FovReticleLayer));
+        // Mosaic plans + scheduler jobs.
+        p.register(Box::new(MosaicLayer));
+        p.register(Box::new(SchedulerJobsLayer));
+        // Bottom-left info strip last so it sits on top.
+        p.register(Box::new(InfoOverlayLayer));
         p
     }
 
