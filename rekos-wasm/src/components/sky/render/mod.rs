@@ -1,4 +1,22 @@
 //! Canvas2D rendering logic for the sky map overlay.
+//!
+//! Note: this file is the legacy free-fn surface. New code lives under
+//! `params.rs` (and forthcoming `layer.rs` / `pipeline.rs`). During the
+//! pipeline refactor both coexist: layers consume the grouped param
+//! structs, while the legacy `render_overlay` keeps consuming
+//! `RenderParams`. Once every layer is migrated, this file shrinks to the
+//! shared types (`HitItem`, `MosaicPlanRender`, `SchedulerJobRender`).
+
+pub mod layer;
+pub mod params;
+pub mod pipeline;
+
+#[allow(unused_imports)]
+pub use layer::{Catalogs, Frame, GpuPrepare, SkyLayer};
+#[allow(unused_imports)]
+pub use params::{LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
+#[allow(unused_imports)]
+pub use pipeline::RenderPipeline;
 
 use std::collections::HashMap;
 use std::f64::consts::PI;
