@@ -699,7 +699,8 @@ pub fn SkyTab(
                         }
                     }
 
-                    renderer.upload_lines(&segs);
+                    // segs / dso_items / text_items are bundled into a
+                    // GpuPrepare and submitted in one call below.
 
                     // ── GPU text: cardinals + zenith mark for now.
                     // Other labels (star/constellation/DSO/FOV) stay on
@@ -819,10 +820,14 @@ pub fn SkyTab(
                             &mut text_items,
                         );
                     }
-                    renderer.upload_dso(&dso_items);
-                    renderer.upload_text(&text_items);
-
-                    renderer.render_frame(&uniforms, stars_on, const_on);
+                    let prep = render::layer::GpuPrepare {
+                        lines: segs,
+                        dso: dso_items,
+                        text: text_items,
+                        show_stars: stars_on,
+                        show_constellations: const_on,
+                    };
+                    renderer.submit_frame(&prep, &uniforms);
                 }
             }
         }

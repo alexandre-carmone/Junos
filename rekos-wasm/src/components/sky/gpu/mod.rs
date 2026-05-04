@@ -474,7 +474,34 @@ impl SkyRenderer {
         self.surface.configure(&self.device, &self.surface_config);
     }
 
+    /// Upload the supplied per-frame instance buffers (lines / dso / text)
+    /// and run the compute + render passes. The single-call replacement
+    /// for the previous `upload_lines` + `upload_dso` + `upload_text` +
+    /// `render_frame(...)` sequence — callers now hand in a populated
+    /// `GpuPrepare` instead of juggling four entry points.
+    pub fn submit_frame(
+        &mut self,
+        prep: &super::render::layer::GpuPrepare,
+        uniforms: &Uniforms,
+    ) {
+        self.upload_lines(&prep.lines);
+        self.upload_dso(&prep.dso);
+        self.upload_text(&prep.text);
+        self.render_inner(uniforms, prep.show_stars, prep.show_constellations);
+    }
+
+    /// Legacy entry point — kept as a thin wrapper around `render_inner`
+    /// so existing call sites keep working until the migration finishes.
     pub fn render_frame(
+        &self,
+        uniforms: &Uniforms,
+        show_stars: bool,
+        show_constellations: bool,
+    ) {
+        self.render_inner(uniforms, show_stars, show_constellations);
+    }
+
+    fn render_inner(
         &self,
         uniforms: &Uniforms,
         show_stars: bool,
