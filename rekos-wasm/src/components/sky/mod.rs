@@ -47,7 +47,10 @@ use crate::nebulae::NebulaeIndex;
 use actions::SkyContextMenu;
 use controls::SkyControls;
 use info_popup::SkyInfoPopup;
-use render::{HitItem, MosaicPlanRender, MosaicTileRender, RenderParams, SchedulerJobRender};
+use render::{HitItem, MosaicPlanRender, MosaicTileRender, SchedulerJobRender};
+use render::layer::{Catalogs, Frame};
+use render::params::{LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
+use render::pipeline::RenderPipeline;
 use search::SkySearch;
 
 // ---------------------------------------------------------------------------
@@ -376,6 +379,12 @@ pub fn SkyTab(
     let gpu_renderer: Rc<RefCell<Option<SkyRenderer>>> = Rc::new(RefCell::new(None));
     let (gpu_ready, set_gpu_ready) = signal(false);
 
+    // New layered render pipeline. Built once; layers are stateless today.
+    // Runs after the legacy `render::render_overlay` each frame, so layers
+    // already migrated draw on top of the legacy overlay until step 8.
+    let render_pipeline: Rc<RefCell<RenderPipeline>> =
+        Rc::new(RefCell::new(RenderPipeline::standard()));
+
     // Nebulae image cache: URL path → HtmlImageElement (lazily loaded)
     let nebulae_images: Rc<RefCell<HashMap<String, HtmlImageElement>>> =
         Rc::new(RefCell::new(HashMap::new()));
@@ -440,6 +449,7 @@ pub fn SkyTab(
 
     // ── Render function ────────────────────────────────────────────────────
     let gpu_for_render = Rc::clone(&gpu_renderer);
+    let pipeline_for_render = Rc::clone(&render_pipeline);
     let nebulae_for_render = Rc::clone(&nebulae_images);
     let hit_items_for_render = Rc::clone(&hit_items);
     let trail_for_render = Rc::clone(&slew_trail);
@@ -689,7 +699,8 @@ pub fn SkyTab(
                         }
                     }
 
-                    renderer.upload_lines(&segs);
+                    // segs / dso_items / text_items are bundled into a
+                    // GpuPrepare and submitted in one call below.
 
                     // ── GPU text: cardinals + zenith mark for now.
                     // Other labels (star/constellation/DSO/FOV) stay on
@@ -809,10 +820,14 @@ pub fn SkyTab(
                             &mut text_items,
                         );
                     }
-                    renderer.upload_dso(&dso_items);
-                    renderer.upload_text(&text_items);
-
-                    renderer.render_frame(&uniforms, stars_on, const_on);
+                    let prep = render::layer::GpuPrepare {
+                        lines: segs,
+                        dso: dso_items,
+                        text: text_items,
+                        show_stars: stars_on,
+                        show_constellations: const_on,
+                    };
+                    renderer.submit_frame(&prep, &uniforms);
                 }
             }
         }
@@ -945,71 +960,6 @@ pub fn SkyTab(
             })
         })();
 
-        // ── Overlay rendering (delegated to render module) ─────────────
-        let params = RenderParams {
-            wf,
-            hf,
-            c_alt,
-            c_az,
-            fov,
-            lst,
-            latitude: s.latitude,
-            sin_lat,
-            cos_lat,
-            mag_limit,
-            has_gpu,
-            stars_on,
-            names_on,
-            const_on,
-            con_names_on,
-            grid_on,
-            eq_grid_on,
-            meridian_on,
-            ecliptic_on,
-            zenith_on,
-            solar_system_on,
-            solve_marker_on,
-            slew_trail_on,
-            fov_on,
-            dso_on,
-            dso_gx,
-            dso_oc,
-            dso_gc,
-            dso_nb,
-            dso_pn,
-            dso_snr,
-            dso_gal,
-            dso_mag,
-            fl,
-            mount_connected: m.connected,
-            mount_ra_h: m.ra_h,
-            mount_dec_deg: m.dec_deg,
-            cam_pixel_size_um: cam.pixel_size_um,
-            cam_sensor_width: cam.sensor_width,
-            cam_sensor_height: cam.sensor_height,
-            rotation_deg: sv.rotation_deg,
-            solve_ra_jnow_deg: sv.ra_jnow_deg,
-            solve_dec_jnow_deg: sv.dec_jnow_deg,
-            solve_pixscale_arcsec: sv.pixscale_arcsec,
-            solve_age_ms: sv.solved_at_ms.map(|t| js_sys::Date::now() - t),
-            cursor_altaz,
-            cursor_radec,
-            t_off,
-            jd,
-            cur_lang,
-            scheduler_jobs_on,
-            scheduler_jobs: scheduler_jobs_data,
-            mosaic_kstars: mosaic_kstars_render,
-            mosaic_plan: mosaic_plan_render,
-            is_mobile: mobile_profile.is_mobile,
-            lines_on_gpu: has_gpu,
-            text_on_gpu: has_gpu,
-            dso_on_gpu: has_gpu,
-            hud_on_dom: has_gpu,
-            picking_on_cpu: has_gpu,
-            solar_on_gpu: has_gpu,
-        };
-
         let nb_idx = nebulae_index.get_untracked();
         let mut nebulae_cache = nebulae_for_render.borrow_mut();
         let mut hits = hit_items_for_render.borrow_mut();
@@ -1048,14 +998,69 @@ pub fn SkyTab(
         // trail caps at 120 entries, so the rotation is essentially free.
         let mut trail = trail_for_render.borrow_mut();
         let trail_slice = trail.make_contiguous();
-        render::render_overlay(
-            &ctx, &params, &cat, &dso_cat,
-            dso_idx.as_deref(),
-            nb_idx.as_deref(),
-            &mut nebulae_cache,
-            &mut hits,
-            trail_slice,
-        );
+
+        // ── Layered render pipeline ───────────────────────────────────
+        // All Canvas2D rendering flows through `RenderPipeline::run`,
+        // which drives a `Vec<Box<dyn SkyLayer>>` in legacy draw order.
+        // The four grouped param structs are populated directly from the
+        // local signal/state values — no intermediate god-struct.
+        let cx = wf / 2.0;
+        let cy = hf / 2.0;
+        let scale = hf.min(wf) / 2.0;
+        let view = ViewParams { wf, hf, c_alt, c_az, fov, cx, cy, scale };
+        let scene = SceneParams {
+            jd, lst, latitude: s.latitude,
+            sin_lat, cos_lat, t_off,
+            mag_limit, cur_lang,
+            is_mobile: mobile_profile.is_mobile,
+        };
+        let toggles = LayerToggles {
+            stars_on, names_on, const_on, con_names_on,
+            grid_on, eq_grid_on, meridian_on, ecliptic_on, zenith_on,
+            solar_system_on, solve_marker_on, slew_trail_on, fov_on,
+            dso_on, scheduler_jobs_on,
+        };
+        let state = OverlayState {
+            mount_connected: m.connected,
+            mount_ra_h: m.ra_h,
+            mount_dec_deg: m.dec_deg,
+            fl,
+            cam_pixel_size_um: cam.pixel_size_um,
+            cam_sensor_width:  cam.sensor_width,
+            cam_sensor_height: cam.sensor_height,
+            rotation_deg: sv.rotation_deg,
+            solve_ra_jnow_deg: sv.ra_jnow_deg,
+            solve_dec_jnow_deg: sv.dec_jnow_deg,
+            solve_pixscale_arcsec: sv.pixscale_arcsec,
+            solve_age_ms: sv.solved_at_ms.map(|t| js_sys::Date::now() - t),
+            cursor_altaz,
+            cursor_radec,
+            scheduler_jobs: scheduler_jobs_data,
+            mosaic_kstars: mosaic_kstars_render,
+            mosaic_plan:   mosaic_plan_render,
+            dso_gx, dso_oc, dso_gc, dso_nb, dso_pn, dso_snr, dso_gal, dso_mag,
+        };
+        let mode = PipelineMode::from_has_gpu(has_gpu);
+        let catalogs = Catalogs {
+            stars: cat.as_ref(),
+            dso: dso_cat.as_ref(),
+            dso_index: dso_idx.as_deref(),
+            nebulae: nb_idx.as_deref(),
+        };
+        let mut frame = Frame {
+            view: &view,
+            scene: &scene,
+            state: &state,
+            toggles: &toggles,
+            mode,
+            catalogs: &catalogs,
+            hit_items: &mut hits,
+            nebulae_cache: &mut nebulae_cache,
+            slew_trail: trail_slice,
+        };
+        if let Ok(mut pipe) = pipeline_for_render.try_borrow_mut() {
+            pipe.run(&mut frame, &ctx);
+        }
     });
 
     // ── Slew-complete watcher: fire deferred align_solve when mount stops ─
