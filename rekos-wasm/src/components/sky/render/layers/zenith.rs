@@ -12,7 +12,8 @@ impl SkyLayer for ZenithLayer {
     fn name(&self) -> &'static str { "zenith" }
     fn enabled(&self, f: &Frame) -> bool { f.toggles.zenith_on }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
-        let proj = |alt: f64, az: f64| f.project(alt, az);
-        render_zenith(ctx, f.legacy_params, &proj);
+        let view = *f.view;
+        let proj = |alt: f64, az: f64| super::super::layer::project_with(view, alt, az);
+        render_zenith(ctx, f, &proj);
     }
 }

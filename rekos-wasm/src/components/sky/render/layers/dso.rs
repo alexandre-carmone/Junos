@@ -31,16 +31,6 @@ impl SkyLayer for DsoLayer {
         let dso_cat_owned = f.catalogs.dso.cloned();
         let dso_index = f.catalogs.dso_index;
         let nebulae_index = f.catalogs.nebulae;
-        render_dso(
-            ctx,
-            f.legacy_params,
-            &dso_cat_owned,
-            dso_index,
-            &proj,
-            scale,
-            nebulae_index,
-            f.nebulae_cache,
-            f.hit_items,
-        );
+        render_dso(ctx, f, &dso_cat_owned, dso_index, &proj, scale, nebulae_index);
     }
 }

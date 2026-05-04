@@ -19,7 +19,7 @@ use super::super::dso_index::DsoIndex;
 use super::super::gpu::layers::dso::DsoInstance;
 use super::super::gpu::layers::lines::LineSegment;
 use super::super::gpu::text::TextInstance;
-use super::{HitItem, LayerToggles, OverlayState, PipelineMode, RenderParams, SceneParams, ViewParams};
+use super::{HitItem, LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
 
 /// Borrowed catalog handles. Layers don't own catalog state — they read it.
 pub struct Catalogs<'a> {
@@ -83,20 +83,22 @@ pub struct Frame<'a> {
     pub nebulae_cache: &'a mut HashMap<String, HtmlImageElement>,
     /// Slew trail samples (JD, RA deg, Dec deg) for the trail layer.
     pub slew_trail: &'a [(f64, f64, f64)],
-    /// Transitional: borrow of the legacy `RenderParams` god-struct so
-    /// migrated layers can call the existing `render::render_*` free fns
-    /// without a wide signature change. Removed in step 8 of the refactor.
-    pub legacy_params: &'a RenderParams,
 }
 
 impl<'a> Frame<'a> {
     /// Equirectangular projection: equatorial plate-carrée → screen px.
     /// Centralises the math the legacy free fns inline as a closure.
     pub fn project(&self, alt: f64, az: f64) -> Option<(f64, f64)> {
-        crate::astro::project(alt, az, self.view.c_alt, self.view.c_az, self.view.fov)
-            .map(|(x, y)| (self.view.cx + x * self.view.scale,
-                            self.view.cy - y * self.view.scale))
+        project_with(*self.view, alt, az)
     }
+}
+
+/// Standalone project that doesn't borrow `Frame` — handy when a layer
+/// needs to also pass `&mut Frame` to a render fn while owning a project
+/// closure. Uses a copy of `ViewParams` (which is `Copy`).
+pub fn project_with(view: ViewParams, alt: f64, az: f64) -> Option<(f64, f64)> {
+    crate::astro::project(alt, az, view.c_alt, view.c_az, view.fov)
+        .map(|(x, y)| (view.cx + x * view.scale, view.cy - y * view.scale))
 }
 
 /// One visual concern in the planetarium. Each impl owns both its GPU

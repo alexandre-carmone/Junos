@@ -10,7 +10,7 @@ use web_sys::CanvasRenderingContext2d;
 
 use super::super::layer::{Frame, SkyLayer};
 use super::super::params::PipelineMode;
-use super::super::{push_star_hit_items, render_fallback_stars, render_star_names_gpu};
+use super::super::{render_fallback_stars, render_star_names_gpu};
 
 pub struct StarsLayer;
 
@@ -30,19 +30,14 @@ impl SkyLayer for StarsLayer {
             PipelineMode::Canvas2dFallback => {
                 // Canvas clear is handled by `RenderPipeline::run` before
                 // any layer runs.
-                render_fallback_stars(
-                    ctx, f.legacy_params, &cat_owned, &proj,
-                    view.cx, view.cy, scale, f.hit_items,
-                );
+                render_fallback_stars(ctx, f, &cat_owned, &proj, view.cx, view.cy, scale);
             }
             PipelineMode::Gpu => {
                 if f.toggles.names_on && f.toggles.stars_on {
-                    render_star_names_gpu(
-                        ctx, f.legacy_params, &cat_owned, &proj, f.hit_items,
-                    );
-                } else if f.toggles.stars_on && !f.legacy_params.picking_on_cpu {
-                    push_star_hit_items(f.legacy_params, &cat_owned, &proj, f.hit_items);
+                    render_star_names_gpu(ctx, f, &cat_owned, &proj);
                 }
+                // In Gpu mode the named-star hit list is produced by the
+                // dedicated `picking::build` pre-pass in `mod.rs`, not here.
             }
         }
     }

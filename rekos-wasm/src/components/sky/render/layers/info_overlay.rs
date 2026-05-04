@@ -11,8 +11,8 @@ pub struct InfoOverlayLayer;
 
 impl SkyLayer for InfoOverlayLayer {
     fn name(&self) -> &'static str { "info_overlay" }
-    fn enabled(&self, f: &Frame) -> bool { !f.legacy_params.hud_on_dom }
+    fn enabled(&self, f: &Frame) -> bool { !f.mode.is_gpu() }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
-        render_info_overlay(ctx, f.legacy_params);
+        render_info_overlay(ctx, f);
     }
 }

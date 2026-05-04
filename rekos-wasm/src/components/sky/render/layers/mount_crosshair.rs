@@ -15,7 +15,8 @@ impl SkyLayer for MountCrosshairLayer {
     fn name(&self) -> &'static str { "mount_crosshair" }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
-        let proj = |alt: f64, az: f64| f.project(alt, az);
-        render_mount_crosshair(ctx, f.legacy_params, &proj);
+        let view = *f.view;
+        let proj = |alt: f64, az: f64| super::super::layer::project_with(view, alt, az);
+        render_mount_crosshair(ctx, f, &proj);
     }
 }

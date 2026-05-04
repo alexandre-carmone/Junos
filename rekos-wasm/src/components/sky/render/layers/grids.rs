@@ -14,8 +14,8 @@ use super::super::{
     render_altaz_grid, render_ecliptic, render_eq_grid, render_meridian,
 };
 
-fn project<'a>(f: &'a Frame<'a>) -> impl Fn(f64, f64) -> Option<(f64, f64)> + 'a {
-    move |alt, az| f.project(alt, az)
+fn project(view: super::super::ViewParams) -> impl Fn(f64, f64) -> Option<(f64, f64)> {
+    move |alt, az| super::super::layer::project_with(view, alt, az)
 }
 
 pub struct AltAzGridLayer;
@@ -25,8 +25,9 @@ impl SkyLayer for AltAzGridLayer {
     fn prepare(&mut self, _f: &mut Frame, _g: Option<&mut GpuPrepare>) {}
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
-        let proj = project(f);
-        render_altaz_grid(ctx, f.legacy_params, &proj);
+        let view = *f.view;
+        let proj = project(view);
+        render_altaz_grid(ctx, f, &proj);
     }
 }
 
@@ -36,8 +37,9 @@ impl SkyLayer for MeridianLayer {
     fn enabled(&self, f: &Frame) -> bool { f.toggles.meridian_on }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
-        let proj = project(f);
-        render_meridian(ctx, f.legacy_params, &proj);
+        let view = *f.view;
+        let proj = project(view);
+        render_meridian(ctx, f, &proj);
     }
 }
 
@@ -47,8 +49,9 @@ impl SkyLayer for EqGridLayer {
     fn enabled(&self, f: &Frame) -> bool { f.toggles.eq_grid_on }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
-        let proj = project(f);
-        render_eq_grid(ctx, f.legacy_params, &proj);
+        let view = *f.view;
+        let proj = project(view);
+        render_eq_grid(ctx, f, &proj);
     }
 }
 
@@ -58,7 +61,8 @@ impl SkyLayer for EclipticLayer {
     fn enabled(&self, f: &Frame) -> bool { f.toggles.ecliptic_on }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback { return; }
-        let proj = project(f);
-        render_ecliptic(ctx, f.legacy_params, &proj);
+        let view = *f.view;
+        let proj = project(view);
+        render_ecliptic(ctx, f, &proj);
     }
 }

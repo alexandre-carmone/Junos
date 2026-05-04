@@ -27,6 +27,6 @@ impl SkyLayer for ConstellationNamesLayer {
                 .map(|(x, y)| (view.cx + x * view.scale, view.cy - y * view.scale))
         };
         let cat_owned = f.catalogs.stars.cloned();
-        render_constellation_names_gpu(ctx, f.legacy_params, &cat_owned, &proj);
+        render_constellation_names_gpu(ctx, f, &cat_owned, &proj);
     }
 }

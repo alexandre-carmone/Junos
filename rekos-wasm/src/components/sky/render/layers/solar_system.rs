@@ -12,7 +12,7 @@ pub struct SolarSystemLayer;
 impl SkyLayer for SolarSystemLayer {
     fn name(&self) -> &'static str { "solar_system" }
     fn enabled(&self, f: &Frame) -> bool {
-        f.toggles.solar_system_on && !f.legacy_params.solar_on_gpu
+        f.toggles.solar_system_on && !f.mode.is_gpu()
     }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         let view = *f.view;
@@ -20,6 +20,6 @@ impl SkyLayer for SolarSystemLayer {
             crate::astro::project(alt, az, view.c_alt, view.c_az, view.fov)
                 .map(|(x, y)| (view.cx + x * view.scale, view.cy - y * view.scale))
         };
-        render_solar_system(ctx, f.legacy_params, &proj, f.hit_items);
+        render_solar_system(ctx, f, &proj);
     }
 }
