@@ -141,6 +141,21 @@ translations! {
     sched_complete_when, sched_cond_seq, sched_cond_repeat, sched_cond_loop, sched_cond_finish_at, sched_times_unit, sched_seq_label, sched_seq_col_type,
     sched_seq_col_filter, sched_seq_col_exp, sched_seq_col_count, sched_add_frame, sched_clear_btn, sched_add_job_btn, sched_err_ra, sched_err_dec,
     sched_err_frames, sky_add_scheduler, sky_create_mosaic, sky_scheduler_jobs,
+    // Files tab v2 — browser controls, file actions, livestacker extras.
+    files_sort_name, files_sort_date, files_sort_size, files_sort_asc, files_sort_desc, files_filter_all,
+    files_filter_images, files_filter_fits, files_filter_jpg, files_filter_placeholder, files_refresh, files_download,
+    files_rename, files_delete, files_copy_path, files_confirm_delete, files_rename_prompt, files_section_browser,
+    files_section_preview, files_path_copied, files_open_in_files, files_reveal_captures, files_action_menu,
+    livestack_section_directories, livestack_section_alignment, livestack_section_stacking, livestack_section_rejection,
+    livestack_section_postprocess, livestack_section_calibration, livestack_num_in_mem, livestack_weighting,
+    livestack_downscale, livestack_post_process, livestack_sharpen, livestack_denoise, livestack_deconv,
+    livestack_master_dark, livestack_master_flat, livestack_open_output, livestack_open_input, livestack_latest_preview,
+    livestack_preview_hint, livestack_out_of_sandbox, livestack_align_plate_solve, livestack_align_none,
+    livestack_stack_mean, livestack_stack_sigma, livestack_stack_windsor, livestack_stack_imagemm,
+    livestack_downscale_none, livestack_downscale_x2, livestack_downscale_x3, livestack_downscale_x4,
+    livestack_weighting_equal, livestack_weighting_hfr, livestack_weighting_stars, livestack_reset,
+    livestack_min_snr, livestack_max_snr, livestack_compact_label,
+    files_subtab_preview, files_subtab_controls, files_subtab_settings, files_folder_hint, files_close_preview,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────
@@ -157,9 +172,10 @@ fn leak(map: &serde_json::Map<String, serde_json::Value>, key: &str) -> &'static
 }
 
 fn parse(json: &str) -> Translations {
-    let value: serde_json::Value =
-        serde_json::from_str(json).expect("i18n json failed to parse");
-    let obj = value.as_object().expect("i18n json must be a top-level object");
+    let value: serde_json::Value = serde_json::from_str(json).expect("i18n json failed to parse");
+    let obj = value
+        .as_object()
+        .expect("i18n json must be a top-level object");
     build(obj)
 }
 

@@ -28,6 +28,27 @@ use tracing::warn;
 
 use crate::AppState;
 
+// ── Helpers for write operations ─────────────────────────────────────────────
+
+/// Resolve a relative path for a write-operation target that may not exist
+/// yet (e.g. the new name for a rename). Validates the *parent* is inside
+/// the sandbox, and the joined target would also be inside.
+fn resolve_new(state: &AppState, rel: &str) -> Result<(PathBuf, PathBuf), StatusCode> {
+    let root = state.config.resolved_captures_dir();
+    let root = root.canonicalize().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let trimmed = rel.trim_start_matches(['/', '\\']);
+    if trimmed.is_empty() { return Err(StatusCode::BAD_REQUEST); }
+    let joined = root.join(trimmed);
+    // Canonicalize the parent (must exist) and ensure it's inside root.
+    let parent = joined.parent().ok_or(StatusCode::BAD_REQUEST)?;
+    let parent_canon = parent.canonicalize().map_err(|_| StatusCode::NOT_FOUND)?;
+    if !parent_canon.starts_with(&root) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let file_name = joined.file_name().ok_or(StatusCode::BAD_REQUEST)?;
+    Ok((root, parent_canon.join(file_name)))
+}
+
 // ── Query types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -568,4 +589,184 @@ fn percentile_range(samples: &[f32], lo_p: f64, hi_p: f64) -> (f32, f32) {
     let lo_idx = ((sub.len() as f64) * lo_p).floor() as usize;
     let hi_idx = (((sub.len() as f64) * hi_p).floor() as usize).min(sub.len() - 1);
     (sub[lo_idx], sub[hi_idx])
+}
+
+// ── /download ────────────────────────────────────────────────────────────────
+//
+// Streams the raw file bytes with a Content-Disposition: attachment header so
+// browsers trigger a download dialog rather than rendering inline.
+
+pub async fn download(
+    State(state): State<AppState>,
+    Query(q): Query<PathQ>,
+) -> Result<Response, StatusCode> {
+    let (_root, target) = resolve(&state, &q.path)?;
+    let meta = std::fs::metadata(&target).map_err(|_| StatusCode::NOT_FOUND)?;
+    if !meta.is_file() { return Err(StatusCode::BAD_REQUEST); }
+
+    let name = target.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "download.bin".to_string());
+    // Sanitize: no CR/LF/double-quote/semicolon allowed in the filename header.
+    let safe_name: String = name.chars()
+        .map(|c| if matches!(c, '"' | ';' | '\r' | '\n') { '_' } else { c })
+        .collect();
+
+    let bytes = std::fs::read(&target).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mime = mime_guess::from_path(&target)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_string();
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, mime.parse().unwrap_or(
+        "application/octet-stream".parse().unwrap()));
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        format!(r#"attachment; filename="{}""#, safe_name)
+            .parse()
+            .unwrap_or("attachment".parse().unwrap()),
+    );
+    Ok((StatusCode::OK, headers, Bytes::from(bytes)).into_response())
+}
+
+// ── /rename ──────────────────────────────────────────────────────────────────
+//
+// Same-directory rename only. Body: { path, new_name }. `new_name` must not
+// contain any path separator — rename across directories is refused to keep
+// the surface area small.
+
+#[derive(Debug, Deserialize)]
+pub struct RenameBody {
+    pub path: String,
+    pub new_name: String,
+}
+
+pub async fn rename(
+    State(state): State<AppState>,
+    Json(body): Json<RenameBody>,
+) -> Result<Json<Value>, StatusCode> {
+    if body.new_name.is_empty()
+        || body.new_name.contains('/')
+        || body.new_name.contains('\\')
+        || body.new_name == "."
+        || body.new_name == ".."
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let (root, source) = resolve(&state, &body.path)?;
+    let parent = source.parent().ok_or(StatusCode::BAD_REQUEST)?;
+    let destination = parent.join(&body.new_name);
+
+    // Safety: destination's parent must still be inside the sandbox
+    // (canonicalize already confirmed that for source; parent == source.parent).
+    if !parent.starts_with(&root) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    if destination.exists() {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    std::fs::rename(&source, &destination).map_err(|e| {
+        warn!("rename {} → {} failed: {e}", source.display(), destination.display());
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "path": relative_to(&root, &destination),
+    })))
+}
+
+// ── /delete ──────────────────────────────────────────────────────────────────
+//
+// Deletes a single file, or an empty directory. Recursive deletion is
+// refused to keep the damage surface small.
+
+pub async fn delete(
+    State(state): State<AppState>,
+    Query(q): Query<PathQ>,
+) -> Result<Json<Value>, StatusCode> {
+    let (_root, target) = resolve(&state, &q.path)?;
+    let meta = std::fs::metadata(&target).map_err(|_| StatusCode::NOT_FOUND)?;
+
+    if meta.is_file() {
+        std::fs::remove_file(&target).map_err(|e| {
+            warn!("delete file {} failed: {e}", target.display());
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    } else if meta.is_dir() {
+        // Empty-directory-only. `remove_dir` fails with ENOTEMPTY otherwise.
+        std::fs::remove_dir(&target).map_err(|e| {
+            warn!("delete dir {} failed: {e}", target.display());
+            // If not empty, surface a conflict rather than 500.
+            if e.kind() == std::io::ErrorKind::DirectoryNotEmpty
+                || e.raw_os_error() == Some(39 /* ENOTEMPTY */)
+                || e.raw_os_error() == Some(66 /* BSD ENOTEMPTY */)
+            {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+// ── /resolve ─────────────────────────────────────────────────────────────────
+//
+// Given an absolute filesystem path, return its sandbox-relative form if it
+// falls inside the captures root, or `{in_sandbox:false}` otherwise. Used by
+// the Imaging tab's "Reveal in Files" bridge — it only has absolute paths
+// reported by KStars and needs the relative form to navigate the browser.
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveQ {
+    #[serde(default)]
+    pub abs: String,
+}
+
+pub async fn resolve_abs(
+    State(state): State<AppState>,
+    Query(q): Query<ResolveQ>,
+) -> Json<Value> {
+    let root = match state.config.resolved_captures_dir().canonicalize() {
+        Ok(r) => r,
+        Err(_) => return Json(json!({ "in_sandbox": false })),
+    };
+
+    let abs = PathBuf::from(&q.abs);
+    // Canonicalize if it exists; otherwise try to canonicalize its parent
+    // and re-attach the file name so we can still answer for files that
+    // will soon exist (e.g. the next capture output).
+    let canonical = abs.canonicalize().or_else(|_| {
+        if let (Some(par), Some(fname)) = (abs.parent(), abs.file_name()) {
+            par.canonicalize().map(|p| p.join(fname))
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no parent"))
+        }
+    });
+
+    match canonical {
+        Ok(c) if c.starts_with(&root) => {
+            let rel = relative_to(&root, &c);
+            let parent = c.parent().map(|p| relative_to(&root, p)).unwrap_or_default();
+            Json(json!({
+                "in_sandbox": true,
+                "relative":   rel,
+                "parent":     parent,
+            }))
+        }
+        _ => Json(json!({ "in_sandbox": false })),
+    }
+}
+
+// Keep clippy quiet about the unused helper during development.
+#[allow(dead_code)]
+fn _ensure_resolve_new_used(state: &AppState, rel: &str) -> Result<(PathBuf, PathBuf), StatusCode> {
+    resolve_new(state, rel)
 }

@@ -32,6 +32,14 @@ pub enum Tab { Sky, Mount, Focus, Imaging, Files, PolarAlign, Guide, Scheduler, 
 #[derive(Clone, Copy)]
 pub struct ActiveTabCtx(pub RwSignal<Tab>);
 
+/// Cross-tab bridge used by the Imaging tab's "Reveal in Files" button.
+/// Payload is an optional absolute path (from KStars capture settings);
+/// if None, the Files tab just switches to the captures root. The Files
+/// tab consumes this on mount, resolves the path against the server-side
+/// sandbox via `/api/files/resolve`, and navigates.
+#[derive(Clone, Copy)]
+pub struct RevealInFilesCtx(pub RwSignal<Option<String>>);
+
 // ---------------------------------------------------------------------------
 // Context newtypes kept for sky/actions.rs. They are optional at the call
 // site (use_context returns Option) so providing defaults is sufficient.
@@ -188,6 +196,12 @@ fn App() -> impl IntoView {
 
     let active_tab = RwSignal::new(Tab::Sky);
     provide_context(ActiveTabCtx(active_tab));
+
+    // Cross-tab Reveal-in-Files trigger. Produced by the Imaging tab's
+    // "Reveal in Files" button (with the current capture directory /
+    // last frame filename), consumed by the Files tab on mount.
+    let reveal_ctx = RwSignal::new(None::<String>);
+    provide_context(RevealInFilesCtx(reveal_ctx));
 
     view! {
         <div id="rekos-app" class="fixed inset-0 bg-bg text-[var(--text)] font-ui overflow-hidden">

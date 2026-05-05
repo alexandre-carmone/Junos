@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use axum::{
     response::Json,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use clap::Parser;
@@ -58,10 +58,14 @@ async fn main() {
         .route("/api/authenticate", post(auth::authenticate))
         .route("/message/ekos", get(kstars_ws::message_handler))
         .route("/media/ekos", get(kstars_ws::media_handler))
-        .route("/api/files/list",  get(files::list))
-        .route("/api/files/meta",  get(files::meta))
-        .route("/api/files/thumb", get(files::thumb))
-        .route("/api/files/raw",   get(files::raw))
+        .route("/api/files/list",     get(files::list))
+        .route("/api/files/meta",     get(files::meta))
+        .route("/api/files/thumb",    get(files::thumb))
+        .route("/api/files/raw",      get(files::raw))
+        .route("/api/files/download", get(files::download))
+        .route("/api/files/rename",   post(files::rename))
+        .route("/api/files/delete",   delete(files::delete))
+        .route("/api/files/resolve",  get(files::resolve_abs))
         .fallback_service(ServeDir::new(&dist_dir).append_index_html_on_directories(true))
         .with_state(state);
 

@@ -14,9 +14,12 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::compat::{CameraSnapshot, CaptureSnapshot, FilterWheelSnapshot};
-use crate::i18n::{Lang, Translations, t};
+use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
-use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting, send_device_property_set};
+use crate::ws_helpers::{
+    dispatch_setting as ws_dispatch_setting, send_cmd, send_device_property_set,
+};
+use crate::{ActiveTabCtx, RevealInFilesCtx, Tab};
 
 // ── Shared Tailwind class fragments ───────────────────────────────────────────
 // Repeating chrome — buttons, inputs, foldable panels — kept here so each
@@ -25,18 +28,26 @@ const GHOST_BTN: &str = "btn btn--sm btn-ghost text-text-blue";
 const ACTION_BTN: &str = "btn btn--sm !border-[color:var(--btn-color,var(--text-blue))] text-[color:var(--btn-color,var(--text-blue))]";
 const FIELD_INPUT: &str = "input input--sm flex-1 min-w-0 font-mono";
 const FIELD_LABEL: &str = "basis-[120px] grow-0 shrink-0 text-text-blue overflow-hidden text-ellipsis whitespace-nowrap max-[479px]:basis-auto max-[479px]:text-xs";
-const PANEL_CLS: &str = "border border-border-base bg-[rgba(10,12,20,0.55)] rounded-[3px] overflow-hidden";
+const PANEL_CLS: &str =
+    "border border-border-base bg-[rgba(10,12,20,0.55)] rounded-[3px] overflow-hidden";
 const SUMMARY_CLS: &str = "list-none cursor-pointer py-sp-2 px-3 text-text-blue text-sm font-bold uppercase tracking-[0.08em] flex items-center gap-sp-2 select-none hover:bg-[rgba(20,24,40,0.7)] [&::-webkit-details-marker]:hidden";
 const PANEL_BODY: &str = "py-sp-3 px-3 pb-3 border-t border-[#1a1c28]";
 
 fn status_color(status: &str) -> &'static str {
     let s = status.to_lowercase();
-    if s.contains("error") || s.contains("abort") || s.contains("fail") { "var(--state-err)" }
-    else if s.contains("complete")  { "var(--state-ok)" }
-    else if s.contains("capturing") || s.contains("progress") { "var(--state-info)" }
-    else if s.contains("image received") || s.contains("frame")  { "var(--state-info)" }
-    else if s.contains("waiting") || s.contains("pause") { "var(--state-warn)" }
-    else { "var(--text-muted)" }
+    if s.contains("error") || s.contains("abort") || s.contains("fail") {
+        "var(--state-err)"
+    } else if s.contains("complete") {
+        "var(--state-ok)"
+    } else if s.contains("capturing") || s.contains("progress") {
+        "var(--state-info)"
+    } else if s.contains("image received") || s.contains("frame") {
+        "var(--state-info)"
+    } else if s.contains("waiting") || s.contains("pause") {
+        "var(--state-warn)"
+    } else {
+        "var(--text-muted)"
+    }
 }
 
 // Field declarations: maps a KStars widget objectName (defined in
@@ -62,60 +73,119 @@ enum Kind {
 
 #[derive(Clone, Copy)]
 struct Field {
-    key:   &'static str,
+    key: &'static str,
     label: fn(&Translations) -> &'static str,
-    kind:  Kind,
+    kind: Kind,
 }
 
 const EXPOSURE_FIELDS: &[Field] = &[
-    Field { key: "captureExposureN", label: |t| t.field_exposure_s, kind: Kind::Number },
-    Field { key: "captureTypeS",     label: |t| t.field_frame_type,
-            kind: Kind::ComboDynamic(|c, _| {
-                if c.frame_type_options.is_empty() {
-                    FRAME_TYPE_FALLBACK.iter().map(|s| s.to_string()).collect()
-                } else { c.frame_type_options.clone() }
-            }) },
-    Field { key: "captureCountN",    label: |t| t.field_count,      kind: Kind::Number },
-    Field { key: "captureDelayN",    label: |t| t.field_delay_s,    kind: Kind::Number },
+    Field {
+        key: "captureExposureN",
+        label: |t| t.field_exposure_s,
+        kind: Kind::Number,
+    },
+    Field {
+        key: "captureTypeS",
+        label: |t| t.field_frame_type,
+        kind: Kind::ComboDynamic(|c, _| {
+            if c.frame_type_options.is_empty() {
+                FRAME_TYPE_FALLBACK.iter().map(|s| s.to_string()).collect()
+            } else {
+                c.frame_type_options.clone()
+            }
+        }),
+    },
+    Field {
+        key: "captureCountN",
+        label: |t| t.field_count,
+        kind: Kind::Number,
+    },
+    Field {
+        key: "captureDelayN",
+        label: |t| t.field_delay_s,
+        kind: Kind::Number,
+    },
 ];
 
 const FRAME_FIELDS: &[Field] = &[
-    Field { key: "captureBinHN",    label: |t| t.field_bin_x,    kind: Kind::Number },
-    Field { key: "captureBinVN",    label: |t| t.field_bin_y,    kind: Kind::Number },
-    Field { key: "captureFormatS",  label: |t| t.field_format,
-            kind: Kind::ComboDynamic(|c, _| c.capture_format_options.clone()) },
-    Field { key: "captureEncodingS",label: |t| t.field_encoding,
-            kind: Kind::ComboDynamic(|c, _| c.transfer_format_options.clone()) },
+    Field {
+        key: "captureBinHN",
+        label: |t| t.field_bin_x,
+        kind: Kind::Number,
+    },
+    Field {
+        key: "captureBinVN",
+        label: |t| t.field_bin_y,
+        kind: Kind::Number,
+    },
+    Field {
+        key: "captureFormatS",
+        label: |t| t.field_format,
+        kind: Kind::ComboDynamic(|c, _| c.capture_format_options.clone()),
+    },
+    Field {
+        key: "captureEncodingS",
+        label: |t| t.field_encoding,
+        kind: Kind::ComboDynamic(|c, _| c.transfer_format_options.clone()),
+    },
 ];
 
 const GAIN_FIELDS: &[Field] = &[
-    Field { key: "captureGainN",   label: |t| t.field_gain,   kind: Kind::Number },
-    Field { key: "captureOffsetN", label: |t| t.field_offset, kind: Kind::Number },
-    Field { key: "captureISOS",    label: |t| t.field_iso,
-            kind: Kind::ComboDynamic(|c, _| c.iso_options.clone()) },
+    Field {
+        key: "captureGainN",
+        label: |t| t.field_gain,
+        kind: Kind::Number,
+    },
+    Field {
+        key: "captureOffsetN",
+        label: |t| t.field_offset,
+        kind: Kind::Number,
+    },
+    Field {
+        key: "captureISOS",
+        label: |t| t.field_iso,
+        kind: Kind::ComboDynamic(|c, _| c.iso_options.clone()),
+    },
 ];
 
-const FILTER_FIELDS: &[Field] = &[
-    Field { key: "FilterPosCombo", label: |t| t.field_filter,
-            kind: Kind::ComboDynamic(|_, fw| fw.filter_names.clone()) },
-];
+const FILTER_FIELDS: &[Field] = &[Field {
+    key: "FilterPosCombo",
+    label: |t| t.field_filter,
+    kind: Kind::ComboDynamic(|_, fw| fw.filter_names.clone()),
+}];
 
 const TARGET_FIELDS: &[Field] = &[
-    Field { key: "targetNameT",   label: |t| t.field_target_name, kind: Kind::Text },
-    Field { key: "fileDirectoryT",label: |t| t.field_directory,   kind: Kind::Text },
+    Field {
+        key: "targetNameT",
+        label: |t| t.field_target_name,
+        kind: Kind::Text,
+    },
+    Field {
+        key: "fileDirectoryT",
+        label: |t| t.field_directory,
+        kind: Kind::Text,
+    },
 ];
 
 const ENFORCE_TEMP_FIELDS: &[Field] = &[
-    Field { key: "cameraTemperatureS", label: |t| t.field_enforce_temp, kind: Kind::Bool   },
-    Field { key: "cameraTemperatureN", label: |t| t.field_job_temp_c,   kind: Kind::Number },
+    Field {
+        key: "cameraTemperatureS",
+        label: |t| t.field_enforce_temp,
+        kind: Kind::Bool,
+    },
+    Field {
+        key: "cameraTemperatureN",
+        label: |t| t.field_job_temp_c,
+        kind: Kind::Number,
+    },
 ];
 
 #[component]
 pub fn ImagingTab(
-    #[prop(into)] capture:      Signal<CaptureSnapshot>,
-    #[prop(into)] camera:       Signal<CameraSnapshot>,
+    #[prop(into)] capture: Signal<CaptureSnapshot>,
+    #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
-    #[prop(into)] send:         SendCmd,
+    #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
@@ -125,86 +195,129 @@ pub fn ImagingTab(
     // ── Collapsible-panel state ──────────────────────────────────────────
     // One signal per setting panel so "Collapse all" / "Expand all" can
     // drive them while each panel still behaves independently afterwards.
-    let cooling_open  = RwSignal::new(true);
+    let cooling_open = RwSignal::new(true);
     let exposure_open = RwSignal::new(true);
-    let frame_open    = RwSignal::new(true);
-    let gain_open     = RwSignal::new(false);
-    let filter_open   = RwSignal::new(true);
-    let target_open   = RwSignal::new(false);
-    let jobtemp_open  = RwSignal::new(false);
+    let frame_open = RwSignal::new(true);
+    let gain_open = RwSignal::new(false);
+    let filter_open = RwSignal::new(true);
+    let target_open = RwSignal::new(false);
+    let jobtemp_open = RwSignal::new(false);
     let preview_visible = RwSignal::new(true);
 
     let all_panels = [
-        cooling_open, exposure_open, frame_open, gain_open,
-        filter_open,  target_open,   jobtemp_open,
+        cooling_open,
+        exposure_open,
+        frame_open,
+        gain_open,
+        filter_open,
+        target_open,
+        jobtemp_open,
     ];
     let all_collapse = all_panels;
     let on_collapse_all = move |_: web_sys::MouseEvent| {
-        for s in all_collapse { s.set(false); }
+        for s in all_collapse {
+            s.set(false);
+        }
     };
     let all_expand = all_panels;
     let on_expand_all = move |_: web_sys::MouseEvent| {
-        for s in all_expand { s.set(true); }
+        for s in all_expand {
+            s.set(true);
+        }
     };
     let on_toggle_preview = move |_: web_sys::MouseEvent| {
         preview_visible.update(|v| *v = !*v);
     };
 
-    // ── Action dispatchers ────────────────────────────────────────────────
-    let s_start   = send.clone();
-    let on_start   = move |_| send_cmd(&s_start, "capture_start",   serde_json::json!({}));
-    let s_stop    = send.clone();
-    let on_stop    = move |_| send_cmd(&s_stop,  "capture_stop",    serde_json::json!({}));
-    let s_preview = send.clone();
-    let on_preview = move |_| send_cmd(&s_preview,"capture_preview", serde_json::json!({}));
-    let s_loop    = send.clone();
-    let on_loop    = move |_| send_cmd(&s_loop,  "capture_loop",    serde_json::json!({}));
+    let reveal_ctx = use_context::<RevealInFilesCtx>();
+    let active_tab_ctx = use_context::<ActiveTabCtx>();
+    let on_reveal_files = move |_| {
+        let path = capture.with(|c| capture_reveal_path(&c.settings));
+        if let Some(ctx) = reveal_ctx {
+            ctx.0.set(path);
+        }
+        if let Some(ctx) = active_tab_ctx {
+            ctx.0.set(Tab::Files);
+        }
+    };
 
-    let s_add   = send.clone();
-    let on_add_job   = move |_| send_cmd(&s_add,   "capture_add_sequence",    serde_json::json!({}));
+    // ── Action dispatchers ────────────────────────────────────────────────
+    let s_start = send.clone();
+    let on_start = move |_| send_cmd(&s_start, "capture_start", serde_json::json!({}));
+    let s_stop = send.clone();
+    let on_stop = move |_| send_cmd(&s_stop, "capture_stop", serde_json::json!({}));
+    let s_preview = send.clone();
+    let on_preview = move |_| send_cmd(&s_preview, "capture_preview", serde_json::json!({}));
+    let s_loop = send.clone();
+    let on_loop = move |_| send_cmd(&s_loop, "capture_loop", serde_json::json!({}));
+
+    let s_add = send.clone();
+    let on_add_job = move |_| send_cmd(&s_add, "capture_add_sequence", serde_json::json!({}));
     let s_clear = send.clone();
-    let on_clear_seq = move |_| send_cmd(&s_clear, "capture_clear_sequences", serde_json::json!({}));
+    let on_clear_seq =
+        move |_| send_cmd(&s_clear, "capture_clear_sequences", serde_json::json!({}));
 
     // ── Save / Load sequence file ─────────────────────────────────────────
     // StoredValue is Copy, so these can be captured by on:click closures inside
     // a <Show> children-closure without turning it FnOnce.
     let save_open = RwSignal::new(false);
     let save_path = RwSignal::new(String::new());
-    let sv_save   = StoredValue::new(send.clone());
+    let sv_save = StoredValue::new(send.clone());
 
     let load_open = RwSignal::new(false);
     let load_path = RwSignal::new(String::new());
-    let sv_load   = StoredValue::new(send.clone());
+    let sv_load = StoredValue::new(send.clone());
 
     // ── Cooling → INDI device_property_set on the active camera ───────────
     let s_cool_on = send.clone();
     let cam_cool_on = camera;
     let on_cooler_on = move |_| {
         let dev = cam_cool_on.with(|c| c.device.clone());
-        if dev.is_empty() { return; }
-        send_device_property_set(&s_cool_on, &dev, "CCD_COOLER", serde_json::json!([
-            { "name": "COOLER_ON",  "state": 1 },
-            { "name": "COOLER_OFF", "state": 0 },
-        ]));
+        if dev.is_empty() {
+            return;
+        }
+        send_device_property_set(
+            &s_cool_on,
+            &dev,
+            "CCD_COOLER",
+            serde_json::json!([
+                { "name": "COOLER_ON",  "state": 1 },
+                { "name": "COOLER_OFF", "state": 0 },
+            ]),
+        );
     };
     let s_cool_off = send.clone();
     let cam_cool_off = camera;
     let on_cooler_off = move |_| {
         let dev = cam_cool_off.with(|c| c.device.clone());
-        if dev.is_empty() { return; }
-        send_device_property_set(&s_cool_off, &dev, "CCD_COOLER", serde_json::json!([
-            { "name": "COOLER_ON",  "state": 0 },
-            { "name": "COOLER_OFF", "state": 1 },
-        ]));
+        if dev.is_empty() {
+            return;
+        }
+        send_device_property_set(
+            &s_cool_off,
+            &dev,
+            "CCD_COOLER",
+            serde_json::json!([
+                { "name": "COOLER_ON",  "state": 0 },
+                { "name": "COOLER_OFF", "state": 1 },
+            ]),
+        );
     };
     let s_set_temp = send.clone();
     let cam_set_temp = camera;
     let on_set_temp = move |_| {
         let dev = cam_set_temp.with(|c| c.device.clone());
-        if dev.is_empty() { return; }
-        send_device_property_set(&s_set_temp, &dev, "CCD_TEMPERATURE", serde_json::json!([
-            { "name": "CCD_TEMPERATURE_VALUE", "value": target_temp.get() },
-        ]));
+        if dev.is_empty() {
+            return;
+        }
+        send_device_property_set(
+            &s_set_temp,
+            &dev,
+            "CCD_TEMPERATURE",
+            serde_json::json!([
+                { "name": "CCD_TEMPERATURE_VALUE", "value": target_temp.get() },
+            ]),
+        );
     };
 
     // ── Settings dispatch ────────────────────────────────────────────────
@@ -220,44 +333,63 @@ pub fn ImagingTab(
     let sequence_rows = move || {
         let cap = capture.get();
         let seq = &cap.sequence;
-        let Some(arr) = seq.as_array() else { return Vec::new(); };
+        let Some(arr) = seq.as_array() else {
+            return Vec::new();
+        };
         // Live frame count from new_capture_state (seqv / seqr)
         let live_current = cap.seq_current;
-        let live_total   = cap.seq_total;
-        arr.iter().enumerate().map(|(i, job)| {
-            let count_raw = job["Count"].as_str().unwrap_or("0/0");
-            let (completed, total) = match count_raw.split_once('/') {
-                Some((c, t)) => (c.trim().to_string(), t.trim().to_string()),
-                None         => (String::new(), count_raw.to_string()),
-            };
-            let status = job["Status"].as_str().unwrap_or("Idle").to_string();
-            // For the active job, override with live seqv/seqr counts
-            let (completed, total) = if status == "In Progress" {
-                (
-                    live_current.map(|v| v.to_string()).unwrap_or(completed),
-                    live_total.map(|v| v.to_string()).unwrap_or(total),
-                )
-            } else {
-                (completed, total)
-            };
-            let exp    = job["Exp"].as_str().unwrap_or("—").to_string();
-            let ftype  = job["Type"].as_str().unwrap_or("").to_string();
-            let filter = job["Filter"].as_str().unwrap_or("").to_string();
-            let bin    = job["Bin"].as_str().unwrap_or("").to_string();
-            SequenceRow { index: i, completed, total, exp, ftype, filter, bin, status }
-        }).collect::<Vec<_>>()
+        let live_total = cap.seq_total;
+        arr.iter()
+            .enumerate()
+            .map(|(i, job)| {
+                let count_raw = job["Count"].as_str().unwrap_or("0/0");
+                let (completed, total) = match count_raw.split_once('/') {
+                    Some((c, t)) => (c.trim().to_string(), t.trim().to_string()),
+                    None => (String::new(), count_raw.to_string()),
+                };
+                let status = job["Status"].as_str().unwrap_or("Idle").to_string();
+                // For the active job, override with live seqv/seqr counts
+                let (completed, total) = if status == "In Progress" {
+                    (
+                        live_current.map(|v| v.to_string()).unwrap_or(completed),
+                        live_total.map(|v| v.to_string()).unwrap_or(total),
+                    )
+                } else {
+                    (completed, total)
+                };
+                let exp = job["Exp"].as_str().unwrap_or("—").to_string();
+                let ftype = job["Type"].as_str().unwrap_or("").to_string();
+                let filter = job["Filter"].as_str().unwrap_or("").to_string();
+                let bin = job["Bin"].as_str().unwrap_or("").to_string();
+                SequenceRow {
+                    index: i,
+                    completed,
+                    total,
+                    exp,
+                    ftype,
+                    filter,
+                    bin,
+                    status,
+                }
+            })
+            .collect::<Vec<_>>()
     };
 
     let s_remove = send.clone();
     let on_remove_job = move |idx: usize| {
-        send_cmd(&s_remove, "capture_remove_sequence", serde_json::json!({ "index": idx }));
+        send_cmd(
+            &s_remove,
+            "capture_remove_sequence",
+            serde_json::json!({ "index": idx }),
+        );
     };
 
     // Shared setting lookup: returns the current Value from the debounced
     // capture_get_all_settings snapshot, or Null.
     let get_setting = move |key: &'static str| -> serde_json::Value {
         capture.with(|c| {
-            c.settings.as_object()
+            c.settings
+                .as_object()
                 .and_then(|o| o.get(key).cloned())
                 .unwrap_or(serde_json::Value::Null)
         })
@@ -327,6 +459,12 @@ pub fn ImagingTab(
                     on:click=on_toggle_preview
                     title=move || tr().imaging_toggle_preview_title>
                     {move || if preview_visible.get() { tr().imaging_hide_preview } else { tr().imaging_show_preview }}
+                </button>
+                <button
+                    class=GHOST_BTN
+                    on:click=on_reveal_files
+                    title=move || tr().files_open_in_files>
+                    {move || tr().files_open_in_files}
                 </button>
             </div>
 
@@ -661,22 +799,27 @@ fn marker_cls(open: bool) -> &'static str {
 
 #[derive(Clone)]
 struct SequenceRow {
-    index:     usize,
+    index: usize,
     completed: String,
-    total:     String,
-    exp:       String,
-    ftype:     String,
-    filter:    String,
-    bin:       String,
-    status:    String,
+    total: String,
+    exp: String,
+    ftype: String,
+    filter: String,
+    bin: String,
+    status: String,
 }
 
 fn job_status_color(s: &str) -> &'static str {
     let lo = s.to_lowercase();
-    if lo == "complete"                                     { "var(--state-ok)" }
-    else if lo == "capturing" || lo == "in progress"        { "var(--state-info)" }
-    else if lo.contains("abort") || lo.contains("error")   { "var(--state-err)" }
-    else                                                    { "var(--text-muted)" }
+    if lo == "complete" {
+        "var(--state-ok)"
+    } else if lo == "capturing" || lo == "in progress" {
+        "var(--state-info)"
+    } else if lo.contains("abort") || lo.contains("error") {
+        "var(--state-err)"
+    } else {
+        "var(--text-muted)"
+    }
 }
 
 // ── Shared render helpers ────────────────────────────────────────────────
@@ -696,7 +839,8 @@ fn render_group(
                 render_field(*f, lang, camera, filter_wheel, get_value, d)
             }).collect::<Vec<_>>()}
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 fn render_field(
@@ -721,7 +865,8 @@ fn render_field(
                         d(field.key, serde_json::Value::Bool(event_target_checked(&ev)));
                     }
                 />
-            }.into_any()
+            }
+            .into_any()
         }
         Kind::Number => {
             let d = dispatch.clone();
@@ -739,7 +884,8 @@ fn render_field(
                     }
                     class=FIELD_INPUT
                 />
-            }.into_any()
+            }
+            .into_any()
         }
         Kind::Text => {
             let d = dispatch.clone();
@@ -752,7 +898,8 @@ fn render_field(
                     }
                     class=FIELD_INPUT
                 />
-            }.into_any()
+            }
+            .into_any()
         }
         Kind::ComboDynamic(get_opts) => {
             // Reactive option list: re-derived when camera/filter_wheel change.
@@ -809,7 +956,8 @@ fn render_select(
                 items
             }}
         </select>
-    }.into_any()
+    }
+    .into_any()
 }
 
 /// Like `render_select`, but the option list is reactive — re-derived from
@@ -842,7 +990,8 @@ fn render_select_dynamic(
                 render_select(key, opts, current, d_select.clone())
             }
         }}
-    }.into_any()
+    }
+    .into_any()
 }
 
 fn value_to_display(v: &serde_json::Value) -> String {
@@ -855,6 +1004,18 @@ fn value_to_display(v: &serde_json::Value) -> String {
     }
 }
 
+fn capture_reveal_path(settings: &serde_json::Value) -> Option<String> {
+    let dir = settings
+        .get("fileDirectoryT")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if dir.is_empty() {
+        None
+    } else {
+        Some(dir.to_string())
+    }
+}
 
 fn event_target_checked(ev: &web_sys::Event) -> bool {
     ev.target()
