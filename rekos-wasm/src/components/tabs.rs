@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 
-use crate::compat::{self, FilterWheelSnapshot, MosaicSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot};
+use crate::compat::{
+    self, FilterWheelSnapshot, MosaicSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot,
+};
 use crate::components::files::FilesTab;
 use crate::components::focus::FocusTab;
 use crate::components::guide::GuideTab;
@@ -56,27 +58,27 @@ pub fn TabContent(
         Signal::derive(move || hd.get())
     };
 
-    let send_sky       = Arc::clone(&send);
-    let send_mount     = Arc::clone(&send);
-    let send_focus     = Arc::clone(&send);
-    let send_imaging   = Arc::clone(&send);
-    let send_polar     = Arc::clone(&send);
-    let send_guide     = Arc::clone(&send);
+    let send_sky = Arc::clone(&send);
+    let send_mount = Arc::clone(&send);
+    let send_focus = Arc::clone(&send);
+    let send_imaging = Arc::clone(&send);
+    let send_polar = Arc::clone(&send);
+    let send_guide = Arc::clone(&send);
     let send_scheduler = Arc::clone(&send);
-    let send_files     = Arc::clone(&send);
-    let send_profiles  = Arc::clone(&send);
-    let send_mosaic    = send;
+    let send_files = Arc::clone(&send);
+    let send_profiles = Arc::clone(&send);
+    let send_mosaic = send;
 
-    let sky_visible       = move || active_tab.get() == Tab::Sky;
-    let mount_visible     = move || active_tab.get() == Tab::Mount;
-    let focus_visible     = move || active_tab.get() == Tab::Focus;
-    let imaging_visible   = move || active_tab.get() == Tab::Imaging;
-    let files_visible     = move || active_tab.get() == Tab::Files;
-    let polar_visible     = move || active_tab.get() == Tab::PolarAlign;
-    let guide_visible     = move || active_tab.get() == Tab::Guide;
+    let sky_visible = move || active_tab.get() == Tab::Sky;
+    let mount_visible = move || active_tab.get() == Tab::Mount;
+    let focus_visible = move || active_tab.get() == Tab::Focus;
+    let imaging_visible = move || active_tab.get() == Tab::Imaging;
+    let files_visible = move || active_tab.get() == Tab::Files;
+    let polar_visible = move || active_tab.get() == Tab::PolarAlign;
+    let guide_visible = move || active_tab.get() == Tab::Guide;
     let scheduler_visible = move || active_tab.get() == Tab::Scheduler;
-    let mosaic_visible    = move || active_tab.get() == Tab::Mosaic;
-    let profiles_visible  = move || active_tab.get() == Tab::Profiles;
+    let mosaic_visible = move || active_tab.get() == Tab::Mosaic;
+    let profiles_visible = move || active_tab.get() == Tab::Profiles;
 
     view! {
         <div style=move || format!(
@@ -157,6 +159,8 @@ pub fn TabContent(
                     drivers=store.drivers
                     online=store.online
                     connected=store.connected
+                    kstars_running=store.kstars_running
+                    phd2_running=store.phd2_running
                     send=Arc::clone(&send_profiles)
                 />
             </div>

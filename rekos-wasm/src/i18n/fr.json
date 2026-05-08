@@ -875,5 +875,12 @@
   "files_subtab_controls": "Contrôles",
   "files_subtab_settings": "Réglages",
   "files_folder_hint": "Sélectionnez un dossier pour accéder aux contrôles Live Stack",
-  "files_close_preview": "Fermer"
+  "files_close_preview": "Fermer",
+  "apps_section": "Applications",
+  "apps_kstars": "KStars",
+  "apps_phd2": "PHD2",
+  "apps_launch": "Lancer",
+  "apps_stop": "Arrêter",
+  "apps_running": "En cours",
+  "apps_stopped": "Arrêté"
 }

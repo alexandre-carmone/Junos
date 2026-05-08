@@ -20,14 +20,18 @@ const GUIDING_LABELS: [&str; 4] = ["Internal", "PHD2", "LinGuider", "SEP"];
 
 // `family` strings as KStars emits them — see indicommon.h:143 (DeviceFamilyLabels).
 const FAM_TELESCOPE: &str = "Telescopes";
-const FAM_CCD:       &str = "CCDs";
-const FAM_FOCUSER:   &str = "Focusers";
-const FAM_FILTER:    &str = "Filter Wheels";
-const FAM_AO:        &str = "Adaptive Optics";
-const FAM_DOME:      &str = "Domes";
-const FAM_WEATHER:   &str = "Weather";
+const FAM_CCD: &str = "CCDs";
+const FAM_FOCUSER: &str = "Focusers";
+const FAM_FILTER: &str = "Filter Wheels";
+const FAM_AO: &str = "Adaptive Optics";
+const FAM_DOME: &str = "Domes";
+const FAM_WEATHER: &str = "Weather";
 const AUX_FAMILIES: &[&str] = &[
-    "Auxiliary", "Spectrographs", "Detectors", "Rotators", "Power",
+    "Auxiliary",
+    "Spectrographs",
+    "Detectors",
+    "Rotators",
+    "Power",
 ];
 
 // Class names for row-action buttons. Visual primitives live in base.css;
@@ -46,6 +50,8 @@ pub fn ProfilesTab(
     drivers: RwSignal<Vec<DriverInfo>>,
     online: RwSignal<bool>,
     connected: RwSignal<bool>,
+    kstars_running: RwSignal<bool>,
+    phd2_running: RwSignal<bool>,
     send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -100,6 +106,25 @@ pub fn ProfilesTab(
                 >
                     "↻"
                 </button>
+            </div>
+
+            // Applications section
+            <div class="border border-border-base rounded-lg pt-sp-3 pr-sp-4 pb-sp-3 pl-sp-4 mb-sp-4 bg-[rgba(12,14,24,0.6)]">
+                <div class="text-xs text-text-blue font-semibold tracking-[0.08em] mb-sp-3 uppercase">
+                    {move || tr().apps_section}
+                </div>
+                <div class="flex flex-col gap-sp-2">
+                    <AppRow
+                        label=move || tr().apps_kstars
+                        running=kstars_running
+                        app_name="kstars"
+                    />
+                    <AppRow
+                        label=move || tr().apps_phd2
+                        running=phd2_running
+                        app_name="phd2"
+                    />
+                </div>
             </div>
 
             // Editor (inline panel above the list)
@@ -194,6 +219,73 @@ pub fn ProfilesTab(
     }
 }
 
+// ── AppRow ───────────────────────────────────────────────────────────────────
+
+/// One row in the "Applications" section.  Renders the app name, a running/
+/// stopped badge, and a Launch / Stop button.  Button clicks go directly to
+/// the rekos-server REST API; status updates come back via the `/ws` push.
+#[component]
+fn AppRow(
+    /// Display label (e.g. "KStars").
+    label: impl Fn() -> &'static str + Send + Sync + 'static,
+    /// Signal tracking whether the app is currently running.
+    running: RwSignal<bool>,
+    /// Lowercase app name used in the API request body ("kstars" | "phd2").
+    app_name: &'static str,
+) -> impl IntoView {
+    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let tr = move || t(lang.get());
+
+    let on_action = move |_| {
+        let currently_running = running.get_untracked();
+        let endpoint = if currently_running {
+            "/api/apps/stop"
+        } else {
+            "/api/apps/launch"
+        };
+        let body = serde_json::json!({ "app": app_name }).to_string();
+        // Fire-and-forget fetch; status comes back via ws push.
+        let _ = web_sys::window().map(|w| {
+            use wasm_bindgen::JsValue;
+            let opts = web_sys::RequestInit::new();
+            opts.set_method("POST");
+            opts.set_body(&JsValue::from_str(&body));
+            let headers = web_sys::Headers::new().unwrap();
+            let _ = headers.set("content-type", "application/json");
+            opts.set_headers(&headers);
+            let req = web_sys::Request::new_with_str_and_init(endpoint, &opts).unwrap();
+            w.fetch_with_request(&req)
+        });
+    };
+
+    view! {
+        <div class="flex items-center gap-sp-3">
+            <span class="text-sm text-text-dim font-semibold w-[72px] shrink-0">{label}</span>
+            {move || if running.get() {
+                view! {
+                    <span class="badge badge--ok">{tr().apps_running}</span>
+                }.into_any()
+            } else {
+                view! {
+                    <span class="badge">{tr().apps_stopped}</span>
+                }.into_any()
+            }}
+            <button
+                class=move || {
+                    if running.get() {
+                        format!("{BTN_BASE} {BTN_STOP}")
+                    } else {
+                        format!("{BTN_BASE} {BTN_LAUNCH}")
+                    }
+                }
+                on:click=on_action
+            >
+                {move || if running.get() { tr().apps_stop } else { tr().apps_launch }}
+            </button>
+        </div>
+    }
+}
+
 // ── ProfileRow ───────────────────────────────────────────────────────────────
 
 #[component]
@@ -255,12 +347,17 @@ fn ProfileRow(
                 let confirmed = web_sys::window()
                     .and_then(|w| w.confirm_with_message(msg).ok())
                     .unwrap_or(false);
-                if !confirmed { return; }
+                if !confirmed {
+                    return;
+                }
             }
-            send(serde_json::json!({
-                "type": "profile_start",
-                "payload": {"name": n},
-            }).to_string());
+            send(
+                serde_json::json!({
+                    "type": "profile_start",
+                    "payload": {"name": n},
+                })
+                .to_string(),
+            );
             starting.set(Some(n.clone()));
             // 30s safety: clear the spinner if `online` never flips.
             let n_for_timeout = n.clone();
@@ -369,12 +466,20 @@ impl EditorState {
         let mut p = ProfileInfo::default();
         p.mode = "local".into();
         p.driver_source = "system".into();
-        Self { original_name: String::new(), profile: p }
+        Self {
+            original_name: String::new(),
+            profile: p,
+        }
     }
     fn from_profile(p: &ProfileInfo) -> Self {
-        Self { original_name: p.name.clone(), profile: p.clone() }
+        Self {
+            original_name: p.name.clone(),
+            profile: p.clone(),
+        }
     }
-    fn is_new(&self) -> bool { self.original_name.is_empty() }
+    fn is_new(&self) -> bool {
+        self.original_name.is_empty()
+    }
 }
 
 #[component]
@@ -391,66 +496,72 @@ fn ProfileForm(
     let st = editing.get_untracked().expect("editor open");
     let is_new = st.is_new();
 
-    let name        = RwSignal::new(st.profile.name.clone());
-    let mode        = RwSignal::new(st.profile.mode.clone());
-    let host        = RwSignal::new(st.profile.remote_host.clone());
-    let port        = RwSignal::new(st.profile.remote_port.to_string());
-    let auto_conn   = RwSignal::new(st.profile.auto_connect);
-    let port_sel    = RwSignal::new(st.profile.port_selector);
-    let guiding     = RwSignal::new(st.profile.guiding);
-    let g_host      = RwSignal::new(st.profile.remote_guiding_host.clone());
-    let g_port      = RwSignal::new(st.profile.remote_guiding_port.to_string());
-    let web_mgr     = RwSignal::new(st.profile.use_web_manager);
-    let mount       = RwSignal::new(st.profile.mount.clone());
-    let ccd         = RwSignal::new(st.profile.ccd.clone());
-    let guider_drv  = RwSignal::new(st.profile.guider.clone());
-    let focuser     = RwSignal::new(st.profile.focuser.clone());
-    let filter      = RwSignal::new(st.profile.filter.clone());
-    let ao          = RwSignal::new(st.profile.ao.clone());
-    let dome        = RwSignal::new(st.profile.dome.clone());
-    let weather     = RwSignal::new(st.profile.weather.clone());
-    let aux1        = RwSignal::new(st.profile.aux1.clone());
-    let aux2        = RwSignal::new(st.profile.aux2.clone());
-    let aux3        = RwSignal::new(st.profile.aux3.clone());
-    let aux4        = RwSignal::new(st.profile.aux4.clone());
-    let remote      = RwSignal::new(st.profile.remote.clone());
-    let ds          = st.profile.driver_source.clone();
-    let original    = st.original_name.clone();
+    let name = RwSignal::new(st.profile.name.clone());
+    let mode = RwSignal::new(st.profile.mode.clone());
+    let host = RwSignal::new(st.profile.remote_host.clone());
+    let port = RwSignal::new(st.profile.remote_port.to_string());
+    let auto_conn = RwSignal::new(st.profile.auto_connect);
+    let port_sel = RwSignal::new(st.profile.port_selector);
+    let guiding = RwSignal::new(st.profile.guiding);
+    let g_host = RwSignal::new(st.profile.remote_guiding_host.clone());
+    let g_port = RwSignal::new(st.profile.remote_guiding_port.to_string());
+    let web_mgr = RwSignal::new(st.profile.use_web_manager);
+    let mount = RwSignal::new(st.profile.mount.clone());
+    let ccd = RwSignal::new(st.profile.ccd.clone());
+    let guider_drv = RwSignal::new(st.profile.guider.clone());
+    let focuser = RwSignal::new(st.profile.focuser.clone());
+    let filter = RwSignal::new(st.profile.filter.clone());
+    let ao = RwSignal::new(st.profile.ao.clone());
+    let dome = RwSignal::new(st.profile.dome.clone());
+    let weather = RwSignal::new(st.profile.weather.clone());
+    let aux1 = RwSignal::new(st.profile.aux1.clone());
+    let aux2 = RwSignal::new(st.profile.aux2.clone());
+    let aux3 = RwSignal::new(st.profile.aux3.clone());
+    let aux4 = RwSignal::new(st.profile.aux4.clone());
+    let remote = RwSignal::new(st.profile.remote.clone());
+    let ds = st.profile.driver_source.clone();
+    let original = st.original_name.clone();
 
     let on_save = {
         let send = send.clone();
         move |_| {
             let n = name.get();
-            if n.trim().is_empty() { return; }
+            if n.trim().is_empty() {
+                return;
+            }
             // Block name collision when adding new.
             if is_new && profiles.get_untracked().iter().any(|p| p.name == n) {
                 return;
             }
             let p = ProfileInfo {
-                name:                n.clone(),
-                auto_connect:        auto_conn.get(),
-                port_selector:       port_sel.get(),
-                mode:                if mode.get().is_empty() { "local".into() } else { mode.get() },
-                remote_host:         host.get(),
-                remote_port:         port.get().parse().unwrap_or(0),
-                guiding:             guiding.get(),
+                name: n.clone(),
+                auto_connect: auto_conn.get(),
+                port_selector: port_sel.get(),
+                mode: if mode.get().is_empty() {
+                    "local".into()
+                } else {
+                    mode.get()
+                },
+                remote_host: host.get(),
+                remote_port: port.get().parse().unwrap_or(0),
+                guiding: guiding.get(),
                 remote_guiding_host: g_host.get(),
                 remote_guiding_port: g_port.get().parse().unwrap_or(0),
-                use_web_manager:     web_mgr.get(),
-                mount:               mount.get(),
-                ccd:                 ccd.get(),
-                guider:              guider_drv.get(),
-                focuser:             focuser.get(),
-                filter:              filter.get(),
-                ao:                  ao.get(),
-                dome:                dome.get(),
-                weather:             weather.get(),
-                aux1:                aux1.get(),
-                aux2:                aux2.get(),
-                aux3:                aux3.get(),
-                aux4:                aux4.get(),
-                remote:              remote.get(),
-                driver_source:       ds.clone(),
+                use_web_manager: web_mgr.get(),
+                mount: mount.get(),
+                ccd: ccd.get(),
+                guider: guider_drv.get(),
+                focuser: focuser.get(),
+                filter: filter.get(),
+                ao: ao.get(),
+                dome: dome.get(),
+                weather: weather.get(),
+                aux1: aux1.get(),
+                aux2: aux2.get(),
+                aux3: aux3.get(),
+                aux4: aux4.get(),
+                remote: remote.get(),
+                driver_source: ds.clone(),
             };
             // Update keys the row by `name` — if the user renamed, KStars
             // would create a new profile; we don't support rename yet.
@@ -458,18 +569,24 @@ fn ProfileForm(
                 "profile_add"
             } else if original != p.name {
                 // Rename = delete-old + add-new. Do that explicitly.
-                send(serde_json::json!({
-                    "type": "profile_delete",
-                    "payload": {"name": original},
-                }).to_string());
+                send(
+                    serde_json::json!({
+                        "type": "profile_delete",
+                        "payload": {"name": original},
+                    })
+                    .to_string(),
+                );
                 "profile_add"
             } else {
                 "profile_update"
             };
-            send(serde_json::json!({
-                "type": type_,
-                "payload": p.to_json(),
-            }).to_string());
+            send(
+                serde_json::json!({
+                    "type": type_,
+                    "payload": p.to_json(),
+                })
+                .to_string(),
+            );
             editing.set(None);
         }
     };

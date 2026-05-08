@@ -13,6 +13,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use tracing::{debug, warn};
 
+use crate::apps::build_app_state_msg;
 use crate::AppState;
 
 pub async fn ws_handler(
@@ -42,6 +43,14 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
         }
     };
     let _ = sink.send(Message::Text(init.into())).await;
+
+    // Also send the current app (KStars / PHD2) running state so the browser
+    // gets an up-to-date badge immediately on (re)connect.
+    let app_status = state.app_manager.status_json().await;
+    let kstars = app_status["kstars"].as_str() == Some("running");
+    let phd2   = app_status["phd2"].as_str()   == Some("running");
+    let app_init = build_app_state_msg(kstars, phd2);
+    let _ = sink.send(Message::Text(app_init.into())).await;
 
     loop {
         tokio::select! {

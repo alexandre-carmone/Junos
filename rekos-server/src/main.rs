@@ -1,3 +1,4 @@
+mod apps;
 mod auth;
 mod config;
 mod files;
@@ -20,13 +21,15 @@ use tower_http::services::ServeDir;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+use crate::apps::AppManager;
 use crate::config::Config;
 use crate::hub::Hub;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub hub:    Hub,
-    pub config: Arc<Config>,
+    pub hub:         Hub,
+    pub config:      Arc<Config>,
+    pub app_manager: AppManager,
 }
 
 #[tokio::main]
@@ -45,9 +48,15 @@ async fn main() {
 
     info!("Serving frontend from: {}", config.dist_dir);
 
+    let hub = Hub::new();
+    let app_manager = AppManager::new(hub.browser_tx.clone());
+    app_manager.scan_existing().await;
+    app_manager.clone().start_monitor();
+
     let state = AppState {
-        hub:    Hub::new(),
+        hub,
         config: config.clone(),
+        app_manager,
     };
 
     let dist_dir = config.dist_dir.clone();
@@ -56,6 +65,9 @@ async fn main() {
         .route("/ws", get(proxy::ws_handler))
         .route("/api/config", get(api_config))
         .route("/api/authenticate", post(auth::authenticate))
+        .route("/api/apps/launch", post(apps::launch_handler))
+        .route("/api/apps/stop",   post(apps::stop_handler))
+        .route("/api/apps/state",  get(apps::state_handler))
         .route("/message/ekos", get(kstars_ws::message_handler))
         .route("/media/ekos", get(kstars_ws::media_handler))
         .route("/api/files/list",     get(files::list))

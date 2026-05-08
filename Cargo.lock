@@ -2373,6 +2373,7 @@ dependencies = [
  "futures-util",
  "if-addrs",
  "image",
+ "libc",
  "mime_guess",
  "rcgen",
  "serde",
