@@ -29,15 +29,16 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::compat::GuideSnapshot;
-use crate::i18n::{Lang, Translations, t};
+use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
-use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
+use crate::ws_helpers::{dispatch_setting as ws_dispatch_setting, send_cmd};
 
 type LabelFn = fn(&Translations) -> &'static str;
 
 // ── Shared Tailwind class fragments ───────────────────────────────────────────
 const GUIDE_INPUT: &str = "input input--sm flex-1 min-w-0 font-mono";
-const GUIDE_FIELD_LABEL: &str = "basis-[clamp(100px,25%,200px)] grow-0 shrink-0 text-text-blue text-sm";
+const GUIDE_FIELD_LABEL: &str =
+    "basis-[clamp(100px,25%,200px)] grow-0 shrink-0 text-text-blue text-sm";
 const GUIDE_SECTION: &str = "fieldset m-0";
 const GUIDE_DETAILS: &str = "fieldset !p-0";
 const GUIDE_LEGEND: &str = "fieldset__legend cursor-pointer";
@@ -51,10 +52,10 @@ use timeline::drift_plot;
 // Combo option lists (sourced from kstars/ekos/guide/*.ui)
 // ---------------------------------------------------------------------------
 
-const BINNING_OPTIONS:  &[&str] = &["1x1", "2x2", "3x3", "4x4"];
-const SQUARE_OPTIONS:   &[&str] = &["8", "16", "32", "64", "128"];
-const PULSE_ALGO_OPTS:  &[&str] = &["Standard", "Hysteresis", "Linear", "GPG"];
-const GUIDE_ALGO_OPTS:  &[&str] = &[
+const BINNING_OPTIONS: &[&str] = &["1x1", "2x2", "3x3", "4x4"];
+const SQUARE_OPTIONS: &[&str] = &["8", "16", "32", "64", "128"];
+const PULSE_ALGO_OPTS: &[&str] = &["Standard", "Hysteresis", "Linear", "GPG"];
+const GUIDE_ALGO_OPTS: &[&str] = &[
     "Smart",
     "SEP",
     "Fast",
@@ -71,7 +72,7 @@ fn settings_str(settings: &serde_json::Value, key: &str) -> Option<String> {
     settings.get(key).and_then(|v| match v {
         serde_json::Value::String(s) => Some(s.clone()),
         serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::Bool(b)   => Some(b.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
         _ => None,
     })
 }
@@ -117,17 +118,16 @@ fn event_target_checked(ev: &web_sys::Event) -> bool {
 
 fn stage_color(status: &str) -> &'static str {
     match status {
-        "" | "Idle" | "Aborted" | "Disconnected"        => "var(--text-muted)",
-        "Calibrating" | "Selecting star" | "Looping"
-        | "Capturing" | "Subtracting" | "Subframing"
-        | "Reacquiring"                                 => "var(--state-warn)",
-        "Calibrated" | "Connected"                      => "var(--state-info)",
-        "Guiding"                                       => "var(--state-ok)",
-        "Dithering" | "Dithering successful"
-        | "Manual Dithering" | "Settling"               => "var(--accent-cyan-dim)",
-        "Calibration error" | "Dithering error"
-        | "Suspended"                                   => "var(--state-err)",
-        _                                               => "var(--text)",
+        "" | "Idle" | "Aborted" | "Disconnected" => "var(--text-muted)",
+        "Calibrating" | "Selecting star" | "Looping" | "Capturing" | "Subtracting"
+        | "Subframing" | "Reacquiring" => "var(--state-warn)",
+        "Calibrated" | "Connected" => "var(--state-info)",
+        "Guiding" => "var(--state-ok)",
+        "Dithering" | "Dithering successful" | "Manual Dithering" | "Settling" => {
+            "var(--accent-cyan-dim)"
+        }
+        "Calibration error" | "Dithering error" | "Suspended" => "var(--state-err)",
+        _ => "var(--text)",
     }
 }
 
@@ -149,7 +149,8 @@ fn dispatch_option(send: &SendCmd, name: &str, value: serde_json::Value) {
     let set = serde_json::json!({
         "type": "option_set",
         "payload": { "options": [ { "name": name, "value": value } ] }
-    }).to_string();
+    })
+    .to_string();
     send(set);
     refresh_guide_options(send);
 }
@@ -166,12 +167,13 @@ fn refresh_guide_options(send: &SendCmd) {
 fn is_idle(status: &str) -> bool {
     matches!(
         status,
-        "" | "Idle" | "Aborted" | "Connected"
-        | "Calibrated" | "Calibration error" | "Disconnected"
+        "" | "Idle" | "Aborted" | "Connected" | "Calibrated" | "Calibration error" | "Disconnected"
     )
 }
 
-fn can_start(status: &str) -> bool { is_idle(status) }
+fn can_start(status: &str) -> bool {
+    is_idle(status)
+}
 
 fn can_stop(status: &str) -> bool {
     !matches!(status, "" | "Idle" | "Aborted" | "Disconnected")
@@ -204,7 +206,7 @@ fn bool_row(
     lang: RwSignal<Lang>,
     key: &'static str,
     label: LabelFn,
-) -> impl IntoView {
+) -> impl IntoView + use<> {
     let s = send.clone();
     let on_change = move |ev: web_sys::Event| {
         dispatch_guide_setting(&s, key, serde_json::Value::Bool(event_target_checked(&ev)));
@@ -230,7 +232,7 @@ fn int_row(
     min: i64,
     max: i64,
     step: i64,
-) -> impl IntoView {
+) -> impl IntoView + use<> {
     let s = send.clone();
     let on_change = move |ev: web_sys::Event| {
         let raw = event_target_value(&ev);
@@ -265,7 +267,7 @@ fn float_row(
     min: f64,
     max: f64,
     step: f64,
-) -> impl IntoView {
+) -> impl IntoView + use<> {
     let s = send.clone();
     let on_change = move |ev: web_sys::Event| {
         let raw = event_target_value(&ev);
@@ -301,14 +303,10 @@ fn select_row(
     key: &'static str,
     label: LabelFn,
     options: &'static [&'static str],
-) -> impl IntoView {
+) -> impl IntoView + use<> {
     let s = send.clone();
     let on_change = move |ev: web_sys::Event| {
-        dispatch_guide_setting(
-            &s,
-            key,
-            serde_json::Value::String(event_target_select(&ev)),
-        );
+        dispatch_guide_setting(&s, key, serde_json::Value::String(event_target_select(&ev)));
     };
     view! {
         <div class="flex items-center gap-sp-2">
@@ -341,10 +339,14 @@ fn text_option_row(
     lang: RwSignal<Lang>,
     option: &'static str,
     label: LabelFn,
-) -> impl IntoView {
+) -> impl IntoView + use<> {
     let s = send.clone();
     let on_change = move |ev: web_sys::Event| {
-        dispatch_option(&s, option, serde_json::Value::String(event_target_value(&ev)));
+        dispatch_option(
+            &s,
+            option,
+            serde_json::Value::String(event_target_value(&ev)),
+        );
     };
     view! {
         <div class="flex items-center gap-sp-2">
@@ -367,7 +369,7 @@ fn int_option_row(
     label: LabelFn,
     min: i64,
     max: i64,
-) -> impl IntoView {
+) -> impl IntoView + use<> {
     let s = send.clone();
     let on_change = move |ev: web_sys::Event| {
         let raw = event_target_value(&ev);
@@ -422,24 +424,36 @@ pub fn GuideTab(
 
     // Guider-backend radio — dispatches Options::GuiderType (int).
     let s_internal = send.clone();
-    let on_internal  = move |_| dispatch_option(&s_internal,  "GuiderType", serde_json::Value::Number(0.into()));
+    let on_internal = move |_| {
+        dispatch_option(
+            &s_internal,
+            "GuiderType",
+            serde_json::Value::Number(0.into()),
+        )
+    };
     let s_phd2 = send.clone();
-    let on_phd2      = move |_| dispatch_option(&s_phd2,      "GuiderType", serde_json::Value::Number(1.into()));
+    let on_phd2 =
+        move |_| dispatch_option(&s_phd2, "GuiderType", serde_json::Value::Number(1.into()));
     let s_linguider = send.clone();
-    let on_linguider = move |_| dispatch_option(&s_linguider, "GuiderType", serde_json::Value::Number(2.into()));
+    let on_linguider = move |_| {
+        dispatch_option(
+            &s_linguider,
+            "GuiderType",
+            serde_json::Value::Number(2.into()),
+        )
+    };
 
     // Derive guider type from options map; default 0 (Internal).
-    let guider_type = move || guide.with(|g|
-        settings_i64(&g.options, "GuiderType").unwrap_or(0));
+    let guider_type = move || guide.with(|g| settings_i64(&g.options, "GuiderType").unwrap_or(0));
     let is_internal = move || guider_type() == 0;
 
     // Button gating closures — refresh on each render via guide signal.
     let status = move || guide.with(|g| g.status.clone());
-    let btn_start    = move || can_start(&status());
-    let btn_stop     = move || can_stop(&status());
-    let btn_capture  = move || can_capture_or_loop(&status(), is_internal());
-    let btn_loop     = move || can_capture_or_loop(&status(), is_internal());
-    let btn_clear    = move || can_clear(&status());
+    let btn_start = move || can_start(&status());
+    let btn_stop = move || can_stop(&status());
+    let btn_capture = move || can_capture_or_loop(&status(), is_internal());
+    let btn_loop = move || can_capture_or_loop(&status(), is_internal());
+    let btn_clear = move || can_clear(&status());
 
     view! {
         <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] overflow-hidden">

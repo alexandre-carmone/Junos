@@ -13,10 +13,16 @@ use super::super::{render_center_fov, render_mount_fov};
 pub struct FovReticleLayer;
 
 impl SkyLayer for FovReticleLayer {
-    fn name(&self) -> &'static str { "fov_reticle" }
-    fn enabled(&self, f: &Frame) -> bool { f.toggles.fov_on }
+    fn name(&self) -> &'static str {
+        "fov_reticle"
+    }
+    fn enabled(&self, f: &Frame) -> bool {
+        f.toggles.fov_on
+    }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
-        if f.mode != PipelineMode::Canvas2dFallback { return; }
+        if f.mode != PipelineMode::Canvas2dFallback {
+            return;
+        }
         let view = *f.view;
         let proj = |alt: f64, az: f64| super::super::layer::project_with(view, alt, az);
         render_center_fov(ctx, f, &proj, f.view.cx, f.view.cy);

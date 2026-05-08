@@ -15,8 +15,12 @@ use super::super::{render_fallback_stars, render_star_names_gpu};
 pub struct StarsLayer;
 
 impl SkyLayer for StarsLayer {
-    fn name(&self) -> &'static str { "stars" }
-    fn enabled(&self, f: &Frame) -> bool { f.toggles.stars_on || f.toggles.const_on }
+    fn name(&self) -> &'static str {
+        "stars"
+    }
+    fn enabled(&self, f: &Frame) -> bool {
+        f.toggles.stars_on || f.toggles.const_on
+    }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         let view = *f.view;
         let scale = view.scale;

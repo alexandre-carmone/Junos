@@ -343,7 +343,7 @@ pub fn FilesTab(
     }
 }
 
-fn render_breadcrumb(path: &str, root_label: &'static str, current_path: RwSignal<String>) -> impl IntoView {
+fn render_breadcrumb(path: &str, root_label: &'static str, current_path: RwSignal<String>) -> impl IntoView + use<> {
     let mut acc = String::new();
     let mut chips: Vec<(String, String)> = vec![(String::new(), root_label.to_string())];
     for seg in path.split('/').filter(|s| !s.is_empty()) {

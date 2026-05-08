@@ -12,29 +12,26 @@ use leptos::prelude::*;
 
 use crate::ws::{GuideDriftSample, GuideStateSample};
 
-const WINDOW_S:    f64 = 120.0;
-const VIEW_W:      f64 = 800.0;
-const PLOT_H:      f64 = 160.0;
-const RIBBON_H:    f64 = 12.0;
+const WINDOW_S: f64 = 120.0;
+const VIEW_W: f64 = 800.0;
+const PLOT_H: f64 = 160.0;
+const RIBBON_H: f64 = 12.0;
 const AXIS_LABEL_H: f64 = 14.0;
 
 /// Plot Y-range clamped symmetrically. Real drift is typically < 2".
-const Y_MIN:  f64 = -4.0;
-const Y_MAX:  f64 =  4.0;
+const Y_MIN: f64 = -4.0;
+const Y_MAX: f64 = 4.0;
 
 fn color_for(status: &str) -> &'static str {
     match status {
-        "Idle" | "Aborted" | "Disconnected" | ""        => "#555",
-        "Calibrating" | "Selecting star" | "Looping"
-        | "Capturing" | "Subtracting" | "Subframing"
-        | "Reacquiring"                                 => "#ffd060",
-        "Calibrated" | "Connected"                      => "#88aaff",
-        "Guiding"                                       => "#7affa0",
-        "Dithering" | "Dithering successful"
-        | "Manual Dithering" | "Settling"               => "#66e0e0",
-        "Calibration error" | "Dithering error"
-        | "Suspended"                                   => "#ff6a6a",
-        _                                               => "#c0c0d0",
+        "Idle" | "Aborted" | "Disconnected" | "" => "#555",
+        "Calibrating" | "Selecting star" | "Looping" | "Capturing" | "Subtracting"
+        | "Subframing" | "Reacquiring" => "#ffd060",
+        "Calibrated" | "Connected" => "#88aaff",
+        "Guiding" => "#7affa0",
+        "Dithering" | "Dithering successful" | "Manual Dithering" | "Settling" => "#66e0e0",
+        "Calibration error" | "Dithering error" | "Suspended" => "#ff6a6a",
+        _ => "#c0c0d0",
     }
 }
 
@@ -51,8 +48,13 @@ fn build_path(samples: &[GuideDriftSample], now_ms: f64, axis: Axis) -> String {
     let mut d = String::new();
     let mut started = false;
     for s in samples {
-        let v = match axis { Axis::Ra => s.ra, Axis::De => s.de };
-        if !v.is_finite() { continue; }
+        let v = match axis {
+            Axis::Ra => s.ra,
+            Axis::De => s.de,
+        };
+        if !v.is_finite() {
+            continue;
+        }
         let x = time_to_x(s.t_ms, now_ms);
         let y = y_to_px(v);
         if !started {
@@ -66,18 +68,22 @@ fn build_path(samples: &[GuideDriftSample], now_ms: f64, axis: Axis) -> String {
 }
 
 #[derive(Copy, Clone)]
-enum Axis { Ra, De }
+enum Axis {
+    Ra,
+    De,
+}
 
 pub fn drift_plot(
-    drift:   &[GuideDriftSample],
+    drift: &[GuideDriftSample],
     history: &[GuideStateSample],
-) -> impl IntoView {
-    let now_ms   = web_sys::js_sys::Date::now();
+) -> impl IntoView + use<> {
+    let now_ms = web_sys::js_sys::Date::now();
     let start_ms = now_ms - WINDOW_S * 1000.0;
 
     // Filter drift samples to the window (for clean paths; we don't want
     // a line stretching in from outside).
-    let drift_in_window: Vec<GuideDriftSample> = drift.iter()
+    let drift_in_window: Vec<GuideDriftSample> = drift
+        .iter()
         .filter(|s| s.t_ms >= start_ms)
         .cloned()
         .collect();
@@ -90,10 +96,16 @@ pub fn drift_plot(
     let mut segments: Vec<(f64, f64, &'static str)> = Vec::new();
     for (i, sample) in history.iter().enumerate() {
         let seg_start = sample.t_ms.max(start_ms);
-        let seg_end = history.get(i + 1).map(|n| n.t_ms).unwrap_or(now_ms).min(now_ms);
-        if seg_end <= start_ms || seg_start >= now_ms { continue; }
+        let seg_end = history
+            .get(i + 1)
+            .map(|n| n.t_ms)
+            .unwrap_or(now_ms)
+            .min(now_ms);
+        if seg_end <= start_ms || seg_start >= now_ms {
+            continue;
+        }
         let x0 = time_to_x(seg_start, now_ms);
-        let x1 = time_to_x(seg_end,   now_ms);
+        let x1 = time_to_x(seg_end, now_ms);
         segments.push((x0, (x1 - x0).max(1.0), color_for(&sample.status)));
     }
     let ribbon_placeholder = segments.is_empty();

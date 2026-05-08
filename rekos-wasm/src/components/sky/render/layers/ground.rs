@@ -10,7 +10,9 @@ use super::super::render_ground;
 pub struct GroundLayer;
 
 impl SkyLayer for GroundLayer {
-    fn name(&self) -> &'static str { "ground" }
+    fn name(&self) -> &'static str {
+        "ground"
+    }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         let view = *f.view;
         let proj = |alt: f64, az: f64| super::super::layer::project_with(view, alt, az);

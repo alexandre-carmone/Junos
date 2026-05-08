@@ -16,8 +16,12 @@ use super::super::render_dso;
 pub struct DsoLayer;
 
 impl SkyLayer for DsoLayer {
-    fn name(&self) -> &'static str { "dso" }
-    fn enabled(&self, f: &Frame) -> bool { f.toggles.dso_on }
+    fn name(&self) -> &'static str {
+        "dso"
+    }
+    fn enabled(&self, f: &Frame) -> bool {
+        f.toggles.dso_on
+    }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         // Re-borrow each field individually so the closure capturing
         // `view` doesn't conflict with the mutable borrows of
@@ -31,6 +35,14 @@ impl SkyLayer for DsoLayer {
         let dso_cat_owned = f.catalogs.dso.cloned();
         let dso_index = f.catalogs.dso_index;
         let nebulae_index = f.catalogs.nebulae;
-        render_dso(ctx, f, &dso_cat_owned, dso_index, &proj, scale, nebulae_index);
+        render_dso(
+            ctx,
+            f,
+            &dso_cat_owned,
+            dso_index,
+            &proj,
+            scale,
+            nebulae_index,
+        );
     }
 }

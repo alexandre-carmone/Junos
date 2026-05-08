@@ -10,7 +10,9 @@ use super::super::render_solar_system;
 pub struct SolarSystemLayer;
 
 impl SkyLayer for SolarSystemLayer {
-    fn name(&self) -> &'static str { "solar_system" }
+    fn name(&self) -> &'static str {
+        "solar_system"
+    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.solar_system_on && !f.mode.is_gpu()
     }

@@ -107,6 +107,25 @@ const EXPOSURE_FIELDS: &[Field] = &[
     },
 ];
 
+const ONE_SHOT_EXPOSURE_FIELDS: &[Field] = &[
+    Field {
+        key: "captureExposureN",
+        label: |t| t.field_exposure_s,
+        kind: Kind::Number,
+    },
+    Field {
+        key: "captureTypeS",
+        label: |t| t.field_frame_type,
+        kind: Kind::ComboDynamic(|c, _| {
+            if c.frame_type_options.is_empty() {
+                FRAME_TYPE_FALLBACK.iter().map(|s| s.to_string()).collect()
+            } else {
+                c.frame_type_options.clone()
+            }
+        }),
+    },
+];
+
 const FRAME_FIELDS: &[Field] = &[
     Field {
         key: "captureBinHN",
@@ -139,6 +158,19 @@ const GAIN_FIELDS: &[Field] = &[
     Field {
         key: "captureOffsetN",
         label: |t| t.field_offset,
+        kind: Kind::Number,
+    },
+    Field {
+        key: "captureISOS",
+        label: |t| t.field_iso,
+        kind: Kind::ComboDynamic(|c, _| c.iso_options.clone()),
+    },
+];
+
+const ONE_SHOT_GAIN_FIELDS: &[Field] = &[
+    Field {
+        key: "captureGainN",
+        label: |t| t.field_gain,
         kind: Kind::Number,
     },
     Field {
@@ -191,40 +223,11 @@ pub fn ImagingTab(
     let tr = move || t(lang.get());
 
     let target_temp = RwSignal::new(-10.0_f64);
+    let preview_visible = RwSignal::new(initial_preview_visible());
+    let oneshot_open = RwSignal::new(true);
+    let add_overlay_open = RwSignal::new(false);
+    let job_detail_idx = RwSignal::new(None::<usize>);
 
-    // ── Collapsible-panel state ──────────────────────────────────────────
-    // One signal per setting panel so "Collapse all" / "Expand all" can
-    // drive them while each panel still behaves independently afterwards.
-    let cooling_open = RwSignal::new(true);
-    let exposure_open = RwSignal::new(true);
-    let frame_open = RwSignal::new(true);
-    let gain_open = RwSignal::new(false);
-    let filter_open = RwSignal::new(true);
-    let target_open = RwSignal::new(false);
-    let jobtemp_open = RwSignal::new(false);
-    let preview_visible = RwSignal::new(true);
-
-    let all_panels = [
-        cooling_open,
-        exposure_open,
-        frame_open,
-        gain_open,
-        filter_open,
-        target_open,
-        jobtemp_open,
-    ];
-    let all_collapse = all_panels;
-    let on_collapse_all = move |_: web_sys::MouseEvent| {
-        for s in all_collapse {
-            s.set(false);
-        }
-    };
-    let all_expand = all_panels;
-    let on_expand_all = move |_: web_sys::MouseEvent| {
-        for s in all_expand {
-            s.set(true);
-        }
-    };
     let on_toggle_preview = move |_: web_sys::MouseEvent| {
         preview_visible.update(|v| *v = !*v);
     };
@@ -251,8 +254,7 @@ pub fn ImagingTab(
     let s_loop = send.clone();
     let on_loop = move |_| send_cmd(&s_loop, "capture_loop", serde_json::json!({}));
 
-    let s_add = send.clone();
-    let on_add_job = move |_| send_cmd(&s_add, "capture_add_sequence", serde_json::json!({}));
+    let sv_add_job = StoredValue::new(send.clone());
     let s_clear = send.clone();
     let on_clear_seq =
         move |_| send_cmd(&s_clear, "capture_clear_sequences", serde_json::json!({}));
@@ -375,13 +377,15 @@ pub fn ImagingTab(
             .collect::<Vec<_>>()
     };
 
-    let s_remove = send.clone();
+    let sv_remove_job = StoredValue::new(send.clone());
     let on_remove_job = move |idx: usize| {
-        send_cmd(
-            &s_remove,
-            "capture_remove_sequence",
-            serde_json::json!({ "index": idx }),
-        );
+        sv_remove_job.with_value(|s| {
+            send_cmd(
+                s,
+                "capture_remove_sequence",
+                serde_json::json!({ "index": idx }),
+            )
+        });
     };
 
     // Shared setting lookup: returns the current Value from the debounced
@@ -391,6 +395,7 @@ pub fn ImagingTab(
             c.settings
                 .as_object()
                 .and_then(|o| o.get(key).cloned())
+                .or_else(|| default_capture_setting_value(key))
                 .unwrap_or(serde_json::Value::Null)
         })
     };
@@ -398,10 +403,10 @@ pub fn ImagingTab(
     let stat_label = "text-text-blue text-xs uppercase tracking-[0.06em]";
 
     view! {
-        <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] overflow-hidden [-webkit-tap-highlight-color:rgba(136,170,255,0.25)]">
+        <div class="absolute inset-0 bg-bg text-text font-mono overflow-y-auto overflow-x-hidden [-webkit-tap-highlight-color:rgba(136,170,255,0.25)]">
 
             // ── Header ────────────────────────────────────────────────────
-            <div class="flex flex-wrap items-center gap-y-[10px] gap-x-[18px] py-[10px] pl-20 pr-5 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md min-h-[44px] max-[759px]:py-sp-2 max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:gap-y-[6px] max-[759px]:gap-x-3 max-[759px]:text-sm max-[374px]:gap-x-2 max-[374px]:gap-y-[4px]">
+            <div class="flex flex-wrap items-center gap-y-[10px] gap-x-[18px] py-[10px] pl-20 pr-5 border-b border-border-base bg-[rgba(6,6,15,0.92)] text-md min-h-[44px] max-[759px]:py-[6px] max-[759px]:pl-16 max-[759px]:pr-2 max-[759px]:gap-y-[4px] max-[759px]:gap-x-2 max-[759px]:text-xs max-[374px]:gap-x-[6px] max-[374px]:gap-y-[3px]">
                 <span
                     class="inline-block py-sp-1 px-sp-3 rounded-[14px] text-sm border border-current"
                     style=move || format!(
@@ -413,7 +418,7 @@ pub fn ImagingTab(
                         if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
-                <span class="inline-flex items-center gap-[6px]">
+                <span class="inline-flex items-center gap-[6px] max-[479px]:hidden">
                     <span class=stat_label>{move || tr().imaging_camera}</span>
                     <span>{move || {
                         let d = camera.with(|c| c.device.clone());
@@ -447,53 +452,54 @@ pub fn ImagingTab(
                         _ => "—".into(),
                     })}</span>
                 </span>
-                <span class="inline-flex items-center gap-[6px]">
+                <span class="inline-flex items-center gap-[6px] max-[639px]:hidden">
                     <span class=stat_label>{move || tr().imaging_progress}</span>
                     <span>{move || capture.with(|c| match (c.seq_current, c.seq_total) {
                         (Some(a), Some(b)) => format!("{} / {}", a, b),
                         _ => "—".into(),
                     })}</span>
                 </span>
+                <div class="inline-flex flex-wrap items-center gap-[6px] py-[2px] px-[8px] border border-[#23283b] bg-[rgba(10,12,20,0.55)] rounded-sm max-[759px]:order-last max-[759px]:w-full max-[759px]:justify-between max-[759px]:px-[6px]">
+                    <span class="text-text-blue text-[10px] uppercase tracking-[0.06em] max-[759px]:hidden">{move || tr().imaging_cooling}</span>
+                    <span class="text-text-blue text-xs">{move || tr().imaging_target_c}</span>
+                    <input
+                        type="number"
+                        step="0.5"
+                        value=move || format!("{:.1}", target_temp.get())
+                        on:change=move |ev| {
+                            let s = event_target_value(&ev);
+                            if let Ok(n) = s.parse::<f64>() { target_temp.set(n); }
+                        }
+                        class="input input--sm w-[72px] font-mono"
+                    />
+                    <button on:click=on_set_temp class=GHOST_BTN>{move || tr().imaging_set}</button>
+                    <button on:click=on_cooler_on class="btn btn--sm btn-ghost text-text-blue max-[479px]:hidden">{move || tr().cooler_on}</button>
+                    <button on:click=on_cooler_off class="btn btn--sm btn-ghost text-text-blue max-[479px]:hidden">{move || tr().cooler_off}</button>
+                </div>
                 <button
-                    class=format!("{GHOST_BTN} ml-auto")
+                    class=format!("{GHOST_BTN} ml-auto max-[639px]:ml-0")
                     on:click=on_toggle_preview
                     title=move || tr().imaging_toggle_preview_title>
                     {move || if preview_visible.get() { tr().imaging_hide_preview } else { tr().imaging_show_preview }}
                 </button>
                 <button
-                    class=GHOST_BTN
+                    class="btn btn--sm btn-ghost text-text-blue max-[639px]:hidden"
                     on:click=on_reveal_files
                     title=move || tr().files_open_in_files>
                     {move || tr().files_open_in_files}
                 </button>
             </div>
 
-            // ── Body: responsive grid (1199px shrinks to 2-col, 759px stacks) ──
-            <div class=move || {
-                let shared = "min-h-0 overflow-y-auto items-start \
-                              max-[899px]:flex max-[899px]:flex-col";
-                let cols = if preview_visible.get() {
-                    "grid grid-cols-[minmax(0,1fr)_340px_320px] \
-                     [@media(min-width:900px)_and_(max-width:1199px)]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] \
-                     [@media(min-width:900px)_and_(max-width:1199px)]:grid-rows-[minmax(220px,45%)_auto]"
-                } else {
-                    "grid grid-cols-[minmax(0,1fr)_320px] \
-                     [@media(min-width:900px)_and_(max-width:1199px)]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
-                };
-                format!("{shared} {cols}")
-            }>
-                // ─ Preview ────────────────────────────────────────────────
+            // ── Body: sequence-centred vertical layout ─────────────────────
+            <div class="overflow-x-hidden p-sp-4 pb-6 flex flex-col gap-sp-4 max-[759px]:p-sp-3">
                 <div
                     class=move || {
-                        let base = "min-w-0 h-full overflow-hidden flex items-center justify-center bg-bg-input-deep border-r border-border-base \
-                                    sticky top-0 \
-                                    max-[1199px]:col-span-full max-[1199px]:relative max-[1199px]:h-auto max-[1199px]:border-r-0 max-[1199px]:border-b max-[1199px]:border-border-base \
-                                    max-[899px]:col-auto max-[899px]:shrink-0 max-[899px]:min-h-[200px] max-[899px]:max-h-[40vh]";
+                        let base = "min-h-[180px] max-h-[35vh] overflow-hidden flex items-center justify-center bg-bg-input-deep border border-border-base rounded-[3px]";
                         if preview_visible.get() { base.to_string() } else { format!("{base} hidden") }
                     }>
                     {move || match capture.with(|c| c.preview_url.clone()) {
                         Some(url) => view! {
-                            <img class="max-w-full max-h-full object-contain [image-rendering:pixelated]" src=url />
+                            <img class="max-w-full max-h-[35vh] object-contain [image-rendering:pixelated]" src=url />
                         }.into_any(),
                         None => view! {
                             <div class="text-[#444] text-sm text-center px-3">
@@ -503,175 +509,41 @@ pub fn ImagingTab(
                     }}
                 </div>
 
-                // ─ Settings ──────────────────────────────────────────────
-                <div class="flex flex-col min-w-0 p-sp-4 gap-sp-4 border-r border-border-base max-[899px]:border-r-0 max-[899px]:border-b max-[899px]:border-border-base max-[899px]:p-sp-3 max-[899px]:gap-sp-3 max-[899px]:overflow-y-visible max-[899px]:shrink-0">
-
-                    // Toolbar: collapse / expand all panels
-                    <div class="flex flex-wrap items-center justify-between gap-sp-2 pb-[6px] border-b border-[#1a1c28] mb-sp-1">
-                        <span class="text-text-blue text-xs uppercase tracking-[0.08em]">{move || tr().imaging_capture_controls}</span>
-                        <div class="flex gap-[6px]">
-                            <button class=GHOST_BTN on:click=on_collapse_all>{move || tr().imaging_collapse_all}</button>
-                            <button class=GHOST_BTN on:click=on_expand_all>{move || tr().imaging_expand_all}</button>
+                <details
+                    class=PANEL_CLS
+                    prop:open=move || oneshot_open.get()
+                    on:toggle=move |ev: web_sys::Event| {
+                        if let Some(el) = ev.target()
+                            .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
+                        { oneshot_open.set(el.open()); }
+                    }>
+                    <summary class=SUMMARY_CLS>
+                        <span class=move || marker_cls(oneshot_open.get())>"▸"</span>
+                        {move || tr().imaging_one_shot}
+                    </summary>
+                    <div class=PANEL_BODY>
+                        <div class="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-sp-3 mb-sp-3">
+                            {render_group(ONE_SHOT_EXPOSURE_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                            <div class="flex flex-col gap-[6px]">
+                                {render_group(FILTER_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                                {render_group(ONE_SHOT_GAIN_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-4 gap-sp-2 max-[759px]:grid-cols-2">
+                            <button on:click=on_preview class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().preview}</button>
+                            <button on:click=on_loop class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().focus_loop_btn}</button>
+                            <button on:click=on_start class=ACTION_BTN style="--btn-color:var(--state-ok);">{move || tr().start}</button>
+                            <button on:click=on_stop class=ACTION_BTN style="--btn-color:var(--state-err);">{move || tr().stop}</button>
                         </div>
                     </div>
-
-                    // Actions — always visible, not foldable
-                    <fieldset class="border border-border-base py-sp-3 px-3">
-                        <legend class="text-text-blue px-[6px] text-sm uppercase tracking-[0.06em]">{move || tr().imaging_actions}</legend>
-                        <div class="grid grid-cols-2 gap-sp-2">
-                            <button on:click=on_start   class=ACTION_BTN style="--btn-color:var(--state-ok);">{move || tr().start}</button>
-                            <button on:click=on_stop    class=ACTION_BTN style="--btn-color:var(--state-err);">{move || tr().stop}</button>
-                            <button on:click=on_preview class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().preview}</button>
-                            <button on:click=on_loop    class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().focus_loop_btn}</button>
-                        </div>
-                    </fieldset>
-
-                    // Cooling — foldable, open by default
-                    <details
-                        class=PANEL_CLS
-                        prop:open=move || cooling_open.get()
-                        on:toggle=move |ev: web_sys::Event| {
-                            if let Some(el) = ev.target()
-                                .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
-                            {
-                                cooling_open.set(el.open());
-                            }
-                        }>
-                        <summary class=SUMMARY_CLS>
-                            <span class=move || marker_cls(cooling_open.get())>"▸"</span>
-                            {move || tr().imaging_cooling}
-                        </summary>
-                        <div class=PANEL_BODY>
-                            <div class="flex items-center gap-sp-2 mb-sp-2 max-[479px]:flex-wrap">
-                                <span class=FIELD_LABEL>{move || tr().imaging_target_c}</span>
-                                <input
-                                    type="number"
-                                    step="0.5"
-                                    value=move || format!("{:.1}", target_temp.get())
-                                    on:change=move |ev| {
-                                        let s = event_target_value(&ev);
-                                        if let Ok(n) = s.parse::<f64>() { target_temp.set(n); }
-                                    }
-                                    class=FIELD_INPUT
-                                />
-                                <button on:click=on_set_temp class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().imaging_set}</button>
-                            </div>
-                            <div class="grid grid-cols-2 gap-sp-2">
-                                <button on:click=on_cooler_on  class=ACTION_BTN style="--btn-color:var(--state-ok);">{move || tr().cooler_on}</button>
-                                <button on:click=on_cooler_off class=ACTION_BTN style="--btn-color:var(--state-err);">{move || tr().cooler_off}</button>
-                            </div>
-                        </div>
-                    </details>
-
-                    <details
-                        class=PANEL_CLS
-                        prop:open=move || exposure_open.get()
-                        on:toggle=move |ev: web_sys::Event| {
-                            if let Some(el) = ev.target()
-                                .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
-                            { exposure_open.set(el.open()); }
-                        }>
-                        <summary class=SUMMARY_CLS>
-                            <span class=move || marker_cls(exposure_open.get())>"▸"</span>
-                            {move || tr().imaging_exposure}
-                        </summary>
-                        <div class=PANEL_BODY>
-                            {render_group(EXPOSURE_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                        </div>
-                    </details>
-
-                    <details
-                        class=PANEL_CLS
-                        prop:open=move || frame_open.get()
-                        on:toggle=move |ev: web_sys::Event| {
-                            if let Some(el) = ev.target()
-                                .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
-                            { frame_open.set(el.open()); }
-                        }>
-                        <summary class=SUMMARY_CLS>
-                            <span class=move || marker_cls(frame_open.get())>"▸"</span>
-                            {move || tr().imaging_frame}
-                        </summary>
-                        <div class=PANEL_BODY>
-                            {render_group(FRAME_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                        </div>
-                    </details>
-
-                    <details
-                        class=PANEL_CLS
-                        prop:open=move || gain_open.get()
-                        on:toggle=move |ev: web_sys::Event| {
-                            if let Some(el) = ev.target()
-                                .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
-                            { gain_open.set(el.open()); }
-                        }>
-                        <summary class=SUMMARY_CLS>
-                            <span class=move || marker_cls(gain_open.get())>"▸"</span>
-                            {move || tr().imaging_gain_iso}
-                        </summary>
-                        <div class=PANEL_BODY>
-                            {render_group(GAIN_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                        </div>
-                    </details>
-
-                    <details
-                        class=PANEL_CLS
-                        prop:open=move || filter_open.get()
-                        on:toggle=move |ev: web_sys::Event| {
-                            if let Some(el) = ev.target()
-                                .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
-                            { filter_open.set(el.open()); }
-                        }>
-                        <summary class=SUMMARY_CLS>
-                            <span class=move || marker_cls(filter_open.get())>"▸"</span>
-                            {move || tr().imaging_filter}
-                        </summary>
-                        <div class=PANEL_BODY>
-                            {render_group(FILTER_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                        </div>
-                    </details>
-
-                    <details
-                        class=PANEL_CLS
-                        prop:open=move || target_open.get()
-                        on:toggle=move |ev: web_sys::Event| {
-                            if let Some(el) = ev.target()
-                                .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
-                            { target_open.set(el.open()); }
-                        }>
-                        <summary class=SUMMARY_CLS>
-                            <span class=move || marker_cls(target_open.get())>"▸"</span>
-                            {move || tr().imaging_target}
-                        </summary>
-                        <div class=PANEL_BODY>
-                            {render_group(TARGET_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                        </div>
-                    </details>
-
-                    <details
-                        class=PANEL_CLS
-                        prop:open=move || jobtemp_open.get()
-                        on:toggle=move |ev: web_sys::Event| {
-                            if let Some(el) = ev.target()
-                                .and_then(|t| t.dyn_into::<web_sys::HtmlDetailsElement>().ok())
-                            { jobtemp_open.set(el.open()); }
-                        }>
-                        <summary class=SUMMARY_CLS>
-                            <span class=move || marker_cls(jobtemp_open.get())>"▸"</span>
-                            {move || tr().imaging_job_temperature}
-                        </summary>
-                        <div class=PANEL_BODY>
-                            {render_group(ENFORCE_TEMP_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                        </div>
-                    </details>
-                </div>
+                </details>
 
                 // ─ Sequence queue ────────────────────────────────────────
-                <div class="sticky top-0 flex flex-col min-w-0 max-h-screen overflow-hidden max-[1199px]:relative max-[1199px]:max-h-none max-[1199px]:overflow-y-auto max-[899px]:shrink-0 max-[899px]:overflow-visible">
+                <section class="flex flex-col min-w-0 border border-border-base bg-[rgba(8,10,18,0.45)] rounded-[3px] overflow-visible">
                     <div class="flex flex-wrap items-center justify-between gap-sp-2 pt-3 pb-sp-2 px-sp-4 border-b border-border-base max-[899px]:flex-col max-[899px]:items-stretch">
                         <span class="text-text-blue text-sm uppercase tracking-[0.08em]">{move || tr().imaging_sequence_queue}</span>
                         <div class="flex flex-wrap gap-[6px] max-[479px]:grid max-[479px]:grid-cols-2 max-[479px]:gap-sp-2 max-[479px]:w-full">
-                            <button on:click=on_add_job   class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().imaging_add_job}</button>
+                            <button on:click=move |_| add_overlay_open.set(true) class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().imaging_add_exposure}</button>
                             <button on:click=on_clear_seq class=ACTION_BTN style="--btn-color:var(--state-err);">{move || tr().seq_clear}</button>
                             <button
                                 class=ACTION_BTN
@@ -732,7 +604,7 @@ pub fn ImagingTab(
                             <button class=ACTION_BTN style="--btn-color:var(--text-faint);" on:click=move |_| load_open.set(false)>"✕"</button>
                         </div>
                     </Show>
-                    <div class="flex-1 min-h-0 overflow-y-auto py-sp-2 px-sp-3 max-[899px]:overflow-y-visible max-[899px]:max-h-none">
+                    <div class="py-sp-2 px-sp-3">
                         {move || {
                             let rows = sequence_rows();
                             if rows.is_empty() {
@@ -748,7 +620,9 @@ pub fn ImagingTab(
                                 let badge_color = job_status_color(&r.status);
                                 let filter_label = if r.filter.is_empty() { "—".into() } else { r.filter };
                                 view! {
-                                    <div class="flex flex-col gap-[3px] py-sp-2 px-sp-3 mb-[6px] bg-[rgba(14,16,26,0.85)] border border-[#22263a] rounded-sm">
+                                    <div
+                                        class="w-full text-left flex flex-col gap-[5px] py-sp-2 px-sp-3 mb-[6px] bg-[rgba(14,16,26,0.85)] border border-[#22263a] rounded-sm hover:border-[#3a4465] hover:bg-[rgba(18,22,36,0.92)] transition-colors cursor-pointer"
+                                        on:click=move |_| job_detail_idx.set(Some(idx))>
                                         <div class="flex items-center gap-sp-2">
                                             <span class="text-[#555] text-xs">{format!("#{}", idx + 1)}</span>
                                             <span
@@ -759,7 +633,10 @@ pub fn ImagingTab(
                                             <button
                                                 class="btn btn--sm btn-ghost text-state-err"
                                                 title=tr().imaging_remove_job
-                                                on:click=move |_| on_remove(idx)>
+                                                on:click=move |ev: web_sys::MouseEvent| {
+                                                    ev.stop_propagation();
+                                                    on_remove(idx);
+                                                }>
                                                 "×"
                                             </button>
                                         </div>
@@ -779,7 +656,70 @@ pub fn ImagingTab(
                             }).collect::<Vec<_>>().into_any()
                         }}
                     </div>
-                </div>
+                </section>
+
+                <Show when=move || add_overlay_open.get()>
+                    <div class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2">
+                        <div class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col">
+                            <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
+                                <h2 class="text-text-blue text-sm uppercase tracking-[0.08em]">{move || tr().imaging_add_exposure}</h2>
+                                <button class=GHOST_BTN on:click=move |_| add_overlay_open.set(false)>{move || tr().imaging_close}</button>
+                            </div>
+                            <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-sp-4 max-[759px]:p-sp-3">
+                                {settings_group_view(move || tr().imaging_exposure, EXPOSURE_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                                {settings_group_view(move || tr().imaging_frame, FRAME_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                                {settings_group_view(move || tr().imaging_gain_iso, GAIN_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                                {settings_group_view(move || tr().imaging_filter, FILTER_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                                {settings_group_view(move || tr().imaging_target, TARGET_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                                {settings_group_view(move || tr().imaging_job_temperature, ENFORCE_TEMP_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                            </div>
+                            <div class="flex justify-end gap-sp-2 py-sp-3 px-sp-4 border-t border-border-base bg-[rgba(10,12,20,0.8)]">
+                                <button class=GHOST_BTN on:click=move |_| add_overlay_open.set(false)>{move || tr().cancel}</button>
+                                <button class=ACTION_BTN style="--btn-color:var(--state-info);" on:click=move |_| {
+                                    sv_add_job.with_value(|s| send_cmd(s, "capture_add_sequence", serde_json::json!({})));
+                                    add_overlay_open.set(false);
+                                }>{move || tr().imaging_add_exposure}</button>
+                            </div>
+                        </div>
+                    </div>
+                </Show>
+
+                <Show when=move || job_detail_idx.get().is_some()>
+                    {move || {
+                        let idx = job_detail_idx.get().unwrap_or(0);
+                        let job = capture.with(|c| c.sequence.as_array().and_then(|arr| arr.get(idx).cloned()));
+                        let Some(job) = job else {
+                            return view! {}.into_any();
+                        };
+                        let rows = job_detail_rows(&job, tr());
+                        let on_remove = on_remove_job.clone();
+                        view! {
+                            <div class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.82)] backdrop-blur-sm flex items-center justify-center p-sp-4 max-[759px]:items-stretch max-[759px]:p-sp-2">
+                                <div class="w-full max-w-[720px] max-h-[90vh] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col">
+                                    <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
+                                        <h2 class="text-text-blue text-sm uppercase tracking-[0.08em]">{format!("{} #{}", tr().imaging_job_detail, idx + 1)}</h2>
+                                        <button class=GHOST_BTN on:click=move |_| job_detail_idx.set(None)>{move || tr().imaging_close}</button>
+                                    </div>
+                                    <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-sp-2 max-[759px]:p-sp-3">
+                                        {rows.into_iter().map(|(label, value)| view! {
+                                            <div class="border border-[#22263a] bg-[rgba(14,16,26,0.8)] rounded-sm py-sp-2 px-sp-3">
+                                                <div class="text-text-blue text-xs uppercase tracking-[0.06em] mb-[3px]">{label}</div>
+                                                <div class="text-sm text-[#cbd6f0] break-words">{value}</div>
+                                            </div>
+                                        }).collect::<Vec<_>>()}
+                                    </div>
+                                    <div class="flex justify-end gap-sp-2 py-sp-3 px-sp-4 border-t border-border-base bg-[rgba(10,12,20,0.8)]">
+                                        <button class=GHOST_BTN on:click=move |_| job_detail_idx.set(None)>{move || tr().imaging_close}</button>
+                                        <button class=ACTION_BTN style="--btn-color:var(--state-err);" on:click=move |_| {
+                                            on_remove.clone()(idx);
+                                            job_detail_idx.set(None);
+                                        }>{move || tr().imaging_remove_job}</button>
+                                    </div>
+                                </div>
+                            </div>
+                        }.into_any()
+                    }}
+                </Show>
             </div>
         </div>
     }
@@ -819,6 +759,53 @@ fn job_status_color(s: &str) -> &'static str {
         "var(--state-err)"
     } else {
         "var(--text-muted)"
+    }
+}
+
+fn settings_group_view(
+    title: impl Fn() -> &'static str + Copy + Send + Sync + 'static,
+    fields: &'static [Field],
+    lang: RwSignal<Lang>,
+    camera: Signal<CameraSnapshot>,
+    filter_wheel: Signal<FilterWheelSnapshot>,
+    get_value: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
+    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
+) -> leptos::prelude::AnyView {
+    view! {
+        <section class="border border-[#22263a] bg-[rgba(14,16,26,0.72)] rounded-sm p-sp-3">
+            <h3 class="text-text-blue text-xs uppercase tracking-[0.08em] mb-sp-2">{title}</h3>
+            {render_group(fields, lang, camera, filter_wheel, get_value, dispatch)}
+        </section>
+    }
+    .into_any()
+}
+
+fn job_detail_rows(job: &serde_json::Value, t: &'static Translations) -> Vec<(String, String)> {
+    let read = |key: &str| -> String { job_value_display(&job[key]) };
+    vec![
+        (t.status.to_string(), read("Status")),
+        (t.field_frame_type.to_string(), read("Type")),
+        (t.field_exposure_s.to_string(), read("Exp")),
+        (t.field_count.to_string(), read("Count")),
+        (t.field_filter.to_string(), read("Filter")),
+        (t.field_bin_x.to_string(), read("Bin")),
+        (t.field_gain.to_string(), read("ISO/Gain")),
+        (t.field_offset.to_string(), read("Offset")),
+        (t.field_encoding.to_string(), read("Encoding")),
+        (t.field_format.to_string(), read("Format")),
+        (t.field_job_temp_c.to_string(), read("Temperature")),
+        (t.field_delay_s.to_string(), read("Delay")),
+        (t.field_target_name.to_string(), read("Target")),
+        (t.field_directory.to_string(), read("Directory")),
+    ]
+}
+
+fn job_value_display(v: &serde_json::Value) -> String {
+    let s = value_to_display(v);
+    if s.is_empty() {
+        "—".to_string()
+    } else {
+        s
     }
 }
 
@@ -1002,6 +989,31 @@ fn value_to_display(v: &serde_json::Value) -> String {
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
     }
+}
+
+fn default_capture_setting_value(key: &str) -> Option<serde_json::Value> {
+    match key {
+        // One-shot + sequence common defaults
+        "captureExposureN" => serde_json::Number::from_f64(1.0).map(serde_json::Value::Number),
+        "captureTypeS" => Some(serde_json::Value::String("Light".to_string())),
+        "captureCountN" => Some(serde_json::Value::Number(1.into())),
+        "captureDelayN" => Some(serde_json::Value::Number(0.into())),
+        "captureBinHN" => Some(serde_json::Value::Number(1.into())),
+        "captureBinVN" => Some(serde_json::Value::Number(1.into())),
+        "captureGainN" => Some(serde_json::Value::Number(0.into())),
+        "captureOffsetN" => Some(serde_json::Value::Number(0.into())),
+        "cameraTemperatureEnforceB" => Some(serde_json::Value::Bool(false)),
+        "cameraTemperatureN" => serde_json::Number::from_f64(-10.0).map(serde_json::Value::Number),
+        _ => None,
+    }
+}
+
+fn initial_preview_visible() -> bool {
+    web_sys::window()
+        .and_then(|w| w.inner_width().ok())
+        .and_then(|v| v.as_f64())
+        .map(|w| w >= 900.0)
+        .unwrap_or(true)
 }
 
 fn capture_reveal_path(settings: &serde_json::Value) -> Option<String> {

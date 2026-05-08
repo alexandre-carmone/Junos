@@ -20,10 +20,16 @@ pub enum PipelineMode {
 
 impl PipelineMode {
     pub fn from_has_gpu(has_gpu: bool) -> Self {
-        if has_gpu { Self::Gpu } else { Self::Canvas2dFallback }
+        if has_gpu {
+            Self::Gpu
+        } else {
+            Self::Canvas2dFallback
+        }
     }
 
-    pub fn is_gpu(self) -> bool { matches!(self, Self::Gpu) }
+    pub fn is_gpu(self) -> bool {
+        matches!(self, Self::Gpu)
+    }
 }
 
 /// Geometry and projection: canvas size, view center, FOV, and the
@@ -112,4 +118,3 @@ pub struct OverlayState {
     pub dso_gal: bool,
     pub dso_mag: f64,
 }
-

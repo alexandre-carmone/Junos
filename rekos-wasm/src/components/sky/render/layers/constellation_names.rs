@@ -15,12 +15,16 @@ use super::super::render_constellation_names_gpu;
 pub struct ConstellationNamesLayer;
 
 impl SkyLayer for ConstellationNamesLayer {
-    fn name(&self) -> &'static str { "constellation_names" }
+    fn name(&self) -> &'static str {
+        "constellation_names"
+    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.const_on && f.toggles.con_names_on
     }
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
-        if f.mode != PipelineMode::Gpu { return; }
+        if f.mode != PipelineMode::Gpu {
+            return;
+        }
         let view = *f.view;
         let proj = |alt: f64, az: f64| {
             crate::astro::project(alt, az, view.c_alt, view.c_az, view.fov)

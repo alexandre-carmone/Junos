@@ -65,17 +65,19 @@ impl GpuPrepare {
 }
 
 impl Default for GpuPrepare {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Per-frame context handed to every layer. Cheap to construct — just
 /// borrows of the four param groups + catalogs + a mutable hit-list slot.
 pub struct Frame<'a> {
-    pub view:     &'a ViewParams,
-    pub scene:    &'a SceneParams,
-    pub state:    &'a OverlayState,
-    pub toggles:  &'a LayerToggles,
-    pub mode:     PipelineMode,
+    pub view: &'a ViewParams,
+    pub scene: &'a SceneParams,
+    pub state: &'a OverlayState,
+    pub toggles: &'a LayerToggles,
+    pub mode: PipelineMode,
     pub catalogs: &'a Catalogs<'a>,
     pub hit_items: &'a mut Vec<HitItem>,
     /// Lazy-loaded nebula thumbnails, keyed by URL path. The DSO layer
@@ -110,7 +112,9 @@ pub trait SkyLayer {
 
     /// Whether this layer should run this frame. Default: always on.
     /// Layers with user-facing toggles override to read `f.toggles`.
-    fn enabled(&self, f: &Frame) -> bool { true }
+    fn enabled(&self, f: &Frame) -> bool {
+        true
+    }
 
     /// Build per-frame data. May append to `gpu` when `f.mode` is `Gpu`.
     /// Default: no-op.

@@ -77,7 +77,7 @@ pub(super) fn render_preview_modal(
     }.into_any()
 }
 
-pub(super) fn render_meta_blocks(m: &FileMeta, tr: &'static Translations) -> impl IntoView {
+pub(super) fn render_meta_blocks(m: &FileMeta, tr: &'static Translations) -> impl IntoView + use<> {
     let p = m
         .fits
         .as_ref()

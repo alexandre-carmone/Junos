@@ -38,7 +38,10 @@ impl RenderPipeline {
     /// Pipeline with no layers registered. The default during migration —
     /// existing free-fn rendering still runs alongside in `mod.rs`.
     pub fn empty() -> Self {
-        Self { layers: Vec::new(), gpu_prepare: GpuPrepare::new() }
+        Self {
+            layers: Vec::new(),
+            gpu_prepare: GpuPrepare::new(),
+        }
     }
 
     /// Pipeline with the standard set of registered layers, in draw
@@ -84,8 +87,12 @@ impl RenderPipeline {
         self.layers.push(layer);
     }
 
-    pub fn gpu_prepare(&self) -> &GpuPrepare { &self.gpu_prepare }
-    pub fn gpu_prepare_mut(&mut self) -> &mut GpuPrepare { &mut self.gpu_prepare }
+    pub fn gpu_prepare(&self) -> &GpuPrepare {
+        &self.gpu_prepare
+    }
+    pub fn gpu_prepare_mut(&mut self) -> &mut GpuPrepare {
+        &mut self.gpu_prepare
+    }
 
     /// Run prepare → draw on every enabled layer.
     ///
@@ -110,13 +117,21 @@ impl RenderPipeline {
         }
 
         for layer in &mut self.layers {
-            if !layer.enabled(frame) { continue; }
-            let gpu = if frame.mode.is_gpu() { Some(&mut self.gpu_prepare) } else { None };
+            if !layer.enabled(frame) {
+                continue;
+            }
+            let gpu = if frame.mode.is_gpu() {
+                Some(&mut self.gpu_prepare)
+            } else {
+                None
+            };
             layer.prepare(frame, gpu);
         }
 
         for layer in &self.layers {
-            if !layer.enabled(frame) { continue; }
+            if !layer.enabled(frame) {
+                continue;
+            }
             layer.draw_canvas2d(frame, ctx);
         }
         let _ = ctx; // silence unused on the empty-pipeline early-return path
