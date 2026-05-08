@@ -12,6 +12,7 @@
 
 use web_sys::CanvasRenderingContext2d;
 
+use super::super::gpu::FontAtlas;
 use super::layer::{Frame, GpuPrepare, SkyLayer};
 use super::layers::center_crosshair::CenterCrosshairLayer;
 use super::layers::constellation_names::ConstellationNamesLayer;
@@ -100,7 +101,12 @@ impl RenderPipeline {
     /// (or the legacy `render_frame`) afterwards with `self.gpu_prepare()`.
     /// That coupling moves into `run` once `mod.rs` no longer assembles GPU
     /// instances inline.
-    pub fn run(&mut self, frame: &mut Frame, ctx: &CanvasRenderingContext2d) {
+    pub fn run(
+        &mut self,
+        frame: &mut Frame,
+        ctx: &CanvasRenderingContext2d,
+        font_atlas: Option<&FontAtlas>,
+    ) {
         self.gpu_prepare.clear();
 
         // Canvas2D clear: transparent in Gpu mode (the WebGPU canvas sits
@@ -126,6 +132,15 @@ impl RenderPipeline {
                 None
             };
             layer.prepare(frame, gpu);
+        }
+
+        if let Some(atlas) = font_atlas {
+            for layer in &self.layers {
+                if !layer.enabled(frame) {
+                    continue;
+                }
+                layer.prepare_gpu_text(frame, atlas, &mut self.gpu_prepare.text);
+            }
         }
 
         for layer in &self.layers {

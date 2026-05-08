@@ -9,8 +9,9 @@ use std::f64::consts::PI;
 
 use web_sys::CanvasRenderingContext2d;
 
-use super::super::layer::{Frame, GpuPrepare, SkyLayer};
+use super::super::layer::{line_view, Frame, GpuPrepare, SkyLayer};
 use super::super::params::PipelineMode;
+use crate::components::sky::gpu::layers::lines as gpu_lines;
 
 pub struct CenterCrosshairLayer;
 
@@ -19,7 +20,13 @@ impl SkyLayer for CenterCrosshairLayer {
         "center_crosshair"
     }
 
-    fn prepare(&mut self, _f: &mut Frame, _gpu: Option<&mut GpuPrepare>) {}
+    fn prepare(&mut self, f: &mut Frame, gpu: Option<&mut GpuPrepare>) {
+        if !f.mode.is_gpu() {
+            return;
+        }
+        let Some(gpu) = gpu else { return };
+        gpu_lines::build_center_crosshair(&mut gpu.lines, &line_view(f));
+    }
 
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         if f.mode != PipelineMode::Canvas2dFallback {

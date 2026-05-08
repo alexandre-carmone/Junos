@@ -39,8 +39,7 @@ use crate::{ActiveTabCtx, Tab};
 use crate::astro;
 use crate::catalog::CatalogData;
 use crate::dso_catalog::DsoCatalogData;
-use self::gpu::{DsoInstance, LineSegment, LineView, SkyRenderer, TextInstance, Uniforms};
-use self::gpu::layers::lines as gpu_lines;
+use self::gpu::{LineView, SkyRenderer, Uniforms};
 use crate::i18n::{Lang, t};
 use crate::nebulae::NebulaeIndex;
 
@@ -143,6 +142,159 @@ fn detect_mobile_profile() -> MobileProfile {
     // Retina/4K monitors — the extra fill rate is affordable there.
     let dpr_cap = if is_mobile { 2.0 } else { 3.0 };
     MobileProfile { is_mobile, dpr_cap }
+}
+
+fn build_uniforms(
+    sin_lat: f64,
+    cos_lat: f64,
+    lst: f64,
+    c_alt: f64,
+    c_az: f64,
+    fov: f64,
+    cx: f64,
+    cy: f64,
+    scale: f64,
+    mag_limit: f32,
+    wf: f64,
+    hf: f64,
+    dpr: f64,
+    jd: f64,
+) -> Uniforms {
+    let (zeta_rad, z_rad, theta_rad) = crate::coords::precession_angles_j2000_to_jnow(jd);
+    Uniforms {
+        sin_lat: sin_lat as f32,
+        cos_lat: cos_lat as f32,
+        lst_rad: lst.to_radians() as f32,
+        c_alt_rad: c_alt.to_radians() as f32,
+        c_az_rad: c_az.to_radians() as f32,
+        fov_rad: fov.to_radians() as f32,
+        cx: (cx * dpr) as f32,
+        cy: (cy * dpr) as f32,
+        scale: (scale * dpr) as f32,
+        mag_limit,
+        canvas_w: (wf * dpr) as f32,
+        canvas_h: (hf * dpr) as f32,
+        dpr: dpr as f32,
+        zeta_rad: zeta_rad as f32,
+        z_rad: z_rad as f32,
+        theta_rad: theta_rad as f32,
+    }
+}
+
+fn derive_scheduler_jobs(
+    scheduler_jobs_on: bool,
+    scheduler: &SchedulerSnapshot,
+) -> Vec<SchedulerJobRender> {
+    if !scheduler_jobs_on {
+        return Vec::new();
+    }
+    scheduler
+        .jobs
+        .iter()
+        .filter_map(|j| {
+            let name = j["name"].as_str()?.to_string();
+            let ra_h = j["targetRA"].as_f64()?;
+            let dec_deg = j["targetDEC"].as_f64()?;
+            let state = j["state"].as_i64().unwrap_or(0);
+            Some(SchedulerJobRender {
+                name,
+                ra_h,
+                dec_deg,
+                state,
+            })
+        })
+        .collect()
+}
+
+fn derive_kstars_mosaic_plan(mosaic: &MosaicSnapshot) -> Option<MosaicPlanRender> {
+    if mosaic.tiles.is_empty() {
+        return None;
+    }
+    let tiles = mosaic
+        .tiles
+        .iter()
+        .map(|tile| MosaicTileRender {
+            ra_deg: tile.ra_deg,
+            dec_deg: tile.dec_deg,
+            rotation: tile.rotation,
+        })
+        .collect::<Vec<_>>();
+    Some(MosaicPlanRender {
+        target_name: mosaic.target_name.clone().unwrap_or_default(),
+        tiles,
+        fov_w_deg: mosaic.camera_fov_w_deg.unwrap_or(0.5),
+        fov_h_deg: mosaic.camera_fov_h_deg.unwrap_or(0.5),
+        overlap_pct: mosaic.overlap.unwrap_or(10.0),
+        pa_deg: mosaic.pa.unwrap_or(0.0),
+    })
+}
+
+fn derive_planner_mosaic_plan(
+    planning_on: bool,
+    center: Option<(f64, f64)>,
+    focal_length_mm: Option<f64>,
+    camera: &CameraSnapshot,
+    grid_w: u32,
+    grid_h: u32,
+    overlap_pct: f64,
+    pa_deg: f64,
+    target_name: &str,
+) -> Option<MosaicPlanRender> {
+    if !planning_on {
+        return None;
+    }
+    let (center_ra_deg, center_dec_deg) = center?;
+    let fl_mm = focal_length_mm?;
+    let px_um = camera.pixel_size_um?;
+    let sw = camera.sensor_width?;
+    let sh = camera.sensor_height?;
+
+    let fov_w_deg = astro::fov_deg(fl_mm, sw as f64, px_um);
+    let fov_h_deg = astro::fov_deg(fl_mm, sh as f64, px_um);
+    let fov_w_am = fov_w_deg * 60.0;
+    let fov_h_am = fov_h_deg * 60.0;
+    let x_off = fov_w_am * (1.0 - overlap_pct / 100.0);
+    let y_off = fov_h_am * (1.0 - overlap_pct / 100.0);
+    let init_x = (x_off * (grid_w as f64 - 1.0) - fov_w_am) / 2.0;
+    let init_y = -(fov_h_am + y_off * (grid_h as f64 - 1.0)) / 2.0;
+    // KStars rotatePoint uses angle = -PA (after wrapping PA into [0,360)).
+    let pa_norm = ((pa_deg % 360.0) + 360.0) % 360.0;
+    let ang = -pa_norm.to_radians();
+    let cp = ang.cos();
+    let sp = ang.sin();
+
+    let tiles = (0..grid_w)
+        .flat_map(|col| {
+            (0..grid_h).map(move |row| {
+                let x = init_x - col as f64 * x_off;
+                let y = init_y + row as f64 * y_off;
+                let tx = x + fov_w_am / 2.0;
+                let ty = y + fov_h_am / 2.0;
+                let rx = cp * tx - sp * ty;
+                let ry = sp * tx + cp * ty;
+                // skyLocation = (0,0) - rotatePoint(...): negate.
+                let sky_x_am = -rx;
+                let sky_y_am = -ry;
+                let dec_t = center_dec_deg + sky_y_am / 60.0;
+                let cos_dec_t = dec_t.to_radians().cos().abs().max(0.01);
+                let ra_t = center_ra_deg + (sky_x_am / 60.0) / cos_dec_t;
+                MosaicTileRender {
+                    ra_deg: ra_t,
+                    dec_deg: dec_t,
+                    rotation: 0.0,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Some(MosaicPlanRender {
+        target_name: target_name.to_string(),
+        tiles,
+        fov_w_deg,
+        fov_h_deg,
+        overlap_pct,
+        pa_deg,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -577,7 +729,8 @@ pub fn SkyTab(
         // fov=180° → mag 3.5, fov=90° → mag 4.5, fov=30° → mag 5.5, fov=5° → mag 6.5
         let mag_limit: f32 = (6.5 - 3.0 * (fov / 180.0).sqrt()).clamp(3.5, 6.5) as f32;
 
-        // ── GPU path ───────────────────────────────────────────────────
+        let mut gpu_uniforms: Option<Uniforms> = None;
+        // ── GPU prep (uniforms + renderer resize) ──────────────────────
         if has_gpu {
             if let Ok(mut opt) = gpu_for_render.try_borrow_mut() {
                 if let Some(renderer) = opt.as_mut() {
@@ -585,249 +738,13 @@ pub fn SkyTab(
                         renderer.resize(w_phys, h_phys);
                     }
 
-                    // Precession angles for J2000 → JNow; shader applies them to
-                    // catalog RA/Dec before eq_to_altaz so stars match the
-                    // Canvas2D overlay and the mount crosshair.
-                    let (zeta_rad, z_rad, theta_rad) =
-                        crate::coords::precession_angles_j2000_to_jnow(jd);
-
-                    let uniforms = Uniforms {
-                        sin_lat: sin_lat as f32,
-                        cos_lat: cos_lat as f32,
-                        lst_rad: lst.to_radians() as f32,
-                        c_alt_rad: c_alt.to_radians() as f32,
-                        c_az_rad: c_az.to_radians() as f32,
-                        fov_rad: fov.to_radians() as f32,
-                        cx: (cx * dpr) as f32,
-                        cy: (cy * dpr) as f32,
-                        scale: (scale * dpr) as f32,
-                        mag_limit,
-                        canvas_w: (wf * dpr) as f32,
-                        canvas_h: (hf * dpr) as f32,
-                        dpr: dpr as f32,
-                        zeta_rad: zeta_rad as f32,
-                        z_rad: z_rad as f32,
-                        theta_rad: theta_rad as f32,
-                    };
-
-                    // ── Build the GPU line list (horizon, grids, meridian,
-                    // ecliptic, crosshairs, slew trail, zenith circle).
-                    let view = LineView {
-                        wf, hf, fov, c_alt, c_az,
-                        lst, latitude: s.latitude, jd,
-                    };
-                    let mut segs: Vec<LineSegment> = Vec::with_capacity(2048);
-                    gpu_lines::build_horizon(&mut segs, &view);
-                    if grid_on { gpu_lines::build_altaz_grid(&mut segs, &view); }
-                    if meridian_on { gpu_lines::build_meridian(&mut segs, &view); }
-                    if eq_grid_on { gpu_lines::build_eq_grid(&mut segs, &view); }
-                    if ecliptic_on { gpu_lines::build_ecliptic(&mut segs, &view); }
-                    if zenith_on { gpu_lines::build_zenith(&mut segs, &view); }
-                    if slew_trail_on {
-                        let trail = trail_for_render.borrow();
-                        let trail_vec: Vec<(f64, f64, f64)> =
-                            trail.iter().copied().collect();
-                        gpu_lines::build_slew_trail(&mut segs, &view, &trail_vec);
-                    }
-                    gpu_lines::build_mount_crosshair(
-                        &mut segs, &view, m.connected, m.ra_h, m.dec_deg,
+                    let uniforms = build_uniforms(
+                        sin_lat, cos_lat, lst, c_alt, c_az, fov, cx, cy, scale, mag_limit, wf, hf,
+                        dpr, jd,
                     );
-                    gpu_lines::build_center_crosshair(&mut segs, &view);
+                    gpu_uniforms = Some(uniforms);
 
-                    // Center FOV + Mount FOV reticles on GPU.
-                    let mut fov_label_anchors: Vec<((f64, f64), [f32; 4], String)> = Vec::new();
-                    if fov_on {
-                        if let (Some(fl_mm), Some(px_um), Some(sw), Some(sh)) =
-                            (fl, cam.pixel_size_um, cam.sensor_width, cam.sensor_height)
-                        {
-                            let fov_w_deg = crate::astro::fov_deg(fl_mm, sw as f64, px_um);
-                            let fov_h_deg = crate::astro::fov_deg(fl_mm, sh as f64, px_um);
-                            let rot_deg = sv.rotation_deg.unwrap_or(0.0);
-                            let label = format!(
-                                "{:.0}x{:.0}'",
-                                fov_w_deg * 60.0, fov_h_deg * 60.0,
-                            );
-
-                            // Center FOV
-                            let (cra_deg, cdec_deg) = crate::astro::altaz_to_eq(
-                                c_alt, c_az, lst, s.latitude);
-                            let center_color =
-                                [80.0/255.0, 190.0/255.0, 1.0, 0.85];
-                            if let Some(anchor) = gpu_lines::build_fov_reticle(
-                                &mut segs, &view,
-                                cra_deg, cdec_deg, fov_w_deg, fov_h_deg, rot_deg,
-                                center_color, 1.0,
-                            ) {
-                                fov_label_anchors.push((anchor, center_color, label.clone()));
-                            }
-
-                            // Mount FOV
-                            if m.connected {
-                                if let (Some(ra_h), Some(dec)) = (m.ra_h, m.dec_deg) {
-                                    let mount_color = [1.0, 204.0/255.0, 0.0, 1.0];
-                                    if let Some(anchor) = gpu_lines::build_fov_reticle(
-                                        &mut segs, &view,
-                                        ra_h * 15.0, dec, fov_w_deg, fov_h_deg, rot_deg,
-                                        mount_color, 1.0,
-                                    ) {
-                                        fov_label_anchors.push((anchor, mount_color, label.clone()));
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Solve marker (ring + gap-crosshair + rotated FOV rect).
-                    if solve_marker_on {
-                        if let (Some(ra), Some(dec)) =
-                            (sv.ra_jnow_deg, sv.dec_jnow_deg)
-                        {
-                            let age_ms = sv.solved_at_ms
-                                .map(|t| js_sys::Date::now() - t);
-                            let alpha = age_ms
-                                .map(|age| (1.0 - (age / 600_000.0).min(1.0)) * 0.95 + 0.05)
-                                .unwrap_or(1.0) as f32;
-                            if alpha >= 0.1 {
-                                gpu_lines::build_solve_marker(
-                                    &mut segs, &view,
-                                    ra, dec, alpha,
-                                    sv.pixscale_arcsec,
-                                    cam.sensor_width, cam.sensor_height,
-                                    sv.rotation_deg,
-                                );
-                            }
-                        }
-                    }
-
-                    // segs / dso_items / text_items are bundled into a
-                    // GpuPrepare and submitted in one call below.
-
-                    // ── GPU text: cardinals + zenith mark for now.
-                    // Other labels (star/constellation/DSO/FOV) stay on
-                    // Canvas2D until their parent layers move to GPU.
-                    let mut text_items: Vec<TextInstance> = Vec::new();
-                    if let Some(atlas) = renderer.font_atlas() {
-                        let tr = crate::i18n::t(cur_lang);
-                        let cardinal_color = [221.0/255.0, 170.0/255.0, 102.0/255.0, 1.0];
-                        let cardinal_size: f32 = 14.0;
-                        for (label, az_deg) in &[
-                            (tr.cardinal_n, 0.0_f64),
-                            (tr.cardinal_e, 90.0),
-                            (tr.cardinal_s, 180.0),
-                            (tr.cardinal_w, 270.0),
-                        ] {
-                            if let Some((sx, sy)) = view.project(-2.0, *az_deg) {
-                                let w = atlas.measure_width(label, cardinal_size);
-                                atlas.push_text(
-                                    &mut text_items,
-                                    label,
-                                    sx as f32 - w * 0.5,
-                                    sy as f32 + 4.0,
-                                    cardinal_size,
-                                    cardinal_color,
-                                );
-                            }
-                        }
-                        if zenith_on {
-                            if let Some((sx, sy)) = view.project(90.0, 0.0) {
-                                atlas.push_text(
-                                    &mut text_items,
-                                    tr.zenith_mark,
-                                    sx as f32 + 9.0,
-                                    sy as f32 - 4.0,
-                                    10.0,
-                                    [180.0/255.0, 220.0/255.0, 1.0, 0.85],
-                                );
-                            }
-                        }
-                        // FOV reticle labels (centre + mount), positioned by
-                        // the line builder so they sit above each rectangle.
-                        for ((ax, ay), color, lbl) in &fov_label_anchors {
-                            let w = atlas.measure_width(lbl, 10.0);
-                            atlas.push_text(
-                                &mut text_items,
-                                lbl,
-                                *ax as f32 - w * 0.5,
-                                *ay as f32 - 12.0,
-                                10.0,
-                                *color,
-                            );
-                        }
-                        // Solve label (above the marker ring).
-                        if solve_marker_on {
-                            if let (Some(ra), Some(dec)) =
-                                (sv.ra_jnow_deg, sv.dec_jnow_deg)
-                            {
-                                let (alt, az) = crate::astro::eq_to_altaz(
-                                    ra, dec, lst, s.latitude);
-                                if let Some((sx, sy)) = view.project(alt, az) {
-                                    let age_ms = sv.solved_at_ms
-                                        .map(|t| js_sys::Date::now() - t);
-                                    let alpha = age_ms
-                                        .map(|age| (1.0 - (age / 600_000.0).min(1.0))
-                                            * 0.95 + 0.05)
-                                        .unwrap_or(1.0) as f32;
-                                    if alpha >= 0.1 {
-                                        let label = tr.solved_mark;
-                                        let w = atlas.measure_width(label, 10.0);
-                                        atlas.push_text(
-                                            &mut text_items,
-                                            label,
-                                            sx as f32 - w * 0.5,
-                                            sy as f32 - 28.0,
-                                            10.0,
-                                            [60.0/255.0, 230.0/255.0,
-                                             120.0/255.0, alpha],
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // ── GPU DSO symbols + labels.
-                    let mut dso_items: Vec<DsoInstance> = Vec::new();
-                    if dso_on {
-                        if let Some(ref dc) = dso_cat {
-                            let params = dso_render::DsoBuildParams {
-                                view: &view,
-                                dso_cat: dc,
-                                dso_index: dso_idx.as_deref(),
-                                mag_limit: dso_mag,
-                                names_on,
-                                is_mobile: mobile_profile.is_mobile,
-                                kind_filter: dso_render::KindFilter {
-                                    gx: dso_gx, oc: dso_oc, gc: dso_gc,
-                                    nb: dso_nb, pn: dso_pn, snr: dso_snr,
-                                    gal: dso_gal,
-                                },
-                                lang: cur_lang,
-                            };
-                            dso_render::build(
-                                params,
-                                renderer.font_atlas(),
-                                &mut dso_items,
-                                &mut text_items,
-                            );
-                        }
-                    }
-                    if solar_system_on {
-                        solar_render::build(
-                            &view,
-                            names_on,
-                            cur_lang,
-                            renderer.font_atlas(),
-                            &mut dso_items,
-                            &mut text_items,
-                        );
-                    }
-                    let prep = render::layer::GpuPrepare {
-                        lines: segs,
-                        dso: dso_items,
-                        text: text_items,
-                        show_stars: stars_on,
-                        show_constellations: const_on,
-                    };
-                    renderer.submit_frame(&prep, &uniforms);
+                    // GPU line/DSO/text prep now runs through RenderPipeline.
                 }
             }
         }
@@ -878,34 +795,10 @@ pub fn SkyTab(
         });
 
         // ── Derive scheduler job render list ───────────────────────────
-        let scheduler_jobs_data: Vec<SchedulerJobRender> = if scheduler_jobs_on {
-            sched.jobs.iter().filter_map(|j| {
-                let name    = j["name"].as_str()?.to_string();
-                let ra_h    = j["targetRA"].as_f64()?;
-                let dec_deg = j["targetDEC"].as_f64()?;
-                let state   = j["state"].as_i64().unwrap_or(0);
-                Some(SchedulerJobRender { name, ra_h, dec_deg, state })
-            }).collect()
-        } else {
-            Vec::new()
-        };
+        let scheduler_jobs_data = derive_scheduler_jobs(scheduler_jobs_on, &sched);
 
         // ── KStars mosaic tiles → MosaicPlanRender ─────────────────────
-        let mosaic_kstars_render = if !mos.tiles.is_empty() {
-            let tiles = mos.tiles.iter().map(|t| MosaicTileRender {
-                ra_deg: t.ra_deg, dec_deg: t.dec_deg, rotation: t.rotation,
-            }).collect::<Vec<_>>();
-            Some(MosaicPlanRender {
-                target_name: mos.target_name.clone().unwrap_or_default(),
-                tiles,
-                fov_w_deg:   mos.camera_fov_w_deg.unwrap_or(0.5),
-                fov_h_deg:   mos.camera_fov_h_deg.unwrap_or(0.5),
-                overlap_pct: mos.overlap.unwrap_or(10.0),
-                pa_deg:      mos.pa.unwrap_or(0.0),
-            })
-        } else {
-            None
-        };
+        let mosaic_kstars_render = derive_kstars_mosaic_plan(&mos);
 
         // ── In-app mosaic planner preview ──────────────────────────────
         // Mirrors KStars' MosaicTiles::updateTiles (mosaictiles.cpp:370-435):
@@ -913,52 +806,17 @@ pub fn SkyTab(
         // rotated by PA around the mosaic center, then converted to RA/Dec
         // with a per-tile cos(dec) correction. This way the preview matches
         // exactly what `scheduler_import_mosaic` will produce in KStars.
-        let mosaic_plan_render: Option<MosaicPlanRender> = (|| {
-            if !mosaic_planning_on { return None; }
-            let (center_ra_deg, center_dec_deg) = mosaic_center_val?;
-            let fl_mm = fl?;
-            let px_um = cam.pixel_size_um?;
-            let sw    = cam.sensor_width?;
-            let sh    = cam.sensor_height?;
-            let fov_w_deg = astro::fov_deg(fl_mm, sw as f64, px_um);
-            let fov_h_deg = astro::fov_deg(fl_mm, sh as f64, px_um);
-            let fov_w_am  = fov_w_deg * 60.0;
-            let fov_h_am  = fov_h_deg * 60.0;
-            let x_off = fov_w_am * (1.0 - mosaic_overlap_pct / 100.0);
-            let y_off = fov_h_am * (1.0 - mosaic_overlap_pct / 100.0);
-            let init_x = (x_off * (mosaic_gw as f64 - 1.0) - fov_w_am) / 2.0;
-            let init_y = -(fov_h_am + y_off * (mosaic_gh as f64 - 1.0)) / 2.0;
-            // KStars rotatePoint uses angle = -PA (after wrapping PA into [0,360)).
-            let pa_norm = ((mosaic_pa_val % 360.0) + 360.0) % 360.0;
-            let ang = -pa_norm.to_radians();
-            let cp = ang.cos();
-            let sp = ang.sin();
-            let tiles = (0..mosaic_gw).flat_map(|col| {
-                (0..mosaic_gh).map(move |row| {
-                    let x = init_x - col as f64 * x_off;
-                    let y = init_y + row as f64 * y_off;
-                    let tx = x + fov_w_am / 2.0;
-                    let ty = y + fov_h_am / 2.0;
-                    let rx = cp * tx - sp * ty;
-                    let ry = sp * tx + cp * ty;
-                    // skyLocation = (0,0) - rotatePoint(...): negate.
-                    let sky_x_am = -rx;
-                    let sky_y_am = -ry;
-                    let dec_t = center_dec_deg + sky_y_am / 60.0;
-                    let cos_dec_t = dec_t.to_radians().cos().abs().max(0.01);
-                    let ra_t = center_ra_deg + (sky_x_am / 60.0) / cos_dec_t;
-                    MosaicTileRender { ra_deg: ra_t, dec_deg: dec_t, rotation: 0.0 }
-                })
-            }).collect::<Vec<_>>();
-            Some(MosaicPlanRender {
-                target_name: mosaic_target_name.clone(),
-                tiles,
-                fov_w_deg,
-                fov_h_deg,
-                overlap_pct: mosaic_overlap_pct,
-                pa_deg:      mosaic_pa_val,
-            })
-        })();
+        let mosaic_plan_render = derive_planner_mosaic_plan(
+            mosaic_planning_on,
+            mosaic_center_val,
+            fl,
+            &cam,
+            mosaic_gw,
+            mosaic_gh,
+            mosaic_overlap_pct,
+            mosaic_pa_val,
+            &mosaic_target_name,
+        );
 
         let nb_idx = nebulae_index.get_untracked();
         let mut nebulae_cache = nebulae_for_render.borrow_mut();
@@ -1058,8 +916,26 @@ pub fn SkyTab(
             nebulae_cache: &mut nebulae_cache,
             slew_trail: trail_slice,
         };
-        if let Ok(mut pipe) = pipeline_for_render.try_borrow_mut() {
-            pipe.run(&mut frame, &ctx);
+        if has_gpu {
+            if let (Some(uniforms), Ok(mut pipe), Ok(mut opt)) = (
+                gpu_uniforms,
+                pipeline_for_render.try_borrow_mut(),
+                gpu_for_render.try_borrow_mut(),
+            ) {
+                if let Some(renderer) = opt.as_mut() {
+                    pipe.run(&mut frame, &ctx, renderer.font_atlas());
+                    let prep = render::layer::GpuPrepare {
+                        lines: pipe.gpu_prepare().lines.clone(),
+                        dso: pipe.gpu_prepare().dso.clone(),
+                        text: pipe.gpu_prepare().text.clone(),
+                        show_stars: stars_on,
+                        show_constellations: const_on,
+                    };
+                    renderer.submit_frame(&prep, &uniforms);
+                }
+            }
+        } else if let Ok(mut pipe) = pipeline_for_render.try_borrow_mut() {
+            pipe.run(&mut frame, &ctx, None);
         }
     });
 

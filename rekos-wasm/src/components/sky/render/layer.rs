@@ -17,8 +17,8 @@ use crate::nebulae::NebulaeIndex;
 
 use super::super::dso_index::DsoIndex;
 use super::super::gpu::layers::dso::DsoInstance;
-use super::super::gpu::layers::lines::LineSegment;
-use super::super::gpu::text::TextInstance;
+use super::super::gpu::layers::lines::{LineSegment, LineView};
+use super::super::gpu::{FontAtlas, TextInstance};
 use super::{HitItem, LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
 
 /// Borrowed catalog handles. Layers don't own catalog state — they read it.
@@ -103,6 +103,19 @@ pub fn project_with(view: ViewParams, alt: f64, az: f64) -> Option<(f64, f64)> {
         .map(|(x, y)| (view.cx + x * view.scale, view.cy - y * view.scale))
 }
 
+pub fn line_view(f: &Frame) -> LineView {
+    LineView {
+        wf: f.view.wf,
+        hf: f.view.hf,
+        fov: f.view.fov,
+        c_alt: f.view.c_alt,
+        c_az: f.view.c_az,
+        lst: f.scene.lst,
+        latitude: f.scene.latitude,
+        jd: f.scene.jd,
+    }
+}
+
 /// One visual concern in the planetarium. Each impl owns both its GPU
 /// prepare (when applicable) and its Canvas2D draw, so adding/removing a
 /// layer is a single-file change.
@@ -119,6 +132,10 @@ pub trait SkyLayer {
     /// Build per-frame data. May append to `gpu` when `f.mode` is `Gpu`.
     /// Default: no-op.
     fn prepare(&mut self, f: &mut Frame, gpu: Option<&mut GpuPrepare>) {}
+
+    /// Build GPU text instances for this layer. Called by the pipeline only
+    /// when a `FontAtlas` is available.
+    fn prepare_gpu_text(&self, f: &mut Frame, atlas: &FontAtlas, out: &mut Vec<TextInstance>) {}
 
     /// Paint the Canvas2D overlay. In `Gpu` mode, GPU-capable layers
     /// no-op here. Always-Canvas2D layers ignore `f.mode`. Default: no-op.

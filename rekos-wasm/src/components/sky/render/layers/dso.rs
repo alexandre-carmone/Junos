@@ -10,8 +10,10 @@
 
 use web_sys::CanvasRenderingContext2d;
 
-use super::super::layer::{Frame, SkyLayer};
+use super::super::layer::{line_view, Frame, GpuPrepare, SkyLayer};
 use super::super::render_dso;
+use crate::components::sky::dso_render;
+use crate::components::sky::gpu::{FontAtlas, TextInstance};
 
 pub struct DsoLayer;
 
@@ -22,6 +24,68 @@ impl SkyLayer for DsoLayer {
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.dso_on
     }
+
+    fn prepare(&mut self, f: &mut Frame, gpu: Option<&mut GpuPrepare>) {
+        if !f.mode.is_gpu() {
+            return;
+        }
+        let Some(gpu) = gpu else { return };
+        let Some(dso_cat) = f.catalogs.dso else {
+            return;
+        };
+        let view = line_view(f);
+        let params = dso_render::DsoBuildParams {
+            view: &view,
+            dso_cat,
+            dso_index: f.catalogs.dso_index,
+            mag_limit: f.state.dso_mag,
+            names_on: false,
+            is_mobile: f.scene.is_mobile,
+            kind_filter: dso_render::KindFilter {
+                gx: f.state.dso_gx,
+                oc: f.state.dso_oc,
+                gc: f.state.dso_gc,
+                nb: f.state.dso_nb,
+                pn: f.state.dso_pn,
+                snr: f.state.dso_snr,
+                gal: f.state.dso_gal,
+            },
+            lang: f.scene.cur_lang,
+        };
+        let mut scratch_text: Vec<TextInstance> = Vec::new();
+        dso_render::build(params, None, &mut gpu.dso, &mut scratch_text);
+    }
+
+    fn prepare_gpu_text(&self, f: &mut Frame, atlas: &FontAtlas, out: &mut Vec<TextInstance>) {
+        if !f.mode.is_gpu() {
+            return;
+        }
+        let Some(dso_cat) = f.catalogs.dso else {
+            return;
+        };
+        let view = line_view(f);
+        let params = dso_render::DsoBuildParams {
+            view: &view,
+            dso_cat,
+            dso_index: f.catalogs.dso_index,
+            mag_limit: f.state.dso_mag,
+            names_on: f.toggles.names_on,
+            is_mobile: f.scene.is_mobile,
+            kind_filter: dso_render::KindFilter {
+                gx: f.state.dso_gx,
+                oc: f.state.dso_oc,
+                gc: f.state.dso_gc,
+                nb: f.state.dso_nb,
+                pn: f.state.dso_pn,
+                snr: f.state.dso_snr,
+                gal: f.state.dso_gal,
+            },
+            lang: f.scene.cur_lang,
+        };
+        let mut scratch_dso = Vec::new();
+        dso_render::build(params, Some(atlas), &mut scratch_dso, out);
+    }
+
     fn draw_canvas2d(&self, f: &mut Frame, ctx: &CanvasRenderingContext2d) {
         // Re-borrow each field individually so the closure capturing
         // `view` doesn't conflict with the mutable borrows of
