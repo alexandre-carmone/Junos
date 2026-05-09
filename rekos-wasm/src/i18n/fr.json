@@ -595,6 +595,8 @@
   "guide_rms": "RMS :",
   "guide_connected": "Connecté :",
   "guide_actions": "Actions",
+  "guide_settings_button": "Paramètres",
+  "guide_settings_title": "Paramètres du guidage",
   "guide_essentials": "Essentiels",
   "guide_ra_dec_corrections": "Corrections AD / DÉC",
   "guide_calibration": "Calibration",

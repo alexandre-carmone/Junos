@@ -26,6 +26,7 @@
 //! Q_SCRIPTABLE only in KStars).
 
 use leptos::prelude::*;
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
 use crate::compat::GuideSnapshot;
@@ -447,6 +448,29 @@ pub fn GuideTab(
     let guider_type = move || guide.with(|g| settings_i64(&g.options, "GuiderType").unwrap_or(0));
     let is_internal = move || guider_type() == 0;
 
+    // Settings overlay open/closed.
+    let settings_open = RwSignal::new(false);
+
+    // Escape closes the overlay. We forget() the closure (one persistent
+    // listener per GuideTab mount); calls into a disposed RwSignal are a
+    // no-op in leptos 0.7, so leftover listeners after a tab switch are
+    // harmless. on_cleanup is unusable here because Closure<dyn FnMut(_)>
+    // is !Send.
+    {
+        let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+            move |e: web_sys::KeyboardEvent| {
+                if e.key() == "Escape" && settings_open.get_untracked() {
+                    settings_open.set(false);
+                }
+            },
+        );
+        if let Some(win) = web_sys::window() {
+            let _ = win
+                .add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
+        }
+        cb.forget();
+    }
+
     // Button gating closures — refresh on each render via guide signal.
     let status = move || guide.with(|g| g.status.clone());
     let btn_start = move || can_start(&status());
@@ -539,11 +563,40 @@ pub fn GuideTab(
                             class="btn btn-ghost text-accent-amber !border-accent-amber">
                             {move || tr().guide_clear_cal}
                         </button>
+                        <button
+                            class="btn btn-ghost ml-auto"
+                            on:click=move |_| settings_open.set(true)>
+                            {move || tr().guide_settings_button}
+                        </button>
                     </div>
                     <div class="mt-[6px] text-xs text-[#667]">
                         {move || tr().guide_capture_loop_note}
                     </div>
                 </fieldset>
+
+                // ── Settings overlay ────────────────────────────────────
+                // All parameter sections live inside a full-screen modal
+                // (toggled by the Settings button on the action row). The
+                // main view stays focused on the live drift plot + preview
+                // + Start/Stop/Capture/Loop/Clear.
+                <Show when=move || settings_open.get()>
+                    <div
+                        class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
+                        on:click=move |_| settings_open.set(false)>
+                        <div
+                            class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col"
+                            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()>
+                            <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
+                                <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
+                                    {move || tr().guide_settings_title}
+                                </h2>
+                                <button
+                                    class="btn btn-ghost"
+                                    on:click=move |_| settings_open.set(false)>
+                                    {move || tr().imaging_close}
+                                </button>
+                            </div>
+                            <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 flex flex-col gap-[14px]">
 
                 // ── Essentials ──────────────────────────────────────────
                 <fieldset class=GUIDE_SECTION>
@@ -644,19 +697,19 @@ pub fn GuideTab(
                         <div class="flex gap-sp-4 flex-wrap">
                             <label class="flex items-center gap-[6px] cursor-pointer">
                                 <input type="radio" name="guider-type"
-                                       on:change=on_internal
+                                       on:change=on_internal.clone()
                                        prop:checked=move || guider_type() == 0 />
                                 {move || tr().guide_internal}
                             </label>
                             <label class="flex items-center gap-[6px] cursor-pointer">
                                 <input type="radio" name="guider-type"
-                                       on:change=on_phd2
+                                       on:change=on_phd2.clone()
                                        prop:checked=move || guider_type() == 1 />
                                 {move || tr().guide_phd2_label}
                             </label>
                             <label class="flex items-center gap-[6px] cursor-pointer">
                                 <input type="radio" name="guider-type"
-                                       on:change=on_linguider
+                                       on:change=on_linguider.clone()
                                        prop:checked=move || guider_type() == 2 />
                                 {move || tr().guide_linguider_label}
                             </label>
@@ -707,6 +760,11 @@ pub fn GuideTab(
                         </div>
                     </div>
                 </details>
+
+                            </div>
+                        </div>
+                    </div>
+                </Show>
             </div>
         </div>
     }

@@ -505,6 +505,8 @@
   "guide_rms": "RMS:",
   "guide_connected": "Connected:",
   "guide_actions": "Actions",
+  "guide_settings_button": "Settings",
+  "guide_settings_title": "Guide Settings",
   "guide_essentials": "Essentials",
   "guide_ra_dec_corrections": "RA / DEC corrections",
   "guide_calibration": "Calibration",
