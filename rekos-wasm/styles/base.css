@@ -304,3 +304,441 @@ textarea:focus-visible,
    components can opt back into mono for RA/Dec / exposure / FOV without
    restating the font stack. */
 .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ── Scheduler tab ────────────────────────────────────────────────── */
+
+.sched-root {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-input-deep);
+    color: var(--text);
+    font-family: var(--font-mono);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sched-header {
+    display: flex;
+    flex-direction: column;
+    padding: var(--sp-2) var(--sp-6) var(--sp-2) 80px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-input-deep) 90%, black);
+    flex-shrink: 0;
+}
+.sched-header-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sp-2) var(--sp-4);
+    font-size: var(--fs-md);
+    min-height: 36px;
+}
+.sched-title {
+    color: var(--text-blue);
+    font-weight: 700;
+    font-size: var(--fs-md);
+    letter-spacing: 0.08em;
+}
+.sched-job-count {
+    color: var(--text-faint);
+    font-size: var(--fs-sm);
+    font-weight: 400;
+}
+.sched-ctrl-group {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+.sched-log-row {
+    color: var(--text-faint);
+    font-size: var(--fs-sm);
+    font-style: italic;
+    padding-top: 3px;
+    min-height: 16px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sched-badge {
+    display: inline-block;
+    padding: 3px var(--sp-3);
+    border-radius: 14px;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+}
+.sched-badge-idle {
+    background: color-mix(in srgb, var(--bg-elev-2) 85%, var(--accent-violet));
+    color: var(--text-blue);
+    border: 1px solid var(--border-accent);
+}
+.sched-badge-running {
+    background: color-mix(in srgb, var(--bg-elev-1) 80%, var(--state-ok));
+    color: var(--state-ok);
+    border: 1px solid color-mix(in srgb, var(--state-ok) 45%, var(--border-ok));
+}
+.sched-badge-paused {
+    background: color-mix(in srgb, var(--bg-elev-1) 80%, var(--state-warn));
+    color: var(--state-warn);
+    border: 1px solid color-mix(in srgb, var(--state-warn) 40%, var(--border-strong));
+}
+
+.sched-btn {
+    padding: 4px var(--sp-4);
+    border-radius: var(--r-md);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    border: 1px solid var(--border-ok);
+    background: color-mix(in srgb, var(--bg-elev-1) 85%, var(--state-ok));
+    color: var(--state-ok);
+    transition: background var(--dur-fast) var(--ease-out);
+    min-height: 28px;
+    min-width: 28px;
+}
+.sched-btn:hover { background: color-mix(in srgb, var(--bg-elev-1) 75%, var(--state-ok)); }
+.sched-btn-stop {
+    border-color: color-mix(in srgb, var(--state-err) 50%, var(--border-strong));
+    background: color-mix(in srgb, var(--bg-elev-1) 85%, var(--state-err));
+    color: var(--state-err);
+}
+.sched-btn-stop:hover { background: color-mix(in srgb, var(--bg-elev-1) 75%, var(--state-err)); }
+.sched-btn-apply {
+    border: 1px solid var(--border-accent);
+    background: color-mix(in srgb, var(--bg-elev-1) 85%, var(--accent-cyan));
+    color: var(--text-blue);
+    padding: 4px var(--sp-3);
+    border-radius: var(--r-md);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    min-height: 28px;
+    min-width: 28px;
+}
+.sched-btn-apply:hover { background: color-mix(in srgb, var(--bg-elev-1) 75%, var(--accent-cyan)); }
+.sched-btn-clear {
+    border: 1px solid color-mix(in srgb, var(--state-err) 40%, var(--border-strong));
+    background: color-mix(in srgb, var(--bg-elev-1) 90%, var(--state-err));
+    color: color-mix(in srgb, var(--state-err) 75%, var(--text-muted));
+    padding: 4px var(--sp-3);
+    border-radius: var(--r-md);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    min-height: 28px;
+    min-width: 28px;
+}
+.sched-btn-clear:hover { background: color-mix(in srgb, var(--bg-elev-1) 82%, var(--state-err)); }
+.sched-btn-icon {
+    background: none;
+    border: 1px solid var(--border-accent);
+    border-radius: 5px;
+    color: var(--text-blue);
+    font-size: 12px;
+    padding: 3px var(--sp-2);
+    font-family: var(--font-mono);
+    min-height: 28px;
+    min-width: 28px;
+}
+.sched-btn-icon:hover { background: color-mix(in srgb, var(--accent-cyan) 12%, transparent); }
+
+.sched-body {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 0 0 var(--sp-6);
+}
+
+.sched-section-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--sp-2) var(--sp-6) var(--sp-1);
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 85%, black);
+}
+.sched-section-label {
+    color: var(--text-faint);
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 600;
+}
+
+.sched-table-wrap { overflow-x: auto; padding: 0 16px 12px; }
+.sched-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    min-width: 520px;
+}
+.sched-table th {
+    color: var(--text-blue);
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: var(--sp-2) var(--sp-2) var(--sp-1);
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    white-space: nowrap;
+}
+.sched-table td {
+    padding: 6px var(--sp-2);
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, black);
+    vertical-align: middle;
+}
+.sched-table tr:hover td { background: color-mix(in srgb, var(--accent-cyan) 5%, transparent); }
+
+.sched-cell-name { font-weight: 600; }
+.sched-cell-coords {
+    color: color-mix(in srgb, var(--text-blue) 70%, var(--text-muted));
+    font-size: var(--fs-sm);
+}
+.sched-cell-time {
+    color: var(--text-faint);
+    font-size: var(--fs-sm);
+}
+.sched-cell-remove { width: 36px; }
+
+.sched-state-active { color: var(--state-ok); }
+.sched-state-error { color: var(--state-err); }
+.sched-state-aborted { color: var(--state-warn); }
+.sched-state-complete { color: color-mix(in srgb, var(--text-blue) 70%, var(--text-muted)); }
+.sched-state-queued { color: var(--text); }
+.sched-stage-sub {
+    display: block;
+    color: color-mix(in srgb, var(--state-ok) 50%, var(--text-muted));
+    font-size: var(--fs-xs);
+    margin-top: 1px;
+}
+
+.sched-alt-good { color: var(--state-ok); }
+.sched-alt-warn { color: var(--state-warn); }
+.sched-alt-bad { color: color-mix(in srgb, var(--state-err) 60%, var(--text-faint)); }
+
+.sched-progress-wrap {
+    position: relative;
+    height: 16px;
+    background: var(--bg-elev-1);
+    border-radius: 3px;
+    overflow: hidden;
+    min-width: 60px;
+}
+.sched-progress-bar {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, var(--state-ok) 30%, transparent);
+    transition: width var(--dur-slow) var(--ease-out);
+}
+.sched-progress-text {
+    position: relative;
+    font-size: var(--fs-xs);
+    line-height: 16px;
+    padding: 0 var(--sp-1);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.sched-remove-btn {
+    background: none;
+    border: none;
+    color: color-mix(in srgb, var(--state-err) 45%, var(--text-faint));
+    font-size: 13px;
+    padding: 3px var(--sp-2);
+    border-radius: var(--r-sm);
+    display: block;
+    width: 100%;
+    text-align: center;
+    min-height: 24px;
+    min-width: 24px;
+}
+.sched-remove-btn:hover {
+    background: color-mix(in srgb, var(--state-err) 15%, transparent);
+    color: var(--state-err);
+}
+.sched-empty {
+    color: var(--text-faint);
+    font-size: 12px;
+    padding: var(--sp-6) var(--sp-6);
+}
+
+.sched-add-section { padding: 0 16px 10px; }
+.sched-add-section--settings { padding-top: 8px; padding-bottom: 8px; }
+.sched-add-section--compact { padding-bottom: 8px; }
+.sched-add-details {
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    overflow: hidden;
+}
+.sched-add-summary {
+    padding: 9px var(--sp-4);
+    font-size: var(--fs-sm);
+    color: var(--text-blue);
+    user-select: none;
+    background: color-mix(in srgb, var(--bg-elev-1) 75%, transparent);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 600;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+.sched-add-summary:hover {
+    background: color-mix(in srgb, var(--bg-elev-2) 80%, transparent);
+}
+.sched-add-body {
+    padding: var(--sp-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    background: color-mix(in srgb, var(--bg-elev-1) 65%, transparent);
+}
+
+.sched-toggle-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+}
+
+.sched-field-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    align-items: center;
+}
+.sched-field-row-mb8 { margin-bottom: 8px; }
+.sched-field-row-mt6 { margin-top: 6px; }
+.sched-field-row-gap16 { gap: 16px; }
+.sched-field-label {
+    color: var(--text-blue);
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    min-width: 60px;
+}
+.sched-field-label-offset { margin-left: 8px; }
+.sched-field-unit { color: var(--text-faint); font-size: var(--fs-sm); }
+
+.sched-input {
+    background: var(--bg-input);
+    border: 1px solid var(--border-accent);
+    border-radius: var(--r-sm);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 5px var(--sp-2);
+    outline: none;
+    min-height: 30px;
+}
+.sched-input:focus { border-color: var(--border-accent-2); }
+.sched-input-path { flex: 1; min-width: 200px; }
+.sched-input-target { width: 180px; }
+.sched-input-ra-dec { width: 90px; }
+.sched-input-small { width: 60px; }
+
+.sched-select {
+    background: var(--bg-input);
+    border: 1px solid var(--border-accent);
+    border-radius: var(--r-sm);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 5px 6px;
+    outline: none;
+}
+.sched-select:focus { border-color: var(--border-accent-2); }
+.sched-btn-search { padding: 4px 10px; }
+
+.sched-coords-hint {
+    color: color-mix(in srgb, var(--text-muted) 55%, var(--text-faint));
+    font-size: var(--fs-xs);
+    font-style: italic;
+    padding: 2px 0 0 4px;
+}
+.sched-search-row { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+.sched-search-result {
+    color: var(--state-ok);
+    font-size: var(--fs-sm);
+    padding: 3px var(--sp-2);
+    background: color-mix(in srgb, var(--bg-elev-1) 75%, var(--state-ok));
+    border-radius: var(--r-sm);
+    border: 1px solid color-mix(in srgb, var(--state-ok) 35%, var(--border-ok));
+}
+.sched-fieldset {
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: var(--sp-2) var(--sp-4) var(--sp-3);
+    margin: 0;
+}
+.sched-fieldset legend {
+    color: var(--text-faint);
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0 6px;
+}
+.sched-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-muted);
+    user-select: none;
+    font-size: var(--fs-sm);
+}
+.sched-toggle-label input[type="checkbox"] { accent-color: var(--text-blue); }
+
+.sched-seq-section { display: flex; flex-direction: column; gap: var(--sp-2); }
+.sched-seq-label {
+    color: var(--text-blue);
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.sched-seq-total {
+    font-size: var(--fs-xs);
+    color: color-mix(in srgb, var(--text-muted) 55%, var(--text-faint));
+    padding: var(--sp-1) 6px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 85%, black);
+    text-align: right;
+}
+
+.sched-form-error { color: var(--state-err); font-size: var(--fs-sm); }
+.sched-form-btns { display: flex; gap: var(--sp-3); align-items: center; }
+.sched-add-btn {
+    padding: 6px 20px;
+    border-radius: var(--r-md);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--border-ok);
+    background: color-mix(in srgb, var(--bg-elev-1) 85%, var(--state-ok));
+    color: var(--state-ok);
+    min-height: 28px;
+    min-width: 28px;
+}
+.sched-add-btn:hover { background: color-mix(in srgb, var(--bg-elev-1) 75%, var(--state-ok)); }
+
+@media (max-width: 767px) {
+    .sched-header {
+        padding: var(--sp-2) 16px var(--sp-2) 16px;
+    }
+    .sched-table {
+        min-width: 360px;
+        font-size: var(--fs-sm);
+    }
+    .sched-table th,
+    .sched-table td {
+        padding: 4px 5px;
+    }
+    .sched-col-start,
+    .sched-col-end { display: none; }
+    .sched-btn {
+        padding: 6px 10px;
+    }
+    .sched-section-bar {
+        padding: var(--sp-2) 12px var(--sp-1);
+    }
+}
