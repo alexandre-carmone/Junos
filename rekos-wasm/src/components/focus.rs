@@ -31,6 +31,22 @@ fn status_color(status: &str) -> &'static str {
     else                                           { "var(--text-muted)" }
 }
 
+/// Combo lists for keys that KStars exposes as `currentText` of a QComboBox.
+/// Sourced from `kstars/ekos/focus/opsfocusprocess.ui` and the focus widgets.
+/// When a key appears here, the settings overlay renders a `<select>` instead
+/// of a free-text input.
+const FOCUS_ALGORITHM_OPTS: &[&str] =
+    &["Iterative", "Polynomial", "Linear", "Linear 1 Pass"];
+const FOCUS_BINNING_OPTS: &[&str] = &["1x1", "2x2", "3x3", "4x4"];
+
+fn enum_options_for(key: &str) -> Option<&'static [&'static str]> {
+    match key {
+        "focusAlgorithm" => Some(FOCUS_ALGORITHM_OPTS),
+        "focusBinning"   => Some(FOCUS_BINNING_OPTS),
+        _ => None,
+    }
+}
+
 /// Subset of `focus_get_all_settings` keys this first cut knows how to render.
 /// Unknown keys are ignored (no generic fallback in v1, per plan).
 const KNOWN_SETTING_KEYS: &[&str] = &[
@@ -375,7 +391,37 @@ fn render_setting_row(
         other => other.to_string(),
     };
 
-    let field = match kind.as_str() {
+    // Enum-valued keys (combo boxes in KStars) render as <select>, regardless
+    // of whether the current payload happened to type them as string/number.
+    let field = if let Some(opts) = enum_options_for(static_key) {
+        let d = dispatch.clone();
+        let current = display.clone();
+        let opts_vec: Vec<String> = {
+            let mut v: Vec<String> = opts.iter().map(|s| s.to_string()).collect();
+            if !current.is_empty() && !v.iter().any(|o| o == &current) {
+                v.insert(0, current.clone());
+            }
+            v
+        };
+        view! {
+            <select
+                class="input input--sm flex-1 font-mono"
+                prop:value=current.clone()
+                on:change=move |ev| {
+                    let s = ev.target()
+                        .and_then(|t| t.dyn_into::<web_sys::HtmlSelectElement>().ok())
+                        .map(|el| el.value())
+                        .unwrap_or_default();
+                    d(static_key, serde_json::Value::String(s));
+                }
+            >
+                {opts_vec.into_iter().map(|o| {
+                    let l = o.clone();
+                    view! { <option value=o>{l}</option> }
+                }).collect::<Vec<_>>()}
+            </select>
+        }.into_any()
+    } else { match kind.as_str() {
         "bool" => {
             let checked = val.as_bool().unwrap_or(false);
             let d = dispatch.clone();
@@ -422,7 +468,7 @@ fn render_setting_row(
                 />
             }.into_any()
         }
-    };
+    } };
 
     let title_key = key.clone();
     view! {
