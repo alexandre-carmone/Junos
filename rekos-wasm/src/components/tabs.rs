@@ -101,22 +101,22 @@ pub fn TabContent(
             />
         </div>
         <Show when=mount_visible>
-            <div style="position:absolute; inset:0; z-index:40;">
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <MountTab mount=mount send=Arc::clone(&send_mount) />
             </div>
         </Show>
         <Show when=focus_visible>
-            <div style="position:absolute; inset:0; z-index:40;">
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <FocusTab focus=focus_snapshot camera=camera send=Arc::clone(&send_focus) />
             </div>
         </Show>
         <Show when=imaging_visible>
-            <div style="position:absolute; inset:0; z-index:40;">
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <ImagingTab capture=capture_snapshot camera=camera filter_wheel=filter_wheel send=Arc::clone(&send_imaging) />
             </div>
         </Show>
         <Show when=files_visible>
-            <div style="position:absolute; inset:0; z-index:40;">
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <FilesTab
                     livestacker_state=store.livestacker_state
                     livestacker_settings=store.livestacker_settings
@@ -125,22 +125,22 @@ pub fn TabContent(
             </div>
         </Show>
         <Show when=polar_visible>
-            <div style="position:absolute; inset:0; z-index:40;">
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <PolarAlignTab polar=polar_snapshot mount=mount send=Arc::clone(&send_polar) />
             </div>
         </Show>
         <Show when=guide_visible>
-            <div style="position:absolute; inset:0; z-index:40;">
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <GuideTab guide=guide_snapshot send=Arc::clone(&send_guide) />
             </div>
         </Show>
         <Show when=scheduler_visible>
-            <div style="position:absolute; inset:0; z-index:40;">
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <SchedulerTab scheduler=scheduler_snapshot camera=camera filter_wheel=filter_wheel send=Arc::clone(&send_scheduler) />
             </div>
         </Show>
         <Show when=mosaic_visible>
-            <div style="position:absolute; inset:0; z-index:40;">
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <MosaicTab
                     camera=camera
                     filter_wheel=filter_wheel
@@ -152,7 +152,7 @@ pub fn TabContent(
             </div>
         </Show>
         <Show when=profiles_visible>
-            <div style="position:absolute; inset:0; z-index:40;">
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <ProfilesTab
                     profiles=store.profiles
                     selected_profile=store.selected_profile
