@@ -63,6 +63,27 @@ pub fn FocusTab(
 
     let step_size = RwSignal::new(100_i64);
 
+    // Settings overlay open/closed (mirrors guide tab pattern).
+    let settings_open = RwSignal::new(false);
+
+    // Escape closes the overlay. forget() the closure (one persistent listener
+    // per FocusTab mount); calls into a disposed RwSignal are a no-op in
+    // leptos 0.7, so leftover listeners after a tab switch are harmless.
+    {
+        let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+            move |e: web_sys::KeyboardEvent| {
+                if e.key() == "Escape" && settings_open.get_untracked() {
+                    settings_open.set(false);
+                }
+            },
+        );
+        if let Some(win) = web_sys::window() {
+            let _ = win
+                .add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
+        }
+        cb.forget();
+    }
+
     // ── Action dispatchers ────────────────────────────────────────────────
     let send1 = send.clone();
     let on_start = move |_| send_cmd(&send1, "focus_start", serde_json::json!({}));
@@ -139,10 +160,11 @@ pub fn FocusTab(
     });
 
     // ── Settings grid ─────────────────────────────────────────────────────
-    let send_set_all = send.clone();
-    let dispatch_setting = move |key: &'static str, value: serde_json::Value| {
-        ws_dispatch_setting(&send_set_all, "focus_set_all_settings", None, key, value);
-    };
+    // Stash `send` in a StoredValue so the reactive closure that renders
+    // settings rows (now nested inside <Show>) doesn't have to capture a
+    // non-Copy SendCmd through two layers of Fn closures. We rebuild the
+    // dispatcher fresh on each reactive evaluation.
+    let send_sv = StoredValue::new(send.clone());
 
     let settings_rows = move || {
         let settings = focus.with(|f| f.settings.clone());
@@ -255,6 +277,11 @@ pub fn FocusTab(
                             <button on:click=on_reset class="btn btn-ghost col-span-2">
                                 {move || tr().focus_reset_frame}
                             </button>
+                            <button
+                                class="btn btn-ghost col-span-2"
+                                on:click=move |_| settings_open.set(true)>
+                                {move || tr().guide_settings_button}
+                            </button>
                         </div>
                     </fieldset>
 
@@ -280,11 +307,33 @@ pub fn FocusTab(
                         </div>
                     </fieldset>
 
-                    // Settings
-                    <fieldset class=fieldset_cls>
-                        <legend class=legend_cls>{move || tr().focus_settings_section}</legend>
-                        <div class="flex flex-col gap-sp-2">
+                </div>
+            </div>
+
+            // Fullscreen settings overlay (mirrors guide tab).
+            <Show when=move || settings_open.get()>
+                <div
+                    class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
+                    on:click=move |_| settings_open.set(false)>
+                    <div
+                        class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col"
+                        on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()>
+                        <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
+                            <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
+                                {move || tr().focus_settings_section}
+                            </h2>
+                            <button
+                                class="btn btn-ghost"
+                                on:click=move |_| settings_open.set(false)>
+                                {move || tr().imaging_close}
+                            </button>
+                        </div>
+                        <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 flex flex-col gap-sp-2">
                             {move || {
+                                let send = send_sv.get_value();
+                                let dispatch_setting = move |key: &'static str, value: serde_json::Value| {
+                                    ws_dispatch_setting(&send, "focus_set_all_settings", None, key, value);
+                                };
                                 let rows = settings_rows();
                                 if rows.is_empty() {
                                     return view! {
@@ -299,9 +348,9 @@ pub fn FocusTab(
                                 }).collect::<Vec<_>>().into_any()
                             }}
                         </div>
-                    </fieldset>
+                    </div>
                 </div>
-            </div>
+            </Show>
         </div>
     }
 }
