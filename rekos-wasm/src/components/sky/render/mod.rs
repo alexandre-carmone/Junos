@@ -594,11 +594,17 @@ pub(super) fn render_dso(
                         // transform() multiplies with the current matrix (DPR
                         // scale stays intact), so coordinates are in CSS pixels.
                         let _ = ctx.transform(a, b, c, d, e, f);
-                        ctx.set_global_alpha(0.85);
+                        // Thumbnails carry a baked alpha (scripts/feather_nebulae.py)
+                        // so source-over draws straight onto the sky without the
+                        // legacy 0.85 fade. `lighten` makes the composite purely
+                        // additive: residual dark pixels can never darken the
+                        // stars underneath, which matches the physics of
+                        // emission/reflection nebulae.
+                        let _ = ctx.set_global_composite_operation("lighten");
                         let _ = ctx.draw_image_with_html_image_element_and_dw_and_dh(
                             img, 0.0, 0.0, 1.0, 1.0,
                         );
-                        ctx.set_global_alpha(1.0);
+                        let _ = ctx.set_global_composite_operation("source-over");
                         ctx.restore();
                         true
                     } else {
