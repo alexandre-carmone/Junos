@@ -154,7 +154,7 @@ pub fn MountTab(
     let edit_binning        = RwSignal::new("1x1".to_string());
     let edit_filter         = RwSignal::new(String::new());
     let edit_iso            = RwSignal::new(String::new());
-    let edit_gain           = RwSignal::new(0.0_f64);
+    let edit_gain           = RwSignal::new(100_f64);
     let edit_dark_frame     = RwSignal::new(false);
     let edit_post_action    = RwSignal::new("nothing".to_string()); // "sync"|"slew"|"nothing"
     let edit_solver_local   = RwSignal::new(true);                   // false → remote
