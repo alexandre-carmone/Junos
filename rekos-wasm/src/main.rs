@@ -197,6 +197,24 @@ fn App() -> impl IntoView {
     let active_tab = RwSignal::new(Tab::Sky);
     provide_context(ActiveTabCtx(active_tab));
 
+    // One-shot startup tab selection: once we hear back from the server
+    // whether KStars is running, switch to Profiles if it isn't. After
+    // that first decision we never auto-switch again — if the user is
+    // on Sky and quits KStars mid-session, they stay on Sky.
+    {
+        let known = store.kstars_state_known;
+        let running = store.kstars_running;
+        let decided = std::rc::Rc::new(std::cell::Cell::new(false));
+        Effect::new(move |_| {
+            if decided.get() { return; }
+            if !known.get() { return; }
+            decided.set(true);
+            if !running.get_untracked() {
+                active_tab.set(Tab::Profiles);
+            }
+        });
+    }
+
     // Cross-tab Reveal-in-Files trigger. Produced by the Imaging tab's
     // "Reveal in Files" button (with the current capture directory /
     // last frame filename), consumed by the Files tab on mount.

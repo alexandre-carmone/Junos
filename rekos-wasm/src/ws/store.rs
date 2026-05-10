@@ -60,6 +60,10 @@ pub struct DeviceStore {
     /// Whether PHD2 process is running on the server host.
     /// Updated by `app_state` messages pushed from rekos-server.
     pub phd2_running: RwSignal<bool>,
+    /// Set true on the first `app_state` message — used by the app shell
+    /// to make a one-shot startup decision (e.g. default to Profiles tab
+    /// when KStars isn't running).
+    pub kstars_state_known: RwSignal<bool>,
 }
 
 impl DeviceStore {
@@ -101,6 +105,7 @@ impl DeviceStore {
             drivers: RwSignal::new(Vec::new()),
             kstars_running: RwSignal::new(false),
             phd2_running: RwSignal::new(false),
+            kstars_state_known: RwSignal::new(false),
         }
     }
 
@@ -920,6 +925,7 @@ impl DeviceStore {
                 if let Some(s) = payload["phd2"].as_str() {
                     self.phd2_running.set(s == "running");
                 }
+                self.kstars_state_known.set(true);
             }
 
             _ => {}
