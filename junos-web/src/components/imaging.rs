@@ -69,6 +69,11 @@ enum Kind {
     /// it returns empty, the field renders as a free text input so the user
     /// can still type a value before the device pushes its property.
     ComboDynamic(fn(&CameraSnapshot, &FilterWheelSnapshot) -> Vec<String>),
+    /// Filter dropdown — always rendered as `<select>`. When the option
+    /// list is empty (no filter wheel attached / not yet reporting) it
+    /// shows a single disabled placeholder option from i18n; never falls
+    /// back to a free-text input.
+    ComboFilter(fn(&CameraSnapshot, &FilterWheelSnapshot) -> Vec<String>),
 }
 
 #[derive(Clone, Copy)]
@@ -183,7 +188,7 @@ const ONE_SHOT_GAIN_FIELDS: &[Field] = &[
 const FILTER_FIELDS: &[Field] = &[Field {
     key: "FilterPosCombo",
     label: |t| t.field_filter,
-    kind: Kind::ComboDynamic(|_, fw| fw.filter_names.clone()),
+    kind: Kind::ComboFilter(|_, fw| fw.filter_names.clone()),
 }];
 
 const TARGET_FIELDS: &[Field] = &[
@@ -893,6 +898,11 @@ fn render_field(
             let opts_fn = move || get_opts(&camera.get(), &filter_wheel.get());
             render_select_dynamic(field.key, opts_fn, current, dispatch.clone())
         }
+        Kind::ComboFilter(get_opts) => {
+            let opts_fn = move || get_opts(&camera.get(), &filter_wheel.get());
+            let placeholder = move || t(lang.get()).field_filter_none;
+            render_select_filter(field.key, opts_fn, current, dispatch.clone(), placeholder)
+        }
     };
 
     let label_fn = field.label;
@@ -972,6 +982,34 @@ fn render_select_dynamic(
                         }
                         class=FIELD_INPUT
                     />
+                }.into_any()
+            } else {
+                render_select(key, opts, current, d_select.clone())
+            }
+        }}
+    }
+    .into_any()
+}
+
+/// Filter-specific dropdown: always a `<select>`. When the option list is
+/// empty, render a disabled select with a localized placeholder option —
+/// no free-text fallback (filter values are never typed by hand).
+fn render_select_filter(
+    key: &'static str,
+    opts_fn: impl Fn() -> Vec<String> + Copy + Send + Sync + 'static,
+    current: impl Fn() -> serde_json::Value + Copy + Send + Sync + 'static,
+    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
+    placeholder: impl Fn() -> &'static str + Copy + Send + Sync + 'static,
+) -> leptos::prelude::AnyView {
+    let d_select = dispatch.clone();
+    view! {
+        {move || {
+            let opts = opts_fn();
+            if opts.is_empty() {
+                view! {
+                    <select class=FIELD_INPUT disabled=true>
+                        <option selected=true>{placeholder()}</option>
+                    </select>
                 }.into_any()
             } else {
                 render_select(key, opts, current, d_select.clone())

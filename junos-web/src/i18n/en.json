@@ -470,6 +470,7 @@
   "field_offset": "Offset",
   "field_iso": "ISO",
   "field_filter": "Filter",
+  "field_filter_none": "No filter wheel",
   "field_target_name": "Target",
   "field_directory": "Directory",
   "field_enforce_temp": "Enforce target temperature",

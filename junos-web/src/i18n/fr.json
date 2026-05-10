@@ -560,6 +560,7 @@
   "field_offset": "Décalage",
   "field_iso": "ISO",
   "field_filter": "Filtre",
+  "field_filter_none": "Aucune roue",
   "field_target_name": "Cible",
   "field_directory": "Répertoire",
   "field_enforce_temp": "Forcer la température cible",
