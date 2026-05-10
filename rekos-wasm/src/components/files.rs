@@ -267,7 +267,7 @@ pub fn FilesTab(
                         <summary class=SUMMARY_CLS><span>{move || tr().livestack_section_directories}</span></summary>
                         <div class="max-h-[190px] overflow-y-auto p-sp-2">
                             <Show when=move || !current_path.with(|p| p.is_empty())>
-                                <button class="mb-sp-1 flex w-full items-center gap-sp-2 rounded-md border border-transparent px-sp-2 py-sp-2 text-left text-sm text-text-blue hover:border-border-strong hover:bg-bg-elev-1" on:click=move |_| {
+                                <button class="mb-sp-1 flex w-full items-center gap-sp-2 rounded-md border border-border-strong bg-bg-elev-2 px-sp-2 py-sp-2 text-left text-sm text-text-blue transition hover:border-border-mid hover:bg-bg-elev-3" on:click=move |_| {
                                     let parent = parent_of(&current_path.get());
                                     current_path.set(parent.clone());
                                     selected.set(None);

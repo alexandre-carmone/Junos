@@ -54,7 +54,7 @@ pub(super) fn render_dirs(
         let rel_click = rel.clone();
         view! {
             <button
-                class=if active { "mb-sp-1 flex w-full items-center gap-sp-2 rounded-md border border-accent-cyan bg-[color-mix(in_srgb,var(--accent-cyan)_10%,var(--bg-elev-1))] px-sp-2 py-sp-2 text-left text-sm text-text" } else { "mb-sp-1 flex w-full items-center gap-sp-2 rounded-md border border-transparent px-sp-2 py-sp-2 text-left text-sm text-text hover:border-border-strong hover:bg-bg-elev-1" }
+                class=if active { "mb-sp-1 flex w-full items-center gap-sp-2 rounded-md border border-accent-cyan bg-[color-mix(in_srgb,var(--accent-cyan)_14%,var(--bg-elev-2))] px-sp-2 py-sp-2 text-left text-sm text-text" } else { "mb-sp-1 flex w-full items-center gap-sp-2 rounded-md border border-border-strong bg-bg-elev-2 px-sp-2 py-sp-2 text-left text-sm text-text transition hover:border-border-mid hover:bg-bg-elev-3" }
                 on:click=move |_| {
                 current_path.set(rel_click.clone());
                 selected_folder.set(Some(rel_click.clone()));
@@ -140,7 +140,7 @@ fn render_file_card(
     let rel_menu = rel.clone();
     view! {
         <div class=if rel == selected_snapshot { FILE_CARD_ACTIVE } else { FILE_CARD }>
-            <button class="flex flex-1 flex-col p-0 text-left" on:click=move |_| { selected.set(Some(rel_select.clone())); preview_open.set(true); }>
+            <button class="flex flex-1 flex-col bg-transparent p-0 text-left text-inherit" on:click=move |_| { selected.set(Some(rel_select.clone())); preview_open.set(true); }>
                 <img class="aspect-square w-full bg-black object-cover" src=thumb loading="lazy" />
                 <span class="truncate px-sp-2 py-sp-2 text-xs text-text-muted">{f.name.clone()}</span>
             </button>
@@ -169,7 +169,7 @@ fn render_file_row(
     let rel_menu = rel.clone();
     view! {
         <div class=if rel == selected_snapshot { FILE_ROW_ACTIVE } else { FILE_ROW }>
-            <button class="min-w-0 flex-1 text-left" on:click=move |_| { selected.set(Some(rel_select.clone())); preview_open.set(true); }>
+            <button class="min-w-0 flex-1 bg-transparent text-left text-inherit" on:click=move |_| { selected.set(Some(rel_select.clone())); preview_open.set(true); }>
                 <div class="truncate text-text">{f.name}</div>
                 <div class="mt-[2px] flex gap-sp-3 text-xs text-text-faint">
                     <span>{format_size(f.size)}</span>

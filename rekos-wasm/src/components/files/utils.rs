@@ -10,10 +10,10 @@ pub(super) const INPUT_CLS: &str = "input input--sm w-full";
 pub(super) const SELECT_CLS: &str = "input input--sm";
 pub(super) const SMALL_BTN: &str = "btn btn--sm btn-ghost";
 pub(super) const KV_ROW: &str = "grid grid-cols-[minmax(92px,auto)_1fr] gap-sp-2 text-sm";
-pub(super) const FILE_CARD: &str = "group relative flex min-h-[164px] flex-col overflow-hidden rounded-md border border-border-strong bg-bg-input-deep text-left text-text transition hover:border-text-blue hover:bg-bg-elev-1";
-pub(super) const FILE_CARD_ACTIVE: &str = "group relative flex min-h-[164px] flex-col overflow-hidden rounded-md border border-accent-cyan bg-[color-mix(in_srgb,var(--accent-cyan)_10%,var(--bg-input-deep))] text-left text-text shadow-[0_0_0_2px_rgba(40,220,240,0.16)]";
-pub(super) const FILE_ROW: &str = "group flex items-center gap-sp-3 rounded-md border border-border bg-bg-elev-1 px-sp-3 py-sp-2 text-left text-sm text-text transition hover:border-text-blue hover:bg-bg-elev-2";
-pub(super) const FILE_ROW_ACTIVE: &str = "group flex items-center gap-sp-3 rounded-md border border-accent-cyan bg-[color-mix(in_srgb,var(--accent-cyan)_10%,var(--bg-elev-1))] px-sp-3 py-sp-2 text-left text-sm text-text";
+pub(super) const FILE_CARD: &str = "group relative flex min-h-[164px] flex-col overflow-hidden rounded-md border border-border-strong bg-bg-elev-2 text-left text-text transition hover:border-border-mid hover:bg-bg-elev-3";
+pub(super) const FILE_CARD_ACTIVE: &str = "group relative flex min-h-[164px] flex-col overflow-hidden rounded-md border border-accent-cyan bg-[color-mix(in_srgb,var(--accent-cyan)_14%,var(--bg-elev-2))] text-left text-text shadow-[0_0_0_2px_rgba(40,220,240,0.16)]";
+pub(super) const FILE_ROW: &str = "group flex items-center gap-sp-3 rounded-md border border-border-strong bg-bg-elev-2 px-sp-3 py-sp-2 text-left text-sm text-text transition hover:border-border-mid hover:bg-bg-elev-3";
+pub(super) const FILE_ROW_ACTIVE: &str = "group flex items-center gap-sp-3 rounded-md border border-accent-cyan bg-[color-mix(in_srgb,var(--accent-cyan)_14%,var(--bg-elev-2))] px-sp-3 py-sp-2 text-left text-sm text-text";
 
 pub(super) fn kv(label: &'static str, value: String) -> impl IntoView {
     view! { <div class=KV_ROW><span class="text-text-muted">{label}</span><span class="break-words text-right text-text-dim num">{value}</span></div> }
