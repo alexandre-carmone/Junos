@@ -115,6 +115,23 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
     let send_abort   = mk_send!();
     let send_abort2  = mk_send!();
     let send_track   = mk_send!();
+    let send_flip    = mk_send!();
+
+    // ── Auto-flip settings (round-tripped via mount_set_all_settings) ─
+    // Local edit signals; kept in sync with the snapshot via Effects so
+    // they pick up KStars-side changes without freezing user input.
+    let flip_enabled = RwSignal::new(false);
+    let flip_offset  = RwSignal::new(0.0_f64);
+    Effect::new(move |_| {
+        if let Some(b) = mount.get().meridian_flip_enabled {
+            flip_enabled.set(b);
+        }
+    });
+    Effect::new(move |_| {
+        if let Some(v) = mount.get().meridian_flip_offset_deg {
+            flip_offset.set(v);
+        }
+    });
 
     // D-pad press/release helpers — emit `mount_set_motion` for one direction.
     let dpad_press = |dir: &'static str| {
@@ -251,6 +268,18 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                         })
                     }}
 
+                    // In-tab meridian flip status chip — duplicates the top
+                    // banner but stays visible while scrolling the body.
+                    {move || {
+                        let m = mount.get();
+                        (!m.meridian_flip_status.is_empty()).then(|| view! {
+                            <div class="mt-sp-2 inline-flex items-center gap-sp-2 px-sp-2 py-[3px] rounded-sm border border-state-warn/40 bg-state-warn/15 text-state-warn font-mono text-sm">
+                                <span class="font-bold tracking-[0.08em]">{tr().mount_meridian_flip}{":"}</span>
+                                <span>{m.meridian_flip_status}</span>
+                            </div>
+                        })
+                    }}
+
                     // GoTo section
                     <div class="mt-sp-5">
                         <div class=SECTION_TITLE>{move || tr().mount_goto_section}</div>
@@ -383,6 +412,51 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                                     >{lbl}</button>
                                 }
                             }).collect::<Vec<_>>()}
+                        </div>
+                    </div>
+
+                    // Meridian flip auto-config — round-trips via
+                    // mount_set_all_settings; keys mirror the KStars
+                    // QObjects (mount.ui:111, 124).
+                    <div class="w-full max-w-[320px]">
+                        <div class=SECTION_TITLE>{move || tr().mount_meridian_flip}</div>
+                        <div class="flex flex-col gap-sp-2">
+                            <label class="flex items-center gap-sp-2 font-mono text-sm text-text-muted cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    prop:checked=move || flip_enabled.get()
+                                    on:change=move |ev| flip_enabled.set(event_target_checked(&ev))
+                                />
+                                {move || tr().mount_auto_flip}
+                            </label>
+                            <div>
+                                <label class="font-mono text-sm text-text-faint mb-[2px] block">
+                                    {move || tr().mount_past_meridian}{" (°)"}
+                                </label>
+                                <input
+                                    class="input w-full font-mono"
+                                    type="number"
+                                    step="0.1"
+                                    prop:value=move || format!("{:.2}", flip_offset.get())
+                                    on:input=move |ev| {
+                                        if let Ok(v) = event_target_value(&ev).parse::<f64>() {
+                                            flip_offset.set(v);
+                                        }
+                                    }
+                                />
+                            </div>
+                            <button
+                                class=format!("{MOUNT_BTN} btn-primary")
+                                on:click=move |_| {
+                                    send_flip(serde_json::json!({
+                                        "type": "mount_set_all_settings",
+                                        "payload": {
+                                            "executeMeridianFlip":      flip_enabled.get_untracked(),
+                                            "meridianFlipOffsetDegrees": flip_offset.get_untracked(),
+                                        }
+                                    }).to_string());
+                                }
+                            >{move || tr().save_btn}</button>
                         </div>
                     </div>
 

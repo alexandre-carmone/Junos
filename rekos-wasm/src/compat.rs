@@ -29,6 +29,8 @@ pub struct MountSnapshot {
     pub status_str: String,
     pub meridian_flip_status: String,
     pub auto_park_countdown: String,
+    pub meridian_flip_enabled:    Option<bool>,
+    pub meridian_flip_offset_deg: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -135,6 +137,8 @@ pub fn derive_mount(store: &DeviceStore) -> Signal<MountSnapshot> {
                 status_str: ms.status_str,
                 meridian_flip_status: ms.meridian_flip_status,
                 auto_park_countdown: ms.auto_park_countdown,
+                meridian_flip_enabled:    ms.meridian_flip_enabled,
+                meridian_flip_offset_deg: ms.meridian_flip_offset_deg,
             },
             None => MountSnapshot::default(),
         }

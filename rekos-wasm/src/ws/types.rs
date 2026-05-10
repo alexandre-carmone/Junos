@@ -24,6 +24,10 @@ pub struct MountStatusData {
     pub status_str:           String,
     pub meridian_flip_status: String,
     pub auto_park_countdown:  String,
+    /// `executeMeridianFlip` from `mount_get_all_settings`.
+    pub meridian_flip_enabled:    Option<bool>,
+    /// `meridianFlipOffsetDegrees` — hour-angle offset past meridian, in degrees.
+    pub meridian_flip_offset_deg: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default)]

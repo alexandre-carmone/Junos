@@ -81,6 +81,7 @@ pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
                 prime_send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"align_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"guide_get_all_settings","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"mount_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"scheduler_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"scheduler_get_jobs","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"livestacker_get_all_settings","payload":{}}"#.to_string());

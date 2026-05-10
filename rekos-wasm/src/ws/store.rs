@@ -147,6 +147,22 @@ impl DeviceStore {
                 }
             }
 
+            "mount_get_all_settings" => {
+                // Reply to our `mount_get_all_settings` request, also sent
+                // (debounced) after a `mount_set_all_settings`. Payload is the
+                // full Mount widget map; we only care about the meridian-flip
+                // pair. Cf. message.cpp:604-608 (sendMountSettings).
+                self.mount_status.update(|opt| {
+                    let ms = opt.get_or_insert_with(MountStatusData::default);
+                    if let Some(b) = payload["executeMeridianFlip"].as_bool() {
+                        ms.meridian_flip_enabled = Some(b);
+                    }
+                    if let Some(v) = payload["meridianFlipOffsetDegrees"].as_f64() {
+                        ms.meridian_flip_offset_deg = Some(v);
+                    }
+                });
+            }
+
             "new_mount_state" => {
                 self.mount_status.update(|opt| {
                     let ms = opt.get_or_insert_with(MountStatusData::default);
