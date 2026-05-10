@@ -798,5 +798,14 @@
   "apps_launch": "Launch",
   "apps_stop": "Stop",
   "apps_running": "Running",
-  "apps_stopped": "Stopped"
+  "apps_stopped": "Stopped",
+  "focus_param_exposure": "Exposure (s)",
+  "focus_param_binning": "Binning",
+  "focus_param_iso": "ISO",
+  "focus_param_iterations": "Iterations",
+  "focus_param_max_step": "Max step",
+  "focus_param_max_travel": "Max travel",
+  "focus_param_auto_star": "Auto star",
+  "focus_param_suspend_guiding": "Suspend guiding",
+  "focus_param_use_full_field": "Full field"
 }

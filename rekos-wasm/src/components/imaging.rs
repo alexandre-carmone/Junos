@@ -1000,7 +1000,7 @@ fn default_capture_setting_value(key: &str) -> Option<serde_json::Value> {
         "captureDelayN" => Some(serde_json::Value::Number(0.into())),
         "captureBinHN" => Some(serde_json::Value::Number(1.into())),
         "captureBinVN" => Some(serde_json::Value::Number(1.into())),
-        "captureGainN" => Some(serde_json::Value::Number(0.into())),
+        "captureGainN" => Some(serde_json::Value::Number(100.into())),
         "captureOffsetN" => Some(serde_json::Value::Number(0.into())),
         "cameraTemperatureEnforceB" => Some(serde_json::Value::Bool(false)),
         "cameraTemperatureN" => serde_json::Number::from_f64(-10.0).map(serde_json::Value::Number),

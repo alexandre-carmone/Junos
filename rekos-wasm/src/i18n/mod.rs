@@ -159,6 +159,9 @@ translations! {
     livestack_weighting_equal, livestack_weighting_hfr, livestack_weighting_stars, livestack_reset,
     livestack_min_snr, livestack_max_snr, livestack_compact_label,
     files_subtab_preview, files_subtab_controls, files_subtab_settings, files_folder_hint, files_close_preview,
+    focus_param_exposure, focus_param_binning, focus_param_iso, focus_param_iterations,
+    focus_param_max_step, focus_param_max_travel, focus_param_auto_star,
+    focus_param_suspend_guiding, focus_param_use_full_field,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

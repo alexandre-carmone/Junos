@@ -16,7 +16,7 @@ use wasm_bindgen::{closure::Closure, JsCast};
 use web_sys::{HtmlCanvasElement, CanvasRenderingContext2d, MouseEvent};
 
 use crate::compat::{CameraSnapshot, FocusSnapshot};
-use crate::i18n::{Lang, t};
+use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
 
@@ -38,6 +38,26 @@ fn status_color(status: &str) -> &'static str {
 const FOCUS_ALGORITHM_OPTS: &[&str] =
     &["Iterative", "Polynomial", "Linear", "Linear 1 Pass"];
 const FOCUS_BINNING_OPTS: &[&str] = &["1x1", "2x2", "3x3", "4x4"];
+
+fn param_label(key: &str, tr: &Translations) -> &'static str {
+    match key {
+        "focusExposure"        => tr.focus_param_exposure,
+        "focusBinning"         => tr.focus_param_binning,
+        "focusGain"            => tr.gain,
+        "focusISO"             => tr.focus_param_iso,
+        "focusIterations"      => tr.focus_param_iterations,
+        "focusStepSize"        => tr.focus_step_size,
+        "focusMaxStep"         => tr.focus_param_max_step,
+        "focusMaxTravel"       => tr.focus_param_max_travel,
+        "focusTolerance"       => tr.focus_tolerance,
+        "focusBacklash"        => tr.focus_backlash,
+        "focusAlgorithm"       => tr.focus_algorithm,
+        "focusAutoStarEnabled" => tr.focus_param_auto_star,
+        "focusSuspendGuiding"  => tr.focus_param_suspend_guiding,
+        "focusUseFullField"    => tr.focus_param_use_full_field,
+        _ => "",
+    }
+}
 
 fn enum_options_for(key: &str) -> Option<&'static [&'static str]> {
     match key {
@@ -360,7 +380,8 @@ pub fn FocusTab(
                                 }
                                 rows.into_iter().map(|(key, kind, val)| {
                                     let dispatch = dispatch_setting.clone();
-                                    render_setting_row(key, kind, val, dispatch)
+                                    let label = param_label(&key, tr());
+                                    render_setting_row(key, kind, val, label, dispatch)
                                 }).collect::<Vec<_>>().into_any()
                             }}
                         </div>
@@ -375,6 +396,7 @@ fn render_setting_row(
     key: String,
     kind: String,
     val: serde_json::Value,
+    label: &'static str,
     dispatch: impl Fn(&'static str, serde_json::Value) + Clone + 'static,
 ) -> leptos::prelude::AnyView {
     // Find the static slice for the key so the dispatcher closure stays 'static.
@@ -474,7 +496,7 @@ fn render_setting_row(
     view! {
         <div class="flex items-center gap-sp-2 text-sm max-[420px]:flex-col max-[420px]:items-stretch">
             <span class="basis-[140px] grow-0 shrink-0 text-text-blue overflow-hidden text-ellipsis whitespace-nowrap max-[759px]:basis-[110px] max-[420px]:basis-auto" title=title_key>
-                {key}
+                {if label.is_empty() { key } else { label.to_string() }}
             </span>
             {field}
         </div>

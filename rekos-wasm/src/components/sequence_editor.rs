@@ -55,7 +55,7 @@ impl Default for SeqFrame {
             delay:      "0".into(),
             bin_x:      "1".into(),
             bin_y:      "1".into(),
-            gain:       String::new(),
+            gain:       "100".into(),
             offset:     String::new(),
             iso:        String::new(),
             format:     "FITS".into(),

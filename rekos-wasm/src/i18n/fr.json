@@ -888,5 +888,14 @@
   "apps_launch": "Lancer",
   "apps_stop": "Arrêter",
   "apps_running": "En cours",
-  "apps_stopped": "Arrêté"
+  "apps_stopped": "Arrêté",
+  "focus_param_exposure": "Exposition (s)",
+  "focus_param_binning": "Binning",
+  "focus_param_iso": "ISO",
+  "focus_param_iterations": "Itérations",
+  "focus_param_max_step": "Pas max",
+  "focus_param_max_travel": "Course max",
+  "focus_param_auto_star": "Étoile auto",
+  "focus_param_suspend_guiding": "Susp. guidage",
+  "focus_param_use_full_field": "Champ entier"
 }
