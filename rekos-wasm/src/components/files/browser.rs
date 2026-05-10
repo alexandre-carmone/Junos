@@ -1,13 +1,25 @@
 use leptos::prelude::*;
+use wasm_bindgen::JsCast;
 
 use crate::i18n::Translations;
 
-use super::actions::show_file_actions;
-use super::types::{DirEntry, FilterKind, ListReply, SortDir, SortKey};
+use super::types::{DirEntry, FileMenuState, FilterKind, ListReply, SortDir, SortKey};
 use super::utils::{
     format_mtime, format_size, is_fits_ext, is_image_ext, is_jpg_ext, url_encode, FILE_CARD,
     FILE_CARD_ACTIVE, FILE_ROW, FILE_ROW_ACTIVE, SMALL_BTN,
 };
+
+fn open_menu_for(rel: String, ev: &web_sys::MouseEvent, file_menu: RwSignal<Option<FileMenuState>>) {
+    let (x, y) = ev
+        .current_target()
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        .map(|el| {
+            let r = el.get_bounding_client_rect();
+            (r.right(), r.bottom())
+        })
+        .unwrap_or((0.0, 0.0));
+    file_menu.set(Some(FileMenuState { rel, anchor_x: x, anchor_y: y }));
+}
 
 pub(super) fn filter_button(
     label_kind: FilterKind,
@@ -67,9 +79,8 @@ pub(super) fn render_files(
     name_filter: String,
     loading: bool,
     tr: &'static Translations,
-    refresh_tick: RwSignal<u32>,
-    flash: RwSignal<Option<String>>,
     preview_open: RwSignal<bool>,
+    file_menu: RwSignal<Option<FileMenuState>>,
 ) -> impl IntoView {
     let mut files: Vec<DirEntry> = listing
         .map(|r| r.entries.into_iter().filter(|e| e.kind == "file").collect())
@@ -106,9 +117,9 @@ pub(super) fn render_files(
             {files.into_iter().map(|f| {
                 let rel = if current_path.is_empty() { f.name.clone() } else { format!("{}/{}", current_path, f.name) };
                 if is_image_ext(&f.ext) {
-                    render_file_card(f, rel, selected_snapshot.clone(), selected, refresh_tick, flash, preview_open, tr).into_any()
+                    render_file_card(f, rel, selected_snapshot.clone(), selected, preview_open, file_menu, tr).into_any()
                 } else {
-                    render_file_row(f, rel, selected_snapshot.clone(), selected, refresh_tick, flash, preview_open, tr).into_any()
+                    render_file_row(f, rel, selected_snapshot.clone(), selected, preview_open, file_menu, tr).into_any()
                 }
             }).collect_view()}
         </div>
@@ -120,17 +131,13 @@ fn render_file_card(
     rel: String,
     selected_snapshot: String,
     selected: RwSignal<Option<String>>,
-    refresh_tick: RwSignal<u32>,
-    flash: RwSignal<Option<String>>,
     preview_open: RwSignal<bool>,
+    file_menu: RwSignal<Option<FileMenuState>>,
     tr: &'static Translations,
 ) -> impl IntoView {
     let thumb = format!("/api/files/thumb?size=256&path={}", url_encode(&rel));
     let rel_select = rel.clone();
-    let rel_download = rel.clone();
-    let rel_rename = rel.clone();
-    let rel_delete = rel.clone();
-    let rel_copy = rel.clone();
+    let rel_menu = rel.clone();
     view! {
         <div class=if rel == selected_snapshot { FILE_CARD_ACTIVE } else { FILE_CARD }>
             <button class="flex flex-1 flex-col p-0 text-left" on:click=move |_| { selected.set(Some(rel_select.clone())); preview_open.set(true); }>
@@ -139,7 +146,11 @@ fn render_file_card(
             </button>
             <div class="absolute left-sp-2 right-sp-2 top-sp-2 flex justify-between gap-sp-2">
                 <span class="badge">{format_size(f.size)}</span>
-                <button class="btn btn--sm btn-ghost bg-bg-panel-solid" title=tr.files_action_menu on:click=move |_| show_file_actions(&rel_download, &rel_rename, &rel_delete, &rel_copy, refresh_tick, selected, flash, tr)>"..."</button>
+                <button
+                    class="btn btn--sm btn-ghost bg-bg-panel-solid"
+                    title=tr.files_action_menu
+                    on:click=move |ev| { ev.stop_propagation(); open_menu_for(rel_menu.clone(), &ev, file_menu); }
+                >"..."</button>
             </div>
         </div>
     }
@@ -150,16 +161,12 @@ fn render_file_row(
     rel: String,
     selected_snapshot: String,
     selected: RwSignal<Option<String>>,
-    refresh_tick: RwSignal<u32>,
-    flash: RwSignal<Option<String>>,
     preview_open: RwSignal<bool>,
+    file_menu: RwSignal<Option<FileMenuState>>,
     tr: &'static Translations,
 ) -> impl IntoView {
     let rel_select = rel.clone();
-    let rel_download = rel.clone();
-    let rel_rename = rel.clone();
-    let rel_delete = rel.clone();
-    let rel_copy = rel.clone();
+    let rel_menu = rel.clone();
     view! {
         <div class=if rel == selected_snapshot { FILE_ROW_ACTIVE } else { FILE_ROW }>
             <button class="min-w-0 flex-1 text-left" on:click=move |_| { selected.set(Some(rel_select.clone())); preview_open.set(true); }>
@@ -169,7 +176,11 @@ fn render_file_row(
                     <span>{format_mtime(f.mtime)}</span>
                 </div>
             </button>
-            <button class=SMALL_BTN title=tr.files_action_menu on:click=move |_| show_file_actions(&rel_download, &rel_rename, &rel_delete, &rel_copy, refresh_tick, selected, flash, tr)>"..."</button>
+            <button
+                class=SMALL_BTN
+                title=tr.files_action_menu
+                on:click=move |ev| { ev.stop_propagation(); open_menu_for(rel_menu.clone(), &ev, file_menu); }
+            >"..."</button>
         </div>
     }
 }

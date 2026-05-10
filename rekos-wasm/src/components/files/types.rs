@@ -55,6 +55,13 @@ pub(super) struct ResolveReply {
     pub(super) parent: String,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct FileMenuState {
+    pub(super) rel: String,
+    pub(super) anchor_x: f64,
+    pub(super) anchor_y: f64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SortKey {
     Name,

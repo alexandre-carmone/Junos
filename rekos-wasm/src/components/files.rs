@@ -22,11 +22,12 @@ mod settings;
 mod types;
 mod utils;
 
+use actions::{copy_to_clipboard, delete_file_action, download_file, rename_file_action};
 use api::{fetch_list, fetch_meta, newest_image_in_abs_dir, resolve_abs};
 use browser::{filter_button, render_dirs, render_files};
 use livestack::render_livestack_workspace;
 use preview::render_preview_modal;
-use types::{FileMeta, FilterKind, ListReply, LiveStackTab, SortDir, SortKey};
+use types::{FileMenuState, FileMeta, FilterKind, ListReply, LiveStackTab, SortDir, SortKey};
 use utils::{event_select_value, event_value, parent_of, PANEL_BODY, PANEL_CLS, SELECT_CLS, SUMMARY_CLS, INPUT_CLS};
 
 #[component]
@@ -59,6 +60,7 @@ pub fn FilesTab(
     let selected_meta = RwSignal::new(None::<FileMeta>);
     let meta_error = RwSignal::new(None::<String>);
     let flash = RwSignal::new(None::<String>);
+    let file_menu = RwSignal::new(None::<FileMenuState>);
 
     let latest_stacked = RwSignal::new(None::<String>);
     let latest_stacked_warning = RwSignal::new(None::<String>);
@@ -293,9 +295,8 @@ pub fn FilesTab(
                             name_filter.get(),
                             loading.get(),
                             tr(),
-                            refresh_tick,
-                            flash,
                             preview_open,
+                            file_menu,
                         )}
                     </div>
                 </section>
@@ -339,6 +340,61 @@ pub fn FilesTab(
                     preview_open,
                 )}
             </Show>
+
+            <Show when=move || file_menu.get().is_some()>
+                {move || render_file_menu(file_menu, refresh_tick, selected, flash, tr())}
+            </Show>
+        </div>
+    }
+}
+
+fn render_file_menu(
+    file_menu: RwSignal<Option<FileMenuState>>,
+    refresh_tick: RwSignal<u32>,
+    selected: RwSignal<Option<String>>,
+    flash: RwSignal<Option<String>>,
+    tr: &'static crate::i18n::Translations,
+) -> impl IntoView + use<> {
+    let state = file_menu.get_untracked().unwrap_or(FileMenuState {
+        rel: String::new(),
+        anchor_x: 0.0,
+        anchor_y: 0.0,
+    });
+    const MENU_W: f64 = 180.0;
+    let left = (state.anchor_x - MENU_W).max(8.0);
+    let top = state.anchor_y + 4.0;
+    let style = format!("left:{}px;top:{}px;width:{}px;", left, top, MENU_W);
+    let close = move || file_menu.set(None);
+
+    let rel_d = state.rel.clone();
+    let rel_r = state.rel.clone();
+    let rel_x = state.rel.clone();
+    let rel_c = state.rel.clone();
+
+    view! {
+        <div class="fixed inset-0 z-50" on:click=move |_| close()>
+            <div
+                class="panel absolute flex flex-col gap-sp-1 p-sp-1 shadow-lg"
+                style=style
+                on:click=move |ev| ev.stop_propagation()
+            >
+                <button class="btn btn--sm btn-ghost w-full justify-start" on:click=move |_| {
+                    download_file(&rel_d);
+                    close();
+                }>{tr.files_download}</button>
+                <button class="btn btn--sm btn-ghost w-full justify-start" on:click=move |_| {
+                    rename_file_action(&rel_r, refresh_tick, selected, tr);
+                    close();
+                }>{tr.files_rename}</button>
+                <button class="btn btn--sm btn-ghost w-full justify-start" on:click=move |_| {
+                    delete_file_action(&rel_x, refresh_tick, selected, flash, tr);
+                    close();
+                }>{tr.files_delete}</button>
+                <button class="btn btn--sm btn-ghost w-full justify-start" on:click=move |_| {
+                    copy_to_clipboard(&rel_c, flash, tr.files_path_copied);
+                    close();
+                }>{tr.files_copy_path}</button>
+            </div>
         </div>
     }
 }

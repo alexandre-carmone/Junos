@@ -7,30 +7,6 @@ use crate::i18n::Translations;
 use super::api::{delete_file, rename_file, resolve_abs};
 use super::utils::url_encode;
 
-pub(super) fn show_file_actions(
-    rel_download: &str,
-    rel_rename: &str,
-    rel_delete: &str,
-    rel_copy: &str,
-    refresh_tick: RwSignal<u32>,
-    selected: RwSignal<Option<String>>,
-    flash: RwSignal<Option<String>>,
-    tr: &'static Translations,
-) {
-    let Some(win) = web_sys::window() else { return; };
-    let choice = win.prompt_with_message(&format!(
-        "{}:\n1. {}\n2. {}\n3. {}\n4. {}",
-        tr.files_action_menu, tr.files_download, tr.files_rename, tr.files_delete, tr.files_copy_path,
-    )).ok().flatten().unwrap_or_default();
-    match choice.trim() {
-        "1" => download_file(rel_download),
-        "2" => rename_file_action(rel_rename, refresh_tick, selected, tr),
-        "3" => delete_file_action(rel_delete, refresh_tick, selected, flash, tr),
-        "4" => copy_to_clipboard(rel_copy, flash, tr.files_path_copied),
-        _ => {}
-    }
-}
-
 pub(super) fn download_file(rel: &str) {
     let Some(win) = web_sys::window() else { return; };
     let Some(doc) = win.document() else { return; };
