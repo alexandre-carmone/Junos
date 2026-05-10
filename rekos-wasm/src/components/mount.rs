@@ -4,6 +4,7 @@ use leptos::prelude::*;
 use web_sys::MouseEvent;
 
 use crate::compat::MountSnapshot;
+use crate::components::coord_input::{CoordInput, CoordMode};
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 
@@ -286,23 +287,11 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                         <div class="flex flex-col gap-sp-2">
                             <div>
                                 <label class="font-mono text-sm text-text-faint mb-[2px] block">{move || tr().mount_ra_input}</label>
-                                <input
-                                    class="input w-full font-mono"
-                                    type="text"
-                                    placeholder="HH MM SS"
-                                    prop:value=move || ra_input.get()
-                                    on:input=move |ev| ra_input.set(event_target_value(&ev))
-                                />
+                                <CoordInput mode=CoordMode::Hms value=ra_input aria_label="RA" />
                             </div>
                             <div>
                                 <label class="font-mono text-sm text-text-faint mb-[2px] block">{move || tr().mount_dec_input}</label>
-                                <input
-                                    class="input w-full font-mono"
-                                    type="text"
-                                    placeholder="±DD MM SS"
-                                    prop:value=move || dec_input.get()
-                                    on:input=move |ev| dec_input.set(event_target_value(&ev))
-                                />
+                                <CoordInput mode=CoordMode::DmsSigned value=dec_input aria_label="Dec" />
                             </div>
                             <div>
                                 <label class="font-mono text-sm text-text-faint mb-[2px] block">{move || tr().mount_target_input}</label>

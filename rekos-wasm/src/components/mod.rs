@@ -1,3 +1,4 @@
+pub mod coord_input;
 pub mod files;
 pub mod focus;
 pub mod guide;

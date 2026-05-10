@@ -4,6 +4,10 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
+use crate::components::coord_input::{
+    degrees_to_dms_string, dms_string_to_degrees, hms_string_to_hours, hours_to_hms_string,
+    CoordInput, CoordMode,
+};
 use crate::components::sequence_editor::{SeqFrame, SequenceEditor};
 use crate::i18n::{t, Lang};
 
@@ -37,6 +41,82 @@ pub fn SchedulerAddJobSection(
     on_clear_form: Arc<dyn Fn() + Send + Sync>,
 ) -> impl IntoView {
     let tr = move || t(lang.get());
+
+    // ── Sexagesimal sibling signals bridged to the decimal `f_ra_h` /
+    //   `f_dec_deg` props. The CoordInput widget edits these, and Effects
+    //   keep the decimal source-of-truth in sync (and vice-versa for
+    //   prefill/catalog/clear). The scheduler submit path keeps reading
+    //   the decimal signals unchanged.
+    let f_ra_hms = RwSignal::new({
+        let s = f_ra_h.get_untracked();
+        s.parse::<f64>().ok().map(hours_to_hms_string).unwrap_or_default()
+    });
+    let f_dec_dms = RwSignal::new({
+        let s = f_dec_deg.get_untracked();
+        s.parse::<f64>().ok().map(degrees_to_dms_string).unwrap_or_default()
+    });
+
+    Effect::new(move |_| {
+        let s = f_ra_hms.get();
+        let new_dec = if s.trim().is_empty() {
+            String::new()
+        } else {
+            format!("{:.6}", hms_string_to_hours(&s))
+        };
+        if f_ra_h.get_untracked() != new_dec {
+            f_ra_h.set(new_dec);
+        }
+    });
+    Effect::new(move |_| {
+        let s = f_ra_h.get();
+        if s.trim().is_empty() {
+            if !f_ra_hms.get_untracked().trim().is_empty() {
+                f_ra_hms.set(String::new());
+            }
+            return;
+        }
+        let Ok(h) = s.parse::<f64>() else { return };
+        let new_hms = hours_to_hms_string(h);
+        let cur = f_ra_hms.get_untracked();
+        if cur != new_hms {
+            // Avoid bouncing when the difference is just rounding within
+            // the second-precision representation.
+            let cur_h = if cur.trim().is_empty() { f64::NAN } else { hms_string_to_hours(&cur) };
+            if cur_h.is_nan() || (cur_h - h).abs() > 0.5 / 3600.0 {
+                f_ra_hms.set(new_hms);
+            }
+        }
+    });
+
+    Effect::new(move |_| {
+        let s = f_dec_dms.get();
+        let new_dec = if s.trim().is_empty() {
+            String::new()
+        } else {
+            format!("{:.6}", dms_string_to_degrees(&s))
+        };
+        if f_dec_deg.get_untracked() != new_dec {
+            f_dec_deg.set(new_dec);
+        }
+    });
+    Effect::new(move |_| {
+        let s = f_dec_deg.get();
+        if s.trim().is_empty() {
+            if !f_dec_dms.get_untracked().trim().is_empty() {
+                f_dec_dms.set(String::new());
+            }
+            return;
+        }
+        let Ok(d) = s.parse::<f64>() else { return };
+        let new_dms = degrees_to_dms_string(d);
+        let cur = f_dec_dms.get_untracked();
+        if cur != new_dms {
+            let cur_d = if cur.trim().is_empty() { f64::NAN } else { dms_string_to_degrees(&cur) };
+            if cur_d.is_nan() || (cur_d - d).abs() > 0.5 / 3600.0 {
+                f_dec_dms.set(new_dms);
+            }
+        }
+    });
 
     view! {
         <div class="sched-add-section">
@@ -72,35 +152,9 @@ pub fn SchedulerAddJobSection(
 
                     <div class="sched-field-row">
                         <span class="sched-field-label">{move || tr().sched_ra_label}</span>
-                        <input
-                            class="sched-input sched-input-ra-dec"
-                            placeholder="5.5882"
-                            prop:value=move || f_ra_h.get()
-                            on:input=move |ev| {
-                                f_ra_h.set(
-                                    ev.target()
-                                        .unwrap()
-                                        .unchecked_into::<web_sys::HtmlInputElement>()
-                                        .value(),
-                                );
-                            }
-                        />
-                        <span class="sched-field-unit">"h"</span>
+                        <CoordInput mode=CoordMode::Hms value=f_ra_hms aria_label="RA" />
                         <span class="sched-field-label sched-field-label-offset">{move || tr().sched_dec_label}</span>
-                        <input
-                            class="sched-input sched-input-ra-dec"
-                            placeholder="-5.3911"
-                            prop:value=move || f_dec_deg.get()
-                            on:input=move |ev| {
-                                f_dec_deg.set(
-                                    ev.target()
-                                        .unwrap()
-                                        .unchecked_into::<web_sys::HtmlInputElement>()
-                                        .value(),
-                                );
-                            }
-                        />
-                        <span class="sched-field-unit">"°"</span>
+                        <CoordInput mode=CoordMode::DmsSigned value=f_dec_dms aria_label="Dec" />
                     </div>
                     {move || coords_hint.get().map(|h| view! {
                         <div class="sched-coords-hint">{h}</div>
