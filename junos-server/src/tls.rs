@@ -48,7 +48,7 @@ pub async fn ensure_cert(cert: Option<&Path>, key: Option<&Path>) -> Result<Rust
     let mut params = CertificateParams::new(sans).context("rcgen params")?;
     params.distinguished_name = {
         let mut dn = DistinguishedName::new();
-        dn.push(rcgen::DnType::CommonName, "rekos-dev");
+        dn.push(rcgen::DnType::CommonName, "junos-dev");
         dn
     };
     let key_pair = KeyPair::generate().context("rcgen keypair")?;

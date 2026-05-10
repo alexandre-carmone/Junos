@@ -1,6 +1,6 @@
 //! Minimal WebSocket + DeviceStore for milestone 1.
 //!
-//! Scope: attach to the rekos-server `/ws` endpoint and decode just the
+//! Scope: attach to the junos-server `/ws` endpoint and decode just the
 //! Ekos Live messages the planetarium needs for the FOV reticle.
 //!
 //! # Where FOV inputs actually come from
@@ -46,7 +46,7 @@ use retry::{spawn_refresh_loop, spawn_retry_property, spawn_retry_property_with}
 /// Type-erased command sink. Components dispatch raw Ekos Live JSON strings.
 pub type SendCmd = Arc<dyn Fn(String) + Send + Sync>;
 
-pub fn use_rekos_ws() -> (DeviceStore, SendCmd) {
+pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
     let store = DeviceStore::new();
 
     let ws_url = {

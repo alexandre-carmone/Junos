@@ -1,6 +1,6 @@
 //! Files tab — segmented capture browser + promoted LiveStacker panel.
 //!
-//! File browsing is HTTP-backed and sandboxed by rekos-server's captures root.
+//! File browsing is HTTP-backed and sandboxed by junos-server's captures root.
 //! LiveStacker controls still dispatch raw Ekos Live JSON over the shared WS.
 
 use std::sync::Arc;

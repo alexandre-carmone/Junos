@@ -2,7 +2,7 @@ set shell := ["bash", "-cu"]
 
 default: run
 
-# Install all toolchain bits needed to build and run rekos.
+# Install all toolchain bits needed to build and run junos.
 # Assumes `rustup` and `cargo` are already on PATH.
 install: setup-tailwind
     rustup target add wasm32-unknown-unknown
@@ -10,25 +10,25 @@ install: setup-tailwind
 
 # Rebuild WASM frontend (release) and server, then run the server.
 run: build
-    ./target/release/rekos-server
+    ./target/release/junos-server
 
 # Full release build: trunk (wasm) + cargo (server).
 build: build-wasm build-server
 
 build-wasm: ensure-trunk
-    cd rekos-wasm && trunk build --release
+    cd junos-web && trunk build --release
 
 build-server:
-    cargo build --release -p rekos-server
+    cargo build --release -p junos-server
 
 # Fast typecheck (no codegen) for both crates.
 check:
-    cargo check -p rekos-wasm --target wasm32-unknown-unknown
-    cargo check -p rekos-server
+    cargo check -p junos-web --target wasm32-unknown-unknown
+    cargo check -p junos-server
 
 # Dev loop: trunk watch in one terminal, `just dev-server` in another.
 dev-wasm: ensure-trunk
-    cd rekos-wasm && trunk watch
+    cd junos-web && trunk watch
 
 # Make sure `trunk` is on PATH; if missing, add ~/.cargo/bin or install it.
 ensure-trunk:
@@ -48,11 +48,11 @@ ensure-trunk:
 # self-signed cert is auto-generated into .certs/ on first run. Pass
 # --no-https to skip TLS for headless/CI runs.
 dev-server:
-    cargo run -p rekos-server
+    cargo run -p junos-server
 
 clean:
     cargo clean
-    rm -rf rekos-wasm/dist
+    rm -rf junos-web/dist
 
 # Generate a self-signed TLS cert into .certs/ covering localhost + the
 # host's first non-loopback IPv4. Same shape the server would auto-create
@@ -62,14 +62,14 @@ gen-cert:
     HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}'); \
     SAN="DNS:localhost,IP:127.0.0.1$([ -n "$HOST_IP" ] && echo ,IP:$HOST_IP)"; \
     openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-        -subj "/CN=rekos-web" \
+        -subj "/CN=junos-web" \
         -addext "subjectAltName=$SAN" \
         -keyout .certs/key.pem -out .certs/cert.pem
     @echo "Wrote .certs/cert.pem and .certs/key.pem"
 
 # Download the Tailwind v3 standalone binary (re-run to upgrade).
 setup-tailwind:
-    mkdir -p rekos-wasm/bin
-    curl -sLo rekos-wasm/bin/tailwindcss \
+    mkdir -p junos-web/bin
+    curl -sLo junos-web/bin/tailwindcss \
       https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/tailwindcss-linux-x64
-    chmod +x rekos-wasm/bin/tailwindcss
+    chmod +x junos-web/bin/tailwindcss

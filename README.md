@@ -1,4 +1,4 @@
-# rekos-web
+# junos-web
 
 A local, browser-based KStars/Ekos web client.
 It runs **alongside KStars on your LAN** and acts as a transparent relay
@@ -12,20 +12,20 @@ between KStars and your browser — nothing is sent to the cloud.
          │  ws://localhost:8080/media/ekos
          ▼
    ┌─────────────────────┐
-   │     rekos-server    │   Axum + Tokio relay
+   │     junos-server    │   Axum + Tokio relay
    │  (Rust, native)     │   serves the WASM frontend at /
    └─────────────────────┘
          ▲
          │  ws://localhost:8080/ws
          │
-   Browser ── rekos-wasm (Leptos + WebGPU planetarium)
+   Browser ── junos-web (Leptos + WebGPU planetarium)
 ```
 
-- **`rekos-server`** — a tiny Axum relay. KStars connects *into* it as if it
+- **`junos-server`** — a tiny Axum relay. KStars connects *into* it as if it
   were `ekoslive.com`. Browsers connect to `/ws` and exchange raw Ekos Live
   JSON messages with KStars. The server also serves the compiled WASM
-  frontend from `rekos-wasm/dist/`.
-- **`rekos-wasm`** — the browser app. Leptos 0.7 CSR with a WebGPU sky view.
+  frontend from `junos-web/dist/`.
+- **`junos-web`** — the browser app. Leptos 0.7 CSR with a WebGPU sky view.
   Speaks the Ekos Live wire format directly (`{type, payload}` JSON).
 
 The server does **no protocol translation** — messages flow through opaque.
@@ -33,11 +33,10 @@ All Ekos Live semantics live in the WASM client.
 
 ## Repository layout
 
-- **`rekos-server/`** — Axum/Tokio relay (Rust, native).
-- **`rekos-wasm/`** — Leptos 0.7 CSR + WebGPU browser app.
-- **`junos-web/`** — sibling Leptos crate with its own build pipeline
-  (`cd junos-web && trunk build --release`); not part of the Cargo
-  workspace.
+- **`junos-server/`** — Axum/Tokio relay (Rust, native).
+- **`junos-web/`** — Leptos 0.7 CSR + WebGPU browser app.
+- **`deprecated-junos/`** — old prototype Leptos crate kept for
+  reference only; not part of the Cargo workspace.
 - **`kstars/`** — read-only checkout of the upstream KStars C++ source,
   kept as the authoritative reference for the Ekos Live wire format.
 
@@ -61,8 +60,8 @@ just              # release build (wasm + server) then run
 just build        # release build only, no run
 just check        # fast typecheck of both crates
 just dev-wasm     # `trunk watch` for the frontend
-just dev-server   # `cargo run -p rekos-server`
-just clean        # cargo clean + rm rekos-wasm/dist
+just dev-server   # `cargo run -p junos-server`
+just clean        # cargo clean + rm junos-web/dist
 ```
 
 > ⚠️ **iPhone / iPad users — read this first.**
@@ -109,7 +108,7 @@ To trust the dev cert on iPhone/iPad:
 2. Open `.certs/cert.pem` on the device (AirDrop is easiest) and let
    iOS prompt — Settings → **Profile Downloaded → Install**.
 3. Settings → General → About → **Certificate Trust Settings** → enable
-   the `rekos-dev` certificate.
+   the `junos-dev` certificate.
 4. Safari → Settings → Apps → Safari → Advanced → **Feature Flags → WebGPU**
    (iOS 18+).
 
@@ -125,7 +124,7 @@ To trust the dev cert on iPhone/iPad:
 
 ## Frontend tabs
 
-`rekos-wasm` is more than a planetarium. The tab wheel exposes:
+`junos-web` is more than a planetarium. The tab wheel exposes:
 
 - **Sky** — WebGPU planetarium with stars, DSOs, nebulae thumbnails,
   constellation lines, mount-anchored FOV reticle, search, and a
@@ -143,16 +142,16 @@ This project would not exist without the work of several upstream
 projects. In particular:
 
 - **[KStars / Ekos](https://kstars.kde.org/)** (KDE, GPL-2.0-or-later) —
-  rekos-web speaks the Ekos Live wire format directly. The `kstars/`
+  junos-web speaks the Ekos Live wire format directly. The `kstars/`
   directory in this repo is a read-only checkout of the upstream KStars
   source kept as the authoritative protocol reference. All Ekos session
   logic, INDI device management, and plate-solving is performed by
-  KStars itself; rekos-web is only a relay and a UI.
+  KStars itself; junos-web is only a relay and a UI.
 
 - **[Stellarium](https://stellarium.org/)** (Stellarium team,
   GPL-2.0-or-later) — the planetarium ships imagery and data sourced
   from the Stellarium GitHub repository:
-  - **Nebulae thumbnails** in `rekos-wasm/public/nebulae/` are derived
+  - **Nebulae thumbnails** in `junos-web/public/nebulae/` are derived
     from Stellarium's `nebulae/default/` texture set
     (see `scripts/download_nebulae.py`).
   - **Constellation stick figures** are built from Stellarium's
@@ -165,5 +164,5 @@ projects. In particular:
   and full license text.
 
 - **Hipparcos / Tycho** catalogs and the OpenNGC deep-sky catalog feed
-  the binary catalogs in `rekos-wasm/public/`. Regeneration scripts
+  the binary catalogs in `junos-web/public/`. Regeneration scripts
   live in `scripts/` (run with `uv run`).

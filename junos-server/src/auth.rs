@@ -38,7 +38,7 @@ pub async fn authenticate(Json(req): Json<AuthRequest>) -> Json<Value> {
     );
 
     let username = if req.username.is_empty() {
-        "rekos".to_string()
+        "junos".to_string()
     } else {
         req.username
     };
@@ -47,7 +47,7 @@ pub async fn authenticate(Json(req): Json<AuthRequest>) -> Json<Value> {
         "success":    true,
         "token":      STUB_JWT,
         "username":   username,
-        "email":      "local@rekos.local",
+        "email":      "local@junos.local",
         "from_date":  "2020-01-01",
         "to_date":    "2286-11-20",
         "plan_id":    "local",

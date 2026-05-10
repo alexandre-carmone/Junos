@@ -165,18 +165,18 @@ pub fn MosaicTab(
         }
 
         let safe_name = sanitize_name(if target.is_empty() { "mosaic" } else { &target });
-        let rel_path  = format!(".rekos-sequences/{}.esq", safe_name);
+        let rel_path  = format!(".junos-sequences/{}.esq", safe_name);
         let abs_path  = if home.is_empty() {
             rel_path.clone()
         } else {
-            format!("{}/.rekos-sequences/{}.esq", home, safe_name)
+            format!("{}/.junos-sequences/{}.esq", home, safe_name)
         };
 
         let xml = build_esq_xml(&safe_name, &valid_frames);
         if !home.is_empty() {
             send_cmd(&send_s, "file_directory_operation", serde_json::json!({
                 "operation": "create",
-                "path": format!("{}/.rekos-sequences", home),
+                "path": format!("{}/.junos-sequences", home),
             }));
         }
         send_cmd(&send_s, "scheduler_save_sequence_file",

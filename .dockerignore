@@ -1,9 +1,10 @@
 target
 result
 .certs
-rekos-wasm/dist
-rekos-wasm/bin
-junos-web/target
 junos-web/dist
+junos-web/bin
+junos-web/target
+deprecated-junos/target
+deprecated-junos/dist
 .git
 kstars

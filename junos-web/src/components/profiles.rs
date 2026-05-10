@@ -223,7 +223,7 @@ pub fn ProfilesTab(
 
 /// One row in the "Applications" section.  Renders the app name, a running/
 /// stopped badge, and a Launch / Stop button.  Button clicks go directly to
-/// the rekos-server REST API; status updates come back via the `/ws` push.
+/// the junos-server REST API; status updates come back via the `/ws` push.
 #[component]
 fn AppRow(
     /// Display label (e.g. "KStars").

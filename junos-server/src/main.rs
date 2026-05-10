@@ -35,14 +35,14 @@ pub struct AppState {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "rekos_server=info".into()))
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "junos_server=info".into()))
         .with(tracing_subscriber::fmt::layer())
         .init();
 
     let config = Arc::new(Config::parse());
 
     if let Ok(home) = std::env::var("HOME") {
-        let seq_dir = std::path::Path::new(&home).join(".rekos-sequences");
+        let seq_dir = std::path::Path::new(&home).join(".junos-sequences");
         let _ = std::fs::create_dir_all(&seq_dir);
     }
 
@@ -144,5 +144,5 @@ fn log_exit(
 }
 
 async fn api_config() -> Json<serde_json::Value> {
-    Json(json!({ "server": "rekos-server" }))
+    Json(json!({ "server": "junos-server" }))
 }

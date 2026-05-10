@@ -82,7 +82,7 @@ impl SkyRenderer {
             Ok(s) => s,
             Err(e) => {
                 web_sys::console::warn_1(
-                    &format!("rekos: WebGPU create_surface failed: {e}").into(),
+                    &format!("junos: WebGPU create_surface failed: {e}").into(),
                 );
                 return None;
             }
@@ -99,7 +99,7 @@ impl SkyRenderer {
             Some(a) => a,
             None => {
                 web_sys::console::warn_1(
-                    &"rekos: WebGPU request_adapter returned None (WebGPU unavailable or disabled)".into(),
+                    &"junos: WebGPU request_adapter returned None (WebGPU unavailable or disabled)".into(),
                 );
                 return None;
             }
@@ -131,7 +131,7 @@ impl SkyRenderer {
             Ok(pair) => pair,
             Err(e) => {
                 web_sys::console::warn_1(
-                    &format!("rekos: WebGPU request_device failed: {e}").into(),
+                    &format!("junos: WebGPU request_device failed: {e}").into(),
                 );
                 return None;
             }

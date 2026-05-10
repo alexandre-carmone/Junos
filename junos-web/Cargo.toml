@@ -1,14 +1,14 @@
 [package]
-name = "rekos-wasm"
+name = "junos-web"
 version = "0.1.0"
 edition = "2024"
 
 # Trunk WASM build — excluded from native `cargo build` via workspace default-members.
-# Build with: cd rekos-wasm && trunk build --release
-# Dev:        cd rekos-wasm && trunk serve --proxy-ws /ws=ws://localhost:8080/ws
+# Build with: cd junos-web && trunk build --release
+# Dev:        cd junos-web && trunk serve --proxy-ws /ws=ws://localhost:8080/ws
 
 [[bin]]
-name = "rekos-wasm"
+name = "junos-web"
 path = "src/main.rs"
 
 [dependencies]

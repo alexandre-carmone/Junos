@@ -265,7 +265,7 @@ fn thumb_cache_path(root: &Path, target: &Path, size: u32, mtime: u64) -> PathBu
     target.hash(&mut h);
     mtime.hash(&mut h);
     let key = format!("{:016x}_{}.jpg", h.finish(), size);
-    root.join(".rekos-thumbs").join(key)
+    root.join(".junos-thumbs").join(key)
 }
 
 fn jpeg_response(bytes: Vec<u8>) -> Response {

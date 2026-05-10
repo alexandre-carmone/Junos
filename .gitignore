@@ -1,9 +1,9 @@
-junos-web
+deprecated-junos
 kstars
 target
-rekos-wasm/dist
-rekos-wasm/styles/tailwind.css
-rekos-wasm/bin/
+junos-web/dist
+junos-web/styles/tailwind.css
+junos-web/bin/
 .certs
 result
 .claude

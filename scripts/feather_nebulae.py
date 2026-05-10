@@ -34,7 +34,7 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-NEBULAE_DIR = ROOT / "rekos-wasm" / "public" / "nebulae"
+NEBULAE_DIR = ROOT / "junos-web" / "public" / "nebulae"
 
 # Tunables — chosen to clear the typical Stellarium black background while
 # keeping faint nebulosity visible. Adjust if specific objects look wrong.

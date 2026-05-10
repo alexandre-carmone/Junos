@@ -3,10 +3,10 @@
 with lib;
 
 let
-  cfg = config.services.rekos-web;
+  cfg = config.services.junos-web;
   portOf = addr: toInt (last (splitString ":" addr));
 
-  certDir  = "/var/lib/rekos-web/certs";
+  certDir  = "/var/lib/junos-web/certs";
   certPath = "${certDir}/cert.pem";
   keyPath  = "${certDir}/key.pem";
 
@@ -15,13 +15,13 @@ let
 
   # Generates a self-signed cert under StateDirectory if missing. Idempotent —
   # subsequent starts skip the openssl call. Delete the dir to force renewal.
-  generateCertScript = pkgs.writeShellScript "rekos-web-gen-cert" ''
+  generateCertScript = pkgs.writeShellScript "junos-web-gen-cert" ''
     set -eu
     install -d -m 0700 ${certDir}
     if [ ! -s ${certPath} ] || [ ! -s ${keyPath} ]; then
-      echo "rekos-web: generating self-signed TLS cert at ${certDir}"
+      echo "junos-web: generating self-signed TLS cert at ${certDir}"
       ${pkgs.openssl}/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-        -subj "/CN=rekos-web" \
+        -subj "/CN=junos-web" \
         -addext "subjectAltName=${sanList}" \
         -keyout ${keyPath} \
         -out    ${certPath}
@@ -30,13 +30,13 @@ let
   '';
 in
 {
-  options.services.rekos-web = {
-    enable = mkEnableOption "rekos-web KStars Ekos Live LAN relay";
+  options.services.junos-web = {
+    enable = mkEnableOption "junos-web KStars Ekos Live LAN relay";
 
     package = mkOption {
       type = types.package;
       description = ''
-        The rekos-web wrapper package (includes rekos-server with a
+        The junos-web wrapper package (includes junos-server with a
         baked-in --dist-dir pointing to the compiled WASM frontend).
         Defaults to the package from the same flake revision.
       '';
@@ -141,7 +141,7 @@ in
       default = [ ];
       example = [ "--http-addr" "0.0.0.0:8080" ];
       description = ''
-        Additional command-line arguments passed verbatim to rekos-server.
+        Additional command-line arguments passed verbatim to junos-server.
       '';
     };
   };
@@ -150,12 +150,12 @@ in
     assertions = [
       {
         assertion = cfg.tls.autoGenerate || (cfg.tls.cert != null && cfg.tls.key != null);
-        message = "services.rekos-web: either tls.autoGenerate must be true, or both tls.cert and tls.key must be set.";
+        message = "services.junos-web: either tls.autoGenerate must be true, or both tls.cert and tls.key must be set.";
       }
     ];
 
-    systemd.services.rekos-web = {
-      description = "rekos-web KStars Ekos Live relay server";
+    systemd.services.junos-web = {
+      description = "junos-web KStars Ekos Live relay server";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
@@ -179,7 +179,7 @@ in
         in
         {
           ExecStart = concatStringsSep " " (
-            [ "${cfg.package}/bin/rekos-server"
+            [ "${cfg.package}/bin/junos-server"
               "--http-addr" cfg.httpAddr
             ]
             ++ optionals cfg.enableHttps [ "--https-addr" cfg.httpsAddr ]
@@ -198,9 +198,9 @@ in
           Restart = "on-failure";
           RestartSec = "5s";
 
-          StateDirectory = "rekos-web";
+          StateDirectory = "junos-web";
           StateDirectoryMode = "0750";
-          WorkingDirectory = "/var/lib/rekos-web";
+          WorkingDirectory = "/var/lib/junos-web";
 
           DynamicUser = true;
           PrivateTmp = true;

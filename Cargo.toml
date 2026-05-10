@@ -1,4 +1,4 @@
 [workspace]
-members = ["rekos-server", "rekos-wasm"]
-default-members = ["rekos-server"]
+members = ["junos-server", "junos-web"]
+default-members = ["junos-server"]
 resolver = "2"

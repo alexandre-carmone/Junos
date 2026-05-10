@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-/// Rekos server configuration.
+/// Junos server configuration.
 ///
 /// Architecture: KStars (Ekos Live client) connects *inbound* to us over plain
 /// HTTP from the same machine. Browsers connect over HTTPS — required by iOS
@@ -11,7 +11,7 @@ use clap::Parser;
 ///
 /// Both listeners share the same Router, so any consumer can use either port.
 #[derive(Parser, Debug, Clone)]
-#[command(name = "rekos-server", about = "Ekos Live server + WASM frontend host")]
+#[command(name = "junos-server", about = "Ekos Live server + WASM frontend host")]
 pub struct Config {
     /// HTTP listen address — used by KStars (Ekos Live offline server).
     #[arg(long, default_value = "0.0.0.0:8080", env = "HTTP_ADDR")]
@@ -21,8 +21,8 @@ pub struct Config {
     #[arg(long, default_value = "0.0.0.0:8443", env = "HTTPS_ADDR")]
     pub https_addr: String,
 
-    /// Path to the rekos-wasm dist directory to serve.
-    #[arg(long, default_value = "rekos-wasm/dist", env = "DIST_DIR")]
+    /// Path to the junos-web dist directory to serve.
+    #[arg(long, default_value = "junos-web/dist", env = "DIST_DIR")]
     pub dist_dir: String,
 
     /// Override the auto-managed PEM-encoded TLS certificate.

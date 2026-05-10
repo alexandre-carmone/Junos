@@ -4,26 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`rekos-web` is a Rust workspace that re-implements the deprecated KStars/Ekos web client. It is **not** an Ekos Live cloud client — it runs alongside KStars on the LAN as a transparent relay between KStars and a browser. The browser sees KStars exactly as if it had connected to ekoslive.com, but the traffic stays local.
+`junos-web` is a Rust workspace that re-implements the deprecated KStars/Ekos web client. It is **not** an Ekos Live cloud client — it runs alongside KStars on the LAN as a transparent relay between KStars and a browser. The browser sees KStars exactly as if it had connected to ekoslive.com, but the traffic stays local.
 
 Two crates:
 
-- **`rekos-server`** (Axum/Tokio) — local relay. KStars connects *inbound* to it; browsers connect to it; it broadcasts KStars events to all browsers and forwards browser commands to the attached KStars session. Also serves the WASM frontend from `rekos-wasm/dist/`.
-- **`rekos-wasm`** (Leptos 0.7 CSR + WebGPU) — browser app. Connects to the server's `/ws` and exchanges raw Ekos Live JSON `{type, payload}` messages with KStars.
+- **`junos-server`** (Axum/Tokio) — local relay. KStars connects *inbound* to it; browsers connect to it; it broadcasts KStars events to all browsers and forwards browser commands to the attached KStars session. Also serves the WASM frontend from `junos-web/dist/`.
+- **`junos-web`** (Leptos 0.7 CSR + WebGPU) — browser app. Connects to the server's `/ws` and exchanges raw Ekos Live JSON `{type, payload}` messages with KStars.
 
 `kstars/` is the upstream KStars C++ source kept as a **read-only reference** for the Ekos Live wire format — never edit it, but grep it heavily when you need to know what KStars actually sends/accepts.
 
 ## Repo layout
 
-- `rekos-server/`, `rekos-wasm/` — the two workspace crates (see Architecture below).
-- `junos-web/` — sibling Trunk/Leptos crate with its **own** `Cargo.toml` (not in the workspace). Build with `cd junos-web && trunk build --release`. Has its own `CLAUDE.md` — read that before touching it.
+- `junos-server/`, `junos-web/` — the two workspace crates (see Architecture below).
+- `deprecated-junos/` — old prototype Trunk/Leptos crate, kept for reference only. Not part of this workspace; do not edit.
 - `kstars/` — read-only upstream KStars C++ source, kept as the authoritative reference for the Ekos Live wire format. Never edit; grep heavily.
-- `scripts/` — Python tools that regenerate the binary catalogs in `rekos-wasm/public/` (`gen_catalog.py`, `gen_dso_catalog.py`, `gen_dso_sprites.py`, `download_nebulae.py`, `platesolve_nebulae.py`, …). Per user preference, run with `uv run script.py` — never bare `python3`. The generated outputs are checked in; don't regenerate them as part of unrelated code changes.
+- `scripts/` — Python tools that regenerate the binary catalogs in `junos-web/public/` (`gen_catalog.py`, `gen_dso_catalog.py`, `gen_dso_sprites.py`, `download_nebulae.py`, `platesolve_nebulae.py`, …). Per user preference, run with `uv run script.py` — never bare `python3`. The generated outputs are checked in; don't regenerate them as part of unrelated code changes.
 - `flake.nix` / `nix/` — Nix dev shell. Already provided; don't propose adding one.
 
 ## Frontend tabs
 
-`rekos-wasm` is no longer planetarium-only. `components/tabs.rs` defines a `Tab` enum and `components/tab_wheel.rs` renders the tab switcher. Current tabs: `Sky` (planetarium, fullscreen behind the wheel), `Mount`, `Focus`, `Guide`, `Imaging`, `Files`, `Mosaic`, `PolarAlign`, `Scheduler`, `Profiles`. Each tab module lives directly under `components/`. `SkyTab` is kept mounted (`display:none` when inactive) so its WebGPU context and catalog state survive tab switches; the other tabs render only when active. The planetarium remains the most fully-featured surface; the other tabs are progressively being reintroduced — when adding to them, grow `DeviceStore` (`ws.rs`) and the `apply_ekos_event` match arm only as needed.
+`junos-web` is no longer planetarium-only. `components/tabs.rs` defines a `Tab` enum and `components/tab_wheel.rs` renders the tab switcher. Current tabs: `Sky` (planetarium, fullscreen behind the wheel), `Mount`, `Focus`, `Guide`, `Imaging`, `Files`, `Mosaic`, `PolarAlign`, `Scheduler`, `Profiles`. Each tab module lives directly under `components/`. `SkyTab` is kept mounted (`display:none` when inactive) so its WebGPU context and catalog state survive tab switches; the other tabs render only when active. The planetarium remains the most fully-featured surface; the other tabs are progressively being reintroduced — when adding to them, grow `DeviceStore` (`ws.rs`) and the `apply_ekos_event` match arm only as needed.
 
 ## Build & run
 
@@ -36,23 +36,23 @@ cargo install trunk
 just               # release build (wasm + server) then run
 just build         # release build only
 just check         # fast typecheck both crates (no codegen)
-just dev-wasm      # `trunk watch` in rekos-wasm/
-just dev-server    # `cargo run -p rekos-server`
-just clean         # cargo clean + rm rekos-wasm/dist
+just dev-wasm      # `trunk watch` in junos-web/
+just dev-server    # `cargo run -p junos-server`
+just clean         # cargo clean + rm junos-web/dist
 
 # Manual equivalents
-cd rekos-wasm && trunk build --release
-cargo build --release -p rekos-server
-./target/release/rekos-server
-cargo check -p rekos-wasm --target wasm32-unknown-unknown
-cargo check -p rekos-server
+cd junos-web && trunk build --release
+cargo build --release -p junos-server
+./target/release/junos-server
+cargo check -p junos-web --target wasm32-unknown-unknown
+cargo check -p junos-server
 ```
 
-Workspace root `Cargo.toml` sets `default-members = ["rekos-server"]`, so `cargo build`/`cargo run` from the root operate on the server only. `rekos-wasm` is only buildable through Trunk (or `cargo check --target wasm32-unknown-unknown -p rekos-wasm`). `junos-web` is **not** in the workspace and has its own build pipeline.
+Workspace root `Cargo.toml` sets `default-members = ["junos-server"]`, so `cargo build`/`cargo run` from the root operate on the server only. `junos-web` is only buildable through Trunk (or `cargo check --target wasm32-unknown-unknown -p junos-web`). `deprecated-junos/` is the old prototype crate and is not in the workspace.
 
 ### Server ports
 
-`rekos-server` binds **two** ports by default:
+`junos-server` binds **two** ports by default:
 
 - **HTTP on `:8080`** — KStars-facing. KStars' Ekos Live client connects here.
 - **HTTPS on `:8443`** — browser-facing. iOS Safari requires TLS to expose WebGPU, so the browser must hit `https://<host>:8443`. A self-signed cert is auto-generated into `.certs/` on first run.
@@ -63,7 +63,7 @@ There are no unit tests — verification is manual: run KStars, enable Ekos Live
 
 ## Architecture
 
-### Server (`rekos-server`)
+### Server (`junos-server`)
 
 `hub.rs` is the central state. A `tokio::sync::broadcast` channel fans KStars events out to every connected browser, plus an `Option<mpsc::Sender>` that points at the currently-attached KStars session (only one KStars can be attached at a time).
 
@@ -74,11 +74,11 @@ There are no unit tests — verification is manual: run KStars, enable Ekos Live
 
 There is **no protocol translation** in the server. Messages flow through opaque. All Ekos Live semantics live in the WASM client.
 
-### Frontend (`rekos-wasm`)
+### Frontend (`junos-web`)
 
 Leptos 0.7 CSR. Entry point `main.rs` → `App()` → tab wheel + active tab. Module layout:
 
-- `ws.rs` — the WebSocket spine. Owns `DeviceStore`, `apply_ekos_event()`, `use_rekos_ws()`, and the cross-referencing Effects that derive `telescope_settings` from `scopes ∩ trains`. Also fires per-device retry loops via `spawn_retry_property()` for `CCD_INFO` and `EQUATORIAL_EOD_COORD`.
+- `ws.rs` — the WebSocket spine. Owns `DeviceStore`, `apply_ekos_event()`, `use_junos_ws()`, and the cross-referencing Effects that derive `telescope_settings` from `scopes ∩ trains`. Also fires per-device retry loops via `spawn_retry_property()` for `CCD_INFO` and `EQUATORIAL_EOD_COORD`.
 - `compat.rs` — flat snapshot types (`MountSnapshot`, `CameraSnapshot`, `SiteSnapshot`, `SolveSnapshot`) derived from `DeviceStore`. The sky module imports these, not `DeviceStore`.
 - `main.rs` — wires catalogs, site location, language, the Leptos contexts required by `sky/actions.rs` (`MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx`, `MosaicPlannerCtx`), and the tab shell. The top status strip (position `fixed`, `pointer-events:none`) shows WS state + mount RA/Dec + active FOV in arcmin.
 - `components/tabs.rs`, `components/tab_wheel.rs` — tab enum and wheel switcher.
@@ -111,9 +111,9 @@ JSON `{"type": "...", "payload": {...}}` over WebSocket. Authoritative reference
 
 ### Critical pitfalls — *read these before adding features*
 
-1. **Two gates, not one.** `new_connection_state` carries `{connected, online}`. `rekos-server`'s synthetic event only sets `connected`. KStars' real event after profile start sets `online: true`. Many endpoints (`get_devices`, `get_states`, `get_scopes` in most call sites, `process*Commands`) gate on `getEkosStartingStatus() == Success` and are silently dropped before that — see `message.cpp:264, 291`. `ws.rs` prime requests fire on `online=true`, not `connected=true`, for this reason.
+1. **Two gates, not one.** `new_connection_state` carries `{connected, online}`. `junos-server`'s synthetic event only sets `connected`. KStars' real event after profile start sets `online: true`. Many endpoints (`get_devices`, `get_states`, `get_scopes` in most call sites, `process*Commands`) gate on `getEkosStartingStatus() == Success` and are silently dropped before that — see `message.cpp:264, 291`. `ws.rs` prime requests fire on `online=true`, not `connected=true`, for this reason.
 
-2. **`m_ClientState`.** KStars' `Node::sendResponse` (`node.cpp:156`) drops every outbound event if the remote peer hasn't sent `{"type":"set_client_state","payload":{"state":true}}`. `rekos-server/src/kstars_ws.rs` sends this on connect; don't remove it.
+2. **`m_ClientState`.** KStars' `Node::sendResponse` (`node.cpp:156`) drops every outbound event if the remote peer hasn't sent `{"type":"set_client_state","payload":{"state":true}}`. `junos-server/src/kstars_ws.rs` sends this on connect; don't remove it.
 
 3. **`processDeviceCommands` silent drop.** `message.cpp:1664` — `if (!INDIListener::findDevice(device, …)) return;`. If the INDI driver for a device isn't registered yet when you send `device_property_get` / `device_property_set` / `device_property_subscribe`, the command is dropped with no reply and the subscription is not recorded. This is why `ws.rs::spawn_retry_property` exists: it keeps firing subscribe+get for up to 60 s until the expected data actually lands in the store.
 
@@ -137,7 +137,7 @@ JSON `{"type": "...", "payload": {...}}` over WebSocket. Authoritative reference
 
 ## Styling
 
-Styles live in `rekos-wasm/styles/`, bundled by Trunk via `<link data-trunk rel="css" …>` in `index.html` (load order: `tokens` → `base` → `shell` → `components/*` → `responsive`):
+Styles live in `junos-web/styles/`, bundled by Trunk via `<link data-trunk rel="css" …>` in `index.html` (load order: `tokens` → `base` → `shell` → `components/*` → `responsive`):
 
 - `tokens.css` defines design tokens (`--bg`, `--text-blue`, `--accent-cyan`, `--sp-*`, `--r-*`, `--fs-*`, `--font-mono`). Reference these via `var(--name)` in CSS rather than restating hex/px literals.
 - `components/sky.css` and `components/tab_wheel.css` hold the class definitions for the migrated components. Use semantic class names: `<component>-<part>` (e.g. `sky-controls-toggle`, `tab-wheel-button`), with state modifiers as `--<state>` suffixes (e.g. `tab-wheel-button--active`).
@@ -149,7 +149,7 @@ When migrating a previously-untouched tab, add a new `components/<tab>.css`, rep
 
 ## Static assets
 
-`rekos-wasm/public/` contains binary catalogs — `junos.bin` (star catalog), `dso.bin` (deep-sky catalog), `nebulae.json` + `nebulae/` (thumbnails). Trunk copies these into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes. The Python regen tools live in `scripts/` (run with `uv run`).
+`junos-web/public/` contains binary catalogs — `junos.bin` (star catalog), `dso.bin` (deep-sky catalog), `nebulae.json` + `nebulae/` (thumbnails). Trunk copies these into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes. The Python regen tools live in `scripts/` (run with `uv run`).
 
 ## Code style observed in this codebase
 

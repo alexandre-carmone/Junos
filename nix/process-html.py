@@ -40,8 +40,8 @@ html = re.sub(r'[ \t]*<link data-trunk[^\n]*\n', '', html)
 # Inject WASM init script before </head>, matching the pattern Trunk produces
 init_script = (
     '    <script type="module">\n'
-    "import init, * as bindings from '/rekos-wasm.js';\n"
-    "const wasm = await init({ module_or_path: '/rekos-wasm_bg.wasm' });\n"
+    "import init, * as bindings from '/junos-web.js';\n"
+    "const wasm = await init({ module_or_path: '/junos-web_bg.wasm' });\n"
     'window.wasmBindings = bindings;\n'
     'dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));\n'
     '</script>\n'

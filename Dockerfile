@@ -34,23 +34,23 @@ COPY . .
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/work/target,id=rekos-target \
-    --mount=type=cache,target=/work/rekos-wasm/target,id=rekos-wasm-target \
+    --mount=type=cache,target=/work/target,id=junos-target \
+    --mount=type=cache,target=/work/junos-web/target,id=junos-web-target \
     just install 
     
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/work/target,id=rekos-target \
-    --mount=type=cache,target=/work/rekos-wasm/target,id=rekos-wasm-target \
+    --mount=type=cache,target=/work/target,id=junos-target \
+    --mount=type=cache,target=/work/junos-web/target,id=junos-web-target \
     just build \
     && mkdir -p /out \
-    && cp target/release/rekos-server /out/rekos-server
+    && cp target/release/junos-server /out/junos-server
 
 RUN just gen-cert
 
 # Move the cached binary into a stable path inside the image.
-RUN mkdir -p target/release && mv /out/rekos-server target/release/rekos-server
+RUN mkdir -p target/release && mv /out/junos-server target/release/junos-server
 
 EXPOSE 8080 8443
-CMD ["./target/release/rekos-server"]
+CMD ["./target/release/junos-server"]

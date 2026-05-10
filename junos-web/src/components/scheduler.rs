@@ -249,11 +249,11 @@ pub fn SchedulerTab(
 
         let xml = build_esq_xml(&name, &frames);
         let safe_name = sanitize_name(if name.is_empty() { "sequence" } else { &name });
-        let rel_path  = format!(".rekos-sequences/{}.esq", safe_name);
+        let rel_path  = format!(".junos-sequences/{}.esq", safe_name);
         let abs_path  = if home.is_empty() {
-            format!(".rekos-sequences/{}.esq", safe_name)
+            format!(".junos-sequences/{}.esq", safe_name)
         } else {
-            format!("{}/.rekos-sequences/{}.esq", home, safe_name)
+            format!("{}/.junos-sequences/{}.esq", home, safe_name)
         };
 
         let (seq_r, rep_r, rep_lim, loop_r, until_r, until_val) =

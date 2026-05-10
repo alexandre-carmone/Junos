@@ -9,7 +9,7 @@
 # ///
 """Generate the precomputed sky-background tile pyramid.
 
-Reads `rekos-wasm/public/nebulae.json` + `nebulae/*.png` (already plate-solved
+Reads `junos-web/public/nebulae.json` + `nebulae/*.png` (already plate-solved
 by `scripts/platesolve_nebulae.py`) and rasterizes them into HEALPix nested
 tiles at one or more levels.
 
@@ -21,7 +21,7 @@ Usage:
     uv run scripts/gen_sky_tiles.py --levels 0-4
     uv run scripts/gen_sky_tiles.py --tile-px 256 --format png
 
-Output layout (under `rekos-wasm/public/sky_tiles/`):
+Output layout (under `junos-web/public/sky_tiles/`):
     manifest.json          { format, tile_px, levels: [{ nside, ipix_present }] }
     L{level}/{ipix}.png    one file per non-empty tile
 
@@ -47,7 +47,7 @@ from PIL import Image
 
 # ── paths ────────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
-PUBLIC = ROOT / "rekos-wasm" / "public"
+PUBLIC = ROOT / "junos-web" / "public"
 NEBULAE_JSON = PUBLIC / "nebulae.json"
 NEBULAE_DIR = PUBLIC / "nebulae"
 OUT_ROOT = PUBLIC / "sky_tiles"

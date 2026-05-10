@@ -12,7 +12,7 @@ pub struct DeviceStore {
     /// Ekos::Success, i.e. a profile is running and requests that gate on it
     /// will actually be handled. Driven by `new_connection_state.online`.
     pub online: RwSignal<bool>,
-    /// Server's $HOME, injected by rekos-server/proxy.rs on connect.
+    /// Server's $HOME, injected by junos-server/proxy.rs on connect.
     /// Used to predict .esq file paths written via scheduler_save_sequence_file.
     pub home_dir: RwSignal<String>,
     pub mount_status: RwSignal<Option<MountStatusData>>,
@@ -55,10 +55,10 @@ pub struct DeviceStore {
     /// `online == true` (same gate as `get_profiles`).
     pub drivers: RwSignal<Vec<DriverInfo>>,
     /// Whether KStars process is running on the server host.
-    /// Updated by `app_state` messages pushed from rekos-server.
+    /// Updated by `app_state` messages pushed from junos-server.
     pub kstars_running: RwSignal<bool>,
     /// Whether PHD2 process is running on the server host.
-    /// Updated by `app_state` messages pushed from rekos-server.
+    /// Updated by `app_state` messages pushed from junos-server.
     pub phd2_running: RwSignal<bool>,
     /// Set true on the first `app_state` message — used by the app shell
     /// to make a one-shot startup decision (e.g. default to Profiles tab
@@ -806,7 +806,7 @@ impl DeviceStore {
             }
 
             // Binary media frames come through as JSON after server-side
-            // decoding (rekos-server/src/kstars_ws.rs:169-198). Metadata is the
+            // decoding (junos-server/src/kstars_ws.rs:169-198). Metadata is the
             // parsed header; we only consume focus frames (uuid starts with
             // "+F", see kstars media.cpp:752).
             "new_preview_image" => {
@@ -916,7 +916,7 @@ impl DeviceStore {
                 self.livestacker_settings.set(payload.clone());
             }
 
-            // rekos-server app launcher status: {"kstars":"running"|"stopped",
+            // junos-server app launcher status: {"kstars":"running"|"stopped",
             // "phd2":"running"|"stopped"}.
             "app_state" => {
                 if let Some(s) = payload["kstars"].as_str() {

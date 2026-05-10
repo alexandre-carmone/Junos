@@ -1,4 +1,4 @@
-//! Rekos Web UI — milestone 1: fullscreen planetarium only.
+//! Junos Web UI — milestone 1: fullscreen planetarium only.
 
 mod astro;
 mod catalog;
@@ -107,7 +107,7 @@ fn App() -> impl IntoView {
     provide_context(dso_index_sig);
 
     // ── WebSocket ─────────────────────────────────────────────────────────
-    let (store, send) = ws::use_rekos_ws();
+    let (store, send) = ws::use_junos_ws();
 
     // ── Sky view state (persisted) ────────────────────────────────────────
     let ls = web_sys::window().and_then(|w| w.local_storage().ok().flatten());
@@ -137,7 +137,7 @@ fn App() -> impl IntoView {
 
     // ── Language ──────────────────────────────────────────────────────────
     let saved_lang = ls.as_ref()
-        .and_then(|s| s.get_item("rekos_lang").ok().flatten())
+        .and_then(|s| s.get_item("junos_lang").ok().flatten())
         .map(|v| if v == "fr" { Lang::Fr } else { Lang::En })
         .unwrap_or_default();
     let lang = RwSignal::new(saved_lang);
@@ -145,7 +145,7 @@ fn App() -> impl IntoView {
     Effect::new(move |_| {
         let v = match lang.get() { Lang::Fr => "fr", Lang::En => "en" };
         if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-            let _ = s.set_item("rekos_lang", v);
+            let _ = s.set_item("junos_lang", v);
         }
     });
 
@@ -222,7 +222,7 @@ fn App() -> impl IntoView {
     provide_context(RevealInFilesCtx(reveal_ctx));
 
     view! {
-        <div id="rekos-app" class="fixed inset-0 bg-bg text-[var(--text)] font-ui overflow-hidden">
+        <div id="junos-app" class="fixed inset-0 bg-bg text-[var(--text)] font-ui overflow-hidden">
             <TabContent
                 store=store.clone()
                 send=Arc::clone(&send)

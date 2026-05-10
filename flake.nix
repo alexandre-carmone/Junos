@@ -1,5 +1,5 @@
 {
-  description = "rekos-web — Ekos Live LAN relay + Leptos/WebGPU browser client";
+  description = "junos-web — Ekos Live LAN relay + Leptos/WebGPU browser client";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -36,7 +36,7 @@
         #
         # To fill in the hashes after changing this version:
         #   1. Set both hashes to pkgs.lib.fakeHash
-        #   2. Run:  nix build .#rekos-wasm-dist
+        #   2. Run:  nix build .#junos-web-dist
         #      The build fails with "got: sha256-<HASH>" — paste that as wasmBindgenSrcHash
         #   3. Run again — it fails with a second hash for wasmBindgenCargoHash
         #   4. Run once more — it should now succeed
@@ -64,39 +64,39 @@
             let rel = pkgs.lib.removePrefix (toString ./.) (toString path);
             in !(pkgs.lib.hasPrefix "/kstars" rel)
             && !(pkgs.lib.hasPrefix "/target" rel)
-            && !(pkgs.lib.hasPrefix "/rekos-wasm/dist" rel)
-            && !(pkgs.lib.hasPrefix "/rekos-wasm/bin" rel)
-            && !(rel == "/rekos-wasm/styles/tailwind.css")
+            && !(pkgs.lib.hasPrefix "/junos-web/dist" rel)
+            && !(pkgs.lib.hasPrefix "/junos-web/bin" rel)
+            && !(rel == "/junos-web/styles/tailwind.css")
             && !(pkgs.lib.hasPrefix "/.certs" rel)
             && !(pkgs.lib.hasPrefix "/.git" rel)
             && !(rel == "/result");
         };
 
-        # ── Stage 1: compile rekos-wasm to a raw .wasm binary ──────────────
+        # ── Stage 1: compile junos-web to a raw .wasm binary ──────────────
         #
         # buildRustPackage's configurePhase sets up vendored cargo deps;
         # our custom buildPhase runs on top of that — no network needed.
-        rekosWasmRaw = rustPlatformWasm.buildRustPackage {
-          pname = "rekos-wasm-raw";
+        junosWebRaw = rustPlatformWasm.buildRustPackage {
+          pname = "junos-web-raw";
           version = "0.1.0";
           src = filteredSrc;
           cargoLock.lockFile = ./Cargo.lock;
 
           buildPhase = ''
-            cargo build -p rekos-wasm --target wasm32-unknown-unknown --release
+            cargo build -p junos-web --target wasm32-unknown-unknown --release
           '';
           installPhase = ''
             mkdir -p $out
-            cp target/wasm32-unknown-unknown/release/rekos-wasm.wasm $out/
+            cp target/wasm32-unknown-unknown/release/junos-web.wasm $out/
           '';
 
           doCheck = false;
         };
 
         # ── Stage 2: tailwind + wasm-bindgen + assets → dist directory ─────
-        rekosWasmDist = pkgs.stdenv.mkDerivation {
-          name = "rekos-wasm-dist";
-          src = ./rekos-wasm;
+        junosWebDist = pkgs.stdenv.mkDerivation {
+          name = "junos-web-dist";
+          src = ./junos-web;
 
           nativeBuildInputs = [
             wasmBindgenCli
@@ -119,7 +119,7 @@
             wasm-bindgen \
               --target web \
               --out-dir "$out" \
-              ${rekosWasmRaw}/rekos-wasm.wasm
+              ${junosWebRaw}/junos-web.wasm
 
             # Static catalog assets (checked-in binaries — copy as-is)
             cp -r public/. "$out/"
@@ -140,10 +140,10 @@
 
         # ── Server binary ───────────────────────────────────────────────────
         #
-        # Workspace default-members = ["rekos-server"], so cargo build --release
+        # Workspace default-members = ["junos-server"], so cargo build --release
         # builds only the server.  We override both phases for clarity.
-        rekosServer = pkgs.rustPlatform.buildRustPackage {
-          pname = "rekos-server";
+        junosServer = pkgs.rustPlatform.buildRustPackage {
+          pname = "junos-server";
           version = "0.1.0";
           src = filteredSrc;
           cargoLock.lockFile = ./Cargo.lock;
@@ -152,11 +152,11 @@
           buildInputs = [ pkgs.openssl ];
 
           buildPhase = ''
-            cargo build -p rekos-server --release
+            cargo build -p junos-server --release
           '';
           installPhase = ''
             mkdir -p $out/bin
-            cp target/release/rekos-server $out/bin/
+            cp target/release/junos-server $out/bin/
           '';
 
           doCheck = false;
@@ -179,8 +179,8 @@
 
           shellHook = ''
             export OPENSSL_NO_VENDOR=1
-            if [ -e rekos-wasm/bin/tailwindcss ]; then
-              echo "warning: rekos-wasm/bin/tailwindcss exists — the Nix shell ships its own \`tailwindcss\` on PATH."
+            if [ -e junos-web/bin/tailwindcss ]; then
+              echo "warning: junos-web/bin/tailwindcss exists — the Nix shell ships its own \`tailwindcss\` on PATH."
               echo "         Trunk's pre_build hook still calls bin/tailwindcss; either delete it or keep both in sync."
             fi
           '';
@@ -188,13 +188,13 @@
 
       in {
         packages = {
-          inherit rekosWasmDist rekosServer;
+          inherit junosWebDist junosServer;
 
           # Default package: thin wrapper that bakes --dist-dir into the binary
           # so callers never have to pass it explicitly.
-          default = pkgs.writeShellScriptBin "rekos-server" ''
-            exec ${rekosServer}/bin/rekos-server \
-              --dist-dir ${rekosWasmDist} \
+          default = pkgs.writeShellScriptBin "junos-server" ''
+            exec ${junosServer}/bin/junos-server \
+              --dist-dir ${junosWebDist} \
               "$@"
           '';
         };
@@ -207,7 +207,7 @@
         # ./.certs/ on first run.
         apps.default = {
           type = "app";
-          program = "${self.packages.${system}.default}/bin/rekos-server";
+          program = "${self.packages.${system}.default}/bin/junos-server";
         };
       }
     )
@@ -216,19 +216,19 @@
     // {
       # Usage in the user's NixOS flake:
       #
-      #   inputs.rekos-web.url = "path:/path/to/rekos-web";
-      #   inputs.rekos-web.inputs.nixpkgs.follows = "nixpkgs";
+      #   inputs.junos-web.url = "path:/path/to/junos-web";
+      #   inputs.junos-web.inputs.nixpkgs.follows = "nixpkgs";
       #
       #   nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
       #     modules = [
-      #       rekos-web.nixosModules.default
-      #       { services.rekos-web.enable = true; }
+      #       junos-web.nixosModules.default
+      #       { services.junos-web.enable = true; }
       #     ];
       #   };
       nixosModules.default = { config, lib, pkgs, ... }: {
         imports = [ ./nix/module.nix ];
         # Supply the package built for the current system as the default
-        services.rekos-web.package = lib.mkDefault self.packages.${pkgs.system}.default;
+        services.junos-web.package = lib.mkDefault self.packages.${pkgs.system}.default;
       };
     };
 }

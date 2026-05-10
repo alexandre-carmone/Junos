@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Generate rekos-wasm/public/dso.bin from the OpenNGC catalog.
+"""Generate junos-web/public/dso.bin from the OpenNGC catalog.
 
 Downloads NGC.csv from the OpenNGC GitHub repository (or uses a local cache),
 filters to visually interesting deep-sky objects, and emits the binary blob
-consumed by `rekos-wasm/src/dso_catalog.rs`.
+consumed by `junos-web/src/dso_catalog.rs`.
 
 Fields emitted per object:
   ra_deg, dec_deg, name, kind, mag, size_arcmin (major), size_minor_arcmin, pa_deg,
@@ -29,7 +29,7 @@ OPENGC_URL = (
 )
 CACHE = os.path.join(os.path.dirname(__file__), "openngc.csv")
 OUT = os.path.join(
-    os.path.dirname(__file__), "..", "rekos-wasm", "public", "dso.bin"
+    os.path.dirname(__file__), "..", "junos-web", "public", "dso.bin"
 )
 WIKIDATA_FR_CACHE = os.path.join(os.path.dirname(__file__), "wikidata_fr_dso.json")
 WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
@@ -143,7 +143,7 @@ def _sparql_query(query):
         WIKIDATA_SPARQL_URL,
         data=data,
         headers={
-            "User-Agent": "stars-dso-catalog-gen/1.0 (rekos-web)",
+            "User-Agent": "stars-dso-catalog-gen/1.0 (junos-web)",
             "Accept": "application/sparql-results+json",
             "Content-Type": "application/x-www-form-urlencoded",
         },
