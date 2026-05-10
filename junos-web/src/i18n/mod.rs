@@ -162,6 +162,16 @@ translations! {
     focus_param_exposure, focus_param_binning, focus_param_iso, focus_param_iterations,
     focus_param_max_step, focus_param_max_travel, focus_param_auto_star,
     focus_param_suspend_guiding, focus_param_use_full_field,
+    mount_solve_section, mount_solve_capture, mount_solve_stop, mount_solve_load_fits,
+    mount_solve_params, mount_solve_status, mount_solve_pa, mount_solve_pixscale,
+    mount_solve_solved_at, mount_solve_no_solution, mount_solve_params_capture,
+    mount_solve_params_solver, mount_solve_params_astrometry, mount_solve_post_action,
+    mount_solve_post_sync, mount_solve_post_slew, mount_solve_post_nothing,
+    mount_solve_use_scale, mount_solve_use_position, mount_solve_apply,
+    mount_solve_binning, mount_solve_filter, mount_solve_iso, mount_solve_gain,
+    mount_solve_dark_frame, mount_solve_settling_ms, mount_solve_solver_source,
+    mount_solve_solver_local, mount_solve_solver_remote, mount_solve_rotator_threshold,
+    mount_solve_rotator_control,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

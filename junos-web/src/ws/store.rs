@@ -677,6 +677,12 @@ impl DeviceStore {
             // (see message.cpp:927, 943; align.cpp:2351 for the solution map).
             // RA/Dec in the solution are JNow.
             "new_align_state" => {
+                if let Some(s) = payload.get("status").and_then(|v| v.as_str()) {
+                    let s = s.to_string();
+                    self.align_solution.update(|a| {
+                        a.status = Some(s);
+                    });
+                }
                 if let Some(sol) = payload.get("solution").and_then(|v| v.as_object()) {
                     leptos::logging::log!(
                         "[ws] new_align_state solution: {}",

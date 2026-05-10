@@ -84,6 +84,7 @@ pub struct SolveSnapshot {
     pub dec_jnow_deg:    Option<f64>,
     pub pixscale_arcsec: Option<f64>,
     pub solved_at_ms:    Option<f64>,
+    pub status:          Option<String>,
 }
 
 pub fn derive_solve(store: &DeviceStore) -> Signal<SolveSnapshot> {
@@ -96,6 +97,7 @@ pub fn derive_solve(store: &DeviceStore) -> Signal<SolveSnapshot> {
             dec_jnow_deg:    a.dec_jnow_deg,
             pixscale_arcsec: a.pixscale_arcsec,
             solved_at_ms:    a.solved_at_ms,
+            status:          a.status,
         }
     })
 }

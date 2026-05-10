@@ -345,6 +345,7 @@ pub struct AlignSolutionData {
     pub orientation_deg:  Option<f64>, // PA from align.cpp:2364
     pub pixscale_arcsec:  Option<f64>, // pix from align.cpp:2363
     pub solved_at_ms:     Option<f64>, // js_sys::Date::now() at receipt
+    pub status:           Option<String>, // last new_align_state {status} string
 }
 
 /// Aggregated state from `new_livestacker_state`. KStars sends two flavours:

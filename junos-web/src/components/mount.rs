@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use leptos::prelude::*;
+use leptos::web_sys;
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 use web_sys::MouseEvent;
 
-use crate::compat::MountSnapshot;
+use crate::compat::{FilterWheelSnapshot, MountSnapshot, SolveSnapshot};
 use crate::components::coord_input::{CoordInput, CoordMode};
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
@@ -47,7 +50,13 @@ const DPAD_BTN: &str = "btn-icon btn-icon--lg !rounded-lg border-border-accent-2
 // ── MountTab ──────────────────────────────────────────────────────────────────
 
 #[component]
-pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
+pub fn MountTab(
+    mount: Signal<MountSnapshot>,
+    solve: Signal<SolveSnapshot>,
+    align_settings: RwSignal<serde_json::Value>,
+    filter_wheel: Signal<FilterWheelSnapshot>,
+    send: SendCmd,
+) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
 
@@ -132,6 +141,206 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
         if let Some(v) = mount.get().meridian_flip_offset_deg {
             flip_offset.set(v);
         }
+    });
+
+    // ── Plate-solve UI state ─────────────────────────────────────────
+    // Overlay open + "params dirty" edit signals seeded from align_settings.
+    let settings_open = RwSignal::new(false);
+
+    // Edit signals — seeded lazily when overlay opens, updated by inputs.
+    let edit_exposure       = RwSignal::new(1.0_f64);
+    let edit_accuracy       = RwSignal::new(30.0_f64);
+    let edit_settling       = RwSignal::new(500.0_f64);
+    let edit_binning        = RwSignal::new("1x1".to_string());
+    let edit_filter         = RwSignal::new(String::new());
+    let edit_iso            = RwSignal::new(String::new());
+    let edit_gain           = RwSignal::new(0.0_f64);
+    let edit_dark_frame     = RwSignal::new(false);
+    let edit_post_action    = RwSignal::new("nothing".to_string()); // "sync"|"slew"|"nothing"
+    let edit_solver_local   = RwSignal::new(true);                   // false → remote
+    let edit_use_scale      = RwSignal::new(true);
+    let edit_use_position   = RwSignal::new(true);
+    let edit_rotator_thr    = RwSignal::new(60_i64);
+    let edit_rotator_ctrl   = RwSignal::new(false);
+
+    // Seed edit signals from latest align_settings each time overlay opens.
+    Effect::new(move |_| {
+        if !settings_open.get() {
+            return;
+        }
+        let s = align_settings.get();
+        if let Some(v) = s.get("alignExposure").and_then(|x| x.as_f64()) {
+            edit_exposure.set(v);
+        }
+        if let Some(v) = s.get("alignAccuracyThreshold").and_then(|x| x.as_f64()) {
+            edit_accuracy.set(v);
+        }
+        if let Some(v) = s.get("alignSettlingTime").and_then(|x| x.as_f64()) {
+            edit_settling.set(v);
+        }
+        if let Some(v) = s.get("alignBinning").and_then(|x| x.as_str()) {
+            edit_binning.set(v.to_string());
+        }
+        if let Some(v) = s.get("alignFilter").and_then(|x| x.as_str()) {
+            edit_filter.set(v.to_string());
+        }
+        if let Some(v) = s.get("alignISO").and_then(|x| x.as_str()) {
+            edit_iso.set(v.to_string());
+        }
+        if let Some(v) = s.get("alignGain").and_then(|x| x.as_f64()) {
+            edit_gain.set(v);
+        }
+        if let Some(v) = s.get("alignDarkFrame").and_then(|x| x.as_bool()) {
+            edit_dark_frame.set(v);
+        }
+        if s.get("syncR").and_then(|x| x.as_bool()).unwrap_or(false) {
+            edit_post_action.set("sync".into());
+        } else if s.get("slewR").and_then(|x| x.as_bool()).unwrap_or(false) {
+            edit_post_action.set("slew".into());
+        } else if s.get("nothingR").and_then(|x| x.as_bool()).unwrap_or(false) {
+            edit_post_action.set("nothing".into());
+        }
+        if let Some(v) = s.get("remoteSolverR").and_then(|x| x.as_bool()) {
+            edit_solver_local.set(!v);
+        } else if let Some(v) = s.get("localSolverR").and_then(|x| x.as_bool()) {
+            edit_solver_local.set(v);
+        }
+    });
+
+    // Escape closes the overlay (mirrors focus.rs:108-121).
+    {
+        let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+            move |e: web_sys::KeyboardEvent| {
+                if e.key() == "Escape" && settings_open.get_untracked() {
+                    settings_open.set(false);
+                }
+            },
+        );
+        if let Some(win) = web_sys::window() {
+            let _ = win.add_event_listener_with_callback(
+                "keydown",
+                cb.as_ref().unchecked_ref(),
+            );
+        }
+        cb.forget();
+    }
+
+    // Handlers
+    let send_solve = mk_send!();
+    let on_capture_solve = move |_: MouseEvent| {
+        send_solve(serde_json::json!({"type":"align_solve","payload":{}}).to_string());
+    };
+    let send_align_stop = mk_send!();
+    let on_align_stop = move |_: MouseEvent| {
+        send_align_stop(serde_json::json!({"type":"align_stop","payload":{}}).to_string());
+    };
+
+    // Hidden file input ref + Load FITS button trigger.
+    let file_input_ref: NodeRef<leptos::html::Input> = NodeRef::new();
+    let on_load_fits_click = move |_: MouseEvent| {
+        if let Some(el) = file_input_ref.get() {
+            el.click();
+        }
+    };
+    let send_load_fits = mk_send!();
+    let on_file_change = move |ev: web_sys::Event| {
+        let target = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok());
+        let files = match target.as_ref().and_then(|i| i.files()) {
+            Some(f) => f,
+            None => return,
+        };
+        let file = match files.get(0) {
+            Some(f) => f,
+            None => return,
+        };
+        let name = file.name();
+        let ext = name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_else(|| "fits".into());
+        let reader = match web_sys::FileReader::new() {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let reader_cl = reader.clone();
+        let send_for_cb = Arc::clone(&send_load_fits);
+        let onload = Closure::<dyn FnMut()>::new(move || {
+            let buf = match reader_cl.result() {
+                Ok(b) => b,
+                Err(_) => return,
+            };
+            let array = web_sys::js_sys::Uint8Array::new(&buf);
+            // Build a binary string (each byte = one char code) then btoa.
+            let len = array.length() as usize;
+            let mut bytes = vec![0u8; len];
+            array.copy_to(&mut bytes);
+            let bin: String = bytes.iter().map(|&b| b as char).collect();
+            let win = match web_sys::window() {
+                Some(w) => w,
+                None => return,
+            };
+            let b64 = match win.btoa(&bin) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            send_for_cb(serde_json::json!({
+                "type": "align_load_and_slew",
+                "payload": { "data": b64, "ext": ext }
+            }).to_string());
+        });
+        let _ = reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+        onload.forget();
+        let _ = reader.read_as_array_buffer(&file);
+        // Reset value so picking the same file again re-triggers change.
+        if let Some(t) = target {
+            t.set_value("");
+        }
+    };
+
+    // Apply overlay → align_set_all_settings + align_set_astrometry_settings.
+    // Stored in an Arc so the <Show>-body closure (Fn) can clone+invoke it.
+    let send_apply_settings   = mk_send!();
+    let send_apply_astrometry = mk_send!();
+    let on_apply: Arc<dyn Fn(MouseEvent) + Send + Sync + 'static> = Arc::new(move |_: MouseEvent| {
+        let mut map = align_settings
+            .get_untracked()
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        map.insert("alignExposure".into(), serde_json::json!(edit_exposure.get_untracked()));
+        map.insert("alignAccuracyThreshold".into(), serde_json::json!(edit_accuracy.get_untracked()));
+        map.insert("alignSettlingTime".into(), serde_json::json!(edit_settling.get_untracked()));
+        map.insert("alignBinning".into(), serde_json::json!(edit_binning.get_untracked()));
+        let f = edit_filter.get_untracked();
+        if !f.is_empty() {
+            map.insert("alignFilter".into(), serde_json::json!(f));
+        }
+        let iso = edit_iso.get_untracked();
+        if !iso.is_empty() {
+            map.insert("alignISO".into(), serde_json::json!(iso));
+        }
+        map.insert("alignGain".into(), serde_json::json!(edit_gain.get_untracked()));
+        map.insert("alignDarkFrame".into(), serde_json::json!(edit_dark_frame.get_untracked()));
+        let pa = edit_post_action.get_untracked();
+        map.insert("syncR".into(), serde_json::json!(pa == "sync"));
+        map.insert("slewR".into(), serde_json::json!(pa == "slew"));
+        map.insert("nothingR".into(), serde_json::json!(pa == "nothing"));
+        let local = edit_solver_local.get_untracked();
+        map.insert("localSolverR".into(), serde_json::json!(local));
+        map.insert("remoteSolverR".into(), serde_json::json!(!local));
+
+        send_apply_settings(serde_json::json!({
+            "type": "align_set_all_settings",
+            "payload": serde_json::Value::Object(map),
+        }).to_string());
+
+        send_apply_astrometry(serde_json::json!({
+            "type": "align_set_astrometry_settings",
+            "payload": {
+                "scale":          edit_use_scale.get_untracked(),
+                "position":       edit_use_position.get_untracked(),
+                "threshold":      edit_rotator_thr.get_untracked(),
+                "rotator_control": edit_rotator_ctrl.get_untracked(),
+            }
+        }).to_string());
+        settings_open.set(false);
     });
 
     // D-pad press/release helpers — emit `mount_set_motion` for one direction.
@@ -484,8 +693,288 @@ pub fn MountTab(mount: Signal<MountSnapshot>, send: SendCmd) -> impl IntoView {
                             }
                         >{move || if mount.get().tracking { tr().mount_tracking_on } else { tr().mount_tracking_off }}</button>
                     </div>
+
+                    // ── Solve section ─────────────────────────────────
+                    <div class="w-full max-w-[320px]">
+                        <div class=SECTION_TITLE>{move || tr().mount_solve_section}</div>
+
+                        // Status row
+                        <div class="grid grid-cols-[auto_1fr] gap-y-sp-1 gap-x-3 items-baseline mb-sp-2">
+                            <span class="font-mono text-sm text-text-faint whitespace-nowrap">
+                                {move || tr().mount_solve_status}{":"}
+                            </span>
+                            <span class="font-mono text-[12px] text-text-dim">
+                                {move || solve.get().status.unwrap_or_else(|| "—".into())}
+                            </span>
+                        </div>
+
+                        // Solution rows or "no solution"
+                        {move || {
+                            let s = solve.get();
+                            let has = s.ra_jnow_deg.is_some() || s.dec_jnow_deg.is_some();
+                            if !has {
+                                return view! {
+                                    <div class="text-[#555] font-mono text-[12px] py-sp-2 text-center">
+                                        {tr().mount_solve_no_solution}
+                                    </div>
+                                }.into_any();
+                            }
+                            let rows: Vec<(&'static str, String)> = vec![
+                                (tr().mount_ra_jnow,
+                                 s.ra_jnow_deg.map(|d| fmt_hms(d / 15.0)).unwrap_or_else(|| "—".into())),
+                                (tr().mount_dec_jnow,
+                                 s.dec_jnow_deg.map(fmt_dms).unwrap_or_else(|| "—".into())),
+                                (tr().mount_solve_pa,
+                                 s.rotation_deg.map(|v| format!("{v:.2}°")).unwrap_or_else(|| "—".into())),
+                                (tr().mount_solve_pixscale,
+                                 s.pixscale_arcsec.map(|v| format!("{v:.2}\"/px")).unwrap_or_else(|| "—".into())),
+                                (tr().mount_solve_solved_at,
+                                 s.solved_at_ms.map(|t| {
+                                     let now = web_sys::js_sys::Date::now();
+                                     let dt = ((now - t) / 1000.0).max(0.0) as u64;
+                                     if dt < 60 { format!("{dt} s") }
+                                     else if dt < 3600 { format!("{} min", dt / 60) }
+                                     else { format!("{} h", dt / 3600) }
+                                 }).unwrap_or_else(|| "—".into())),
+                            ];
+                            view! {
+                                <div class="grid grid-cols-[auto_1fr] gap-y-sp-1 gap-x-3 items-baseline">
+                                    {rows.into_iter().map(|(lbl, val)| view! {
+                                        <span class="font-mono text-sm text-text-faint whitespace-nowrap">
+                                            {lbl}{":"}
+                                        </span>
+                                        <span class="font-mono text-[12px] text-text-dim tabular-nums">
+                                            {val}
+                                        </span>
+                                    }).collect::<Vec<_>>()}
+                                </div>
+                            }.into_any()
+                        }}
+
+                        // Action buttons + hidden file input
+                        <div class="grid grid-cols-2 gap-sp-2 mt-sp-2">
+                            <button
+                                class=format!("{MOUNT_BTN} btn-primary")
+                                on:click=on_capture_solve
+                            >{move || tr().mount_solve_capture}</button>
+                            <button
+                                class=format!("{MOUNT_BTN} btn-danger")
+                                on:click=on_align_stop
+                            >{move || tr().mount_solve_stop}</button>
+                            <button
+                                class=format!("{MOUNT_BTN} text-state-info")
+                                on:click=on_load_fits_click
+                            >{move || tr().mount_solve_load_fits}</button>
+                            <button
+                                class=format!("{MOUNT_BTN} text-text-blue")
+                                on:click=move |_| settings_open.set(true)
+                            >{move || tr().mount_solve_params}</button>
+                        </div>
+                        <input
+                            node_ref=file_input_ref
+                            type="file"
+                            accept=".fits,.fit,.fts"
+                            style="display:none"
+                            on:change=on_file_change
+                        />
+                    </div>
                 </div>
             </div>
+
+            // ── Plate-solve parameters overlay ────────────────────────
+            <Show when=move || settings_open.get()>
+                <div
+                    class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
+                    on:click=move |_| settings_open.set(false)
+                >
+                    <div
+                        class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col"
+                        on:click=|ev: MouseEvent| ev.stop_propagation()
+                    >
+                        // Header
+                        <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
+                            <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
+                                {move || tr().mount_solve_params}
+                            </h2>
+                            <button
+                                class="btn btn-ghost"
+                                on:click=move |_| settings_open.set(false)
+                            >{move || tr().imaging_close}</button>
+                        </div>
+
+                        // Body — three groups
+                        <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-sp-4 max-[759px]:p-sp-3">
+
+                            // Capture group
+                            <fieldset class="border border-border-base rounded-[4px] p-sp-3 m-0">
+                                <legend class="text-text-blue text-sm uppercase tracking-[0.08em] px-sp-2">
+                                    {move || tr().mount_solve_params_capture}
+                                </legend>
+                                <div class="flex flex-col gap-sp-2">
+                                    <label class="font-mono text-sm text-text-faint">
+                                        {move || tr().align_exposure}
+                                        <input class="input w-full font-mono mt-[2px]" type="number" step="0.1" min="0"
+                                            prop:value=move || format!("{:.2}", edit_exposure.get())
+                                            on:input=move |ev| { if let Ok(v) = event_target_value(&ev).parse::<f64>() { edit_exposure.set(v); } } />
+                                    </label>
+                                    <label class="font-mono text-sm text-text-faint">
+                                        {move || tr().mount_solve_binning}
+                                        <input class="input w-full font-mono mt-[2px]" type="text"
+                                            prop:value=move || edit_binning.get()
+                                            on:input=move |ev| edit_binning.set(event_target_value(&ev)) />
+                                    </label>
+                                    <label class="font-mono text-sm text-text-faint">
+                                        {move || tr().mount_solve_filter}
+                                        <select class="input w-full font-mono mt-[2px]"
+                                            prop:value=move || edit_filter.get()
+                                            on:change=move |ev| edit_filter.set(event_target_value(&ev))
+                                        >
+                                            <option value="">"—"</option>
+                                            {move || {
+                                                let names = filter_wheel.get().filter_names;
+                                                let current = edit_filter.get();
+                                                let mut all = names.clone();
+                                                if !current.is_empty() && !names.contains(&current) {
+                                                    all.push(current.clone());
+                                                }
+                                                all.into_iter().map(|n| {
+                                                    let sel = current == n;
+                                                    let label = n.clone();
+                                                    view! {
+                                                        <option value=n selected=move || sel>{label}</option>
+                                                    }
+                                                }).collect::<Vec<_>>()
+                                            }}
+                                        </select>
+                                    </label>
+                                    <label class="font-mono text-sm text-text-faint">
+                                        {move || tr().mount_solve_iso}
+                                        <input class="input w-full font-mono mt-[2px]" type="text"
+                                            prop:value=move || edit_iso.get()
+                                            on:input=move |ev| edit_iso.set(event_target_value(&ev)) />
+                                    </label>
+                                    <label class="font-mono text-sm text-text-faint">
+                                        {move || tr().mount_solve_gain}
+                                        <input class="input w-full font-mono mt-[2px]" type="number" step="1"
+                                            prop:value=move || format!("{:.0}", edit_gain.get())
+                                            on:input=move |ev| { if let Ok(v) = event_target_value(&ev).parse::<f64>() { edit_gain.set(v); } } />
+                                    </label>
+                                    <label class="flex items-center gap-sp-2 font-mono text-sm text-text-muted cursor-pointer">
+                                        <input type="checkbox"
+                                            prop:checked=move || edit_dark_frame.get()
+                                            on:change=move |ev| edit_dark_frame.set(event_target_checked(&ev)) />
+                                        {move || tr().mount_solve_dark_frame}
+                                    </label>
+                                </div>
+                            </fieldset>
+
+                            // Solver group
+                            <fieldset class="border border-border-base rounded-[4px] p-sp-3 m-0">
+                                <legend class="text-text-blue text-sm uppercase tracking-[0.08em] px-sp-2">
+                                    {move || tr().mount_solve_params_solver}
+                                </legend>
+                                <div class="flex flex-col gap-sp-2">
+                                    <label class="font-mono text-sm text-text-faint">
+                                        {move || tr().align_accuracy}
+                                        <input class="input w-full font-mono mt-[2px]" type="number" step="1" min="0"
+                                            prop:value=move || format!("{:.0}", edit_accuracy.get())
+                                            on:input=move |ev| { if let Ok(v) = event_target_value(&ev).parse::<f64>() { edit_accuracy.set(v); } } />
+                                    </label>
+                                    <label class="font-mono text-sm text-text-faint">
+                                        {move || tr().mount_solve_settling_ms}
+                                        <input class="input w-full font-mono mt-[2px]" type="number" step="50" min="0"
+                                            prop:value=move || format!("{:.0}", edit_settling.get())
+                                            on:input=move |ev| { if let Ok(v) = event_target_value(&ev).parse::<f64>() { edit_settling.set(v); } } />
+                                    </label>
+                                    <div class="font-mono text-sm text-text-faint mt-sp-1">
+                                        {move || tr().mount_solve_post_action}
+                                    </div>
+                                    <div class="flex flex-col gap-[2px] pl-sp-2">
+                                        <label class="flex items-center gap-sp-2 font-mono text-sm cursor-pointer">
+                                            <input type="radio" name="mount-post-action"
+                                                prop:checked=move || edit_post_action.get() == "sync"
+                                                on:change=move |_| edit_post_action.set("sync".into()) />
+                                            {move || tr().mount_solve_post_sync}
+                                        </label>
+                                        <label class="flex items-center gap-sp-2 font-mono text-sm cursor-pointer">
+                                            <input type="radio" name="mount-post-action"
+                                                prop:checked=move || edit_post_action.get() == "slew"
+                                                on:change=move |_| edit_post_action.set("slew".into()) />
+                                            {move || tr().mount_solve_post_slew}
+                                        </label>
+                                        <label class="flex items-center gap-sp-2 font-mono text-sm cursor-pointer">
+                                            <input type="radio" name="mount-post-action"
+                                                prop:checked=move || edit_post_action.get() == "nothing"
+                                                on:change=move |_| edit_post_action.set("nothing".into()) />
+                                            {move || tr().mount_solve_post_nothing}
+                                        </label>
+                                    </div>
+                                    <div class="font-mono text-sm text-text-faint mt-sp-1">
+                                        {move || tr().mount_solve_solver_source}
+                                    </div>
+                                    <div class="flex flex-col gap-[2px] pl-sp-2">
+                                        <label class="flex items-center gap-sp-2 font-mono text-sm cursor-pointer">
+                                            <input type="radio" name="mount-solver-source"
+                                                prop:checked=move || edit_solver_local.get()
+                                                on:change=move |_| edit_solver_local.set(true) />
+                                            {move || tr().mount_solve_solver_local}
+                                        </label>
+                                        <label class="flex items-center gap-sp-2 font-mono text-sm cursor-pointer">
+                                            <input type="radio" name="mount-solver-source"
+                                                prop:checked=move || !edit_solver_local.get()
+                                                on:change=move |_| edit_solver_local.set(false) />
+                                            {move || tr().mount_solve_solver_remote}
+                                        </label>
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            // Astrometry hints group
+                            <fieldset class="border border-border-base rounded-[4px] p-sp-3 m-0">
+                                <legend class="text-text-blue text-sm uppercase tracking-[0.08em] px-sp-2">
+                                    {move || tr().mount_solve_params_astrometry}
+                                </legend>
+                                <div class="flex flex-col gap-sp-2">
+                                    <label class="flex items-center gap-sp-2 font-mono text-sm text-text-muted cursor-pointer">
+                                        <input type="checkbox"
+                                            prop:checked=move || edit_use_scale.get()
+                                            on:change=move |ev| edit_use_scale.set(event_target_checked(&ev)) />
+                                        {move || tr().mount_solve_use_scale}
+                                    </label>
+                                    <label class="flex items-center gap-sp-2 font-mono text-sm text-text-muted cursor-pointer">
+                                        <input type="checkbox"
+                                            prop:checked=move || edit_use_position.get()
+                                            on:change=move |ev| edit_use_position.set(event_target_checked(&ev)) />
+                                        {move || tr().mount_solve_use_position}
+                                    </label>
+                                    <label class="font-mono text-sm text-text-faint">
+                                        {move || tr().mount_solve_rotator_threshold}
+                                        <input class="input w-full font-mono mt-[2px]" type="number" step="1" min="0"
+                                            prop:value=move || format!("{}", edit_rotator_thr.get())
+                                            on:input=move |ev| { if let Ok(v) = event_target_value(&ev).parse::<i64>() { edit_rotator_thr.set(v); } } />
+                                    </label>
+                                    <label class="flex items-center gap-sp-2 font-mono text-sm text-text-muted cursor-pointer">
+                                        <input type="checkbox"
+                                            prop:checked=move || edit_rotator_ctrl.get()
+                                            on:change=move |ev| edit_rotator_ctrl.set(event_target_checked(&ev)) />
+                                        {move || tr().mount_solve_rotator_control}
+                                    </label>
+                                </div>
+                            </fieldset>
+                        </div>
+
+                        // Footer
+                        <div class="flex justify-end gap-sp-2 py-sp-3 px-sp-4 border-t border-border-base bg-[rgba(10,12,20,0.8)]">
+                            <button class="btn btn-ghost"
+                                on:click=move |_| settings_open.set(false)
+                            >{move || tr().cancel}</button>
+                            <button class=format!("{MOUNT_BTN} btn-primary")
+                                on:click={ let oa = Arc::clone(&on_apply); move |ev| oa(ev) }
+                            >{move || tr().mount_solve_apply}</button>
+                        </div>
+                    </div>
+                </div>
+            </Show>
         </div>
     }
 }
