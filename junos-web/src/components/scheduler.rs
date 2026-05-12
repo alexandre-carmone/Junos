@@ -10,6 +10,9 @@
 use std::sync::Arc;
 
 use leptos::prelude::*;
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
+use web_sys::MouseEvent;
 
 mod labels;
 mod mapping;
@@ -28,7 +31,7 @@ use crate::SchedulerPrefillCtx;
 use labels::{dec_to_dms, ra_to_hms, sanitize_name};
 use mapping::{resolve_completion_condition, resolve_startup_condition};
 use view_add_job::SchedulerAddJobSection;
-use view_jobs::{SchedulerHeader, SchedulerJobsSection};
+use view_jobs::{SchedulerJobsSection, SchedulerToolbar};
 use view_scripts::SchedulerScriptsSection;
 use view_settings::SchedulerSettingsSection;
 
@@ -40,6 +43,35 @@ pub fn SchedulerTab(
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let tr = move || t(lang.get());
+
+    // ── Overlay state ───────────────────────────────────────────────────────
+    let add_open      = RwSignal::new(false);
+    let settings_open = RwSignal::new(false);
+
+    // Escape closes whichever overlay is open.
+    {
+        let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+            move |e: web_sys::KeyboardEvent| {
+                if e.key() == "Escape" {
+                    if add_open.get_untracked()      { add_open.set(false); }
+                    if settings_open.get_untracked() { settings_open.set(false); }
+                }
+            },
+        );
+        if let Some(win) = web_sys::window() {
+            let _ = win.add_event_listener_with_callback(
+                "keydown",
+                cb.as_ref().unchecked_ref(),
+            );
+        }
+        cb.forget();
+    }
+
+    let on_open_add: Arc<dyn Fn() + Send + Sync> =
+        Arc::new(move || add_open.set(true));
+    let on_open_settings: Arc<dyn Fn() + Send + Sync> =
+        Arc::new(move || settings_open.set(true));
 
     let dso_catalog = use_context::<RwSignal<Option<std::sync::Arc<DsoCatalogData>>>>();
 
@@ -297,6 +329,9 @@ pub fn SchedulerTab(
         // 3. Add job
         send_cmd(&send_for_add, "scheduler_add_jobs", serde_json::json!({}));
 
+        // Auto-close the overlay once the job has been submitted.
+        add_open.set(false);
+
         // 4. Refresh job list
         let s = Arc::clone(&send_for_add);
         wasm_bindgen_futures::spawn_local(async move {
@@ -308,60 +343,113 @@ pub fn SchedulerTab(
 
     view! {
         <div class="sched-root">
-            <SchedulerHeader scheduler=scheduler send=Arc::clone(&send) lang=lang />
+            <SchedulerToolbar
+                scheduler=scheduler
+                send=Arc::clone(&send)
+                lang=lang
+                on_open_add=Arc::clone(&on_open_add)
+                on_open_settings=Arc::clone(&on_open_settings)
+            />
 
-            // ── Body ─────────────────────────────────────────────────────────
+            // ── Body: jobs list only ─────────────────────────────────────────
             <div class="sched-body">
                 <SchedulerJobsSection scheduler=scheduler send=Arc::clone(&send) lang=lang />
-                <SchedulerSettingsSection
-                    lang=lang
-                    send=Arc::clone(&send)
-                    greedy=greedy
-                    remember_prog=remember_prog
-                    reschedule_err=reschedule_err
-                />
-
-                <SchedulerScriptsSection
-                    lang=lang
-                    startup_enabled=startup_enabled
-                    pre_startup=pre_startup
-                    post_startup=post_startup
-                    shutdown_enabled=shutdown_enabled
-                    pre_shutdown=pre_shutdown
-                    post_shutdown=post_shutdown
-                    on_apply_scripts=Arc::clone(&on_apply_scripts)
-                />
-
-                <SchedulerAddJobSection
-                    lang=lang
-                    camera=camera
-                    filter_wheel=filter_wheel
-                    f_target_name=f_target_name
-                    f_ra_h=f_ra_h
-                    f_dec_deg=f_dec_deg
-                    f_min_alt=f_min_alt
-                    f_min_moon=f_min_moon
-                    f_pa=f_pa
-                    search_result=search_result
-                    form_error=form_error
-                    step_track=step_track
-                    step_focus=step_focus
-                    step_align=step_align
-                    step_guide=step_guide
-                    startup_cond=startup_cond
-                    startup_at=startup_at
-                    completion_cond=completion_cond
-                    completion_count=completion_count
-                    completion_at=completion_at
-                    seq_frames=seq_frames
-                    coords_hint=coords_hint
-                    seq_total_hint=seq_total_hint
-                    on_catalog_search=Arc::clone(&on_catalog_search)
-                    on_add_job=Arc::clone(&on_add_job)
-                    on_clear_form=Arc::clone(&on_clear_form)
-                />
-
             </div>
+
+            // ── Add-job overlay ──────────────────────────────────────────────
+            <Show when=move || add_open.get()>
+                <div
+                    class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
+                    on:click=move |_| add_open.set(false)
+                >
+                    <div
+                        class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col"
+                        on:click=|ev: MouseEvent| ev.stop_propagation()
+                    >
+                        <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
+                            <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
+                                {move || tr().sched_add_job_section}
+                            </h2>
+                            <button
+                                class="btn btn-ghost"
+                                on:click=move |_| add_open.set(false)
+                            >{move || tr().imaging_close}</button>
+                        </div>
+                        <div class="flex-1 min-h-0 overflow-y-auto p-sp-4">
+                            <SchedulerAddJobSection
+                                lang=lang
+                                camera=camera
+                                filter_wheel=filter_wheel
+                                f_target_name=f_target_name
+                                f_ra_h=f_ra_h
+                                f_dec_deg=f_dec_deg
+                                f_min_alt=f_min_alt
+                                f_min_moon=f_min_moon
+                                f_pa=f_pa
+                                search_result=search_result
+                                form_error=form_error
+                                step_track=step_track
+                                step_focus=step_focus
+                                step_align=step_align
+                                step_guide=step_guide
+                                startup_cond=startup_cond
+                                startup_at=startup_at
+                                completion_cond=completion_cond
+                                completion_count=completion_count
+                                completion_at=completion_at
+                                seq_frames=seq_frames
+                                coords_hint=coords_hint
+                                seq_total_hint=seq_total_hint
+                                on_catalog_search=Arc::clone(&on_catalog_search)
+                                on_add_job=Arc::clone(&on_add_job)
+                                on_clear_form=Arc::clone(&on_clear_form)
+                            />
+                        </div>
+                    </div>
+                </div>
+            </Show>
+
+            // ── Settings overlay (scheduler toggles + observatory scripts) ──
+            <Show when=move || settings_open.get()>
+                <div
+                    class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
+                    on:click=move |_| settings_open.set(false)
+                >
+                    <div
+                        class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col"
+                        on:click=|ev: MouseEvent| ev.stop_propagation()
+                    >
+                        <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
+                            <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
+                                {move || tr().sched_settings_btn}
+                            </h2>
+                            <button
+                                class="btn btn-ghost"
+                                on:click=move |_| settings_open.set(false)
+                            >{move || tr().imaging_close}</button>
+                        </div>
+                        <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 flex flex-col gap-sp-4">
+                            <SchedulerSettingsSection
+                                lang=lang
+                                send=Arc::clone(&send)
+                                greedy=greedy
+                                remember_prog=remember_prog
+                                reschedule_err=reschedule_err
+                            />
+                            <SchedulerScriptsSection
+                                lang=lang
+                                startup_enabled=startup_enabled
+                                pre_startup=pre_startup
+                                post_startup=post_startup
+                                shutdown_enabled=shutdown_enabled
+                                pre_shutdown=pre_shutdown
+                                post_shutdown=post_shutdown
+                                on_apply_scripts=Arc::clone(&on_apply_scripts)
+                            />
+                        </div>
+                    </div>
+                </div>
+            </Show>
         </div>
     }
 }

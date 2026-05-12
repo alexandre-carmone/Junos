@@ -119,10 +119,8 @@ pub fn SchedulerAddJobSection(
     });
 
     view! {
-        <div class="sched-add-section">
-            <details class="sched-add-details">
-                <summary class="sched-add-summary">{move || tr().sched_add_job_section}</summary>
-                <div class="sched-add-body">
+        <div class="sched-add-section sched-add-section--overlay">
+            <div class="sched-add-body">
                     <div class="sched-field-row">
                         <span class="sched-field-label">{move || tr().sched_target_label}</span>
                         <div class="sched-search-row">
@@ -381,8 +379,7 @@ pub fn SchedulerAddJobSection(
                             {move || tr().sched_clear_btn}
                         </button>
                     </div>
-                </div>
-            </details>
+            </div>
         </div>
     }
 }

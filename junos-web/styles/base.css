@@ -350,6 +350,15 @@ textarea:focus-visible,
     align-items: center;
     gap: var(--sp-2);
 }
+.sched-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-left: auto;
+}
+.sched-btn-settings {
+    padding: 4px var(--sp-3);
+}
 .sched-log-row {
     color: var(--text-faint);
     font-size: var(--fs-sm);
