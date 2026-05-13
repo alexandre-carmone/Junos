@@ -6,8 +6,11 @@
 //! Outbound (browser → KStars):
 //!   - polar_start, polar_stop, polar_refresh {value: exposure},
 //!     polar_refreshing_done, polar_slew_done
-//!   - align_set_all_settings {settings: {pAHDirection, pAHRotation,
-//!     pAHMountSpeed, pAHManualSlew, pAHExposure, pAHRefreshAlgorithm}}
+//!   - align_set_all_settings {pAHDirection, pAHRotation, pAHMountSpeed,
+//!     pAHManualSlew, pAHExposure, pAHRefreshAlgorithm} — keys live at the top
+//!     level of the payload (kstars/ekos/ekoslive/message.cpp:871-874 calls
+//!     `payload.toVariantMap()` and feeds it straight to `Align::setAllSettings`,
+//!     which looks each key up against the dialog's child widgets).
 //!   - align_get_all_settings (primed + refreshed from ws.rs)
 //!
 //! Inbound (KStars → browser): `new_polar_state` (partial: stage, message,
@@ -60,8 +63,10 @@ fn speed_label(wire: &str, tr: &Translations) -> String {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Send a single-key update to KStars' align module. The payload is flat — see
+/// the module docstring for the wire shape and KStars handler reference.
 fn dispatch_align_setting(send: &SendCmd, key: &str, value: serde_json::Value) {
-    ws_dispatch_setting(send, "align_set_all_settings", Some("settings"), key, value);
+    ws_dispatch_setting(send, "align_set_all_settings", None, key, value);
 }
 
 fn stage_color(stage: &str) -> &'static str {
@@ -211,23 +216,49 @@ pub fn PolarAlignTab(
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
 
-    // Local exposure field, seeded from `pAHExposure` when settings first
-    // arrive. Kept local so user edits aren't thrashed by the 5 s refresh.
+    // Local edit buffers for form fields, seeded once from server settings.
+    // Kept local so user edits aren't thrashed by the 5 s align_get_all_settings
+    // refresh that replaces store.align_settings wholesale.
     let exposure = RwSignal::new(2.0_f64);
-    let exposure_seeded = RwSignal::new(false);
+    let direction_local = RwSignal::new(String::from("West"));
+    let rotation_local = RwSignal::new(30_i64);
+    let speed_local = RwSignal::new(String::new());
+    let manual_local = RwSignal::new(false);
+    let algo_local = RwSignal::new(String::from("Plate Solve"));
+    // Set on first successful seed from the server *and* whenever the user
+    // touches a field. Either path locks the seeding Effect so a late-arriving
+    // `align_get_all_settings` cannot clobber a value the user already picked.
+    let form_seeded = RwSignal::new(false);
+    let mark_dirty = move || form_seeded.set(true);
     Effect::new(move |_| {
-        if exposure_seeded.get_untracked() {
+        if form_seeded.get_untracked() {
             return;
         }
         let snap = polar.get();
+        if snap.settings.is_null() {
+            return;
+        }
         if let Some(v) = settings_f64(&snap.settings, "pAHExposure") {
             if v.is_finite() && v > 0.0 {
                 exposure.set(v);
-                exposure_seeded.set(true);
             }
-        } else if !snap.settings.is_null() {
-            exposure_seeded.set(true);
         }
+        if let Some(s) = settings_str(&snap.settings, "pAHDirection") {
+            direction_local.set(s);
+        }
+        if let Some(n) = settings_i64(&snap.settings, "pAHRotation") {
+            rotation_local.set(n);
+        }
+        if let Some(s) = settings_str(&snap.settings, "pAHMountSpeed") {
+            speed_local.set(s);
+        }
+        if let Some(b) = settings_bool(&snap.settings, "pAHManualSlew") {
+            manual_local.set(b);
+        }
+        if let Some(s) = settings_str(&snap.settings, "pAHRefreshAlgorithm") {
+            algo_local.set(s);
+        }
+        form_seeded.set(true);
     });
 
     // ── Dispatchers (one Arc clone each) ─────────────────────────────────
@@ -260,53 +291,52 @@ pub fn PolarAlignTab(
     let s_dir = send.clone();
     let on_direction_change = move |ev: web_sys::Event| {
         let v = event_target_select(&ev);
+        direction_local.set(v.clone());
+        mark_dirty();
         dispatch_align_setting(&s_dir, "pAHDirection", serde_json::Value::String(v));
     };
 
     let s_rot = send.clone();
     let on_rotation_change = move |ev: web_sys::Event| {
-        let s = event_target_value(&ev);
-        if let Ok(n) = s.parse::<i64>() {
-            let n = n.clamp(15, 60);
-            dispatch_align_setting(
-                &s_rot,
-                "pAHRotation",
-                serde_json::Value::Number(n.into()),
-            );
-        }
+        let Ok(n) = event_target_value(&ev).parse::<i64>() else { return };
+        let n = n.clamp(15, 60);
+        rotation_local.set(n);
+        mark_dirty();
+        dispatch_align_setting(&s_rot, "pAHRotation", serde_json::Value::Number(n.into()));
     };
 
     let s_speed = send.clone();
     let on_speed_change = move |ev: web_sys::Event| {
         let v = event_target_select(&ev);
+        speed_local.set(v.clone());
+        mark_dirty();
         dispatch_align_setting(&s_speed, "pAHMountSpeed", serde_json::Value::String(v));
     };
 
     let s_manual = send.clone();
     let on_manual_change = move |ev: web_sys::Event| {
         let on = event_target_checked(&ev);
+        manual_local.set(on);
+        mark_dirty();
         dispatch_align_setting(&s_manual, "pAHManualSlew", serde_json::Value::Bool(on));
     };
 
     let s_algo = send.clone();
     let on_algo_change = move |ev: web_sys::Event| {
         let v = event_target_select(&ev);
-        dispatch_align_setting(
-            &s_algo,
-            "pAHRefreshAlgorithm",
-            serde_json::Value::String(v),
-        );
+        algo_local.set(v.clone());
+        mark_dirty();
+        dispatch_align_setting(&s_algo, "pAHRefreshAlgorithm", serde_json::Value::String(v));
     };
 
     let s_exp = send.clone();
     let on_exposure_change = move |ev: web_sys::Event| {
-        let s = event_target_value(&ev);
-        if let Ok(v) = s.parse::<f64>() {
-            let v = v.clamp(0.1, 60.0);
-            exposure.set(v);
-            if let Some(num) = serde_json::Number::from_f64(v) {
-                dispatch_align_setting(&s_exp, "pAHExposure", serde_json::Value::Number(num));
-            }
+        let Ok(v) = event_target_value(&ev).parse::<f64>() else { return };
+        let v = v.clamp(0.1, 60.0);
+        exposure.set(v);
+        mark_dirty();
+        if let Some(num) = serde_json::Number::from_f64(v) {
+            dispatch_align_setting(&s_exp, "pAHExposure", serde_json::Value::Number(num));
         }
     };
 
@@ -314,13 +344,8 @@ pub fn PolarAlignTab(
     let meridian_warning = move || -> Option<String> {
         let ms = mount.get();
         let (Some(ha), Some(dec)) = (ms.ha_deg, ms.dec_deg) else { return None };
-        let (going_west, rotation) = polar.with(|p| {
-            let west = settings_str(&p.settings, "pAHDirection")
-                .map(|s| s == "West")
-                .unwrap_or(true);
-            let rot = settings_i64(&p.settings, "pAHRotation").unwrap_or(30);
-            (west, rot)
-        });
+        let going_west = direction_local.with(|s| s == "West");
+        let rotation = rotation_local.get();
         if !would_cross_meridian(ha, dec, ms.pier_side, rotation, going_west) {
             return None;
         }
@@ -341,10 +366,7 @@ pub fn PolarAlignTab(
     let intro_visible = move || polar.with(|p| is_intro_stage(&p.stage));
     let progress_visible = move || polar.with(|p| is_progress_stage(&p.stage));
     let rotation_visible = move || {
-        polar.with(|p| {
-            is_rotation_stage(&p.stage)
-                && settings_bool(&p.settings, "pAHManualSlew").unwrap_or(false)
-        })
+        polar.with(|p| is_rotation_stage(&p.stage)) && manual_local.get()
     };
     let refresh_visible = move || polar.with(|p| is_refresh_stage(&p.stage));
 
@@ -409,15 +431,14 @@ pub fn PolarAlignTab(
                                 <select
                                     on:change=on_direction_change.clone()
                                     class=POLAR_INPUT
-                                    prop:value=move || polar.with(|p|
-                                        settings_str(&p.settings, "pAHDirection")
-                                            .unwrap_or_else(|| "West".into()))
                                 >
                                     {move || {
                                         let tr_ = tr();
+                                        let cur = direction_local.get();
                                         DIRECTION_WIRE.iter().map(|wire| {
                                             let label = direction_label(wire, tr_);
-                                            view! { <option value=*wire>{label}</option> }
+                                            let sel = *wire == cur;
+                                            view! { <option value=*wire selected=sel>{label}</option> }
                                         }).collect::<Vec<_>>()
                                     }}
                                 </select>
@@ -432,9 +453,7 @@ pub fn PolarAlignTab(
                                     max="60"
                                     step="1"
                                     on:change=on_rotation_change.clone()
-                                    prop:value=move || polar.with(|p|
-                                        settings_i64(&p.settings, "pAHRotation")
-                                            .unwrap_or(30).to_string())
+                                    prop:value=move || rotation_local.get().to_string()
                                     class=POLAR_INPUT
                                 />
                             </div>
@@ -445,25 +464,21 @@ pub fn PolarAlignTab(
                                 <select
                                     on:change=on_speed_change.clone()
                                     class=POLAR_INPUT
-                                    prop:value=move || polar.with(|p|
-                                        settings_str(&p.settings, "pAHMountSpeed")
-                                            .unwrap_or_default())
                                 >
                                     {move || {
                                         let tr_ = tr();
-                                        let current = polar.with(|p|
-                                            settings_str(&p.settings, "pAHMountSpeed")
-                                                .unwrap_or_default());
+                                        let current = speed_local.get();
                                         let mut opts: Vec<String> = DEFAULT_SPEED_OPTIONS
                                             .iter().map(|s| s.to_string()).collect();
                                         if !current.is_empty()
                                             && !opts.iter().any(|s| s == &current)
                                         {
-                                            opts.insert(0, current);
+                                            opts.insert(0, current.clone());
                                         }
                                         opts.into_iter().map(|wire| {
                                             let label = speed_label(&wire, tr_);
-                                            view! { <option value=wire>{label}</option> }
+                                            let sel = wire == current;
+                                            view! { <option value=wire selected=sel>{label}</option> }
                                         }).collect::<Vec<_>>()
                                     }}
                                 </select>
@@ -475,9 +490,7 @@ pub fn PolarAlignTab(
                                 <input
                                     type="checkbox"
                                     on:change=on_manual_change.clone()
-                                    prop:checked=move || polar.with(|p|
-                                        settings_bool(&p.settings, "pAHManualSlew")
-                                            .unwrap_or(false))
+                                    prop:checked=move || manual_local.get()
                                 />
                             </div>
 
@@ -564,15 +577,14 @@ pub fn PolarAlignTab(
                                     <select
                                         on:change=on_algo_change.clone()
                                         class=POLAR_INPUT
-                                        prop:value=move || polar.with(|p|
-                                            settings_str(&p.settings, "pAHRefreshAlgorithm")
-                                                .unwrap_or_else(|| "Plate Solve".into()))
                                     >
                                         {move || {
                                             let tr_ = tr();
+                                            let cur = algo_local.get();
                                             ALGORITHM_WIRE.iter().map(|wire| {
                                                 let label = algorithm_label(wire, tr_);
-                                                view! { <option value=*wire>{label}</option> }
+                                                let sel = *wire == cur;
+                                                view! { <option value=*wire selected=sel>{label}</option> }
                                             }).collect::<Vec<_>>()
                                         }}
                                     </select>
