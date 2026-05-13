@@ -64,6 +64,12 @@ pub struct DeviceStore {
     /// to make a one-shot startup decision (e.g. default to Profiles tab
     /// when KStars isn't running).
     pub kstars_state_known: RwSignal<bool>,
+    /// Active modal dialog pushed by KStars (`dialog_get_info`). Holds the
+    /// raw payload `{title, message, icon, timeout, buttons:[..], default}`
+    /// while a dialog is open; `None` when the dialog is dismissed (KStars
+    /// sends an empty `{}` payload on close). The web responds via
+    /// `dialog_get_response {button: "<label>"}` to unblock KStars.
+    pub active_dialog: RwSignal<Option<serde_json::Value>>,
 }
 
 impl DeviceStore {
@@ -106,6 +112,7 @@ impl DeviceStore {
             kstars_running: RwSignal::new(false),
             phd2_running: RwSignal::new(false),
             kstars_state_known: RwSignal::new(false),
+            active_dialog: RwSignal::new(None),
         }
     }
 
@@ -932,6 +939,26 @@ impl DeviceStore {
                     self.phd2_running.set(s == "running");
                 }
                 self.kstars_state_known.set(true);
+            }
+
+            // KStars-side modal dialog (KSMessageBox). Payload schema
+            // (kstars/auxiliary/ksmessagebox.cpp:275): {title, message,
+            // icon, timeout, buttons:[label,...], default}. When the
+            // dialog closes (accepted or rejected) KStars sends an empty
+            // `{}` — treat that as a dismiss signal so the web modal
+            // disappears in sync with the KStars one. Respond via
+            // `dialog_get_response {button: "<label>"}` (mnemonic `&`
+            // stripped — see message.cpp:2734 + ksmessagebox.cpp:301).
+            "dialog_get_info" => {
+                let has_dialog = payload
+                    .as_object()
+                    .map(|o| o.contains_key("buttons") || o.contains_key("message"))
+                    .unwrap_or(false);
+                if has_dialog {
+                    self.active_dialog.set(Some(payload.clone()));
+                } else {
+                    self.active_dialog.set(None);
+                }
             }
 
             _ => {}

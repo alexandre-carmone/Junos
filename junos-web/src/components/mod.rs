@@ -1,4 +1,5 @@
 pub mod coord_input;
+pub mod dialog_modal;
 pub mod files;
 pub mod focus;
 pub mod guide;

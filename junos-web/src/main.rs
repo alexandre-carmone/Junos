@@ -20,6 +20,7 @@ use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
 use components::sky::dso_index::DsoIndex;
 use components::sky::MosaicPlannerState;
+use components::dialog_modal::DialogModal;
 use components::tab_bar::TabBar;
 use components::tab_wheel::TabWheel;
 use components::tabs::TabContent;
@@ -236,6 +237,10 @@ fn App() -> impl IntoView {
             // every tab (SkyTab is hidden when another tab is active).
             <TabWheel />
             <TabBar />
+            // KStars-side modal mirror — surfaces KSMessageBox prompts so
+            // the user can answer them from the browser instead of having
+            // to switch to the desktop KStars window.
+            <DialogModal dialog=store.active_dialog send=Arc::clone(&send) />
         </div>
     }
 }
