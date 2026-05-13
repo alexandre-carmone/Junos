@@ -456,6 +456,8 @@
   "imaging_remove_job": "Remove job",
   "imaging_one_shot": "One Shot",
   "imaging_add_exposure": "+ Add Exposure",
+  "imaging_send_sequence": "Send to camera",
+  "imaging_sequence_editor": "Sequence Editor",
   "imaging_job_detail": "Job details",
   "imaging_close": "Close",
   "field_exposure_s": "Exposure (s)",

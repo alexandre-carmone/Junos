@@ -1,9 +1,10 @@
-//! Shared multi-row capture-sequence editor used by both the Mosaic Planner
-//! and the Scheduler "Add job" form.
+//! Shared multi-row capture-sequence editor used by the Imaging tab, the
+//! Mosaic Planner and the Scheduler "Add job" form.
 //!
-//! Owns the `SeqFrame` row model and the ESQ XML serializer that both tabs
-//! feed into KStars via `scheduler_save_sequence_file` /
-//! `scheduler_import_mosaic`.
+//! Owns the `SeqFrame` row model and the ESQ XML serializer that callers feed
+//! into KStars via `capture_load_sequence_file` (Imaging),
+//! `scheduler_save_sequence_file` (Scheduler) or `scheduler_import_mosaic`
+//! (Mosaic).
 
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;

@@ -546,6 +546,8 @@
   "imaging_remove_job": "Retirer le job",
   "imaging_one_shot": "Prise unique",
   "imaging_add_exposure": "+ Ajouter une pose",
+  "imaging_send_sequence": "Envoyer",
+  "imaging_sequence_editor": "Éditeur de séquence",
   "imaging_job_detail": "Détails du job",
   "imaging_close": "Fermer",
   "field_exposure_s": "Pose (s)",

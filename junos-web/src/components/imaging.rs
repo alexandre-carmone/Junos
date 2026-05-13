@@ -20,6 +20,7 @@ use crate::ws_helpers::{
     dispatch_setting as ws_dispatch_setting, send_cmd, send_device_property_set,
 };
 use crate::{ActiveTabCtx, RevealInFilesCtx, Tab};
+use super::sequence_editor::{build_esq_xml, SeqFrame, SequenceEditor};
 
 // ── Shared Tailwind class fragments ───────────────────────────────────────────
 // Repeating chrome — buttons, inputs, foldable panels — kept here so each
@@ -62,8 +63,6 @@ const FRAME_TYPE_FALLBACK: &[&str] = &["Light", "Dark", "Bias", "Flat"];
 #[derive(Clone, Copy)]
 enum Kind {
     Number,
-    Text,
-    Bool,
     /// Dropdown whose options come from the active camera / filter wheel.
     /// The closure receives both snapshots and returns the option list — if
     /// it returns empty, the field renders as a free text input so the user
@@ -83,94 +82,10 @@ struct Field {
     kind: Kind,
 }
 
-const EXPOSURE_FIELDS: &[Field] = &[
-    Field {
-        key: "captureExposureN",
-        label: |t| t.field_exposure_s,
-        kind: Kind::Number,
-    },
-    Field {
-        key: "captureTypeS",
-        label: |t| t.field_frame_type,
-        kind: Kind::ComboDynamic(|c, _| {
-            if c.frame_type_options.is_empty() {
-                FRAME_TYPE_FALLBACK.iter().map(|s| s.to_string()).collect()
-            } else {
-                c.frame_type_options.clone()
-            }
-        }),
-    },
-    Field {
-        key: "captureCountN",
-        label: |t| t.field_count,
-        kind: Kind::Number,
-    },
-    Field {
-        key: "captureDelayN",
-        label: |t| t.field_delay_s,
-        kind: Kind::Number,
-    },
-];
-
-const ONE_SHOT_EXPOSURE_FIELDS: &[Field] = &[
-    Field {
-        key: "captureExposureN",
-        label: |t| t.field_exposure_s,
-        kind: Kind::Number,
-    },
-    Field {
-        key: "captureTypeS",
-        label: |t| t.field_frame_type,
-        kind: Kind::ComboDynamic(|c, _| {
-            if c.frame_type_options.is_empty() {
-                FRAME_TYPE_FALLBACK.iter().map(|s| s.to_string()).collect()
-            } else {
-                c.frame_type_options.clone()
-            }
-        }),
-    },
-];
-
-const FRAME_FIELDS: &[Field] = &[
-    Field {
-        key: "captureBinHN",
-        label: |t| t.field_bin_x,
-        kind: Kind::Number,
-    },
-    Field {
-        key: "captureBinVN",
-        label: |t| t.field_bin_y,
-        kind: Kind::Number,
-    },
-    Field {
-        key: "captureFormatS",
-        label: |t| t.field_format,
-        kind: Kind::ComboDynamic(|c, _| c.capture_format_options.clone()),
-    },
-    Field {
-        key: "captureEncodingS",
-        label: |t| t.field_encoding,
-        kind: Kind::ComboDynamic(|c, _| c.transfer_format_options.clone()),
-    },
-];
-
-const GAIN_FIELDS: &[Field] = &[
-    Field {
-        key: "captureGainN",
-        label: |t| t.field_gain,
-        kind: Kind::Number,
-    },
-    Field {
-        key: "captureOffsetN",
-        label: |t| t.field_offset,
-        kind: Kind::Number,
-    },
-    Field {
-        key: "captureISOS",
-        label: |t| t.field_iso,
-        kind: Kind::ComboDynamic(|c, _| c.iso_options.clone()),
-    },
-];
+// Exposure presets in seconds — covers fast focus frames (1 ms) up to long
+// subs (5 min). The chip row below the input lets the user pick one with a
+// single tap; matches by `(value - preset).abs() < 1e-6`.
+const EXPOSURE_PRESETS: &[f64] = &[0.001, 0.01, 0.1, 1.0, 5.0, 30.0, 60.0, 300.0];
 
 const ONE_SHOT_GAIN_FIELDS: &[Field] = &[
     Field {
@@ -191,32 +106,6 @@ const FILTER_FIELDS: &[Field] = &[Field {
     kind: Kind::ComboFilter(|_, fw| fw.filter_names.clone()),
 }];
 
-const TARGET_FIELDS: &[Field] = &[
-    Field {
-        key: "targetNameT",
-        label: |t| t.field_target_name,
-        kind: Kind::Text,
-    },
-    Field {
-        key: "fileDirectoryT",
-        label: |t| t.field_directory,
-        kind: Kind::Text,
-    },
-];
-
-const ENFORCE_TEMP_FIELDS: &[Field] = &[
-    Field {
-        key: "cameraTemperatureS",
-        label: |t| t.field_enforce_temp,
-        kind: Kind::Bool,
-    },
-    Field {
-        key: "cameraTemperatureN",
-        label: |t| t.field_job_temp_c,
-        kind: Kind::Number,
-    },
-];
-
 #[component]
 pub fn ImagingTab(
     #[prop(into)] capture: Signal<CaptureSnapshot>,
@@ -230,8 +119,12 @@ pub fn ImagingTab(
     let target_temp = RwSignal::new(-10.0_f64);
     let preview_visible = RwSignal::new(initial_preview_visible());
     let oneshot_open = RwSignal::new(true);
-    let add_overlay_open = RwSignal::new(false);
+    let editor_open = RwSignal::new(false);
     let job_detail_idx = RwSignal::new(None::<usize>);
+
+    // Imaging's draft sequence — owned locally exactly like Scheduler/Mosaic.
+    // Submitted to KStars in one shot via `capture_load_sequence_file {filedata}`.
+    let seq_frames: RwSignal<Vec<SeqFrame>> = RwSignal::new(vec![SeqFrame::default()]);
 
     let on_toggle_preview = move |_: web_sys::MouseEvent| {
         preview_visible.update(|v| *v = !*v);
@@ -259,7 +152,24 @@ pub fn ImagingTab(
     let s_loop = send.clone();
     let on_loop = move |_| send_cmd(&s_loop, "capture_loop", serde_json::json!({}));
 
-    let sv_add_job = StoredValue::new(send.clone());
+    let sv_send_seq = StoredValue::new(send.clone());
+    let on_send_seq = move |_| {
+        let frames = seq_frames.get_untracked();
+        if frames.is_empty() {
+            return;
+        }
+        let xml = build_esq_xml("", &frames);
+        let s = sv_send_seq.get_value();
+        send_cmd(
+            &s,
+            "capture_load_sequence_file",
+            serde_json::json!({ "filedata": xml }),
+        );
+        wasm_bindgen_futures::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(500).await;
+            send_cmd(&s, "capture_get_sequences", serde_json::json!({}));
+        });
+    };
     let s_clear = send.clone();
     let on_clear_seq =
         move |_| send_cmd(&s_clear, "capture_clear_sequences", serde_json::json!({}));
@@ -328,8 +238,20 @@ pub fn ImagingTab(
     };
 
     // ── Settings dispatch ────────────────────────────────────────────────
+    // Optimistic overrides: user edits pin the value locally until either
+    // KStars echoes the same value back (resync) or the user edits again.
+    // This guards against KStars overwriting captureGainN with the
+    // GainSpinSpecialValue sentinel, and combos (FilterPosCombo, captureISOS,
+    // captureTypeS) being silently reset when KStars's widget can't apply
+    // the value (items not yet populated, asynchronous re-stamp from
+    // FilterManager::positionChanged, etc.).
+    let overrides: RwSignal<std::collections::HashMap<&'static str, serde_json::Value>> =
+        RwSignal::new(std::collections::HashMap::new());
     let s_set_all = send.clone();
     let dispatch_setting = move |key: &'static str, value: serde_json::Value| {
+        overrides.update(|m| {
+            m.insert(key, value.clone());
+        });
         ws_dispatch_setting(&s_set_all, "capture_set_all_settings", None, key, value);
     };
 
@@ -395,15 +317,77 @@ pub fn ImagingTab(
 
     // Shared setting lookup: returns the current Value from the debounced
     // capture_get_all_settings snapshot, or Null.
+    // For captureGainN/captureOffsetN, KStars surfaces a "no value" sentinel
+    // equal to `min - step` (e.g. -10 when min=0 step=10). Treat any negative
+    // numeric value for those keys as absent and fall back to our default.
+    // Local overrides (set by the user via `dispatch_setting`) take priority.
     let get_setting = move |key: &'static str| -> serde_json::Value {
+        if let Some(v) = overrides.with(|m| m.get(key).cloned()) {
+            return v;
+        }
         capture.with(|c| {
             c.settings
                 .as_object()
                 .and_then(|o| o.get(key).cloned())
+                .filter(|v| {
+                    !(matches!(key, "captureGainN" | "captureOffsetN")
+                        && v.as_f64().map(|n| n < 0.0).unwrap_or(false))
+                })
                 .or_else(|| default_capture_setting_value(key))
                 .unwrap_or(serde_json::Value::Null)
         })
     };
+
+    // Resync: when the server snapshot matches an override, drop the override
+    // so future out-of-band changes flow through normally.
+    Effect::new(move |_| {
+        let snapshot = capture.with(|c| c.settings.clone());
+        let Some(obj) = snapshot.as_object() else {
+            return;
+        };
+        let to_remove: Vec<&'static str> = overrides.with(|m| {
+            m.iter()
+                .filter_map(|(k, v)| {
+                    obj.get(*k).filter(|server| *server == v).map(|_| *k)
+                })
+                .collect()
+        });
+        if !to_remove.is_empty() {
+            overrides.update(|m| {
+                for k in to_remove {
+                    m.remove(k);
+                }
+            });
+        }
+    });
+
+    // Prime captureGainN once: when KStars first reports settings without a
+    // real gain (missing or negative sentinel), push our default (100) so the
+    // value sticks server-side for sequence jobs.
+    let prime_dispatch = StoredValue::new(send.clone());
+    let primed = StoredValue::new(false);
+    Effect::new(move |_| {
+        let has_settings =
+            capture.with(|c| c.settings.as_object().map(|o| !o.is_empty()).unwrap_or(false));
+        if !has_settings || primed.get_value() {
+            return;
+        }
+        let needs_default = capture.with(|c| {
+            c.settings
+                .as_object()
+                .and_then(|o| o.get("captureGainN"))
+                .map(|v| v.as_f64().map(|n| n < 0.0).unwrap_or(true))
+                .unwrap_or(true)
+        });
+        if needs_default {
+            if let Some(default) = default_capture_setting_value("captureGainN") {
+                prime_dispatch.with_value(|s| {
+                    ws_dispatch_setting(s, "capture_set_all_settings", None, "captureGainN", default);
+                });
+            }
+        }
+        primed.set_value(true);
+    });
 
     let stat_label = "text-text-blue text-xs uppercase tracking-[0.06em]";
 
@@ -527,11 +511,26 @@ pub fn ImagingTab(
                         {move || tr().imaging_one_shot}
                     </summary>
                     <div class=PANEL_BODY>
-                        <div class="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-sp-3 mb-sp-3">
-                            {render_group(ONE_SHOT_EXPOSURE_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                            <div class="flex flex-col gap-[6px]">
-                                {render_group(FILTER_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                                {render_group(ONE_SHOT_GAIN_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                        <div class="flex flex-col gap-sp-3 mb-sp-3">
+                            // Exposure: bespoke widget — large numeric input
+                            // accepting 0.001s–3600s, with quick-pick chips below.
+                            {render_exposure_field(lang, get_setting, dispatch_setting.clone())}
+
+                            // Frame type: segmented control instead of <select>.
+                            {render_frame_type_segmented(lang, camera, get_setting, dispatch_setting.clone())}
+
+                            // Filter / Gain / ISO row — three equal columns
+                            // with the label stacked above the editor. Filter
+                            // gets its own renderer because changing the combo
+                            // via capture_set_all_settings does not move the
+                            // wheel in KStars (camera.cpp:245); we have to
+                            // hit the FilterWheel device's FILTER_SLOT INDI
+                            // property directly.
+                            <div class="grid grid-cols-3 gap-sp-3 max-[479px]:grid-cols-1">
+                                {render_filter_field(lang, filter_wheel, get_setting, dispatch_setting.clone(), send.clone())}
+                                {ONE_SHOT_GAIN_FIELDS.iter().map(|f| {
+                                    render_stacked_field(*f, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())
+                                }).collect::<Vec<_>>()}
                             </div>
                         </div>
                         <div class="grid grid-cols-4 gap-sp-2 max-[759px]:grid-cols-2">
@@ -548,7 +547,7 @@ pub fn ImagingTab(
                     <div class="flex flex-wrap items-center justify-between gap-sp-2 pt-3 pb-sp-2 px-sp-4 border-b border-border-base max-[899px]:flex-col max-[899px]:items-stretch">
                         <span class="text-text-blue text-sm uppercase tracking-[0.08em]">{move || tr().imaging_sequence_queue}</span>
                         <div class="flex flex-wrap gap-[6px] max-[479px]:grid max-[479px]:grid-cols-2 max-[479px]:gap-sp-2 max-[479px]:w-full">
-                            <button on:click=move |_| add_overlay_open.set(true) class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().imaging_add_exposure}</button>
+                            <button on:click=move |_| editor_open.set(true) class=ACTION_BTN style="--btn-color:var(--state-info);">{move || tr().imaging_sequence_editor}</button>
                             <button on:click=on_clear_seq class=ACTION_BTN style="--btn-color:var(--state-err);">{move || tr().seq_clear}</button>
                             <button
                                 class=ACTION_BTN
@@ -663,27 +662,23 @@ pub fn ImagingTab(
                     </div>
                 </section>
 
-                <Show when=move || add_overlay_open.get()>
+                // ─ Sequence editor (full-screen overlay) ─────────────────
+                <Show when=move || editor_open.get()>
                     <div class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2">
                         <div class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col">
                             <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
-                                <h2 class="text-text-blue text-sm uppercase tracking-[0.08em]">{move || tr().imaging_add_exposure}</h2>
-                                <button class=GHOST_BTN on:click=move |_| add_overlay_open.set(false)>{move || tr().imaging_close}</button>
+                                <h2 class="text-text-blue text-sm uppercase tracking-[0.08em]">{move || tr().imaging_sequence_editor}</h2>
+                                <button class=GHOST_BTN on:click=move |_| editor_open.set(false)>{move || tr().imaging_close}</button>
                             </div>
-                            <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-sp-4 max-[759px]:p-sp-3">
-                                {settings_group_view(move || tr().imaging_exposure, EXPOSURE_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                                {settings_group_view(move || tr().imaging_frame, FRAME_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                                {settings_group_view(move || tr().imaging_gain_iso, GAIN_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                                {settings_group_view(move || tr().imaging_filter, FILTER_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                                {settings_group_view(move || tr().imaging_target, TARGET_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
-                                {settings_group_view(move || tr().imaging_job_temperature, ENFORCE_TEMP_FIELDS, lang, camera, filter_wheel, get_setting, dispatch_setting.clone())}
+                            <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 max-[759px]:p-sp-3">
+                                <SequenceEditor frames=seq_frames camera=camera filter_wheel=filter_wheel />
                             </div>
                             <div class="flex justify-end gap-sp-2 py-sp-3 px-sp-4 border-t border-border-base bg-[rgba(10,12,20,0.8)]">
-                                <button class=GHOST_BTN on:click=move |_| add_overlay_open.set(false)>{move || tr().cancel}</button>
-                                <button class=ACTION_BTN style="--btn-color:var(--state-info);" on:click=move |_| {
-                                    sv_add_job.with_value(|s| send_cmd(s, "capture_add_sequence", serde_json::json!({})));
-                                    add_overlay_open.set(false);
-                                }>{move || tr().imaging_add_exposure}</button>
+                                <button class=GHOST_BTN on:click=move |_| editor_open.set(false)>{move || tr().imaging_close}</button>
+                                <button class=ACTION_BTN style="--btn-color:var(--state-info);" on:click=move |ev| {
+                                    on_send_seq(ev);
+                                    editor_open.set(false);
+                                }>{move || tr().imaging_send_sequence}</button>
                             </div>
                         </div>
                     </div>
@@ -767,24 +762,6 @@ fn job_status_color(s: &str) -> &'static str {
     }
 }
 
-fn settings_group_view(
-    title: impl Fn() -> &'static str + Copy + Send + Sync + 'static,
-    fields: &'static [Field],
-    lang: RwSignal<Lang>,
-    camera: Signal<CameraSnapshot>,
-    filter_wheel: Signal<FilterWheelSnapshot>,
-    get_value: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
-    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
-) -> leptos::prelude::AnyView {
-    view! {
-        <section class="border border-[#22263a] bg-[rgba(14,16,26,0.72)] rounded-sm p-sp-3">
-            <h3 class="text-text-blue text-xs uppercase tracking-[0.08em] mb-sp-2">{title}</h3>
-            {render_group(fields, lang, camera, filter_wheel, get_value, dispatch)}
-        </section>
-    }
-    .into_any()
-}
-
 fn job_detail_rows(job: &serde_json::Value, t: &'static Translations) -> Vec<(String, String)> {
     let read = |key: &str| -> String { job_value_display(&job[key]) };
     vec![
@@ -847,46 +824,28 @@ fn render_field(
     let current = move || get_value(field.key);
 
     let editor = match field.kind {
-        Kind::Bool => {
-            let d = dispatch.clone();
-            view! {
-                <input
-                    type="checkbox"
-                    prop:checked=move || current().as_bool().unwrap_or(false)
-                    on:change=move |ev| {
-                        d(field.key, serde_json::Value::Bool(event_target_checked(&ev)));
-                    }
-                />
-            }
-            .into_any()
-        }
         Kind::Number => {
             let d = dispatch.clone();
+            let is_int = matches!(field.key, "captureGainN" | "captureOffsetN");
+            let min_attr = if is_int { Some("0") } else { None };
+            let step_attr = if is_int { Some("1") } else { None };
             view! {
                 <input
                     type="number"
+                    min=min_attr
+                    step=step_attr
                     prop:value=move || value_to_display(&current())
                     on:change=move |ev| {
                         let s = event_target_value(&ev);
-                        if let Ok(n) = s.parse::<f64>() {
+                        if is_int {
+                            if let Ok(n) = s.parse::<i64>() {
+                                d(field.key, serde_json::Value::Number(n.into()));
+                            }
+                        } else if let Ok(n) = s.parse::<f64>() {
                             if let Some(num) = serde_json::Number::from_f64(n) {
                                 d(field.key, serde_json::Value::Number(num));
                             }
                         }
-                    }
-                    class=FIELD_INPUT
-                />
-            }
-            .into_any()
-        }
-        Kind::Text => {
-            let d = dispatch.clone();
-            view! {
-                <input
-                    type="text"
-                    prop:value=move || value_to_display(&current())
-                    on:change=move |ev| {
-                        d(field.key, serde_json::Value::String(event_target_value(&ev)));
                     }
                     class=FIELD_INPUT
                 />
@@ -914,6 +873,299 @@ fn render_field(
     }.into_any()
 }
 
+/// Like `render_field`, but with the label stacked above the editor so the
+/// editor gets the full column width. Used for the Filter / Gain / ISO trio
+/// in the redesigned one-shot panel where each grid column is too narrow
+/// for the default `120px label + flex-1 input` row to be usable.
+fn render_stacked_field(
+    field: Field,
+    lang: RwSignal<Lang>,
+    camera: Signal<CameraSnapshot>,
+    filter_wheel: Signal<FilterWheelSnapshot>,
+    get_value: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
+    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
+) -> leptos::prelude::AnyView {
+    let current = move || get_value(field.key);
+    let editor = match field.kind {
+        Kind::Number => {
+            let d = dispatch.clone();
+            let is_int = matches!(field.key, "captureGainN" | "captureOffsetN");
+            let min_attr = if is_int { Some("0") } else { None };
+            let step_attr = if is_int { Some("1") } else { None };
+            view! {
+                <input
+                    type="number"
+                    min=min_attr
+                    step=step_attr
+                    prop:value=move || value_to_display(&current())
+                    on:change=move |ev| {
+                        let s = event_target_value(&ev);
+                        if is_int {
+                            if let Ok(n) = s.parse::<i64>() {
+                                d(field.key, serde_json::Value::Number(n.into()));
+                            }
+                        } else if let Ok(n) = s.parse::<f64>() {
+                            if let Some(num) = serde_json::Number::from_f64(n) {
+                                d(field.key, serde_json::Value::Number(num));
+                            }
+                        }
+                    }
+                    class=FIELD_INPUT
+                />
+            }
+            .into_any()
+        }
+        Kind::ComboDynamic(get_opts) => {
+            let opts_fn = move || get_opts(&camera.get(), &filter_wheel.get());
+            render_select_dynamic(field.key, opts_fn, current, dispatch.clone())
+        }
+        Kind::ComboFilter(get_opts) => {
+            let opts_fn = move || get_opts(&camera.get(), &filter_wheel.get());
+            let placeholder = move || t(lang.get()).field_filter_none;
+            render_select_filter(field.key, opts_fn, current, dispatch.clone(), placeholder)
+        }
+    };
+
+    let label_fn = field.label;
+    view! {
+        <div class="flex flex-col gap-[3px] text-sm min-w-0">
+            <span class="text-text-blue text-xs uppercase tracking-[0.06em] overflow-hidden text-ellipsis whitespace-nowrap">
+                {move || label_fn(t(lang.get()))}
+            </span>
+            {editor}
+        </div>
+    }.into_any()
+}
+
+/// Bespoke editor for `captureExposureN`. KStars accepts 0.001s–3600s with
+/// 3 decimals (camera.ui:752); the generic Number editor only set step=1
+/// for non-int keys, so the browser silently rejected decimal exposures.
+/// Here `step="any"` + `inputmode="decimal"` accepts any positive number,
+/// `on:input` is debounced ~250 ms so we don't flood KStars per keystroke,
+/// and a chip row provides one-tap presets for common exposure lengths.
+fn render_exposure_field(
+    lang: RwSignal<Lang>,
+    get_setting: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
+    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
+) -> leptos::prelude::AnyView {
+    let get_value = move || get_setting("captureExposureN");
+    let dispatch_input = dispatch.clone();
+    // gloo Timeout is !Send/!Sync, so use the LocalStorage variant.
+    let debounce: StoredValue<Option<gloo_timers::callback::Timeout>, leptos::prelude::LocalStorage> =
+        StoredValue::new_local(None);
+    let dispatch_chip = dispatch.clone();
+
+    view! {
+        <div class="flex flex-col gap-sp-2">
+            <div class="flex items-center gap-sp-2 text-sm max-[479px]:flex-col max-[479px]:items-stretch max-[479px]:gap-[2px]">
+                <span class=FIELD_LABEL>{move || t(lang.get()).field_exposure_s}</span>
+                <div class="relative flex-1 min-w-0">
+                    <input
+                        type="number"
+                        min="0.001"
+                        max="3600"
+                        step="any"
+                        inputmode="decimal"
+                        prop:value=move || value_to_display(&get_value())
+                        on:input=move |ev| {
+                            let raw = event_target_value(&ev);
+                            let d = dispatch_input.clone();
+                            // Cancel any pending dispatch and queue a fresh one.
+                            // Dropping the previous Timeout cancels it.
+                            let timeout = gloo_timers::callback::Timeout::new(250, move || {
+                                let trimmed = raw.trim();
+                                if trimmed.is_empty() { return; }
+                                let Ok(n) = trimmed.parse::<f64>() else { return; };
+                                if !n.is_finite() || n <= 0.0 { return; }
+                                if let Some(num) = serde_json::Number::from_f64(n) {
+                                    d("captureExposureN", serde_json::Value::Number(num));
+                                }
+                            });
+                            debounce.set_value(Some(timeout));
+                        }
+                        class=format!("{FIELD_INPUT} pr-[22px] text-base font-bold")
+                    />
+                    <span class="pointer-events-none absolute right-sp-2 top-1/2 -translate-y-1/2 text-text-blue text-xs">"s"</span>
+                </div>
+            </div>
+            <div class="flex flex-wrap gap-[6px] pl-[120px] max-[479px]:pl-0">
+                {EXPOSURE_PRESETS.iter().copied().map(|preset| {
+                    let d = dispatch_chip.clone();
+                    let label = format_preset(preset);
+                    let active = move || get_value().as_f64()
+                        .map(|n| (n - preset).abs() < 1e-6)
+                        .unwrap_or(false);
+                    view! {
+                        <button
+                            type="button"
+                            class="btn btn--sm font-mono"
+                            class:btn-ghost=move || !active()
+                            class:text-text-blue=move || !active()
+                            style=move || if active() {
+                                "border-color:var(--state-info);color:var(--state-info);background:rgba(40,80,140,0.18);"
+                            } else { "" }
+                            on:click=move |_| {
+                                // Cancel any in-flight debounced text dispatch
+                                // and push the preset value immediately.
+                                debounce.set_value(None);
+                                if let Some(num) = serde_json::Number::from_f64(preset) {
+                                    d("captureExposureN", serde_json::Value::Number(num));
+                                }
+                            }
+                        >{label}</button>
+                    }.into_any()
+                }).collect::<Vec<_>>()}
+            </div>
+        </div>
+    }.into_any()
+}
+
+fn format_preset(s: f64) -> String {
+    if s >= 1.0 {
+        format!("{}s", s as i64)
+    } else if s >= 0.01 {
+        // 0.01, 0.1 → strip trailing zeros for readability
+        let mut t = format!("{:.2}", s);
+        while t.ends_with('0') { t.pop(); }
+        if t.ends_with('.') { t.pop(); }
+        format!("{}s", t)
+    } else {
+        // 0.001 → "1ms" reads better than "0.001s"
+        format!("{}ms", (s * 1000.0).round() as i64)
+    }
+}
+
+/// Filter dropdown that actually moves the wheel. Changing FilterPosCombo
+/// via `capture_set_all_settings` only updates KStars's combo state — the
+/// physical wheel is driven by the FilterWheel device's INDI FILTER_SLOT
+/// number property (1-based slot). We do both: dispatch the capture-side
+/// setting (so the sequence-job UI stays consistent) and also push
+/// FILTER_SLOT to the device so the wheel rotates.
+fn render_filter_field(
+    lang: RwSignal<Lang>,
+    filter_wheel: Signal<FilterWheelSnapshot>,
+    get_setting: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
+    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
+    send: SendCmd,
+) -> leptos::prelude::AnyView {
+    let current_text = move || value_to_display(&get_setting("FilterPosCombo"));
+
+    view! {
+        <div class="flex flex-col gap-[3px] text-sm min-w-0">
+            <span class="text-text-blue text-xs uppercase tracking-[0.06em] overflow-hidden text-ellipsis whitespace-nowrap">
+                {move || t(lang.get()).field_filter}
+            </span>
+            {move || {
+                let names = filter_wheel.with(|fw| fw.filter_names.clone());
+                if names.is_empty() {
+                    let placeholder = t(lang.get()).field_filter_none;
+                    view! {
+                        <select class=FIELD_INPUT disabled=true>
+                            <option selected=true>{placeholder}</option>
+                        </select>
+                    }.into_any()
+                } else {
+                    let cur = current_text();
+                    let dispatch = dispatch.clone();
+                    let send = send.clone();
+                    let fw_dev = filter_wheel.with(|fw| fw.device.clone());
+                    let names_for_options = names.clone();
+                    view! {
+                        <select
+                            class=FIELD_INPUT
+                            on:change=move |ev| {
+                                let picked = event_target_value(&ev);
+                                if picked.is_empty() { return; }
+                                // Capture-side setting (keeps preview / job UI in sync).
+                                dispatch(
+                                    "FilterPosCombo",
+                                    serde_json::Value::String(picked.clone()),
+                                );
+                                // Physical move: 1-based slot index in FILTER_SLOT.
+                                if !fw_dev.is_empty() {
+                                    if let Some(idx) = names.iter().position(|n| n == &picked) {
+                                        send_device_property_set(
+                                            &send,
+                                            &fw_dev,
+                                            "FILTER_SLOT",
+                                            serde_json::json!([
+                                                { "name": "FILTER_SLOT_VALUE", "value": (idx + 1) as i64 },
+                                            ]),
+                                        );
+                                    }
+                                }
+                            }
+                        >
+                            {names_for_options.into_iter().map(|n| {
+                                let v = n.clone();
+                                let label = n.clone();
+                                let v_for_sel = n;
+                                let cur_for_sel = cur.clone();
+                                view! {
+                                    <option
+                                        value=v
+                                        selected=cur_for_sel == v_for_sel
+                                    >{label}</option>
+                                }.into_any()
+                            }).collect::<Vec<_>>()}
+                        </select>
+                    }.into_any()
+                }
+            }}
+        </div>
+    }.into_any()
+}
+
+/// Frame-type segmented control. Source list still comes from the camera
+/// snapshot (with `FRAME_TYPE_FALLBACK` until the device reports), and
+/// click dispatches `captureTypeS` exactly like the previous combo did.
+fn render_frame_type_segmented(
+    lang: RwSignal<Lang>,
+    camera: Signal<CameraSnapshot>,
+    get_setting: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
+    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
+) -> leptos::prelude::AnyView {
+    let current = move || value_to_display(&get_setting("captureTypeS"));
+    let dispatch = std::sync::Arc::new(dispatch);
+
+    view! {
+        <div class="flex items-center gap-sp-2 text-sm max-[479px]:flex-col max-[479px]:items-stretch max-[479px]:gap-[2px]">
+            <span class=FIELD_LABEL>{move || t(lang.get()).field_frame_type}</span>
+            <div class="flex flex-1 min-w-0 rounded-[3px] overflow-hidden border border-border-base">
+                {move || {
+                    let opts = camera.with(|c| if c.frame_type_options.is_empty() {
+                        FRAME_TYPE_FALLBACK.iter().map(|s| s.to_string()).collect()
+                    } else {
+                        c.frame_type_options.clone()
+                    });
+                    opts.into_iter().map(|opt| {
+                        let opt_for_active = opt.clone();
+                        let active = move || current() == opt_for_active;
+                        let opt_for_label = opt.clone();
+                        let opt_for_dispatch = opt.clone();
+                        let d = dispatch.clone();
+                        view! {
+                            <button
+                                type="button"
+                                class="flex-1 py-[6px] px-sp-2 text-xs uppercase tracking-[0.06em] border-r border-border-base last:border-r-0 transition-colors"
+                                style=move || if active() {
+                                    "background:rgba(40,80,140,0.28);color:var(--state-info);"
+                                } else {
+                                    "background:transparent;color:var(--text-blue);"
+                                }
+                                on:click=move |_| {
+                                    d("captureTypeS",
+                                      serde_json::Value::String(opt_for_dispatch.clone()));
+                                }
+                            >{opt_for_label}</button>
+                        }.into_any()
+                    }).collect::<Vec<_>>()
+                }}
+            </div>
+        </div>
+    }.into_any()
+}
+
 /// Render a `<select>` whose options are a fixed `Vec<String>`. If the
 /// current value isn't in the list, prepend a disabled placeholder option
 /// so we don't silently drop state.
@@ -924,7 +1176,42 @@ fn render_select(
     dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
 ) -> leptos::prelude::AnyView {
     let d = dispatch.clone();
-    let opts_for_render = opts.clone();
+    // Build options once. Mark `selected` reactively per-option so we don't
+    // tear down the option list every time `current` changes — that previously
+    // left the <select> showing nothing after an edit, because option nodes
+    // were swapped out from under `prop:value`.
+    let opts_unknown = opts.clone();
+    let unknown_opt = {
+        let current_a = current;
+        let opts_a = opts_unknown.clone();
+        move || {
+            let cur = value_to_display(&current_a());
+            if !cur.is_empty() && !opts_a.iter().any(|o| o == &cur) {
+                let cur2 = cur.clone();
+                Some(view! {
+                    <option value=cur.clone() disabled=true selected=true>{cur2}</option>
+                }.into_any())
+            } else {
+                None
+            }
+        }
+    };
+    let option_views: Vec<leptos::prelude::AnyView> = opts
+        .iter()
+        .map(|o| {
+            let v = o.clone();
+            let label = o.clone();
+            let v_for_sel = o.clone();
+            let current_b = current;
+            view! {
+                <option
+                    value=v
+                    prop:selected=move || value_to_display(&current_b()) == v_for_sel
+                >{label}</option>
+            }
+            .into_any()
+        })
+        .collect();
     view! {
         <select
             class=FIELD_INPUT
@@ -933,25 +1220,8 @@ fn render_select(
                 d(key, serde_json::Value::String(event_target_value(&ev)));
             }
         >
-            {move || {
-                let cur = value_to_display(&current());
-                let mut items: Vec<leptos::prelude::AnyView> = Vec::new();
-                if !cur.is_empty() && !opts_for_render.iter().any(|o| o == &cur) {
-                    let cur2 = cur.clone();
-                    items.push(view! {
-                        <option value=cur.clone() disabled=true selected=true>{cur2}</option>
-                    }.into_any());
-                }
-                for o in &opts_for_render {
-                    let v = o.clone();
-                    let label = o.clone();
-                    let is_sel = *o == cur;
-                    items.push(view! {
-                        <option value=v selected=is_sel>{label}</option>
-                    }.into_any());
-                }
-                items
-            }}
+            {move || unknown_opt()}
+            {option_views}
         </select>
     }
     .into_any()
@@ -1067,16 +1337,16 @@ fn capture_reveal_path(settings: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn event_target_checked(ev: &web_sys::Event) -> bool {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.checked())
-        .unwrap_or(false)
-}
-
 fn event_target_value(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.value())
-        .unwrap_or_default()
+    let Some(target) = ev.target() else { return String::new(); };
+    if let Ok(el) = target.clone().dyn_into::<web_sys::HtmlInputElement>() {
+        return el.value();
+    }
+    if let Ok(el) = target.clone().dyn_into::<web_sys::HtmlSelectElement>() {
+        return el.value();
+    }
+    if let Ok(el) = target.dyn_into::<web_sys::HtmlTextAreaElement>() {
+        return el.value();
+    }
+    String::new()
 }
