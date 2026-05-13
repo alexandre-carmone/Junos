@@ -60,6 +60,26 @@ fn status_color(status: &str) -> &'static str {
 // Scheduler's frame-type select and `SequenceJob` XML).
 const FRAME_TYPE_FALLBACK: &[&str] = &["Light", "Dark", "Bias", "Flat"];
 
+// Inline SVGs for the one-shot panel frame-type pills. 16×16 viewBox, stroke
+// uses `currentColor` so the pill's color cascade controls the glyph too.
+const FRAME_TYPE_ICON_LIGHT: &str = r#"<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.8l1.55 4.05L13.8 6.4l-3.1 2.85.95 4.25L8 11.3 4.35 13.5l.95-4.25L2.2 6.4l4.25-.55z"/></svg>"#;
+const FRAME_TYPE_ICON_DARK: &str = r#"<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 9.6A5.4 5.4 0 0 1 6.4 2.8a5.4 5.4 0 1 0 6.8 6.8z"/></svg>"#;
+const FRAME_TYPE_ICON_BIAS: &str = r#"<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1.5L3.2 9h3.6L7 14.5 12.8 7H9.2z"/></svg>"#;
+const FRAME_TYPE_ICON_FLAT: &str = r#"<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.6"/><path d="M8 1.6v1.8M8 12.6v1.8M1.6 8h1.8M12.6 8h1.8M3.5 3.5l1.3 1.3M11.2 11.2l1.3 1.3M3.5 12.5l1.3-1.3M11.2 4.8l1.3-1.3"/></svg>"#;
+const FRAME_TYPE_ICON_OTHER: &str = r#"<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><circle cx="8" cy="8" r="2.4"/></svg>"#;
+
+/// Maps a frame-type name to (icon SVG, accent color). Unknown names get a
+/// neutral dot + muted color so arbitrary device strings still render.
+fn frame_type_visual(name: &str) -> (&'static str, &'static str) {
+    match name {
+        "Light" => (FRAME_TYPE_ICON_LIGHT, "var(--accent-cyan)"),
+        "Dark"  => (FRAME_TYPE_ICON_DARK,  "#9aa3b2"),
+        "Bias"  => (FRAME_TYPE_ICON_BIAS,  "#a285de"),
+        "Flat"  => (FRAME_TYPE_ICON_FLAT,  "var(--state-warn)"),
+        _       => (FRAME_TYPE_ICON_OTHER, "var(--text-blue)"),
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Kind {
     Number,
@@ -1120,7 +1140,7 @@ fn render_filter_field(
 /// snapshot (with `FRAME_TYPE_FALLBACK` until the device reports), and
 /// click dispatches `captureTypeS` exactly like the previous combo did.
 fn render_frame_type_segmented(
-    lang: RwSignal<Lang>,
+    _lang: RwSignal<Lang>,
     camera: Signal<CameraSnapshot>,
     get_setting: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
     dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
@@ -1129,39 +1149,71 @@ fn render_frame_type_segmented(
     let dispatch = std::sync::Arc::new(dispatch);
 
     view! {
-        <div class="flex items-center gap-sp-2 text-sm max-[479px]:flex-col max-[479px]:items-stretch max-[479px]:gap-[2px]">
-            <span class=FIELD_LABEL>{move || t(lang.get()).field_frame_type}</span>
-            <div class="flex flex-1 min-w-0 rounded-[3px] overflow-hidden border border-border-base">
-                {move || {
-                    let opts = camera.with(|c| if c.frame_type_options.is_empty() {
-                        FRAME_TYPE_FALLBACK.iter().map(|s| s.to_string()).collect()
+        // Row of color-coded icon pills. The "Frame Type" label is dropped:
+        // the icons + colors + their position in the one-shot panel make
+        // the role of the control obvious, and reclaiming the 120px label
+        // column lets the pills breathe. On phones we switch to a 2×2 grid
+        // (instead of stacking 4 deep) to keep the panel compact.
+        <div class="grid grid-cols-4 gap-sp-2 max-[479px]:grid-cols-2">
+            {move || {
+                let opts = camera.with(|c| if c.frame_type_options.is_empty() {
+                    FRAME_TYPE_FALLBACK.iter().map(|s| s.to_string()).collect()
+                } else {
+                    c.frame_type_options.clone()
+                });
+                opts.into_iter().map(|opt| {
+                    let (icon, color) = frame_type_visual(&opt);
+                    let opt_for_active_a = opt.clone();
+                    let opt_for_active_b = opt.clone();
+                    let active_pill = move || current() == opt_for_active_a;
+                    let active_icon = move || current() == opt_for_active_b;
+                    let opt_for_dispatch = opt.clone();
+                    let d = dispatch.clone();
+                    // Active pill: filled tint of its own color + ring;
+                    // inactive: muted border, dim icon, blue label.
+                    let pill_style = move || if active_pill() {
+                        format!(
+                            "background:color-mix(in srgb, {c} 22%, transparent);\
+                             border-color:{c};color:{c};\
+                             box-shadow:inset 0 0 0 1px {c};",
+                            c = color,
+                        )
                     } else {
-                        c.frame_type_options.clone()
-                    });
-                    opts.into_iter().map(|opt| {
-                        let opt_for_active = opt.clone();
-                        let active = move || current() == opt_for_active;
-                        let opt_for_label = opt.clone();
-                        let opt_for_dispatch = opt.clone();
-                        let d = dispatch.clone();
-                        view! {
-                            <button
-                                type="button"
-                                class="flex-1 py-[6px] px-sp-2 text-xs uppercase tracking-[0.06em] border-r border-border-base last:border-r-0 transition-colors"
-                                style=move || if active() {
-                                    "background:rgba(40,80,140,0.28);color:var(--state-info);"
-                                } else {
-                                    "background:transparent;color:var(--text-blue);"
-                                }
-                                on:click=move |_| {
-                                    d("captureTypeS",
-                                      serde_json::Value::String(opt_for_dispatch.clone()));
-                                }
-                            >{opt_for_label}</button>
-                        }.into_any()
-                    }).collect::<Vec<_>>()
-                }}
-            </div>
+                        format!(
+                            "background:transparent;\
+                             border-color:var(--border-base);\
+                             color:var(--text-blue);",
+                        )
+                    };
+                    let icon_style = move || if active_icon() {
+                        format!("color:{color};opacity:1;")
+                    } else {
+                        format!("color:{color};opacity:0.6;")
+                    };
+                    view! {
+                        <button
+                            type="button"
+                            class="flex items-center justify-center gap-[6px] min-w-0 h-[32px] px-sp-2 \
+                                   rounded-[6px] border text-xs uppercase tracking-[0.06em] \
+                                   font-medium transition-colors \
+                                   hover:bg-[rgba(255,255,255,0.04)] \
+                                   focus:outline-none focus:ring-1 focus:ring-offset-0"
+                            style=pill_style
+                            on:click=move |_| {
+                                d("captureTypeS",
+                                  serde_json::Value::String(opt_for_dispatch.clone()));
+                            }
+                        >
+                            <span
+                                class="inline-flex shrink-0 transition-opacity"
+                                style=icon_style
+                                inner_html=icon
+                            />
+                            <span class="truncate">{opt}</span>
+                        </button>
+                    }.into_any()
+                }).collect::<Vec<_>>()
+            }}
         </div>
     }.into_any()
 }
