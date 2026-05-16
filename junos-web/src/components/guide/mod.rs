@@ -56,7 +56,9 @@ const GUIDE_LEGEND: &str = "fieldset__legend cursor-pointer";
 const GUIDE_DETAILS_BODY: &str = "py-sp-3 px-sp-4 flex flex-col gap-sp-2";
 const GUIDE_BTN_BASE: &str = "btn";
 
+mod target;
 mod timeline;
+use target::target_plot;
 use timeline::drift_plot;
 
 // ---------------------------------------------------------------------------
@@ -607,20 +609,32 @@ pub fn GuideTab(
 
                 // Preview frame (uuid "+G*" from kstars media.cpp:753)
                 <Show when=move || guide.with(|g| g.preview_url.is_some())>
-                    <div class="flex justify-center items-center bg-bg-input-deep border border-border-base p-sp-2 min-h-[180px] max-h-[400px] max-[759px]:min-h-0 max-[759px]:max-h-[40vh]">
+                    <div class="flex justify-center items-center bg-bg-input-deep border border-border-base p-sp-2 min-h-[180px] max-h-[400px] overflow-hidden max-[759px]:min-h-0 max-[759px]:max-h-[40vh]">
                         <img
                             src=move || guide.with(|g|
                                 g.preview_url.clone().unwrap_or_default())
                             alt="guide frame"
-                            class="max-w-full max-h-[384px] object-contain block [image-rendering:pixelated] max-[759px]:max-h-[40vh]"
+                            class="w-auto h-auto max-w-full max-h-full block object-contain [image-rendering:pixelated]"
                         />
                     </div>
                 </Show>
 
-                // Drift plot + state ribbon. Drift samples come from
-                // kstars/ekos/manager.cpp:2772-2776 via partial
-                // `new_guide_state {drift_ra, drift_de}` events.
-                {move || guide.with(|g| drift_plot(&g.drift, &g.history))}
+                // Drift plot (time series) + target scatter — both fed by
+                // `new_guide_state {drift_ra, drift_de}` events from
+                // kstars/ekos/manager.cpp:2772-2776. Target ring sizes use
+                // `guiderAccuracyThreshold` from the settings snapshot.
+                <div class="flex flex-col min-[760px]:flex-row gap-sp-2 items-stretch">
+                    <div class="flex-1 min-w-0">
+                        {move || guide.with(|g| drift_plot(&g.drift, &g.history))}
+                    </div>
+                    <div class="max-[759px]:w-[180px] max-[759px]:self-center min-[760px]:w-[200px] min-[760px]:flex-none">
+                        {move || guide.with(|g| {
+                            let acc = settings_f64(&g.settings, "guiderAccuracyThreshold")
+                                .unwrap_or(1.5);
+                            target_plot(&g.drift, acc)
+                        })}
+                    </div>
+                </div>
 
                 // ── Action row ──────────────────────────────────────────
                 <fieldset class=GUIDE_SECTION>
