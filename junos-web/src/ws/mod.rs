@@ -109,6 +109,37 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
         });
     }
 
+    // Bind the active optical train to each Ekos module. Without an explicit
+    // train_set, Guide::m_Camera stays null and the first guide_start silently
+    // no-ops via Guide::calibrate() → KSNotification::error (does not propagate
+    // over Ekos Live). Focus/Capture happen to win the OpticalTrainManager::
+    // updated race; Guide does not (guide.cpp:3479-3499 has no init-time call
+    // to refreshOpticalTrain, unlike focus.cpp:8032-8055).
+    //
+    // Idempotent: TRAIN_SET handler at message.cpp:1510 just calls
+    // setOpticalTrain(name) which writes to the combo box.
+    {
+        let trains_sig = store.optical_trains;
+        let last_train = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let send_for_effect = send_fn.clone();
+        Effect::new(move |_| {
+            let trains = trains_sig.get();
+            let Some(train) = trains.first() else { return };
+            if train.name.is_empty() || train.name == *last_train.borrow() {
+                return;
+            }
+            *last_train.borrow_mut() = train.name.clone();
+            for module in ["capture", "focus", "guide", "align"] {
+                let msg = serde_json::json!({
+                    "type": "train_set",
+                    "payload": { "module": module, "name": &train.name }
+                })
+                .to_string();
+                send_for_effect(msg);
+            }
+        });
+    }
+
     // Cross-reference: when both the scopes list and the active train are
     // known, match the train's scope name against the scope DB and write
     // focal length + aperture into telescope_settings.
