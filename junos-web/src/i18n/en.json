@@ -842,5 +842,16 @@
   "mount_solve_solver_local": "Local",
   "mount_solve_solver_remote": "Remote",
   "mount_solve_rotator_threshold": "Rotator threshold",
-  "mount_solve_rotator_control": "Rotator control"
+  "mount_solve_rotator_control": "Rotator control",
+  "guide_refresh_settings": "Refresh",
+  "guide_save_calibration": "Save calibration",
+  "guide_export_log": "Export log",
+  "pa_reset_view": "Reset view",
+  "fc_section_dust_cap": "Dust cap",
+  "fc_no_device": "No dust cap / flat panel detected on this profile",
+  "fc_status_unknown": "Unknown",
+  "fc_status_parked": "Closed",
+  "fc_status_unparked": "Open",
+  "fc_status_moving": "Moving",
+  "fc_brightness_label": "Brightness:"
 }

@@ -134,6 +134,43 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
         }
     });
 
+    // Watch for a dust-cap / flat-panel device coming online. The cap device
+    // isn't part of the optical train, so we discover it via `get_devices`
+    // and subscribe to its INDI properties directly.
+    {
+        let cap_sig = store.dustcap_status;
+        let last_cap = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let send_for_effect = send_fn.clone();
+        Effect::new(move |_| {
+            let Some(cap) = cap_sig.get() else { return };
+            if cap.device.is_empty() || cap.device == *last_cap.borrow() { return; }
+            *last_cap.borrow_mut() = cap.device.clone();
+            spawn_retry_property(
+                send_for_effect.clone(),
+                cap.device.clone(),
+                "CAP_PARK",
+                cap_sig,
+                |opt| opt.as_ref().map_or(false, |c| c.park_state != crate::ws::DustCapParkState::Unknown),
+            );
+            if cap.has_light_panel {
+                spawn_retry_property(
+                    send_for_effect.clone(),
+                    cap.device.clone(),
+                    "FLAT_LIGHT_CONTROL",
+                    cap_sig,
+                    |opt| opt.as_ref().map_or(false, |c| c.light_on.is_some()),
+                );
+                spawn_retry_property(
+                    send_for_effect.clone(),
+                    cap.device.clone(),
+                    "FLAT_LIGHT_INTENSITY",
+                    cap_sig,
+                    |opt| opt.as_ref().map_or(false, |c| c.brightness.is_some()),
+                );
+            }
+        });
+    }
+
     // Subscribe + get the INDI properties we care about on the active train's
     // camera (CCD_INFO) and mount (EQUATORIAL_EOD_COORD).
     //

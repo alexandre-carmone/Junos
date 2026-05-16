@@ -932,5 +932,16 @@
   "mount_solve_solver_local": "Local",
   "mount_solve_solver_remote": "Distant",
   "mount_solve_rotator_threshold": "Seuil rot.",
-  "mount_solve_rotator_control": "Contrôle rot."
+  "mount_solve_rotator_control": "Contrôle rot.",
+  "guide_refresh_settings": "Actualiser",
+  "guide_save_calibration": "Sauver calib.",
+  "guide_export_log": "Export log",
+  "pa_reset_view": "Recentrer",
+  "fc_section_dust_cap": "Cache",
+  "fc_no_device": "Aucun cache ou panneau détecté pour ce profil",
+  "fc_status_unknown": "Inconnu",
+  "fc_status_parked": "Fermé",
+  "fc_status_unparked": "Ouvert",
+  "fc_status_moving": "En cours",
+  "fc_brightness_label": "Luminosité :"
 }

@@ -20,10 +20,20 @@
 //!   - new_preview_image with uuid "+G*" — guide camera frame (Internal
 //!     guider only, or PHD2 when its camera matches the Ekos guide camera).
 //!
-//! Deliberately NOT wired: guide_report (declared in commands.h but has no
-//! handler branch in processGuideCommands — silently dropped), dither-now
-//! / suspend / resume (not exposed over Ekos Live at all — they are DBUS/
-//! Q_SCRIPTABLE only in KStars).
+//! `guide_report` is declared in commands.h but has no handler branch in
+//! `processGuideCommands` — silently dropped. We sidestep that by doing a
+//! pure client-side log export (download a Blob built from
+//! `GuideSnapshot.log`).
+//!
+//! `guide_set_calibration_settings` (message.cpp:679) is a bulk-save command
+//! that maps the 8 calibration fields to `Options::set*` and echoes the new
+//! settings via `guide_get_all_settings`. We keep the per-widget controls
+//! (which post each kcfg field via `guide_set_all_settings`) and add a
+//! "Save calibration" button that fires the bulk command using the current
+//! kcfg_* values from the store.
+//!
+//! Deliberately NOT wired: dither-now / suspend / resume (not exposed over
+//! Ekos Live at all — they are DBUS/Q_SCRIPTABLE only in KStars).
 
 use leptos::prelude::*;
 use wasm_bindgen::closure::Closure;
@@ -159,6 +169,69 @@ fn dispatch_option(send: &SendCmd, name: &str, value: serde_json::Value) {
 fn refresh_guide_options(send: &SendCmd) {
     let get = r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#;
     send(get.to_string());
+}
+
+/// Send `guide_set_calibration_settings` with the 8 fields the KStars
+/// handler reads (message.cpp:679-690). Values are pulled from the existing
+/// `kcfg_*` widget map in `guide.settings` so the user's edits in the
+/// per-widget calibration section are saved atomically.
+fn dispatch_calibration_bulk(send: &SendCmd, settings: &serde_json::Value) {
+    let pulse = settings_i64(settings, "kcfg_CalibrationPulseDuration").unwrap_or(1000);
+    let max_move = settings_i64(settings, "kcfg_CalibrationMaxMove").unwrap_or(20);
+    let two_axis = settings_bool(settings, "kcfg_TwoAxisEnabled").unwrap_or(true);
+    let square_size = settings_bool(settings, "kcfg_GuideAutoSquareSizeEnabled").unwrap_or(false);
+    let backlash = settings_bool(settings, "kcfg_GuideCalibrationBacklash").unwrap_or(false);
+    let reset_cal = settings_bool(settings, "kcfg_ResetGuideCalibration").unwrap_or(false);
+    let reuse_cal = settings_bool(settings, "kcfg_ReuseGuideCalibration").unwrap_or(false);
+    let reverse_cal = settings_bool(settings, "kcfg_ReverseDecOnPierSideChange").unwrap_or(false);
+    send_cmd(
+        send,
+        "guide_set_calibration_settings",
+        serde_json::json!({
+            "pulse": pulse,
+            "max_move": max_move,
+            "two_axis": two_axis,
+            "square_size": square_size,
+            "calibrationBacklash": backlash,
+            "resetCalibration": reset_cal,
+            "reuseCalibration": reuse_cal,
+            "reverseCalibration": reverse_cal,
+        }),
+    );
+}
+
+/// Trigger a browser download of the guide log accumulated in
+/// `GuideSnapshot.log`. KStars has no `guide_report` handler (declared in
+/// commands.h but never matched in `processGuideCommands`), so this is a
+/// pure client-side export — the data was already collected from per-frame
+/// `new_guide_state {log}` events.
+fn export_guide_log(log: &str) {
+    use wasm_bindgen::JsValue;
+    let Some(win) = web_sys::window() else { return };
+    let Some(doc) = win.document() else { return };
+    let blob_parts = web_sys::js_sys::Array::new();
+    blob_parts.push(&JsValue::from_str(log));
+    let opts = web_sys::BlobPropertyBag::new();
+    opts.set_type("text/plain;charset=utf-8");
+    let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&blob_parts, &opts) else {
+        return;
+    };
+    let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else { return };
+    let ts = (web_sys::js_sys::Date::now() as u64) / 1000;
+    let fname = format!("guide-log-{ts}.txt");
+    if let Ok(elem) = doc.create_element("a") {
+        if let Ok(anchor) = elem.dyn_into::<web_sys::HtmlAnchorElement>() {
+            anchor.set_href(&url);
+            anchor.set_download(&fname);
+            anchor.set_attribute("style", "display:none").ok();
+            if let Some(body) = doc.body() {
+                let _ = body.append_child(&anchor);
+                anchor.click();
+                let _ = body.remove_child(&anchor);
+            }
+        }
+    }
+    let _ = web_sys::Url::revoke_object_url(&url);
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +496,26 @@ pub fn GuideTab(
     let s_clear = send.clone();
     let on_clear = move |_| send_cmd(&s_clear, "guide_clear", serde_json::json!({}));
 
+    // Pure client-side log export — KStars has no `guide_report` handler.
+    let on_export_log = move |_| {
+        let log = guide.with(|g| g.log.clone());
+        export_guide_log(&log);
+    };
+
+    // Pull the full settings snapshot back from KStars (refreshes the
+    // calibration / dither / algorithm forms after an out-of-band edit).
+    let s_refresh = send.clone();
+    let on_refresh_settings =
+        move |_| send_cmd(&s_refresh, "guide_get_all_settings", serde_json::json!({}));
+
+    // Bulk-save calibration: dispatches `guide_set_calibration_settings`
+    // with the 8-field payload KStars expects (message.cpp:679-690).
+    let s_save_cal = send.clone();
+    let on_save_calibration = move |_| {
+        let snap = guide.with(|g| g.settings.clone());
+        dispatch_calibration_bulk(&s_save_cal, &snap);
+    };
+
     // Guider-backend radio — dispatches Options::GuiderType (int).
     let s_internal = send.clone();
     let on_internal = move |_| {
@@ -564,6 +657,12 @@ pub fn GuideTab(
                             {move || tr().guide_clear_cal}
                         </button>
                         <button
+                            class="btn btn-ghost"
+                            on:click=on_export_log.clone()
+                            disabled=move || guide.with(|g| g.log.is_empty())>
+                            {move || tr().guide_export_log}
+                        </button>
+                        <button
                             class="btn btn-ghost ml-auto"
                             on:click=move |_| settings_open.set(true)>
                             {move || tr().guide_settings_button}
@@ -590,11 +689,18 @@ pub fn GuideTab(
                                 <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
                                     {move || tr().guide_settings_title}
                                 </h2>
-                                <button
-                                    class="btn btn-ghost"
-                                    on:click=move |_| settings_open.set(false)>
-                                    {move || tr().imaging_close}
-                                </button>
+                                <div class="flex items-center gap-sp-2">
+                                    <button
+                                        class="btn btn-ghost"
+                                        on:click=on_refresh_settings.clone()>
+                                        {move || tr().guide_refresh_settings}
+                                    </button>
+                                    <button
+                                        class="btn btn-ghost"
+                                        on:click=move |_| settings_open.set(false)>
+                                        {move || tr().imaging_close}
+                                    </button>
+                                </div>
                             </div>
                             <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 flex flex-col gap-[14px]">
 
@@ -640,6 +746,11 @@ pub fn GuideTab(
                         {bool_row (&send, guide, lang, "kcfg_ResetGuideCalibration",      |t| t.guide_f_reset_each_start)}
                         {bool_row (&send, guide, lang, "kcfg_ReuseGuideCalibration",      |t| t.guide_f_reuse_cal)}
                         {bool_row (&send, guide, lang, "kcfg_ReverseDecOnPierSideChange", |t| t.guide_f_reverse_dec_flip)}
+                        <div class="mt-sp-2 flex justify-end">
+                            <button class="btn btn-primary" on:click=on_save_calibration.clone()>
+                                {move || tr().guide_save_calibration}
+                            </button>
+                        </div>
                     </div>
                 </details>
 

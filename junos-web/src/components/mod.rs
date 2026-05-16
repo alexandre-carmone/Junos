@@ -1,6 +1,7 @@
 pub mod coord_input;
 pub mod dialog_modal;
 pub mod files;
+pub mod flat_cal;
 pub mod focus;
 pub mod guide;
 pub mod imaging;

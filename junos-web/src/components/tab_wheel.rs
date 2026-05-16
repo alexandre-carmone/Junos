@@ -33,12 +33,13 @@ use crate::{ActiveTabCtx, Tab};
 
 use crate::components::tab_wheel_icons::tab_icon;
 
-pub const TABS: [Tab; 10] = [
+pub const TABS: [Tab; 11] = [
     Tab::Profiles,
     Tab::Sky,
     Tab::Mount,
     Tab::Focus,
     Tab::Imaging,
+    Tab::FlatCal,
     Tab::Files,
     Tab::PolarAlign,
     Tab::Guide,
@@ -77,6 +78,7 @@ pub fn tab_title(tab: Tab, s: &crate::i18n::Translations) -> &'static str {
         Tab::Guide      => s.tab_guide,
         Tab::Scheduler  => s.tab_scheduler,
         Tab::Mosaic     => s.tab_mosaic,
+        Tab::FlatCal    => s.tab_flat_cal,
         Tab::Profiles   => s.tab_profiles,
     }
 }

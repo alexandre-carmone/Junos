@@ -16,10 +16,15 @@
 //! Inbound (KStars → browser): `new_polar_state` (partial: stage, message,
 //! enabled, vector, updatedError*) and `align_get_all_settings` (settings map).
 //!
+//! `polar_reset_view` (commands.h:419) is wired: KStars' align module
+//! reacts to it even without us hosting a frame view (it emits the
+//! `resetPolarView()` signal which the desktop Align widget consumes).
+//!
 //! Deliberately NOT wired: `polar_set_algorithm` (widget-name bug upstream,
 //! message.cpp:1102 — use align_set_all_settings instead),
-//! `polar_set_crosshair` / `polar_set_zoom` / `polar_reset_view` (no frame
-//! view), `NEW_ALIGN_FRAME` (declared in commands.h:35 but never emitted).
+//! `polar_set_crosshair` / `polar_set_zoom` (require a live frame canvas in
+//! this tab; deferred), `NEW_ALIGN_FRAME` (declared in commands.h:35 but
+//! never emitted).
 
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
@@ -286,6 +291,11 @@ pub fn PolarAlignTab(
     let s_refresh_done = send.clone();
     let on_stop_refresh = move |_| {
         send_cmd(&s_refresh_done, "polar_refreshing_done", serde_json::json!({}));
+    };
+
+    let s_reset_view = send.clone();
+    let on_reset_view = move |_| {
+        send_cmd(&s_reset_view, "polar_reset_view", serde_json::json!({}));
     };
 
     let s_dir = send.clone();
@@ -637,12 +647,15 @@ pub fn PolarAlignTab(
                                 </div>
 
                                 // Refresh controls
-                                <div class="flex gap-sp-2 mt-sp-2">
+                                <div class="flex gap-sp-2 mt-sp-2 flex-wrap">
                                     <button on:click=on_start_refresh.clone() class=BTN_START>
                                         {move || tr().pa_start_refresh}
                                     </button>
                                     <button on:click=on_stop_refresh.clone() class=BTN_ROTATION>
                                         {move || tr().pa_stop_refresh}
+                                    </button>
+                                    <button on:click=on_reset_view.clone() class="btn btn-ghost">
+                                        {move || tr().pa_reset_view}
                                     </button>
                                 </div>
                             </div>

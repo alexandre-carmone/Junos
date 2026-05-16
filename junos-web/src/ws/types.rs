@@ -251,6 +251,46 @@ impl ProfileInfo {
     }
 }
 
+// Dust cap + flat panel state. KStars declares `new_cap_state` in
+// commands.h:32 and a `updateCapStatus` helper at message.cpp:2597, but
+// nothing calls it as of the current snapshot — so we rely on the
+// underlying INDI properties (`CAP_PARK` switch on dust caps,
+// `FLAT_LIGHT_CONTROL` switch + `FLAT_LIGHT_INTENSITY` number on
+// lightbox-capable drivers). Many drivers (e.g. FlipFlat) advertise both
+// the DUSTCAP_INTERFACE and LIGHTBOX_INTERFACE bits on the same device.
+//
+// Park state derives from the active element in `CAP_PARK`:
+//   PARK on, UNPARK off  → Parked (closed)
+//   PARK off, UNPARK on  → Unparked (open)
+//   `state == "Busy"`    → Moving
+//   anything else        → Unknown
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DustCapParkState {
+    #[default]
+    Unknown,
+    Parked,
+    Unparked,
+    Moving,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DustCapStatusData {
+    /// INDI device name (e.g. "Flip Flat"). Empty until `get_devices` lands.
+    pub device:           String,
+    pub connected:        bool,
+    /// True when the device advertises the LIGHTBOX_INTERFACE bit (1 << 10).
+    pub has_light_panel:  bool,
+    pub park_state:       DustCapParkState,
+    /// `FLAT_LIGHT_ON` switch state — None when the device has no light box.
+    pub light_on:         Option<bool>,
+    /// Current `FLAT_LIGHT_INTENSITY_VALUE` from the INDI number property.
+    pub brightness:       Option<f64>,
+    /// `min` / `max` reported by the FLAT_LIGHT_INTENSITY number property
+    /// — drivers vary (0..255 typical, but some report 0..65535).
+    pub brightness_min:   Option<f64>,
+    pub brightness_max:   Option<f64>,
+}
+
 // Polar alignment state (PAA). See kstars/ekos/align/polaralignmentassistant.*
 // and the `new_polar_state` arms in message.cpp:1157-1263.
 #[derive(Debug, Clone, Default)]

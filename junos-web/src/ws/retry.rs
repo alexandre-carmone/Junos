@@ -84,6 +84,7 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
 
     let online   = store.online;
     let trains   = store.optical_trains;
+    let dustcap  = store.dustcap_status;
 
     spawn_local(async move {
         loop {
@@ -153,6 +154,24 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
                         "type": "device_property_get",
                         "payload": { "device": train.focuser, "property": prop, "compact": true }
                     }).to_string());
+                }
+            }
+
+            // ── Dust-cap / flat-panel INDI properties ────────────────
+            if let Some(cap) = dustcap.get_untracked() {
+                if !cap.device.is_empty() {
+                    send(serde_json::json!({
+                        "type": "device_property_get",
+                        "payload": { "device": cap.device, "property": "CAP_PARK", "compact": true }
+                    }).to_string());
+                    if cap.has_light_panel {
+                        for prop in ["FLAT_LIGHT_CONTROL", "FLAT_LIGHT_INTENSITY"] {
+                            send(serde_json::json!({
+                                "type": "device_property_get",
+                                "payload": { "device": cap.device, "property": prop, "compact": true }
+                            }).to_string());
+                        }
+                    }
                 }
             }
         }

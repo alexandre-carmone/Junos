@@ -12,6 +12,7 @@ use crate::compat::{
     self, FilterWheelSnapshot, MosaicSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot,
 };
 use crate::components::files::FilesTab;
+use crate::components::flat_cal::FlatCalTab;
 use crate::components::focus::FocusTab;
 use crate::components::guide::GuideTab;
 use crate::components::imaging::ImagingTab;
@@ -48,6 +49,7 @@ pub fn TabContent(
     let capture_snapshot = compat::derive_capture(&store);
     let polar_snapshot = compat::derive_polar_align(&store);
     let guide_snapshot = compat::derive_guide(&store);
+    let dustcap_snapshot = compat::derive_dustcap(&store);
     let scheduler_snapshot = compat::derive_scheduler(&store);
     let focal_length_mm = {
         let ts = store.telescope_settings;
@@ -62,6 +64,7 @@ pub fn TabContent(
     let send_mount = Arc::clone(&send);
     let send_focus = Arc::clone(&send);
     let send_imaging = Arc::clone(&send);
+    let send_flatcal = Arc::clone(&send);
     let send_polar = Arc::clone(&send);
     let send_guide = Arc::clone(&send);
     let send_scheduler = Arc::clone(&send);
@@ -73,6 +76,7 @@ pub fn TabContent(
     let mount_visible = move || active_tab.get() == Tab::Mount;
     let focus_visible = move || active_tab.get() == Tab::Focus;
     let imaging_visible = move || active_tab.get() == Tab::Imaging;
+    let flatcal_visible = move || active_tab.get() == Tab::FlatCal;
     let files_visible = move || active_tab.get() == Tab::Files;
     let polar_visible = move || active_tab.get() == Tab::PolarAlign;
     let guide_visible = move || active_tab.get() == Tab::Guide;
@@ -113,6 +117,11 @@ pub fn TabContent(
         <Show when=imaging_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <ImagingTab capture=capture_snapshot camera=camera filter_wheel=filter_wheel send=Arc::clone(&send_imaging) />
+            </div>
+        </Show>
+        <Show when=flatcal_visible>
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
+                <FlatCalTab cap=dustcap_snapshot send=Arc::clone(&send_flatcal) />
             </div>
         </Show>
         <Show when=files_visible>

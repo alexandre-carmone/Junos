@@ -172,6 +172,13 @@ translations! {
     mount_solve_dark_frame, mount_solve_settling_ms, mount_solve_solver_source,
     mount_solve_solver_local, mount_solve_solver_remote, mount_solve_rotator_threshold,
     mount_solve_rotator_control,
+    // Guide tab — new actions (refresh, bulk-save, log export)
+    guide_refresh_settings, guide_save_calibration, guide_export_log,
+    // Polar align — reset-view button
+    pa_reset_view,
+    // Flat Cal tab — extra labels not already in fc_* / dc_*
+    fc_section_dust_cap, fc_no_device, fc_status_unknown, fc_status_parked,
+    fc_status_unparked, fc_status_moving, fc_brightness_label,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

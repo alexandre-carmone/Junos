@@ -45,6 +45,11 @@ pub struct DeviceStore {
     pub mosaic_tiles: RwSignal<Option<serde_json::Value>>,
     pub livestacker_state: RwSignal<Option<LiveStackerState>>,
     pub livestacker_settings: RwSignal<serde_json::Value>,
+    /// Dust cap / flat panel status. Driven by `new_cap_state` when KStars
+    /// emits it (`updateCapStatus` declared at message.cpp:2597) and by
+    /// INDI `CAP_PARK` / `FLAT_LIGHT_CONTROL` / `FLAT_LIGHT_INTENSITY`
+    /// pushes for first-mount and continuous updates.
+    pub dustcap_status: RwSignal<Option<DustCapStatusData>>,
     /// Equipment profile list, populated by `get_profiles` responses.
     /// Available before `online == true` — profile CRUD is dispatched
     /// before the Ekos-startup gate (message.cpp:249).
@@ -106,6 +111,7 @@ impl DeviceStore {
             mosaic_tiles: RwSignal::new(None),
             livestacker_state: RwSignal::new(None),
             livestacker_settings: RwSignal::new(serde_json::Value::Null),
+            dustcap_status: RwSignal::new(None),
             profiles: RwSignal::new(Vec::new()),
             selected_profile: RwSignal::new(None),
             drivers: RwSignal::new(Vec::new()),
@@ -156,7 +162,62 @@ impl DeviceStore {
                     self.scheduler_jobs.set(Vec::new());
                     self.mosaic_tiles.set(None);
                     self.livestacker_state.set(None);
+                    self.dustcap_status.set(None);
                 }
+            }
+
+            // KStars device inventory (message.cpp:342). Payload is an array
+            // of `{name, connected, version, interface}` — `interface` is an
+            // INDI driver-interface bitfield (libindi/basedevice.h). Bits
+            // we care about here:
+            //   DUSTCAP_INTERFACE  = 1 << 9  = 512
+            //   LIGHTBOX_INTERFACE = 1 << 10 = 1024
+            // Many flat-panel drivers (Flip Flat, Alnitak) advertise both
+            // bits on a single device.
+            "get_devices" => {
+                const DUSTCAP_BIT:  i64 = 1 << 9;
+                const LIGHTBOX_BIT: i64 = 1 << 10;
+                if let Some(arr) = payload.as_array() {
+                    let cap_dev = arr.iter().find(|d| {
+                        let iface = d["interface"].as_i64().unwrap_or(0);
+                        iface & (DUSTCAP_BIT | LIGHTBOX_BIT) != 0
+                    });
+                    if let Some(dev) = cap_dev {
+                        let name = dev["name"].as_str().unwrap_or("").to_string();
+                        let connected = dev["connected"].as_bool().unwrap_or(false);
+                        let iface = dev["interface"].as_i64().unwrap_or(0);
+                        let has_light = iface & LIGHTBOX_BIT != 0;
+                        self.dustcap_status.update(|opt| {
+                            let s = opt.get_or_insert_with(DustCapStatusData::default);
+                            if !name.is_empty() { s.device = name; }
+                            s.connected = connected;
+                            s.has_light_panel = has_light;
+                        });
+                    }
+                }
+            }
+
+            // Direct cap-state push from KStars (`updateCapStatus` declared
+            // at message.cpp:2597). Currently no call site, but if it
+            // becomes wired the payload is a free-form QJsonObject — we
+            // accept the same field set we synthesise from INDI props.
+            "new_cap_state" => {
+                self.dustcap_status.update(|opt| {
+                    let s = opt.get_or_insert_with(DustCapStatusData::default);
+                    if let Some(v) = payload["device"].as_str() {
+                        if !v.is_empty() { s.device = v.to_string(); }
+                    }
+                    if let Some(v) = payload["connected"].as_bool() { s.connected = v; }
+                    if let Some(v) = payload["lightOn"].as_bool() { s.light_on = Some(v); }
+                    if let Some(v) = payload["brightness"].as_f64() { s.brightness = Some(v); }
+                    if let Some(v) = payload["parkStatus"].as_i64() {
+                        s.park_state = match v {
+                            0 => DustCapParkState::Parked,
+                            1 => DustCapParkState::Unparked,
+                            _ => DustCapParkState::Unknown,
+                        };
+                    }
+                });
             }
 
             "mount_get_all_settings" => {
@@ -499,6 +560,89 @@ impl DeviceStore {
                             fs.current_slot = slot;
                         });
                     }
+                } else if prop == "CAP_PARK" {
+                    // Switch property — element states tell us park vs unpark.
+                    // INDI also surfaces "Busy" while the cap is in motion;
+                    // we map that to `Moving`. Element names per
+                    // kstars/indi/indidustcap.cpp:34.
+                    let state_busy = payload["state"].as_str() == Some("Busy");
+                    let mut park_on: Option<bool> = None;
+                    let mut unpark_on: Option<bool> = None;
+                    if let Some(arr) = payload["switches"].as_array() {
+                        for el in arr {
+                            let n = el["name"].as_str().unwrap_or("");
+                            let v = el["value"].as_bool()
+                                .or_else(|| el["state"].as_str().map(|s| s == "On"));
+                            if n == "PARK" { park_on = v; }
+                            else if n == "UNPARK" { unpark_on = v; }
+                        }
+                    }
+                    let park_state = if state_busy {
+                        DustCapParkState::Moving
+                    } else {
+                        match (park_on, unpark_on) {
+                            (Some(true), _) => DustCapParkState::Parked,
+                            (_, Some(true)) => DustCapParkState::Unparked,
+                            _ => DustCapParkState::Unknown,
+                        }
+                    };
+                    self.dustcap_status.update(|opt| {
+                        let s = opt.get_or_insert_with(DustCapStatusData::default);
+                        if let Some(dev) = payload["device"].as_str() {
+                            if !dev.is_empty() { s.device = dev.to_string(); }
+                        }
+                        s.park_state = park_state;
+                    });
+                } else if prop == "FLAT_LIGHT_CONTROL" {
+                    // Light on/off switch. Element name per
+                    // kstars/indi/indilightbox.cpp:47.
+                    let mut light_on: Option<bool> = None;
+                    if let Some(arr) = payload["switches"].as_array() {
+                        for el in arr {
+                            if el["name"].as_str() == Some("FLAT_LIGHT_ON") {
+                                light_on = el["value"].as_bool()
+                                    .or_else(|| el["state"].as_str().map(|s| s == "On"));
+                            }
+                        }
+                    }
+                    if light_on.is_some() {
+                        self.dustcap_status.update(|opt| {
+                            let s = opt.get_or_insert_with(DustCapStatusData::default);
+                            if let Some(dev) = payload["device"].as_str() {
+                                if !dev.is_empty() { s.device = dev.to_string(); }
+                            }
+                            s.has_light_panel = true;
+                            s.light_on = light_on;
+                        });
+                    }
+                } else if prop == "FLAT_LIGHT_INTENSITY" {
+                    // Number property — value + min/max per
+                    // kstars/indi/indilightbox.cpp:63,114.
+                    let mut brightness: Option<f64> = None;
+                    let mut bmin: Option<f64> = None;
+                    let mut bmax: Option<f64> = None;
+                    if let Some(arr) = payload["numbers"].as_array() {
+                        for el in arr {
+                            // Different drivers name the element differently
+                            // (FLAT_LIGHT_INTENSITY_VALUE vs FLAT_INTENSITY).
+                            // The lightbox usually exposes a single number,
+                            // so just take the first one we see.
+                            brightness = el["value"].as_f64().or(brightness);
+                            bmin = el["min"].as_f64().or(bmin);
+                            bmax = el["max"].as_f64().or(bmax);
+                            if brightness.is_some() { break; }
+                        }
+                    }
+                    self.dustcap_status.update(|opt| {
+                        let s = opt.get_or_insert_with(DustCapStatusData::default);
+                        if let Some(dev) = payload["device"].as_str() {
+                            if !dev.is_empty() { s.device = dev.to_string(); }
+                        }
+                        s.has_light_panel = true;
+                        if brightness.is_some() { s.brightness = brightness; }
+                        if bmin.is_some() { s.brightness_min = bmin; }
+                        if bmax.is_some() { s.brightness_max = bmax; }
+                    });
                 } else if prop == "EQUATORIAL_EOD_COORD" {
                     // INDI mount coord property: RA in hours, DEC in degrees.
                     let ra_h = extract_indi_number(payload, "RA");
