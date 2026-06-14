@@ -58,6 +58,12 @@ pub fn ImagingTab(
 
     let on_toggle_preview = move |_: web_sys::MouseEvent| {
         preview_visible.update(|v| *v = !*v);
+        if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            let _ = ls.set_item(
+                util::PREVIEW_VISIBLE_KEY,
+                if preview_visible.get_untracked() { "true" } else { "false" },
+            );
+        }
     };
 
     let reveal_ctx = use_context::<RevealInFilesCtx>();

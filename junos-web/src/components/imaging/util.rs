@@ -19,11 +19,16 @@ pub(super) fn default_capture_setting_value(key: &str) -> Option<serde_json::Val
     }
 }
 
+pub(super) const PREVIEW_VISIBLE_KEY: &str = "imaging_preview_visible";
+
+/// Preview pane starts visible everywhere. The user can collapse it via the
+/// toggle, and that choice is persisted in localStorage (see `mod.rs`
+/// `on_toggle_preview`) so it survives reloads and tab switches.
 pub(super) fn initial_preview_visible() -> bool {
     web_sys::window()
-        .and_then(|w| w.inner_width().ok())
-        .and_then(|v| v.as_f64())
-        .map(|w| w >= 900.0)
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|ls| ls.get_item(PREVIEW_VISIBLE_KEY).ok().flatten())
+        .map(|v| v != "false")
         .unwrap_or(true)
 }
 
