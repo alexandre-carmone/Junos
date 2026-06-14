@@ -41,7 +41,7 @@ use wasm_bindgen_futures::spawn_local;
 pub use store::DeviceStore;
 pub use types::*;
 
-use retry::{spawn_refresh_loop, spawn_retry_property, spawn_retry_property_with};
+use retry::{spawn_mount_coord_loop, spawn_refresh_loop, spawn_retry_property, spawn_retry_property_with};
 
 /// Type-erased command sink. Components dispatch raw Ekos Live JSON strings.
 pub type SendCmd = Arc<dyn Fn(String) + Send + Sync>;
@@ -350,6 +350,8 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
 
     // Long-lived refresh loop — keeps INDI properties current after bootstrap.
     spawn_refresh_loop(send_fn.clone(), store.clone());
+    // Dedicated fast loop for mount RA/Dec freshness + self-healing re-subscribe.
+    spawn_mount_coord_loop(send_fn.clone(), store.clone());
 
     let store_for_ws = store.clone();
     spawn_local(async move {

@@ -140,12 +140,8 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             }
 
             // ── Mount INDI properties ────────────────────────────────
-            if !train.mount.is_empty() && train.mount != "--" {
-                send(serde_json::json!({
-                    "type": "device_property_get",
-                    "payload": { "device": train.mount, "property": "EQUATORIAL_EOD_COORD", "compact": true }
-                }).to_string());
-            }
+            // EQUATORIAL_EOD_COORD is owned by `spawn_mount_coord_loop`
+            // (faster cadence + re-subscribe); intentionally not polled here.
 
             // ── Focuser INDI properties ──────────────────────────────
             if !train.focuser.is_empty() && train.focuser != "--" {
@@ -174,6 +170,70 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
                     }
                 }
             }
+        }
+    });
+}
+
+/// Dedicated, self-healing freshness loop for the mount's RA/Dec.
+///
+/// `spawn_retry_property` only bootstraps EQUATORIAL_EOD_COORD then stops once
+/// the first value lands, and a one-shot `device_property_subscribe` can be
+/// silently dropped by KStars (driver not registered / settleStatus not yet
+/// Success — message.cpp:1664, pitfalls #1/#3) and is never renewed. That left
+/// the planetarium mount reticle showing a stale position that never recovered
+/// — visibly wrong on-sky and still wrong after a plate-solve + sync.
+///
+/// This loop owns EQUATORIAL_EOD_COORD: it re-polls every 1.5 s (so the marker
+/// tracks slews/syncs without the 5 s lag) and re-subscribes every ~12 s (so a
+/// dropped push self-heals). It resolves the mount device from the active
+/// optical train, falling back to the device name learned from prior
+/// `new_mount_state`/coord pushes (`mount_status.device`) when the train has no
+/// mount set.
+pub(super) fn spawn_mount_coord_loop(send: SendCmd, store: DeviceStore) {
+    use gloo_timers::future::TimeoutFuture;
+
+    let online = store.online;
+    let trains = store.optical_trains;
+    let mount_status = store.mount_status;
+
+    spawn_local(async move {
+        let mut tick: u32 = 0;
+        loop {
+            TimeoutFuture::new(1_500).await;
+
+            if !online.get_untracked() {
+                continue;
+            }
+
+            // Prefer the active train's mount; fall back to the device name we
+            // already learned from coord pushes when the train has none.
+            let device = trains
+                .get_untracked()
+                .first()
+                .map(|t| t.mount.clone())
+                .filter(|m| !m.is_empty() && m != "--")
+                .or_else(|| {
+                    mount_status
+                        .get_untracked()
+                        .map(|m| m.device)
+                        .filter(|d| !d.is_empty() && d != "--")
+                });
+            let Some(device) = device else { continue };
+
+            send(serde_json::json!({
+                "type": "device_property_get",
+                "payload": { "device": device, "property": "EQUATORIAL_EOD_COORD", "compact": true }
+            }).to_string());
+
+            // Re-subscribe every ~12 s so a silently-dropped push subscription
+            // recovers on its own; the 1.5 s poll guarantees freshness meanwhile.
+            if tick % 8 == 0 {
+                send(serde_json::json!({
+                    "type": "device_property_subscribe",
+                    "payload": { "device": device, "properties": ["EQUATORIAL_EOD_COORD"] }
+                }).to_string());
+            }
+            tick = tick.wrapping_add(1);
         }
     });
 }
