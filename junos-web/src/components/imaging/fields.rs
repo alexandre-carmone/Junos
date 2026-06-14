@@ -175,12 +175,25 @@ pub(super) fn render_exposure_field(
     let debounce: StoredValue<Option<gloo_timers::callback::Timeout>, LocalStorage> =
         StoredValue::new_local(None);
     let dispatch_chip = dispatch.clone();
-    // While the user is actively typing, `editing` holds the raw text so the
-    // controlled `prop:value` echoes it verbatim instead of snapping back to the
-    // stale server value during the 250 ms debounce window. Cleared once the
-    // debounced dispatch commits (or a preset chip overrides the field), after
-    // which `get_value()` drives the display again.
-    let editing: RwSignal<Option<String>> = RwSignal::new(None);
+    // The field is uncontrolled: `text` is pre-filled from the current exposure
+    // and kept in sync with the server ONLY until the user first touches it.
+    // After that the input is never auto-overwritten, so typing can't revert and
+    // an integer like `1` stays `1` instead of being reformatted to `1.0`.
+    let text: RwSignal<String> = RwSignal::new(String::new());
+    let touched: RwSignal<bool> = RwSignal::new(false);
+    // Clean numeric string (1.0 -> "1", 0.005 -> "0.005"), empty if no value yet.
+    let display_value = move || {
+        get_value()
+            .as_f64()
+            .map(|n| n.to_string())
+            .unwrap_or_default()
+    };
+    Effect::new(move |_| {
+        let v = display_value();
+        if !touched.get_untracked() {
+            text.set(v);
+        }
+    });
 
     view! {
         <div class="flex flex-col gap-sp-2">
@@ -193,14 +206,12 @@ pub(super) fn render_exposure_field(
                         max="3600"
                         step="any"
                         inputmode="decimal"
-                        prop:value=move || {
-                            editing.get().unwrap_or_else(|| value_to_display(&get_value()))
-                        }
+                        prop:value=move || text.get()
                         on:input=move |ev| {
                             let raw = event_target_value(&ev);
-                            // Pin the typed text immediately so the controlled
-                            // value doesn't revert while the dispatch debounces.
-                            editing.set(Some(raw.clone()));
+                            // First edit detaches the field from server sync.
+                            touched.set(true);
+                            text.set(raw.clone());
                             let d = dispatch_input.clone();
                             // Cancel any pending dispatch and queue a fresh one.
                             // Dropping the previous Timeout cancels it.
@@ -211,8 +222,6 @@ pub(super) fn render_exposure_field(
                                 if !n.is_finite() || n <= 0.0 { return; }
                                 if let Some(num) = serde_json::Number::from_f64(n) {
                                     d("captureExposureN", serde_json::Value::Number(num));
-                                    // Hand display back to the committed value.
-                                    editing.set(None);
                                 }
                             });
                             debounce.set_value(Some(timeout));
@@ -226,7 +235,7 @@ pub(super) fn render_exposure_field(
                 {EXPOSURE_PRESETS.iter().copied().map(|preset| {
                     let d = dispatch_chip.clone();
                     let label = format_preset(preset);
-                    let active = move || get_value().as_f64()
+                    let active = move || text.get().trim().parse::<f64>().ok()
                         .map(|n| (n - preset).abs() < 1e-6)
                         .unwrap_or(false);
                     view! {
@@ -242,7 +251,8 @@ pub(super) fn render_exposure_field(
                                 // Cancel any in-flight debounced text dispatch
                                 // and push the preset value immediately.
                                 debounce.set_value(None);
-                                editing.set(None);
+                                touched.set(true);
+                                text.set(preset.to_string());
                                 if let Some(num) = serde_json::Number::from_f64(preset) {
                                     d("captureExposureN", serde_json::Value::Number(num));
                                 }
