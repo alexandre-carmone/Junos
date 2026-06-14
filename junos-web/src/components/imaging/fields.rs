@@ -175,6 +175,12 @@ pub(super) fn render_exposure_field(
     let debounce: StoredValue<Option<gloo_timers::callback::Timeout>, LocalStorage> =
         StoredValue::new_local(None);
     let dispatch_chip = dispatch.clone();
+    // While the user is actively typing, `editing` holds the raw text so the
+    // controlled `prop:value` echoes it verbatim instead of snapping back to the
+    // stale server value during the 250 ms debounce window. Cleared once the
+    // debounced dispatch commits (or a preset chip overrides the field), after
+    // which `get_value()` drives the display again.
+    let editing: RwSignal<Option<String>> = RwSignal::new(None);
 
     view! {
         <div class="flex flex-col gap-sp-2">
@@ -187,9 +193,14 @@ pub(super) fn render_exposure_field(
                         max="3600"
                         step="any"
                         inputmode="decimal"
-                        prop:value=move || value_to_display(&get_value())
+                        prop:value=move || {
+                            editing.get().unwrap_or_else(|| value_to_display(&get_value()))
+                        }
                         on:input=move |ev| {
                             let raw = event_target_value(&ev);
+                            // Pin the typed text immediately so the controlled
+                            // value doesn't revert while the dispatch debounces.
+                            editing.set(Some(raw.clone()));
                             let d = dispatch_input.clone();
                             // Cancel any pending dispatch and queue a fresh one.
                             // Dropping the previous Timeout cancels it.
@@ -200,6 +211,8 @@ pub(super) fn render_exposure_field(
                                 if !n.is_finite() || n <= 0.0 { return; }
                                 if let Some(num) = serde_json::Number::from_f64(n) {
                                     d("captureExposureN", serde_json::Value::Number(num));
+                                    // Hand display back to the committed value.
+                                    editing.set(None);
                                 }
                             });
                             debounce.set_value(Some(timeout));
@@ -229,6 +242,7 @@ pub(super) fn render_exposure_field(
                                 // Cancel any in-flight debounced text dispatch
                                 // and push the preset value immediately.
                                 debounce.set_value(None);
+                                editing.set(None);
                                 if let Some(num) = serde_json::Number::from_f64(preset) {
                                     d("captureExposureN", serde_json::Value::Number(num));
                                 }
