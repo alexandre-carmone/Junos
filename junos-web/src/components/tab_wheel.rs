@@ -39,12 +39,12 @@ pub const TABS: [Tab; 11] = [
     Tab::Mount,
     Tab::Focus,
     Tab::Imaging,
-    Tab::FlatCal,
     Tab::Files,
     Tab::PolarAlign,
     Tab::Guide,
     Tab::Scheduler,
     Tab::Mosaic,
+    Tab::FlatCal,
 ];
 
 const N: usize = TABS.len();
