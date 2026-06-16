@@ -167,32 +167,135 @@ pub fn FocusTab(
         let h = canvas.height() as f64;
         let Ok(Some(ctx)) = canvas.get_context("2d") else { return };
         let ctx: CanvasRenderingContext2d = ctx.unchecked_into();
+
+        // Background.
         ctx.set_fill_style_str("#0a0a0f");
         ctx.fill_rect(0.0, 0.0, w, h);
-        ctx.set_stroke_style_str("#222");
+
+        // Margined plot box — leave room for Y tick labels (left) and X tick
+        // labels (bottom). Compact: tuned to the ~90 px backing height.
+        let ml = 34.0; // left  — Y tick labels
+        let mb = 14.0; // bottom — X tick labels
+        let mt = 8.0;  // top
+        let mr = 8.0;  // right
+        let px0 = ml;
+        let py0 = mt;
+        let pw = (w - ml - mr).max(1.0);
+        let ph = (h - mt - mb).max(1.0);
+        let px1 = px0 + pw;
+        let py1 = py0 + ph;
+
+        // Plot frame (Y axis + X axis lines).
+        ctx.set_stroke_style_str("#2a2c3a");
         ctx.set_line_width(1.0);
         ctx.begin_path();
-        ctx.move_to(0.0, h - 0.5);
-        ctx.line_to(w, h - 0.5);
+        ctx.move_to(px0 + 0.5, py0);
+        ctx.line_to(px0 + 0.5, py1 + 0.5);
+        ctx.line_to(px1, py1 + 0.5);
         let _ = ctx.stroke();
-        if history.len() < 2 { return; }
-        let min_hfr = history.iter().map(|s| s.hfr).fold(f64::INFINITY, f64::min);
-        let max_hfr = history.iter().map(|s| s.hfr).fold(f64::NEG_INFINITY, f64::max);
-        let span = (max_hfr - min_hfr).max(0.1);
-        let pad = 6.0;
+
+        let _ = ctx.set_font("9px monospace");
+
+        // HFR (Y) value range, with a small headroom pad so the curve never
+        // touches the frame. `span` floor keeps flat-HFR runs from collapsing.
+        let raw_min = history.iter().map(|s| s.hfr).fold(f64::INFINITY, f64::min);
+        let raw_max = history.iter().map(|s| s.hfr).fold(f64::NEG_INFINITY, f64::max);
+        let (y_min, y_max) = if history.is_empty() || !raw_min.is_finite() {
+            (0.0, 1.0)
+        } else {
+            let span = (raw_max - raw_min).max(0.1);
+            let pad = span * 0.12;
+            (raw_min - pad, raw_max + pad)
+        };
+        let y_span = (y_max - y_min).max(0.1);
+        let y_of = |hfr: f64| py1 - (hfr - y_min) / y_span * ph;
+
+        // Y gridlines + tick labels at min / mid / max of the padded range.
+        ctx.set_text_align("right");
+        ctx.set_text_baseline("middle");
+        for k in 0..3 {
+            let val = y_min + y_span * (k as f64) / 2.0;
+            let y = y_of(val);
+            if k > 0 && k < 2 {
+                ctx.set_stroke_style_str("#1e2030");
+                ctx.set_line_width(1.0);
+                ctx.begin_path();
+                ctx.move_to(px0 + 1.0, y + 0.5);
+                ctx.line_to(px1, y + 0.5);
+                let _ = ctx.stroke();
+            }
+            ctx.set_fill_style_str("#8896b5");
+            let _ = ctx.fill_text(&format!("{:.2}", val), px0 - 4.0, y);
+        }
+
+        // Axis titles.
+        ctx.set_fill_style_str("#6b7591");
+        ctx.set_text_align("left");
+        ctx.set_text_baseline("top");
+        let _ = ctx.fill_text("HFR", 2.0, 1.0);
+        ctx.set_text_align("right");
+        let _ = ctx.fill_text("#", w - 2.0, py1 + 3.0);
+
+        if history.len() < 2 {
+            // Empty / single-sample: leave the labelled frame visible.
+            return;
+        }
+
+        let n = history.len();
+        let x_of = |i: usize| px0 + (i as f64) * pw / ((n - 1) as f64);
+
+        // X (sample index) ticks — cap at ~6 labels, always include the last.
+        ctx.set_text_align("center");
+        ctx.set_text_baseline("top");
+        let step = ((n - 1) / 5).max(1);
+        let mut idx = 0usize;
+        while idx < n {
+            let x = x_of(idx);
+            ctx.set_stroke_style_str("#2a2c3a");
+            ctx.set_line_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(x + 0.5, py1);
+            ctx.line_to(x + 0.5, py1 + 2.5);
+            let _ = ctx.stroke();
+            ctx.set_fill_style_str("#8896b5");
+            let _ = ctx.fill_text(&format!("{}", idx + 1), x, py1 + 3.0);
+            idx += step;
+        }
+        // Always label the final sample.
+        {
+            let x = x_of(n - 1);
+            ctx.set_stroke_style_str("#2a2c3a");
+            ctx.set_line_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(x + 0.5, py1);
+            ctx.line_to(x + 0.5, py1 + 2.5);
+            let _ = ctx.stroke();
+            ctx.set_fill_style_str("#8896b5");
+            let _ = ctx.fill_text(&format!("{}", n), x, py1 + 3.0);
+        }
+
+        // Series polyline.
         ctx.set_stroke_style_str("#88aaff");
         ctx.set_line_width(1.5);
         ctx.begin_path();
         for (i, s) in history.iter().enumerate() {
-            let x = pad + (i as f64) * (w - 2.0 * pad) / ((history.len() - 1) as f64);
-            let y = pad + (1.0 - (s.hfr - min_hfr) / span) * (h - 2.0 * pad);
+            let x = x_of(i);
+            let y = y_of(s.hfr);
             if i == 0 { ctx.move_to(x, y); } else { ctx.line_to(x, y); }
         }
         let _ = ctx.stroke();
-        ctx.set_fill_style_str("#cfe0ff");
-        let label = format!("HFR  min {:.2}   max {:.2}", min_hfr, max_hfr);
-        let _ = ctx.set_font("10px monospace");
-        let _ = ctx.fill_text(&label, 6.0, 12.0);
+
+        // Per-sample dots, with the last (current) sample emphasised.
+        for (i, s) in history.iter().enumerate() {
+            let x = x_of(i);
+            let y = y_of(s.hfr);
+            let last = i == n - 1;
+            ctx.set_fill_style_str(if last { "#ffffff" } else { "#cfe0ff" });
+            ctx.begin_path();
+            let _ = ctx.arc(x, y, if last { 2.4 } else { 1.6 }, 0.0,
+                std::f64::consts::TAU);
+            ctx.fill();
+        }
     });
 
     // ── Settings grid ─────────────────────────────────────────────────────
