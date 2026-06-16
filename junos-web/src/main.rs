@@ -33,6 +33,11 @@ pub enum Tab { Sky, Mount, Focus, Imaging, Files, PolarAlign, Guide, Scheduler, 
 #[derive(Clone, Copy)]
 pub struct ActiveTabCtx(pub RwSignal<Tab>);
 
+/// Whether the tab wheel/bar show a text label under each tab icon.
+/// Off by default; persisted to localStorage key `tab_labels`.
+#[derive(Clone, Copy)]
+pub struct TabLabelsCtx(pub RwSignal<bool>);
+
 /// Cross-tab bridge used by the Imaging tab's "Reveal in Files" button.
 /// Payload is an optional absolute path (from KStars capture settings);
 /// if None, the Files tab just switches to the captures root. The Files
@@ -127,6 +132,21 @@ fn App() -> impl IntoView {
             .map(|v| v != "false")
             .unwrap_or(true),
     );
+
+    // ── Tab labels toggle (persisted, off by default) ─────────────────────
+    let show_tab_labels = RwSignal::new(
+        ls.as_ref()
+            .and_then(|s| s.get_item("tab_labels").ok().flatten())
+            .map(|v| v == "true")
+            .unwrap_or(false),
+    );
+    provide_context(TabLabelsCtx(show_tab_labels));
+    Effect::new(move |_| {
+        let v = if show_tab_labels.get() { "true" } else { "false" };
+        if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            let _ = s.set_item("tab_labels", v);
+        }
+    });
 
     // ── Site location ─────────────────────────────────────────────────────
     let site_lat = RwSignal::new(parse_f64("site_latitude", 48.8566));

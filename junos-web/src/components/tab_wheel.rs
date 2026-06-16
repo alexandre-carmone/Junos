@@ -29,7 +29,7 @@ struct DragState {
 }
 
 use crate::i18n::{Lang, t};
-use crate::{ActiveTabCtx, Tab};
+use crate::{ActiveTabCtx, Tab, TabLabelsCtx};
 
 use crate::components::tab_wheel_icons::tab_icon;
 
@@ -90,6 +90,9 @@ pub fn TabWheel() -> impl IntoView {
         .unwrap_or_else(|| RwSignal::new(Tab::Sky));
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
+    let show_labels = use_context::<TabLabelsCtx>()
+        .map(|c| c.0)
+        .unwrap_or_else(|| RwSignal::new(false));
 
     let expanded = RwSignal::new(false);
 
@@ -389,16 +392,21 @@ pub fn TabWheel() -> impl IntoView {
                     view! {
                         <button
                             class=move || {
-                                let base = "absolute w-[66px] h-[44px] rounded-lg p-0 \
+                                let base = "absolute rounded-lg p-0 \
                                             font-mono font-semibold text-md leading-none tracking-[0.05em] \
-                                            min-w-0 flex items-center justify-center cursor-pointer touch-manipulation \
+                                            min-w-0 flex flex-col items-center justify-center gap-0.5 cursor-pointer touch-manipulation \
                                             [-webkit-tap-highlight-color:transparent] \
                                             [transform:translate(-50%,-50%)_rotate(var(--tw-cr,0deg))] \
                                             transition-[background,border-color,box-shadow] duration-150";
-                                if active.get() == tab {
-                                    format!("{base} bg-accent-blue-active border border-text-blue-bright text-text-dim shadow-[0_0_14px_color-mix(in_srgb,var(--text-blue)_45%,transparent)]")
+                                let size = if show_labels.get() {
+                                    "w-[80px] h-[52px] px-1"
                                 } else {
-                                    format!("{base} bg-bg-wheel border border-border-strong text-text-blue shadow-none")
+                                    "w-[66px] h-[44px]"
+                                };
+                                if active.get() == tab {
+                                    format!("{base} {size} bg-accent-blue-active border border-text-blue-bright text-text-dim shadow-[0_0_14px_color-mix(in_srgb,var(--text-blue)_45%,transparent)]")
+                                } else {
+                                    format!("{base} {size} bg-bg-wheel border border-border-strong text-text-blue shadow-none")
                                 }
                             }
                             style=btn_style
@@ -412,11 +420,22 @@ pub fn TabWheel() -> impl IntoView {
                         >
                             <span
                                 class=move || {
-                                    let s = if active.get() == tab { "w-[70%] h-[70%]" } else { "w-[56%] h-[56%]" };
+                                    let s = if show_labels.get() {
+                                        "w-[20px] h-[20px]"
+                                    } else if active.get() == tab {
+                                        "w-[70%] h-[70%]"
+                                    } else {
+                                        "w-[56%] h-[56%]"
+                                    };
                                     format!("inline-block pointer-events-none {s}")
                                 }
                                 inner_html=tab_icon(tab)
                             />
+                            <Show when=move || show_labels.get()>
+                                <span class="text-[9px] leading-none whitespace-nowrap pointer-events-none">
+                                    {move || tab_title(tab, &tr())}
+                                </span>
+                            </Show>
                         </button>
                     }
                 }).collect_view()}
@@ -481,27 +500,50 @@ pub fn TabWheel() -> impl IntoView {
                 />
             </button>
 
-            // Lang toggle — small chip just below the knob, only visible
-            // when expanded.
-            <button
+            // Lang + tab-labels toggles — small chips just below the knob,
+            // only visible when expanded.
+            <div
                 class=move || {
                     let base = "absolute left-1/2 top-[calc(50%+42px)] -translate-x-1/2 \
-                                min-w-[32px] h-[22px] min-h-[22px] px-2 \
-                                rounded-[11px] border border-text-blue bg-bg-wheel text-text-blue \
-                                font-mono font-semibold text-xs leading-none tracking-[0.05em] \
-                                cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] \
-                                transition-opacity duration-150";
+                                flex gap-1 transition-opacity duration-150";
                     let vis = if expanded.get() { "opacity-100 pointer-events-auto" } else { "opacity-0 pointer-events-none" };
                     format!("{base} {vis}")
                 }
-                title=move || lang.get().toggle().label()
-                on:click=move |ev: MouseEvent| {
-                    ev.stop_propagation();
-                    lang.update(|l| *l = l.toggle());
-                }
             >
-                {move || lang.get().label()}
-            </button>
+                <button
+                    class="min-w-[32px] h-[22px] min-h-[22px] px-2 \
+                           rounded-[11px] border border-text-blue bg-bg-wheel text-text-blue \
+                           font-mono font-semibold text-xs leading-none tracking-[0.05em] \
+                           cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent]"
+                    title=move || lang.get().toggle().label()
+                    on:click=move |ev: MouseEvent| {
+                        ev.stop_propagation();
+                        lang.update(|l| *l = l.toggle());
+                    }
+                >
+                    {move || lang.get().label()}
+                </button>
+                <button
+                    class=move || {
+                        let base = "min-w-[30px] h-[22px] min-h-[22px] px-2 \
+                                    rounded-[11px] border \
+                                    font-mono font-semibold text-xs leading-none tracking-[0.05em] \
+                                    cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent]";
+                        if show_labels.get() {
+                            format!("{base} bg-accent-blue-active border-text-blue-bright text-text-dim")
+                        } else {
+                            format!("{base} bg-bg-wheel border-text-blue text-text-blue")
+                        }
+                    }
+                    title=move || tr().tab_labels_toggle
+                    on:click=move |ev: MouseEvent| {
+                        ev.stop_propagation();
+                        show_labels.update(|v| *v = !*v);
+                    }
+                >
+                    "Aa"
+                </button>
+            </div>
         </div>
     }
 }

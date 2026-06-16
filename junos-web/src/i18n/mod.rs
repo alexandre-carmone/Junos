@@ -53,7 +53,7 @@ macro_rules! translations {
 translations! {
     connect, disconnect, start, stop, status, disconnected, tab_sky, tab_camera,
     tab_align, tab_devices, tab_indiserver, tab_log, tab_sky_abbr, tab_focus_abbr, tab_imaging_abbr, tab_polar_abbr,
-    tab_guide_abbr, tab_scheduler_abbr, tab_mosaic_abbr, tab_mosaic, tab_profiles_abbr, tab_profiles, profiles_title, profiles_add,
+    tab_guide_abbr, tab_scheduler_abbr, tab_mosaic_abbr, tab_mosaic, tab_profiles_abbr, tab_profiles, tab_labels_toggle, profiles_title, profiles_add,
     profiles_edit, profiles_delete, profiles_save, profiles_cancel, profiles_launch, profiles_stop, profiles_active, profiles_mode,
     profiles_mode_local, profiles_mode_remote, profiles_host, profiles_port, profiles_auto_connect, profiles_port_selector, profiles_guiding, profiles_web_manager,
     profiles_remote_drivers, profiles_drivers, profiles_name, profiles_confirm_delete, profiles_confirm_launch, profiles_starting, profiles_empty, profiles_new,
