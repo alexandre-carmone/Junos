@@ -110,30 +110,75 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
         });
     }
 
-    // Bind the active optical train to each Ekos module. Without an explicit
+    // Bind each Ekos module to its *saved* optical train. Without an explicit
     // train_set, Guide::m_Camera stays null and the first guide_start silently
     // no-ops via Guide::calibrate() → KSNotification::error (does not propagate
     // over Ekos Live). Focus/Capture happen to win the OpticalTrainManager::
     // updated race; Guide does not (guide.cpp:3479-3499 has no init-time call
     // to refreshOpticalTrain, unlike focus.cpp:8032-8055).
     //
-    // Idempotent: TRAIN_SET handler at message.cpp:1510 just calls
-    // setOpticalTrain(name) which writes to the combo box.
+    // We bind to the per-module assignment from `module_trains`
+    // (train_get_profiles) — NOT blindly to the first train — otherwise every
+    // fresh load would overwrite the user's rig-manager choices: TRAIN_SET →
+    // setOpticalTrain(name) → combo currentIndexChanged → ProfileSettings::
+    // setOneSetting persists it back (mount.cpp:1384, focus.cpp:8025, …).
+    //
+    // Gate on a loaded, non-empty profiles map so we never bind before the
+    // saved assignments arrive. KStars sets all module keys on first train
+    // creation (opticaltrainmanager.cpp:437-442), so the populated map is the
+    // normal state; first-train is only a fallback for an unset key.
+    //
+    // (module, ProfileSettings enum key): 1=Capture 2=Focus 3=Mount 4=Guide
+    // 5=Align — same mapping as the rig-manager ModuleAssign dropdowns.
     {
         let trains_sig = store.optical_trains;
-        let last_train = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let profiles_sig = store.module_trains;
+        let last_sig = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let send_for_effect = send_fn.clone();
         Effect::new(move |_| {
             let trains = trains_sig.get();
-            let Some(train) = trains.first() else { return };
-            if train.name.is_empty() || train.name == *last_train.borrow() {
+            let profiles = profiles_sig.get();
+            let Some(first) = trains.first() else { return };
+            if first.name.is_empty() { return; }
+            // Wait for the saved per-module map before binding anything.
+            if !profiles.as_object().map_or(false, |o| !o.is_empty()) {
                 return;
             }
-            *last_train.borrow_mut() = train.name.clone();
-            for module in ["capture", "focus", "guide", "align"] {
+            // Resolve each module to its saved train name, falling back to the
+            // first train only when the key is absent/unresolved.
+            let resolve = |key: &str| -> String {
+                profiles
+                    .get(key)
+                    .and_then(|v| v.as_i64())
+                    .and_then(|id| trains.iter().find(|t| t.id == id))
+                    .map(|t| t.name.clone())
+                    .unwrap_or_else(|| first.name.clone())
+            };
+            let bindings: Vec<(&str, String)> = [
+                ("capture", "1"),
+                ("focus", "2"),
+                ("mount", "3"),
+                ("guide", "4"),
+                ("align", "5"),
+            ]
+            .into_iter()
+            .map(|(module, key)| (module, resolve(key)))
+            .collect();
+            // Only (re)send when a resolution actually changed, so the 5 s
+            // refresh loop's train_get_all/profiles re-fetches don't re-spam.
+            let signature = bindings
+                .iter()
+                .map(|(m, n)| format!("{m}={n}"))
+                .collect::<Vec<_>>()
+                .join(";");
+            if signature == *last_sig.borrow() {
+                return;
+            }
+            *last_sig.borrow_mut() = signature;
+            for (module, name) in bindings {
                 let msg = serde_json::json!({
                     "type": "train_set",
-                    "payload": { "module": module, "name": &train.name }
+                    "payload": { "module": module, "name": name }
                 })
                 .to_string();
                 send_for_effect(msg);

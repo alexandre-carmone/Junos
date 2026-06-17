@@ -101,6 +101,7 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             send(r#"{"type":"get_states","payload":{}}"#.to_string());
             send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
             send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
+            send(r#"{"type":"train_get_profiles","payload":{}}"#.to_string());
             send(r#"{"type":"capture_get_all_settings","payload":{}}"#.to_string());
             send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
             send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
