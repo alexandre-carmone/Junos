@@ -595,6 +595,7 @@
   "pa_algo_move_star": "Déplacer l'étoile",
   "pa_algo_move_star_calc": "Déplacer l'étoile et calculer l'erreur",
   "pa_speed_max": "Max",
+  "pa_adjust_mount": "Régler monture",
   "guide_guider_label": "Guide :",
   "guide_rms": "RMS :",
   "guide_connected": "Connecté :",

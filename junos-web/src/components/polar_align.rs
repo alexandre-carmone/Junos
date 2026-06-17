@@ -134,6 +134,28 @@ fn format_deg_as_dms_small(deg: f64) -> String {
     }
 }
 
+/// Tolerance below which an axis is considered aligned (no arrow). Mirrors
+/// `minError` in KStars' `PolarAlignmentAssistant::drawArrows`
+/// (kstars/ekos/align/polaralignmentassistant.cpp:307-351).
+const PA_MIN_ERR_DEG: f64 = 20.0 / 3600.0; // 20 arcsec
+
+/// Maps a signed axis error to the glyph telling the user which way to move
+/// the mount to null it. Sign convention follows KStars' `drawArrows`:
+/// for azimuth pass `("←", "→")` (err > 0 → move left), for altitude pass
+/// `("↓", "↑")` (err > 0 → move down). Returns None when the error is within
+/// tolerance or not a finite solve (the `-1` solver-failure sentinel is not
+/// finite-positive here so callers gate on the total error too).
+fn axis_arrow(
+    err: f64,
+    positive_glyph: &'static str,
+    negative_glyph: &'static str,
+) -> Option<&'static str> {
+    if !err.is_finite() || err.abs() < PA_MIN_ERR_DEG {
+        return None;
+    }
+    Some(if err > 0.0 { positive_glyph } else { negative_glyph })
+}
+
 fn settings_str(settings: &serde_json::Value, key: &str) -> Option<String> {
     settings.get(key).and_then(|v| match v {
         serde_json::Value::String(s) => Some(s.clone()),
@@ -644,6 +666,60 @@ pub fn PolarAlignTab(
                                             }
                                         }}
                                     </div>
+                                </div>
+
+                                // Adjust-mount direction arrows. Derived
+                                // client-side from the signed az/alt errors —
+                                // KStars sends only the scalars, the ↑↓←→
+                                // mapping lives in its desktop widget
+                                // (polaralignmentassistant.cpp:307-351).
+                                <div class="mt-sp-2 border border-border-base py-[6px] px-sp-2">
+                                    <div class="text-sm text-text-blue">{move || tr().pa_adjust_mount}</div>
+                                    {move || {
+                                        let tr_ = tr();
+                                        // Prefer the live refresh errors; fall
+                                        // back to the original solve vector.
+                                        let (total, az, alt) = polar.with(|p| {
+                                            let v = p.vector.as_ref();
+                                            (
+                                                p.updated_error.filter(|x| x.is_finite() && *x >= 0.0)
+                                                    .or_else(|| v.map(|v| v.error)),
+                                                p.updated_az_error.filter(|x| x.is_finite())
+                                                    .or_else(|| v.map(|v| v.az_error)),
+                                                p.updated_alt_error.filter(|x| x.is_finite())
+                                                    .or_else(|| v.map(|v| v.alt_error)),
+                                            )
+                                        });
+                                        // Only guide when we have a valid solve.
+                                        let solved = total.map(|t| t.is_finite() && t >= 0.0).unwrap_or(false);
+                                        let az = az.unwrap_or(f64::NAN);
+                                        let alt = alt.unwrap_or(f64::NAN);
+                                        let az_arrow = if solved { axis_arrow(az, "←", "→") } else { None };
+                                        let alt_arrow = if solved { axis_arrow(alt, "↓", "↑") } else { None };
+                                        let axis_view = |label: &'static str, arrow: Option<&'static str>, err: f64| {
+                                            match arrow {
+                                                Some(g) => view! {
+                                                    <div class="flex items-center gap-sp-2 text-sm">
+                                                        <span class="basis-[40px] grow-0 shrink-0 text-text-blue">{label}</span>
+                                                        <span class="text-lg text-accent-green leading-none">{g}</span>
+                                                        <span class="font-mono text-accent-green">{format_deg_as_dms_small(err)}</span>
+                                                    </div>
+                                                }.into_any(),
+                                                None => view! {
+                                                    <div class="flex items-center gap-sp-2 text-sm">
+                                                        <span class="basis-[40px] grow-0 shrink-0 text-text-blue">{label}</span>
+                                                        <span class="text-text-muted">{if solved { "✓" } else { "—" }}</span>
+                                                    </div>
+                                                }.into_any(),
+                                            }
+                                        };
+                                        view! {
+                                            <div class="flex flex-col gap-[2px] mt-[4px]">
+                                                {axis_view(tr_.pa_az_label_long, az_arrow, az)}
+                                                {axis_view(tr_.pa_alt_label_long, alt_arrow, alt)}
+                                            </div>
+                                        }
+                                    }}
                                 </div>
 
                                 // Refresh controls

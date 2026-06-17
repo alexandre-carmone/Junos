@@ -115,7 +115,7 @@ translations! {
     pa_pre_start, pa_rotation_deg_label, pa_mount_speed_label, pa_manual_slew_label, pa_start_btn_long, pa_stop_btn_long, pa_capture_solve, pa_running,
     pa_abort_short, pa_manual_rotation_section, pa_manual_rotate_instr, pa_rotation_done, pa_refresh_correct, pa_exposure_s_label, pa_algorithm_label, pa_original,
     pa_updated, pa_total_label, pa_az_label_long, pa_alt_label_long, pa_start_refresh, pa_stop_refresh, pa_algo_plate_solve, pa_algo_move_star,
-    pa_algo_move_star_calc, pa_speed_max, guide_guider_label, guide_rms, guide_connected, guide_actions, guide_settings_button, guide_settings_title, guide_essentials, guide_ra_dec_corrections,
+    pa_algo_move_star_calc, pa_speed_max, pa_adjust_mount, guide_guider_label, guide_rms, guide_connected, guide_actions, guide_settings_button, guide_settings_title, guide_essentials, guide_ra_dec_corrections,
     guide_calibration, guide_dither, guide_algorithms, guide_backend, guide_phd2, guide_linguider, guide_advanced, guide_gpg,
     guide_start, guide_capture, guide_loop, guide_clear_cal, guide_capture_loop_note, guide_dither_note, guide_internal, guide_phd2_label,
     guide_linguider_label, guide_host, guide_port, guide_f_exposure, guide_f_delay, guide_f_gain, guide_f_binning, guide_f_tracking_box,

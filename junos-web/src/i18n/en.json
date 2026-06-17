@@ -505,6 +505,7 @@
   "pa_algo_move_star": "Move Star",
   "pa_algo_move_star_calc": "Move Star & Calc Error",
   "pa_speed_max": "Max",
+  "pa_adjust_mount": "Adjust mount",
   "guide_guider_label": "Guider:",
   "guide_rms": "RMS:",
   "guide_connected": "Connected:",
