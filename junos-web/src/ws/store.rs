@@ -85,6 +85,21 @@ pub struct DeviceStore {
 }
 
 impl DeviceStore {
+    /// Resolve the optical train assigned to an Ekos module by its
+    /// `ProfileSettings` enum key ("1"=Capture, "2"=Focus, "3"=Mount,
+    /// "4"=Guide, "5"=Align), reading the per-module map from
+    /// `module_trains` (`train_get_profiles`). Falls back to the first train
+    /// when the module has no explicit assignment yet. Untracked read — for
+    /// use in the non-reactive timer loops in `retry.rs`.
+    pub(super) fn module_train_untracked(&self, key: &str) -> Option<OpticalTrain> {
+        let trains = self.optical_trains.get_untracked();
+        let id = self
+            .module_trains
+            .with_untracked(|m| m.get(key).and_then(|v| v.as_i64()));
+        id.and_then(|id| trains.iter().find(|t| t.id == id).cloned())
+            .or_else(|| trains.first().cloned())
+    }
+
     pub(super) fn new() -> Self {
         Self {
             connected: RwSignal::new(false),
@@ -363,22 +378,11 @@ impl DeviceStore {
                             t.camera
                         );
                     }
-                    // Carry the first train's camera name into camera_status so
-                    // it's visible before CCD_INFO comes back.
-                    if let Some(first) = trains.first() {
-                        self.camera_status.update(|opt| {
-                            let cs = opt.get_or_insert_with(CameraStatusData::default);
-                            if !first.camera.is_empty() {
-                                cs.device = first.camera.clone();
-                            }
-                        });
-                        if !first.filterwheel.is_empty() && first.filterwheel != "--" {
-                            self.filter_wheel_status.update(|opt| {
-                                let fs = opt.get_or_insert_with(FilterWheelStatusData::default);
-                                fs.device = first.filterwheel.clone();
-                            });
-                        }
-                    }
+                    // Per-module device names (camera, filterwheel, mount,
+                    // focuser, guide camera) are seeded from each module's
+                    // assigned train by the bootstrap effect in `ws/mod.rs`,
+                    // which resolves `module_trains` → device. Don't seed from
+                    // `trains.first()` here — that ignored the assignment.
                     self.optical_trains.set(trains);
                 }
             }

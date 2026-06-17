@@ -186,16 +186,27 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
         });
     }
 
-    // Cross-reference: when both the scopes list and the active train are
-    // known, match the train's scope name against the scope DB and write
-    // focal length + aperture into telescope_settings.
+    // Cross-reference: when both the scopes list and the capture train are
+    // known, match that train's scope name against the scope DB and write
+    // focal length + aperture into telescope_settings. The FOV reticle /
+    // mosaic preview frame the *imaging* optics, so use the Capture-module
+    // train (ProfileSettings key "1"), not blindly the first train.
     let trains_sig = store.optical_trains;
     let scopes_sig = store.scopes;
+    let profiles_sig_fl = store.module_trains;
     let telescope_sig = store.telescope_settings;
     Effect::new(move |_| {
         let trains = trains_sig.get();
         let scopes = scopes_sig.get();
-        let Some(train) = trains.first() else { return };
+        let profiles = profiles_sig_fl.get();
+        let cap_id = profiles.get("1").and_then(|v| v.as_i64());
+        let train = match cap_id.and_then(|id| trains.iter().find(|t| t.id == id)) {
+            Some(t) => t,
+            None => match trains.first() {
+                Some(t) => t,
+                None => return,
+            },
+        };
         if train.scope.is_empty() || scopes.is_empty() { return; }
         if let Some(s) = scopes.iter().find(|s| s.name == train.scope) {
             // Apply the per-train focal reducer, mirroring KStars' framing
@@ -258,23 +269,47 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
     // actually comes back, then stop.
     {
         let trains_sig2 = store.optical_trains;
+        let profiles_sig = store.module_trains;
         let camera_sig  = store.camera_status;
         let mount_sig   = store.mount_status;
         let focus_sig   = store.focus_status;
         let filter_sig  = store.filter_wheel_status;
+        let guide_sig   = store.guide_status;
         let last_cam     = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let last_mount   = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let last_focuser = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let last_filter  = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let last_guider  = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let send_for_effect = send_fn.clone();
         Effect::new(move |_| {
             let trains = trains_sig2.get();
-            let Some(train) = trains.first() else { return };
+            let profiles = profiles_sig.get();
+            if trains.is_empty() { return; }
+            // Resolve each module to its assigned train (ProfileSettings key:
+            // 1=Capture 2=Focus 3=Mount 4=Guide), falling back to the first
+            // train when unassigned — so each tab subscribes to / displays the
+            // device it actually uses, not blindly the first train's.
+            let resolve = |key: &str| -> Option<OpticalTrain> {
+                profiles
+                    .get(key)
+                    .and_then(|v| v.as_i64())
+                    .and_then(|id| trains.iter().find(|t| t.id == id).cloned())
+                    .or_else(|| trains.first().cloned())
+            };
+            let cam_train   = resolve("1");
+            let focus_train = resolve("2");
+            let mount_train = resolve("3");
+            let guide_train = resolve("4");
 
-            if !train.camera.is_empty() && train.camera != "--"
-                && *last_cam.borrow() != train.camera
+            if let Some(train) = cam_train.as_ref().filter(|t| !t.camera.is_empty() && t.camera != "--")
+                .filter(|t| *last_cam.borrow() != t.camera)
             {
                 *last_cam.borrow_mut() = train.camera.clone();
+                // Seed the camera device name so the tab header shows it before
+                // CCD_INFO comes back.
+                camera_sig.update(|opt| {
+                    opt.get_or_insert_with(CameraStatusData::default).device = train.camera.clone();
+                });
                 spawn_retry_property(
                     send_for_effect.clone(),
                     train.camera.clone(),
@@ -332,10 +367,13 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
                 );
             }
 
-            if !train.filterwheel.is_empty() && train.filterwheel != "--"
-                && *last_filter.borrow() != train.filterwheel
+            if let Some(train) = cam_train.as_ref().filter(|t| !t.filterwheel.is_empty() && t.filterwheel != "--")
+                .filter(|t| *last_filter.borrow() != t.filterwheel)
             {
                 *last_filter.borrow_mut() = train.filterwheel.clone();
+                filter_sig.update(|opt| {
+                    opt.get_or_insert_with(FilterWheelStatusData::default).device = train.filterwheel.clone();
+                });
                 spawn_retry_property_with(
                     send_for_effect.clone(),
                     train.filterwheel.clone(),
@@ -353,10 +391,13 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
                 );
             }
 
-            if !train.mount.is_empty() && train.mount != "--"
-                && *last_mount.borrow() != train.mount
+            if let Some(train) = mount_train.as_ref().filter(|t| !t.mount.is_empty() && t.mount != "--")
+                .filter(|t| *last_mount.borrow() != t.mount)
             {
                 *last_mount.borrow_mut() = train.mount.clone();
+                mount_sig.update(|opt| {
+                    opt.get_or_insert_with(MountStatusData::default).device = train.mount.clone();
+                });
                 spawn_retry_property(
                     send_for_effect.clone(),
                     train.mount.clone(),
@@ -366,8 +407,8 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
                 );
             }
 
-            if !train.focuser.is_empty() && train.focuser != "--"
-                && *last_focuser.borrow() != train.focuser
+            if let Some(train) = focus_train.as_ref().filter(|t| !t.focuser.is_empty() && t.focuser != "--")
+                .filter(|t| *last_focuser.borrow() != t.focuser)
             {
                 *last_focuser.borrow_mut() = train.focuser.clone();
                 // Seed focus_status with the focuser device name so UI has
@@ -390,6 +431,18 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
                     focus_sig,
                     |fs| fs.as_ref().and_then(|f| f.temperature).is_some(),
                 );
+            }
+
+            // Guide camera: the guide tab only displays its name (no INDI
+            // props consumed here), so just seed the device from the Guide
+            // module's train.
+            if let Some(train) = guide_train.as_ref().filter(|t| !t.guider.is_empty() && t.guider != "--")
+                .filter(|t| *last_guider.borrow() != t.guider)
+            {
+                *last_guider.borrow_mut() = train.guider.clone();
+                guide_sig.update(|opt| {
+                    opt.get_or_insert_with(GuideStatusData::default).device = train.guider.clone();
+                });
             }
         });
     }

@@ -588,6 +588,13 @@ pub fn GuideTab(
                 </span>
                 <span class="text-text-blue max-[479px]:hidden">{move || tr().guide_guider_label}</span>
                 <span>{move || guider_type_label(guider_type(), t(lang.get()))}</span>
+                {move || {
+                    let dev = guide.with(|g| g.device.clone());
+                    (!dev.is_empty()).then(|| view! {
+                        <span class="text-text-blue ml-sp-2 max-[479px]:hidden">{move || tr().camera_label}</span>
+                        <span class="font-mono text-sm text-[#666]">{dev.clone()}</span>
+                    })
+                }}
                 <span class="text-text-blue ml-sp-2 max-[479px]:hidden">{move || tr().guide_rms}</span>
                 <span class="text-sm">
                     {move || {

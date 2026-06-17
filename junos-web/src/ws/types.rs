@@ -440,6 +440,7 @@ pub struct GuideDriftSample {
 
 #[derive(Debug, Clone, Default)]
 pub struct GuideStatusData {
+    pub device:    String,
     pub connected: bool,
     pub status:    String,
     pub history:   Vec<GuideStateSample>,

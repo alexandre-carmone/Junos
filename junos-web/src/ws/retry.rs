@@ -83,7 +83,6 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
     use gloo_timers::future::TimeoutFuture;
 
     let online   = store.online;
-    let trains   = store.optical_trains;
     let dustcap  = store.dustcap_status;
 
     spawn_local(async move {
@@ -93,8 +92,11 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             if !online.get_untracked() {
                 continue;
             }
-            let train_list = trains.get_untracked();
-            let Some(train) = train_list.first() else { continue };
+            if store.optical_trains.with_untracked(|t| t.is_empty()) { continue; }
+            // Each module is polled on the device from its own assigned train:
+            // camera + filter wheel from Capture ("1"), focuser from Focus ("2").
+            let cap_train   = store.module_train_untracked("1");
+            let focus_train = store.module_train_untracked("2");
 
             // ── Ekos module-level state ─────────────────────────────
             send(r#"{"type":"get_devices","payload":{}}"#.to_string());
@@ -111,32 +113,36 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             send(r#"{"type":"scheduler_get_jobs","payload":{}}"#.to_string());
             send(r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#.to_string());
 
-            // ── Camera INDI properties ───────────────────────────────
-            if !train.camera.is_empty() && train.camera != "--" {
+            // ── Camera INDI properties (Capture train) ───────────────
+            if let Some(cam) = cap_train.as_ref().map(|t| t.camera.as_str())
+                .filter(|c| !c.is_empty() && *c != "--")
+            {
                 for prop in ["CCD_INFO", "CCD_TEMPERATURE", "CCD_COOLER"] {
                     send(serde_json::json!({
                         "type": "device_property_get",
-                        "payload": { "device": train.camera, "property": prop, "compact": true }
+                        "payload": { "device": cam, "property": prop, "compact": true }
                     }).to_string());
                 }
                 // Combo option lists need labels — compact:false.
                 for prop in ["CCD_CAPTURE_FORMAT", "CCD_TRANSFER_FORMAT", "CCD_FRAME_TYPE", "CCD_ISO"] {
                     send(serde_json::json!({
                         "type": "device_property_get",
-                        "payload": { "device": train.camera, "property": prop, "compact": false }
+                        "payload": { "device": cam, "property": prop, "compact": false }
                     }).to_string());
                 }
             }
 
-            // ── Filter wheel INDI properties ─────────────────────────
-            if !train.filterwheel.is_empty() && train.filterwheel != "--" {
+            // ── Filter wheel INDI properties (Capture train) ─────────
+            if let Some(fw) = cap_train.as_ref().map(|t| t.filterwheel.as_str())
+                .filter(|f| !f.is_empty() && *f != "--")
+            {
                 send(serde_json::json!({
                     "type": "device_property_get",
-                    "payload": { "device": train.filterwheel, "property": "FILTER_NAME", "compact": false }
+                    "payload": { "device": fw, "property": "FILTER_NAME", "compact": false }
                 }).to_string());
                 send(serde_json::json!({
                     "type": "device_property_get",
-                    "payload": { "device": train.filterwheel, "property": "FILTER_SLOT", "compact": true }
+                    "payload": { "device": fw, "property": "FILTER_SLOT", "compact": true }
                 }).to_string());
             }
 
@@ -144,12 +150,14 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             // EQUATORIAL_EOD_COORD is owned by `spawn_mount_coord_loop`
             // (faster cadence + re-subscribe); intentionally not polled here.
 
-            // ── Focuser INDI properties ──────────────────────────────
-            if !train.focuser.is_empty() && train.focuser != "--" {
+            // ── Focuser INDI properties (Focus train) ────────────────
+            if let Some(foc) = focus_train.as_ref().map(|t| t.focuser.as_str())
+                .filter(|f| !f.is_empty() && *f != "--")
+            {
                 for prop in ["ABS_FOCUS_POSITION", "FOCUS_TEMPERATURE"] {
                     send(serde_json::json!({
                         "type": "device_property_get",
-                        "payload": { "device": train.focuser, "property": prop, "compact": true }
+                        "payload": { "device": foc, "property": prop, "compact": true }
                     }).to_string());
                 }
             }
@@ -194,7 +202,6 @@ pub(super) fn spawn_mount_coord_loop(send: SendCmd, store: DeviceStore) {
     use gloo_timers::future::TimeoutFuture;
 
     let online = store.online;
-    let trains = store.optical_trains;
     let mount_status = store.mount_status;
 
     spawn_local(async move {
@@ -206,12 +213,11 @@ pub(super) fn spawn_mount_coord_loop(send: SendCmd, store: DeviceStore) {
                 continue;
             }
 
-            // Prefer the active train's mount; fall back to the device name we
-            // already learned from coord pushes when the train has none.
-            let device = trains
-                .get_untracked()
-                .first()
-                .map(|t| t.mount.clone())
+            // Prefer the Mount module's assigned train ("3"); fall back to the
+            // device name we already learned from coord pushes when it has none.
+            let device = store
+                .module_train_untracked("3")
+                .map(|t| t.mount)
                 .filter(|m| !m.is_empty() && m != "--")
                 .or_else(|| {
                     mount_status

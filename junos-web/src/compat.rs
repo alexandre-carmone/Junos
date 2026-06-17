@@ -269,6 +269,7 @@ pub fn derive_polar_align(store: &DeviceStore) -> Signal<PolarAlignSnapshot> {
 
 #[derive(Debug, Clone, Default)]
 pub struct GuideSnapshot {
+    pub device:      String,
     pub connected:   bool,
     pub status:      String,
     pub history:     Vec<GuideStateSample>,
@@ -398,6 +399,7 @@ pub fn derive_guide(store: &DeviceStore) -> Signal<GuideSnapshot> {
     Signal::derive(move || {
         match status_sig.get() {
             Some(gs) => GuideSnapshot {
+                device:      gs.device,
                 connected:   gs.connected,
                 status:      gs.status,
                 history:     gs.history,
