@@ -22,11 +22,39 @@ pub(super) fn status_color(status: &str) -> &'static str {
         "var(--state-info)"
     } else if s.contains("image received") || s.contains("frame") {
         "var(--state-info)"
-    } else if s.contains("waiting") || s.contains("pause") {
+    } else if s.contains("dither")
+        || s.contains("focus")
+        || s.contains("filter")
+        || s.contains("align")
+        || s.contains("temperature")
+        || s.contains("rotator")
+        || s.contains("meridian")
+        || s.contains("calibrat")
+    {
+        // Transient sub-tasks KStars steps through mid-sequence.
+        "var(--accent-cyan)"
+    } else if s.contains("waiting") || s.contains("pause") || s.contains("suspend") {
         "var(--state-warn)"
     } else {
         "var(--text-muted)"
     }
+}
+
+/// True while the camera/capture pipeline is actively working — used to pulse
+/// the status pill and the live exposure bar. Idle/complete/aborted are static.
+pub(super) fn status_is_active(status: &str) -> bool {
+    let s = status.to_lowercase();
+    s.contains("capturing")
+        || s.contains("progress")
+        || s.contains("dither")
+        || s.contains("focus")
+        || s.contains("filter")
+        || s.contains("align")
+        || s.contains("temperature")
+        || s.contains("rotator")
+        || s.contains("meridian")
+        || s.contains("calibrat")
+        || s.contains("waiting")
 }
 
 // Light/Dark/Bias/Flat are KStars' canonical frame-type strings (matches

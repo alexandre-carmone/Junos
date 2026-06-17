@@ -32,7 +32,7 @@ use fields::{
     render_exposure_field, render_filter_field, render_frame_type_segmented, render_stacked_field,
 };
 use jobs::{job_detail_rows, job_status_color, marker_cls};
-use styles::{status_color, ACTION_BTN, GHOST_BTN, PANEL_BODY, PANEL_CLS, SUMMARY_CLS};
+use styles::{status_color, status_is_active, ACTION_BTN, GHOST_BTN, PANEL_BODY, PANEL_CLS, SUMMARY_CLS};
 use types::{SequenceRow, ONE_SHOT_GAIN_FIELDS};
 use util::{capture_reveal_path, default_capture_setting_value, event_target_value, initial_preview_visible};
 
@@ -334,6 +334,7 @@ pub fn ImagingTab(
             <div class="flex flex-wrap items-center gap-y-[10px] gap-x-[18px] py-[10px] pl-20 pr-5 border-b border-border-base bg-[rgba(6,6,15,0.92)] text-md min-h-[44px] max-[759px]:py-[6px] max-[759px]:pl-16 max-[759px]:pr-2 max-[759px]:gap-y-[4px] max-[759px]:gap-x-2 max-[759px]:text-xs max-[374px]:gap-x-[6px] max-[374px]:gap-y-[3px]">
                 <span
                     class="inline-block py-sp-1 px-sp-3 rounded-[14px] text-sm border border-current"
+                    class:animate-pulse=move || status_is_active(&capture.with(|c| c.status.clone()))
                     style=move || format!(
                         "color:{};",
                         status_color(&capture.with(|c| c.status.clone()))
@@ -414,6 +415,90 @@ pub fn ImagingTab(
                     {move || tr().files_open_in_files}
                 </button>
             </div>
+
+            // ── Activity strip: live exposure + time-remaining readout ─────
+            // Only shown once KStars has reported a real capture status (i.e.
+            // not the blank/idle default). All fields come straight from the
+            // already-populated `CaptureSnapshot`; no extra plumbing needed.
+            {move || {
+                let status = capture.with(|c| c.status.clone());
+                let active = status_is_active(&status);
+                let bar_color = status_color(&status);
+                let show = !status.is_empty() && !status.eq_ignore_ascii_case("idle");
+                if !show {
+                    return ().into_any();
+                }
+
+                // Current-frame countdown. KStars counts down, so the filled
+                // portion of the bar is `1 - left/total`.
+                let (exp_label, exp_fill) = capture.with(|c| {
+                    match (c.exposure_left, c.exposure_total) {
+                        (Some(left), Some(total)) if total > 0.0 => {
+                            let fill = ((1.0 - left / total) * 100.0).clamp(0.0, 100.0);
+                            (format!("{:.1}s / {:.0}s", left.max(0.0), total), fill)
+                        }
+                        (Some(left), _) => (format!("{:.1}s", left.max(0.0)), 0.0),
+                        _ => ("—".to_string(), 0.0),
+                    }
+                });
+
+                let overall_pct = capture.with(|c| c.progress).unwrap_or(0.0).clamp(0.0, 100.0);
+                let seq_time = capture.with(|c| c.seq_remaining_time.clone());
+                let overall_time = capture.with(|c| c.overall_remaining_time.clone());
+                let dash = "--:--:--".to_string();
+                let seq_time = if seq_time.is_empty() { dash.clone() } else { seq_time };
+                let overall_time = if overall_time.is_empty() { dash } else { overall_time };
+                let last_log = capture.with(|c| c.log
+                    .lines()
+                    .rev()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .to_string());
+
+                let stat_label_lc = "text-text-blue text-[10px] uppercase tracking-[0.06em] shrink-0";
+                let track_cls = "relative flex-1 min-w-[60px] h-[6px] rounded-full bg-[rgba(255,255,255,0.08)] overflow-hidden";
+
+                view! {
+                    <div class="flex flex-col gap-[7px] py-[8px] pl-20 pr-5 border-b border-border-base bg-[rgba(8,10,18,0.6)] max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:py-[6px]">
+                        // Row 1 — current frame exposure countdown
+                        <div class="flex items-center gap-[10px] text-xs">
+                            <span class=stat_label_lc>{move || tr().imaging_frame_exposure}</span>
+                            <span class="shrink-0 font-mono tabular-nums" style=format!("color:{};", bar_color)>{exp_label}</span>
+                            <div class=track_cls>
+                                <div
+                                    class=move || format!("absolute inset-y-0 left-0 rounded-full transition-[width] duration-300 {}", if active { "animate-pulse" } else { "" })
+                                    style=format!("width:{:.1}%;background:{};", exp_fill, bar_color)
+                                ></div>
+                            </div>
+                            <span class="shrink-0 font-mono tabular-nums text-text-blue w-[44px] text-right">{format!("{:.0}%", overall_pct)}</span>
+                        </div>
+                        // Row 2 — sequence + overall time remaining
+                        <div class="flex items-center gap-[10px] text-xs">
+                            <span class=stat_label_lc>{move || tr().imaging_seq_remaining}</span>
+                            <span class="shrink-0 font-mono tabular-nums text-text">{seq_time}</span>
+                            <span class="text-text-muted px-[2px]">"•"</span>
+                            <span class=stat_label_lc>{move || tr().imaging_overall_remaining}</span>
+                            <span class="shrink-0 font-mono tabular-nums text-text">{overall_time}</span>
+                            <div class=track_cls>
+                                <div
+                                    class="absolute inset-y-0 left-0 rounded-full transition-[width] duration-300"
+                                    style=format!("width:{:.1}%;background:{};", overall_pct, bar_color)
+                                ></div>
+                            </div>
+                        </div>
+                        // Last log line
+                        {(!last_log.is_empty()).then(|| {
+                            let log_title = last_log.clone();
+                            view! {
+                                <div class="flex items-center gap-[8px] text-[11px] min-w-0">
+                                    <span class=stat_label_lc>{move || tr().imaging_log_label}</span>
+                                    <span class="text-text-muted truncate min-w-0" title=log_title>{last_log}</span>
+                                </div>
+                            }
+                        })}
+                    </div>
+                }.into_any()
+            }}
 
             // ── Body: sequence-centred vertical layout ─────────────────────
             <div class="overflow-x-hidden p-sp-4 pb-6 flex flex-col gap-sp-4 max-[759px]:p-sp-3">

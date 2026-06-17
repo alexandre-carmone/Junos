@@ -105,6 +105,7 @@ translations! {
     jnow_label, j2000_label, yes, no, focus_actions_section, focus_manual_section, focus_settings_section, focus_header_focuser,
     focus_header_hfr, focus_header_position, focus_header_temperature, focus_capture_btn, focus_loop_btn, focus_reset_frame, focus_step_label, focus_in_btn,
     focus_out_btn, focus_no_frame, focus_settings_not_loaded, imaging_camera, imaging_temp, imaging_cooler, imaging_sensor, imaging_progress,
+    imaging_frame_exposure, imaging_seq_remaining, imaging_overall_remaining, imaging_log_label,
     imaging_cooler_on_val, imaging_cooler_off_val, imaging_toggle_preview_title, imaging_hide_preview, imaging_show_preview, imaging_no_frame, imaging_capture_controls, imaging_collapse_all,
     imaging_expand_all, imaging_actions, imaging_cooling, imaging_exposure, imaging_frame, imaging_gain_iso, imaging_filter, imaging_target,
     imaging_job_temperature, imaging_target_c, imaging_set, imaging_sequence_queue, imaging_add_job, imaging_empty_queue, imaging_remove_job,
