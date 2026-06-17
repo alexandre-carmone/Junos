@@ -21,6 +21,13 @@ pub struct DeviceStore {
     pub telescope_settings: RwSignal<TelescopeSettingsData>,
     pub optical_trains: RwSignal<Vec<OpticalTrain>>,
     pub scopes: RwSignal<Vec<ScopeInfo>>,
+    /// All connected INDI devices, from `get_devices`. Used by the rig editor
+    /// to populate per-role device dropdowns (filtered by interface bitfield).
+    pub devices: RwSignal<Vec<DeviceInfo>>,
+    /// Per-module optical-train assignment, from `train_get_profiles`. Raw map
+    /// `{ "<ProfileSettings enum>": <trainId>, … }` (0=Primary 1=Capture
+    /// 2=Focus 3=Mount 4=Guide 5=Align 6=DarkLibrary).
+    pub module_trains: RwSignal<serde_json::Value>,
     pub focus_status: RwSignal<Option<FocusStatusData>>,
     pub focus_settings: RwSignal<serde_json::Value>,
     pub focus_preview_url: RwSignal<Option<String>>,
@@ -89,6 +96,8 @@ impl DeviceStore {
             telescope_settings: RwSignal::new(TelescopeSettingsData::default()),
             optical_trains: RwSignal::new(Vec::new()),
             scopes: RwSignal::new(Vec::new()),
+            devices: RwSignal::new(Vec::new()),
+            module_trains: RwSignal::new(serde_json::Value::Null),
             focus_status: RwSignal::new(None),
             focus_settings: RwSignal::new(serde_json::Value::Null),
             focus_preview_url: RwSignal::new(None),
@@ -178,6 +187,10 @@ impl DeviceStore {
                 const DUSTCAP_BIT:  i64 = 1 << 9;
                 const LIGHTBOX_BIT: i64 = 1 << 10;
                 if let Some(arr) = payload.as_array() {
+                    // Retain the full device list for the rig (optical-train)
+                    // editor's per-role dropdowns.
+                    self.devices
+                        .set(arr.iter().map(DeviceInfo::from_json).collect());
                     let cap_dev = arr.iter().find(|d| {
                         let iface = d["interface"].as_i64().unwrap_or(0);
                         iface & (DUSTCAP_BIT | LIGHTBOX_BIT) != 0
@@ -332,36 +345,15 @@ impl DeviceStore {
                 // OAL scope DB — full list, not just the active one.
                 // Shape: [{ id, model, vendor, type, name, focal_length, aperture }].
                 if let Some(arr) = payload.as_array() {
-                    let scopes: Vec<ScopeInfo> = arr
-                        .iter()
-                        .map(|s| ScopeInfo {
-                            name: s["name"].as_str().unwrap_or("").to_string(),
-                            focal_length_mm: s["focal_length"].as_f64().unwrap_or(0.0),
-                            aperture_mm: s["aperture"].as_f64().unwrap_or(0.0),
-                        })
-                        .collect();
+                    let scopes: Vec<ScopeInfo> = arr.iter().map(ScopeInfo::from_json).collect();
                     self.scopes.set(scopes);
                 }
             }
 
             "train_get_all" => {
                 if let Some(arr) = payload.as_array() {
-                    let trains: Vec<OpticalTrain> = arr
-                        .iter()
-                        .map(|t| OpticalTrain {
-                            id: t["id"].as_i64().unwrap_or(0),
-                            name: t["name"].as_str().unwrap_or("").to_string(),
-                            mount: t["mount"].as_str().unwrap_or("").to_string(),
-                            camera: t["camera"].as_str().unwrap_or("").to_string(),
-                            scope: t["scope"].as_str().unwrap_or("").to_string(),
-                            guider: t["guider"].as_str().unwrap_or("").to_string(),
-                            focuser: t["focuser"].as_str().unwrap_or("").to_string(),
-                            filterwheel: t["filterwheel"].as_str().unwrap_or("").to_string(),
-                            // KStars stores reducer as a number; older trains may
-                            // miss the field entirely → default to 1.0 (no reducer).
-                            reducer: t["reducer"].as_f64().filter(|v| *v > 0.0).unwrap_or(1.0),
-                        })
-                        .collect();
+                    let trains: Vec<OpticalTrain> =
+                        arr.iter().map(OpticalTrain::from_json).collect();
                     for t in &trains {
                         leptos::logging::log!(
                             "[ws] train: name={:?} mount={:?} scope={:?} camera={:?}",
@@ -389,6 +381,13 @@ impl DeviceStore {
                     }
                     self.optical_trains.set(trains);
                 }
+            }
+
+            // Per-module train assignment (message.cpp:381). Map keyed by the
+            // ProfileSettings enum value as a string ("0".."6"), value = train
+            // id. The rig tab resolves ids to names via `optical_trains`.
+            "train_get_profiles" => {
+                self.module_trains.set(payload.clone());
             }
 
             // INDI property reply — either a direct get response, or a

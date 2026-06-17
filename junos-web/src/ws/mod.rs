@@ -76,6 +76,7 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
                 prime_send(r#"{"type":"get_states","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
+                prime_send(r#"{"type":"train_get_profiles","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"capture_get_all_settings","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());

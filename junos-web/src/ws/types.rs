@@ -89,6 +89,9 @@ pub struct OpticalTrain {
     pub guider: String,
     pub focuser: String,
     pub filterwheel: String,
+    pub rotator: String,
+    pub dustcap: String,
+    pub lightbox: String,
     /// Per-train focal reducer ratio (KStars `OpticalTrainManager` default 1.0).
     /// KStars' framing assistant multiplies focal length by this when computing
     /// the camera FOV (`framingassistantui.cpp:422`); we must do the same so
@@ -101,8 +104,58 @@ impl Default for OpticalTrain {
         Self {
             id: 0, name: String::new(), mount: String::new(), camera: String::new(),
             scope: String::new(), guider: String::new(), focuser: String::new(),
-            filterwheel: String::new(), reducer: 1.0,
+            filterwheel: String::new(), rotator: String::new(), dustcap: String::new(),
+            lightbox: String::new(), reducer: 1.0,
         }
+    }
+}
+
+impl OpticalTrain {
+    pub(super) fn from_json(t: &serde_json::Value) -> Self {
+        let s = |k: &str| t[k].as_str().unwrap_or("").to_string();
+        Self {
+            id: t["id"].as_i64().unwrap_or(0),
+            name: s("name"),
+            mount: s("mount"),
+            camera: s("camera"),
+            scope: s("scope"),
+            guider: s("guider"),
+            focuser: s("focuser"),
+            filterwheel: s("filterwheel"),
+            rotator: s("rotator"),
+            dustcap: s("dustcap"),
+            lightbox: s("lightbox"),
+            // KStars stores reducer as a number; older trains may miss the
+            // field entirely → default to 1.0 (no reducer).
+            reducer: t["reducer"].as_f64().filter(|v| *v > 0.0).unwrap_or(1.0),
+        }
+    }
+
+    /// Serialize for `train_add` (`include_id = false`, KStars auto-assigns id
+    /// and stamps the active profile) / `train_update` (`include_id = true`).
+    /// Empty device slots are sent as `"--"`, matching KStars' reset default.
+    pub fn to_json(&self, include_id: bool) -> serde_json::Value {
+        let dev = |v: &str| {
+            let v = v.trim();
+            if v.is_empty() { "--".to_string() } else { v.to_string() }
+        };
+        let mut o = serde_json::json!({
+            "name":        self.name,
+            "mount":       dev(&self.mount),
+            "camera":      dev(&self.camera),
+            "scope":       self.scope,
+            "guider":      dev(&self.guider),
+            "focuser":     dev(&self.focuser),
+            "filterwheel": dev(&self.filterwheel),
+            "rotator":     dev(&self.rotator),
+            "dustcap":     dev(&self.dustcap),
+            "lightbox":    dev(&self.lightbox),
+            "reducer":     self.reducer,
+        });
+        if include_id {
+            o["id"] = serde_json::json!(self.id);
+        }
+        o
     }
 }
 
@@ -126,9 +179,52 @@ pub struct HfrSample {
 
 #[derive(Debug, Clone, Default)]
 pub struct ScopeInfo {
+    /// OAL DB row id (string). Empty for a not-yet-saved scope. Required for
+    /// `scope_update` / `scope_delete`.
+    pub id: String,
+    pub model: String,
+    pub vendor: String,
+    /// "Refractor", "Reflector", … (OAL `type`).
+    pub type_: String,
+    /// Derived display name `"<vendor> <model> <fl>@F/<ratio>"`, computed
+    /// server-side; this is what a train's `scope` field matches against.
     pub name: String,
     pub focal_length_mm: f64,
     pub aperture_mm: f64,
+}
+
+impl ScopeInfo {
+    pub(super) fn from_json(s: &serde_json::Value) -> Self {
+        Self {
+            id: s["id"].as_str().unwrap_or("").to_string(),
+            model: s["model"].as_str().unwrap_or("").to_string(),
+            vendor: s["vendor"].as_str().unwrap_or("").to_string(),
+            type_: s["type"].as_str().unwrap_or("").to_string(),
+            name: s["name"].as_str().unwrap_or("").to_string(),
+            focal_length_mm: s["focal_length"].as_f64().unwrap_or(0.0),
+            aperture_mm: s["aperture"].as_f64().unwrap_or(0.0),
+        }
+    }
+}
+
+/// Connected INDI device, from `get_devices` (message.cpp:342). `interface`
+/// is the libindi driver-interface bitfield (basedevice.h) — used to filter
+/// devices by role when building optical-train slots.
+#[derive(Debug, Clone, Default)]
+pub struct DeviceInfo {
+    pub name: String,
+    pub connected: bool,
+    pub interface: i64,
+}
+
+impl DeviceInfo {
+    pub(super) fn from_json(v: &serde_json::Value) -> Self {
+        Self {
+            name: v["name"].as_str().unwrap_or("").to_string(),
+            connected: v["connected"].as_bool().unwrap_or(false),
+            interface: v["interface"].as_i64().unwrap_or(0),
+        }
+    }
 }
 
 /// INDI driver descriptor mirrored from KStars `get_drivers` responses.

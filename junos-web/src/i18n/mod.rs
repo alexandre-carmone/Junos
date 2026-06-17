@@ -179,6 +179,16 @@ translations! {
     // Flat Cal tab — extra labels not already in fc_* / dc_*
     fc_section_dust_cap, fc_no_device, fc_status_unknown, fc_status_parked,
     fc_status_unparked, fc_status_moving, fc_brightness_label,
+    // Rig (optical-train) manager — section in the Profiles tab
+    rig_section, rig_add_train, rig_offline_hint, rig_no_trains, rig_train_name,
+    rig_role_mount, rig_role_camera, rig_role_scope, rig_role_guider,
+    rig_role_focuser, rig_role_filter, rig_role_rotator, rig_reducer,
+    rig_new_train, rig_edit_train, rig_confirm_delete_train,
+    rig_scopes_section, rig_add_scope, rig_no_scopes, rig_scope_model,
+    rig_scope_vendor, rig_scope_type, rig_scope_fl, rig_scope_aperture,
+    rig_new_scope, rig_edit_scope, rig_confirm_delete_scope,
+    rig_modules_section, rig_module_capture, rig_module_focus, rig_module_guide,
+    rig_module_align, rig_module_mount, rig_apply_config,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

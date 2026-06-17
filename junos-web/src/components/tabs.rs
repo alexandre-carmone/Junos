@@ -170,6 +170,10 @@ pub fn TabContent(
                     connected=store.connected
                     kstars_running=store.kstars_running
                     phd2_running=store.phd2_running
+                    devices=store.devices
+                    optical_trains=store.optical_trains
+                    scopes=store.scopes
+                    module_trains=store.module_trains
                     send=Arc::clone(&send_profiles)
                 />
             </div>
