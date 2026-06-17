@@ -381,7 +381,7 @@ pub fn PolarAlignTab(
     let refresh_visible = move || polar.with(|p| is_refresh_stage(&p.stage));
 
     const POLAR_INPUT: &str = "input input--sm flex-1 font-mono";
-    const FIELD_LABEL: &str = "basis-[clamp(80px,22%,120px)] grow-0 shrink-0 text-text-blue text-sm";
+    const FIELD_LABEL: &str = "basis-[clamp(80px,22%,120px)] grow-0 shrink-0 text-text-blue text-sm max-[759px]:basis-[110px] max-[420px]:basis-auto";
     const SECTION_CLS: &str = "fieldset";
     const BTN_START: &str = "btn btn-primary";
     const BTN_STOP: &str = "btn btn-danger";
@@ -392,7 +392,7 @@ pub fn PolarAlignTab(
         <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] overflow-hidden">
 
             // ── Header ────────────────────────────────────────────────
-            <div class="flex items-center gap-y-sp-2 gap-x-sp-4 flex-wrap min-h-[48px] py-sp-2 pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md max-[374px]:pl-12 max-[374px]:text-sm">
+            <div class="flex items-center gap-y-sp-2 gap-x-sp-4 flex-wrap min-h-[48px] py-sp-2 pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:gap-x-3 max-[759px]:gap-y-[6px] max-[759px]:text-sm max-[374px]:pl-12 max-[374px]:text-sm">
                 <span class="inline-block py-1 px-sp-3 rounded-[14px] text-sm border border-current max-[374px]:text-[10px] max-[374px]:py-[3px] max-[374px]:px-2"
                       style=move || format!(
                     "color:{};",
@@ -412,7 +412,7 @@ pub fn PolarAlignTab(
             </div>
 
             // ── Body ──────────────────────────────────────────────────
-            <div class="overflow-y-auto py-4 px-5 flex flex-col gap-sp-4">
+            <div class="overflow-y-auto py-4 px-5 flex flex-col gap-sp-4 max-[759px]:p-sp-3">
 
                 // Live frame from KStars align module (uuid "+A" — every
                 // capture, solve, and refresh iteration streams a JPEG).
@@ -436,7 +436,7 @@ pub fn PolarAlignTab(
                         <div class="flex flex-col gap-sp-2">
 
                             // Direction
-                            <div class="flex items-center gap-sp-2">
+                            <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
                                 <span class=FIELD_LABEL>{move || tr().pa_direction}</span>
                                 <select
                                     on:change=on_direction_change.clone()
@@ -455,7 +455,7 @@ pub fn PolarAlignTab(
                             </div>
 
                             // Rotation
-                            <div class="flex items-center gap-sp-2">
+                            <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
                                 <span class=FIELD_LABEL>{move || tr().pa_rotation_deg_label}</span>
                                 <input
                                     type="number"
@@ -469,7 +469,7 @@ pub fn PolarAlignTab(
                             </div>
 
                             // Mount speed
-                            <div class="flex items-center gap-sp-2">
+                            <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
                                 <span class=FIELD_LABEL>{move || tr().pa_mount_speed_label}</span>
                                 <select
                                     on:change=on_speed_change.clone()
@@ -495,7 +495,7 @@ pub fn PolarAlignTab(
                             </div>
 
                             // Manual slew
-                            <div class="flex items-center gap-sp-2">
+                            <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
                                 <span class=FIELD_LABEL>{move || tr().pa_manual_slew_label}</span>
                                 <input
                                     type="checkbox"
@@ -568,7 +568,7 @@ pub fn PolarAlignTab(
                             <div class="flex flex-col gap-sp-2 flex-[1_1_260px] min-w-0">
 
                                 // Exposure
-                                <div class="flex items-center gap-sp-2">
+                                <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
                                     <span class=FIELD_LABEL>{move || tr().pa_exposure_s_label}</span>
                                     <input
                                         type="number"
@@ -582,7 +582,7 @@ pub fn PolarAlignTab(
                                 </div>
 
                                 // Algorithm
-                                <div class="flex items-center gap-sp-2">
+                                <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
                                     <span class=FIELD_LABEL>{move || tr().pa_algorithm_label}</span>
                                     <select
                                         on:change=on_algo_change.clone()
@@ -601,7 +601,7 @@ pub fn PolarAlignTab(
                                 </div>
 
                                 // Error readouts
-                                <div class="grid grid-cols-2 gap-sp-2 mt-[6px]">
+                                <div class="grid grid-cols-2 gap-sp-2 mt-[6px] max-[479px]:grid-cols-1">
                                     <div class="border border-border-base py-[6px] px-sp-2">
                                         <div class="text-sm text-text-blue">{move || tr().pa_original}</div>
                                         {move || {
@@ -661,7 +661,7 @@ pub fn PolarAlignTab(
                             </div>
 
                             // Correction vector preview
-                            <div class="flex-[0_0_140px]">
+                            <div class="flex-[0_0_140px] max-[420px]:flex-[1_1_100%] max-[420px]:flex max-[420px]:justify-center">
                                 {move || correction_svg(polar.with(|p| p.vector.clone()))}
                             </div>
                         </div>
