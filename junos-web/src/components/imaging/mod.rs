@@ -333,7 +333,7 @@ pub fn ImagingTab(
             // ── Header ────────────────────────────────────────────────────
             <div class="flex flex-wrap items-center gap-y-[10px] gap-x-[18px] py-[10px] pl-20 pr-5 border-b border-border-base bg-[rgba(6,6,15,0.92)] text-md min-h-[44px] max-[759px]:py-[6px] max-[759px]:pl-16 max-[759px]:pr-2 max-[759px]:gap-y-[4px] max-[759px]:gap-x-2 max-[759px]:text-xs max-[374px]:gap-x-[6px] max-[374px]:gap-y-[3px]">
                 <span
-                    class="inline-block py-sp-1 px-sp-3 rounded-[14px] text-sm border border-current"
+                    class="inline-block py-sp-1 px-sp-3 rounded-[14px] text-sm border border-current max-[479px]:text-xs max-[479px]:px-sp-2 max-[479px]:py-[2px]"
                     class:animate-pulse=move || status_is_active(&capture.with(|c| c.status.clone()))
                     style=move || format!(
                         "color:{};",
@@ -456,12 +456,12 @@ pub fn ImagingTab(
                     .to_string());
 
                 let stat_label_lc = "text-text-blue text-[10px] uppercase tracking-[0.06em] shrink-0";
-                let track_cls = "relative flex-1 min-w-[60px] h-[6px] rounded-full bg-[rgba(255,255,255,0.08)] overflow-hidden";
+                let track_cls = "relative flex-1 min-w-[60px] h-[6px] rounded-full bg-[rgba(255,255,255,0.08)] overflow-hidden max-[479px]:basis-full max-[479px]:min-w-0";
 
                 view! {
                     <div class="flex flex-col gap-[7px] py-[8px] pl-20 pr-5 border-b border-border-base bg-[rgba(8,10,18,0.6)] max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:py-[6px]">
                         // Row 1 — current frame exposure countdown
-                        <div class="flex items-center gap-[10px] text-xs">
+                        <div class="flex flex-wrap items-center gap-[10px] text-xs max-[479px]:gap-x-2 max-[479px]:gap-y-[5px]">
                             <span class=stat_label_lc>{move || tr().imaging_frame_exposure}</span>
                             <span class="shrink-0 font-mono tabular-nums" style=format!("color:{};", bar_color)>{exp_label}</span>
                             <div class=track_cls>
@@ -473,10 +473,10 @@ pub fn ImagingTab(
                             <span class="shrink-0 font-mono tabular-nums text-text-blue w-[44px] text-right">{format!("{:.0}%", overall_pct)}</span>
                         </div>
                         // Row 2 — sequence + overall time remaining
-                        <div class="flex items-center gap-[10px] text-xs">
+                        <div class="flex flex-wrap items-center gap-[10px] text-xs max-[479px]:gap-x-2 max-[479px]:gap-y-[5px]">
                             <span class=stat_label_lc>{move || tr().imaging_seq_remaining}</span>
                             <span class="shrink-0 font-mono tabular-nums text-text">{seq_time}</span>
-                            <span class="text-text-muted px-[2px]">"•"</span>
+                            <span class="text-text-muted px-[2px] max-[479px]:hidden">"•"</span>
                             <span class=stat_label_lc>{move || tr().imaging_overall_remaining}</span>
                             <span class="shrink-0 font-mono tabular-nums text-text">{overall_time}</span>
                             <div class=track_cls>

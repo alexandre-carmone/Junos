@@ -402,7 +402,7 @@ pub fn PolarAlignTab(
     };
     let refresh_visible = move || polar.with(|p| is_refresh_stage(&p.stage));
 
-    const POLAR_INPUT: &str = "input input--sm flex-1 font-mono";
+    const POLAR_INPUT: &str = "input input--sm flex-1 min-w-0 font-mono";
     const FIELD_LABEL: &str = "basis-[clamp(80px,22%,120px)] grow-0 shrink-0 text-text-blue text-sm max-[759px]:basis-[110px] max-[420px]:basis-auto";
     const SECTION_CLS: &str = "fieldset";
     const BTN_START: &str = "btn btn-primary";
@@ -458,7 +458,7 @@ pub fn PolarAlignTab(
                         <div class="flex flex-col gap-sp-2">
 
                             // Direction
-                            <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
+                            <div class="flex items-center gap-sp-2 min-w-0 max-[420px]:flex-col max-[420px]:items-stretch">
                                 <span class=FIELD_LABEL>{move || tr().pa_direction}</span>
                                 <select
                                     on:change=on_direction_change.clone()
@@ -477,7 +477,7 @@ pub fn PolarAlignTab(
                             </div>
 
                             // Rotation
-                            <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
+                            <div class="flex items-center gap-sp-2 min-w-0 max-[420px]:flex-col max-[420px]:items-stretch">
                                 <span class=FIELD_LABEL>{move || tr().pa_rotation_deg_label}</span>
                                 <input
                                     type="number"
@@ -491,7 +491,7 @@ pub fn PolarAlignTab(
                             </div>
 
                             // Mount speed
-                            <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
+                            <div class="flex items-center gap-sp-2 min-w-0 max-[420px]:flex-col max-[420px]:items-stretch">
                                 <span class=FIELD_LABEL>{move || tr().pa_mount_speed_label}</span>
                                 <select
                                     on:change=on_speed_change.clone()
