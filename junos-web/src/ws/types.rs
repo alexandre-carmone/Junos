@@ -472,6 +472,15 @@ pub struct AlignDefaultsData {
     pub solve_radius: Option<SolveRadius>,
 }
 
+/// One entry in the plate-solve process timeline — a status transition
+/// stamped with the wall-clock time it was received. Mirrors the
+/// `GuideStateSample` pattern.
+#[derive(Debug, Clone)]
+pub struct AlignStateSample {
+    pub t_ms:   f64,
+    pub status: String,
+}
+
 /// Latest plate-solve result. Populated from the `solution` payload of
 /// `new_align_state` (kstars/ekos/align/align.cpp:2351). All RA/Dec values are
 /// JNow — KStars uses `m_AlignCoord` which is epoch-of-date.
@@ -483,6 +492,10 @@ pub struct AlignSolutionData {
     pub pixscale_arcsec:  Option<f64>, // pix from align.cpp:2363
     pub solved_at_ms:     Option<f64>, // js_sys::Date::now() at receipt
     pub status:           Option<String>, // last new_align_state {status} string
+    // Progress overlay inputs — all from `new_align_state` (manager.cpp:2500).
+    pub log:              String,           // full accumulated solver log text
+    pub download_progress: Option<String>,  // remote-solver download info
+    pub history:          Vec<AlignStateSample>, // status transition timeline
 }
 
 // ---------------------------------------------------------------------------

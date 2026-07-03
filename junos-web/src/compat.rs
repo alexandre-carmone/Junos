@@ -78,14 +78,24 @@ pub struct SiteSnapshot {
     pub longitude: f64,
 }
 
+/// One entry in the plate-solve process timeline (mirrors `AlignStateSample`).
+#[derive(Debug, Clone)]
+pub struct SolveStateSample {
+    pub t_ms:   f64,
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SolveSnapshot {
-    pub rotation_deg:    Option<f64>,
-    pub ra_jnow_deg:     Option<f64>,
-    pub dec_jnow_deg:    Option<f64>,
-    pub pixscale_arcsec: Option<f64>,
-    pub solved_at_ms:    Option<f64>,
-    pub status:          Option<String>,
+    pub rotation_deg:      Option<f64>,
+    pub ra_jnow_deg:       Option<f64>,
+    pub dec_jnow_deg:      Option<f64>,
+    pub pixscale_arcsec:   Option<f64>,
+    pub solved_at_ms:      Option<f64>,
+    pub status:            Option<String>,
+    pub log:               String,
+    pub download_progress: Option<String>,
+    pub history:           Vec<SolveStateSample>,
 }
 
 pub fn derive_solve(store: &DeviceStore) -> Signal<SolveSnapshot> {
@@ -93,12 +103,17 @@ pub fn derive_solve(store: &DeviceStore) -> Signal<SolveSnapshot> {
     Signal::derive(move || {
         let a = sig.get();
         SolveSnapshot {
-            rotation_deg:    a.orientation_deg,
-            ra_jnow_deg:     a.ra_jnow_deg,
-            dec_jnow_deg:    a.dec_jnow_deg,
-            pixscale_arcsec: a.pixscale_arcsec,
-            solved_at_ms:    a.solved_at_ms,
-            status:          a.status,
+            rotation_deg:      a.orientation_deg,
+            ra_jnow_deg:       a.ra_jnow_deg,
+            dec_jnow_deg:      a.dec_jnow_deg,
+            pixscale_arcsec:   a.pixscale_arcsec,
+            solved_at_ms:      a.solved_at_ms,
+            status:            a.status,
+            log:               a.log,
+            download_progress: a.download_progress,
+            history:           a.history.into_iter()
+                .map(|e| SolveStateSample { t_ms: e.t_ms, status: e.status })
+                .collect(),
         }
     })
 }

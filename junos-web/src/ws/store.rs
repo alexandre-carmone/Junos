@@ -939,8 +939,32 @@ impl DeviceStore {
                 if let Some(s) = payload.get("status").and_then(|v| v.as_str()) {
                     let s = s.to_string();
                     self.align_solution.update(|a| {
+                        // Record a timeline entry only when the status actually
+                        // changes, so the process log stays readable. Bound the
+                        // history to the last 200 transitions.
+                        let changed = a.history.last().map(|e| e.status != s).unwrap_or(true);
+                        if changed {
+                            a.history.push(AlignStateSample {
+                                t_ms: web_sys::js_sys::Date::now(),
+                                status: s.clone(),
+                            });
+                            if a.history.len() > 200 {
+                                let drop = a.history.len() - 200;
+                                a.history.drain(0..drop);
+                            }
+                        }
                         a.status = Some(s);
                     });
+                }
+                // Full accumulated solver log (manager.cpp:2500 sends getLogText()).
+                if let Some(log) = payload.get("log").and_then(|v| v.as_str()) {
+                    let log = log.to_string();
+                    self.align_solution.update(|a| a.log = log);
+                }
+                // Remote-solver download progress (manager.cpp:2509).
+                if let Some(dp) = payload.get("downloadProgress").and_then(|v| v.as_str()) {
+                    let dp = dp.to_string();
+                    self.align_solution.update(|a| a.download_progress = Some(dp));
                 }
                 if let Some(sol) = payload.get("solution").and_then(|v| v.as_object()) {
                     leptos::logging::log!(

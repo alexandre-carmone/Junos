@@ -173,6 +173,9 @@ translations! {
     mount_solve_dark_frame, mount_solve_settling_ms, mount_solve_solver_source,
     mount_solve_solver_local, mount_solve_solver_remote, mount_solve_rotator_threshold,
     mount_solve_rotator_control,
+    // Plate-solve process overlay (Mount tab)
+    mount_solve_process, mount_solve_timeline, mount_solve_log, mount_solve_no_log,
+    mount_solve_download,
     // Guide tab — new actions (refresh, bulk-save, log export)
     guide_refresh_settings, guide_save_calibration, guide_export_log,
     // Polar align — reset-view button

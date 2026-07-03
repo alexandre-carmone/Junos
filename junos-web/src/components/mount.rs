@@ -146,6 +146,8 @@ pub fn MountTab(
     // ── Plate-solve UI state ─────────────────────────────────────────
     // Overlay open + "params dirty" edit signals seeded from align_settings.
     let settings_open = RwSignal::new(false);
+    // Plate-solve process overlay (live timeline + solver log).
+    let log_open = RwSignal::new(false);
 
     // Edit signals — seeded lazily when overlay opens, updated by inputs.
     let edit_exposure       = RwSignal::new(1.0_f64);
@@ -211,8 +213,13 @@ pub fn MountTab(
     {
         let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
             move |e: web_sys::KeyboardEvent| {
-                if e.key() == "Escape" && settings_open.get_untracked() {
-                    settings_open.set(false);
+                if e.key() == "Escape" {
+                    if settings_open.get_untracked() {
+                        settings_open.set(false);
+                    }
+                    if log_open.get_untracked() {
+                        log_open.set(false);
+                    }
                 }
             },
         );
@@ -777,6 +784,27 @@ pub fn MountTab(
                             style="display:none"
                             on:change=on_file_change
                         />
+
+                        // Process / log overlay opener — pulses while solving.
+                        <button
+                            class=move || {
+                                let base = format!("{MOUNT_BTN} mt-sp-2 flex items-center justify-center gap-sp-2");
+                                let live = solve.get().status
+                                    .map(|s| align_in_progress(&s)).unwrap_or(false);
+                                if live { format!("{base} text-state-info animate-pulse") }
+                                else { format!("{base} text-text-blue") }
+                            }
+                            on:click=move |_| log_open.set(true)
+                        >
+                            <span>{move || tr().mount_solve_process}</span>
+                            {move || {
+                                let live = solve.get().status
+                                    .map(|s| align_in_progress(&s)).unwrap_or(false);
+                                live.then(|| view! {
+                                    <span class="w-[7px] h-[7px] rounded-full bg-state-info" />
+                                })
+                            }}
+                        </button>
                     </div>
                 </div>
             </div>
@@ -975,6 +1003,134 @@ pub fn MountTab(
                     </div>
                 </div>
             </Show>
+
+            // ── Plate-solve process overlay (live timeline + solver log) ──
+            <Show when=move || log_open.get()>
+                <div
+                    class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
+                    on:click=move |_| log_open.set(false)
+                >
+                    <div
+                        class="w-full max-w-[820px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col"
+                        on:click=|ev: MouseEvent| ev.stop_propagation()
+                    >
+                        // Header — title + live status chip
+                        <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
+                            <div class="flex items-center gap-sp-3">
+                                <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
+                                    {move || tr().mount_solve_process}
+                                </h2>
+                                {move || {
+                                    let s = solve.get().status.unwrap_or_default();
+                                    if s.is_empty() { return ().into_any(); }
+                                    let cls = format!(
+                                        "font-mono text-[12px] px-sp-2 py-[2px] rounded-sm border border-border-base {}",
+                                        align_status_class(&s),
+                                    );
+                                    view! { <span class=cls>{s}</span> }.into_any()
+                                }}
+                            </div>
+                            <button
+                                class="btn btn-ghost"
+                                on:click=move |_| log_open.set(false)
+                            >{move || tr().imaging_close}</button>
+                        </div>
+
+                        // Body
+                        <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 flex flex-col gap-sp-4 max-[759px]:p-sp-3">
+
+                            // Download progress (remote solver only)
+                            {move || {
+                                solve.get().download_progress.map(|dp| view! {
+                                    <div class="font-mono text-[12px] text-state-info bg-state-info/10 border border-state-info/40 rounded-sm px-sp-3 py-sp-2">
+                                        {tr().mount_solve_download}{": "}{dp}
+                                    </div>
+                                })
+                            }}
+
+                            // Solution summary (reuses same fields as the inline readout)
+                            {move || {
+                                let s = solve.get();
+                                let has = s.ra_jnow_deg.is_some() || s.dec_jnow_deg.is_some();
+                                if !has { return ().into_any(); }
+                                let rows: Vec<(&'static str, String)> = vec![
+                                    (tr().mount_ra_jnow,
+                                     s.ra_jnow_deg.map(|d| fmt_hms(d / 15.0)).unwrap_or_else(|| "—".into())),
+                                    (tr().mount_dec_jnow,
+                                     s.dec_jnow_deg.map(fmt_dms).unwrap_or_else(|| "—".into())),
+                                    (tr().mount_solve_pa,
+                                     s.rotation_deg.map(|v| format!("{v:.2}°")).unwrap_or_else(|| "—".into())),
+                                    (tr().mount_solve_pixscale,
+                                     s.pixscale_arcsec.map(|v| format!("{v:.2}\"/px")).unwrap_or_else(|| "—".into())),
+                                ];
+                                view! {
+                                    <div class="grid grid-cols-[auto_1fr] gap-y-sp-1 gap-x-3 items-baseline">
+                                        {rows.into_iter().map(|(lbl, val)| view! {
+                                            <span class="font-mono text-sm text-text-faint whitespace-nowrap">{lbl}{":"}</span>
+                                            <span class="font-mono text-[12px] text-text-dim tabular-nums">{val}</span>
+                                        }).collect::<Vec<_>>()}
+                                    </div>
+                                }.into_any()
+                            }}
+
+                            // Status timeline
+                            <div>
+                                <div class="font-ui font-semibold text-sm text-text-blue tracking-[0.08em] mb-sp-2">
+                                    {move || tr().mount_solve_timeline}
+                                </div>
+                                <div class="flex flex-col gap-[2px] max-h-[180px] overflow-y-auto">
+                                    {move || {
+                                        let mut hist = solve.get().history;
+                                        if hist.is_empty() {
+                                            return view! {
+                                                <div class="text-[#555] font-mono text-[12px] py-sp-1">
+                                                    {tr().mount_solve_no_solution}
+                                                </div>
+                                            }.into_any();
+                                        }
+                                        // newest first
+                                        hist.reverse();
+                                        view! {
+                                            <For
+                                                each=move || hist.clone().into_iter().enumerate()
+                                                key=|(i, e)| (*i, e.t_ms as u64, e.status.clone())
+                                                children=move |(_, e)| {
+                                                    let cls = format!(
+                                                        "font-mono text-[12px] {}",
+                                                        align_status_class(&e.status),
+                                                    );
+                                                    view! {
+                                                        <div class="grid grid-cols-[auto_1fr] gap-x-3 items-baseline">
+                                                            <span class="font-mono text-[11px] text-text-faint tabular-nums">
+                                                                {fmt_clock(e.t_ms)}
+                                                            </span>
+                                                            <span class=cls>{e.status}</span>
+                                                        </div>
+                                                    }
+                                                }
+                                            />
+                                        }.into_any()
+                                    }}
+                                </div>
+                            </div>
+
+                            // Full solver log
+                            <div class="flex-1 min-h-0 flex flex-col">
+                                <div class="font-ui font-semibold text-sm text-text-blue tracking-[0.08em] mb-sp-2">
+                                    {move || tr().mount_solve_log}
+                                </div>
+                                <pre class="flex-1 min-h-[120px] max-h-[320px] overflow-auto m-0 p-sp-3 bg-[rgba(0,0,0,0.35)] border border-border-base rounded-sm font-mono text-[11px] leading-[1.5] text-text-dim whitespace-pre-wrap break-words">
+                                    {move || {
+                                        let log = solve.get().log;
+                                        if log.trim().is_empty() { tr().mount_solve_no_log.to_string() }
+                                        else { log }
+                                    }}
+                                </pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </Show>
         </div>
     }
 }
@@ -1006,4 +1162,33 @@ fn status_label_color<'a>(
         return (tr.mount_status_error, "var(--state-err)");
     }
     (tr.mount_status_idle, "var(--text-muted)")
+}
+
+// Tailwind text-colour class for an AlignState string (kstars ekos.h:145).
+fn align_status_class(status: &str) -> &'static str {
+    let s = status.to_ascii_uppercase();
+    if s.contains("SUCCESS") || s.contains("COMPLETE") {
+        "text-state-success"
+    } else if s.contains("FAIL") || s.contains("ABORT") {
+        "text-state-danger"
+    } else if s.contains("PROGRESS") || s.contains("SYNC") || s.contains("SLEW")
+        || s.contains("ROTAT") || s.contains("SUSPEND")
+    {
+        "text-state-info"
+    } else {
+        "text-text-dim"
+    }
+}
+
+// True while a solve is actively running (used to pulse the Process button).
+fn align_in_progress(status: &str) -> bool {
+    let s = status.to_ascii_uppercase();
+    s.contains("PROGRESS") || s.contains("SYNC") || s.contains("SLEW")
+        || s.contains("ROTAT")
+}
+
+// HH:MM:SS from a js Date epoch-ms, local time.
+fn fmt_clock(t_ms: f64) -> String {
+    let d = web_sys::js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(t_ms));
+    format!("{:02}:{:02}:{:02}", d.get_hours(), d.get_minutes(), d.get_seconds())
 }
