@@ -485,6 +485,245 @@ pub struct AlignSolutionData {
     pub status:           Option<String>, // last new_align_state {status} string
 }
 
+// ---------------------------------------------------------------------------
+// Generic INDI property mirror — Devices tab (INDI control panel).
+//
+// Wire shapes: kstars/indi/indistd.cpp:1696-1809 ({switch,number,text,light}ToJson).
+// Non-compact adds top-level label/group/perm (+rule for switches) and
+// per-element label/min/max/step/format; compact carries only element
+// name + value/state. `state`/`perm`/`rule` and switch/light element
+// `state` are transmitted as INDI enum ints — but older paths in this
+// codebase have seen string forms ("Busy", "On"), so parse both.
+// ---------------------------------------------------------------------------
+
+/// INDI `IPState` — property (and light element) state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IndiState {
+    #[default]
+    Idle,  // 0
+    Ok,    // 1
+    Busy,  // 2
+    Alert, // 3
+}
+
+impl IndiState {
+    pub fn from_json(v: &serde_json::Value) -> Self {
+        match v.as_i64() {
+            Some(0) => Self::Idle,
+            Some(1) => Self::Ok,
+            Some(2) => Self::Busy,
+            Some(3) => Self::Alert,
+            _ => match v.as_str() {
+                Some("Ok") => Self::Ok,
+                Some("Busy") => Self::Busy,
+                Some("Alert") => Self::Alert,
+                _ => Self::Idle,
+            },
+        }
+    }
+}
+
+/// INDI `IPerm`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IndiPerm {
+    Ro, // 0
+    Wo, // 1
+    #[default]
+    Rw, // 2
+}
+
+impl IndiPerm {
+    pub fn from_json(v: &serde_json::Value) -> Self {
+        match v.as_i64() {
+            Some(0) => Self::Ro,
+            Some(1) => Self::Wo,
+            Some(2) => Self::Rw,
+            _ => match v.as_str() {
+                Some("ro") => Self::Ro,
+                Some("wo") => Self::Wo,
+                _ => Self::Rw,
+            },
+        }
+    }
+
+    pub fn writable(self) -> bool {
+        !matches!(self, Self::Ro)
+    }
+}
+
+/// INDI `ISRule` — switch vector semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IndiRule {
+    #[default]
+    OneOfMany, // 0
+    AtMostOne, // 1
+    NOfMany,   // 2
+}
+
+impl IndiRule {
+    pub fn from_json(v: &serde_json::Value) -> Self {
+        match v.as_i64() {
+            Some(1) => Self::AtMostOne,
+            Some(2) => Self::NOfMany,
+            _ => Self::OneOfMany,
+        }
+    }
+}
+
+/// Switch/light element state — tolerant of int (ISState), bool, and
+/// string ("On"/"Off") forms (cf. the idiom at store.rs CCD_COOLER arm).
+fn switch_state_from_json(el: &serde_json::Value) -> bool {
+    el["state"]
+        .as_i64()
+        .map(|v| v == 1)
+        .or_else(|| el["state"].as_bool())
+        .or_else(|| el["value"].as_bool())
+        .or_else(|| el["state"].as_str().map(|s| s == "On"))
+        .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IndiElementValue {
+    Number { value: f64, min: f64, max: f64, step: f64, format: String },
+    Text(String),
+    Switch(bool),
+    Light(IndiState),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndiElement {
+    pub name: String,
+    pub label: String,
+    pub value: IndiElementValue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndiProperty {
+    pub name: String,
+    pub label: String,
+    pub group: String,
+    pub state: IndiState,
+    pub perm: IndiPerm,
+    /// Only meaningful for switch properties.
+    pub rule: IndiRule,
+    /// True when parsed from a non-compact payload (labels/group/perm and
+    /// number min/max/step/format are real, not defaults). Compact-first
+    /// records get upgraded when the `device_get` reply lands.
+    pub full: bool,
+    pub elements: Vec<IndiElement>,
+}
+
+impl IndiProperty {
+    pub fn is_switch(&self) -> bool {
+        matches!(
+            self.elements.first().map(|e| &e.value),
+            Some(IndiElementValue::Switch(_))
+        )
+    }
+
+    /// Parse a full (compact or non-compact) property object. Kind is
+    /// detected by which element array is present. Labels fall back to
+    /// names, group to "Main Control" — compact pushes arriving before the
+    /// non-compact `device_get` still render.
+    pub fn from_json(p: &serde_json::Value) -> Option<Self> {
+        let name = p["name"].as_str()?.to_string();
+        let s = |el: &serde_json::Value, k: &str, fb: &str| {
+            el[k].as_str().unwrap_or(fb).to_string()
+        };
+        let elem_common = |el: &serde_json::Value| -> (String, String) {
+            let n = el["name"].as_str().unwrap_or("").to_string();
+            let l = s(el, "label", &n);
+            (n, l)
+        };
+
+        let elements: Vec<IndiElement> = if let Some(arr) = p["switches"].as_array() {
+            arr.iter()
+                .map(|el| {
+                    let (n, l) = elem_common(el);
+                    IndiElement { name: n, label: l, value: IndiElementValue::Switch(switch_state_from_json(el)) }
+                })
+                .collect()
+        } else if let Some(arr) = p["numbers"].as_array() {
+            arr.iter()
+                .map(|el| {
+                    let (n, l) = elem_common(el);
+                    IndiElement {
+                        name: n,
+                        label: l,
+                        value: IndiElementValue::Number {
+                            value: el["value"].as_f64().unwrap_or(0.0),
+                            min: el["min"].as_f64().unwrap_or(0.0),
+                            max: el["max"].as_f64().unwrap_or(0.0),
+                            step: el["step"].as_f64().unwrap_or(0.0),
+                            format: s(el, "format", ""),
+                        },
+                    }
+                })
+                .collect()
+        } else if let Some(arr) = p["texts"].as_array() {
+            arr.iter()
+                .map(|el| {
+                    let (n, l) = elem_common(el);
+                    IndiElement { name: n, label: l, value: IndiElementValue::Text(s(el, "text", "")) }
+                })
+                .collect()
+        } else if let Some(arr) = p["lights"].as_array() {
+            arr.iter()
+                .map(|el| {
+                    let (n, l) = elem_common(el);
+                    IndiElement { name: n, label: l, value: IndiElementValue::Light(IndiState::from_json(&el["state"])) }
+                })
+                .collect()
+        } else {
+            return None; // BLOBs aren't serialized by KStars (indistd.cpp:1031)
+        };
+
+        let is_light = p["lights"].is_array();
+        Some(Self {
+            label: s(p, "label", &name),
+            group: s(p, "group", "Main Control"),
+            state: IndiState::from_json(&p["state"]),
+            // Lights carry no perm on the wire — always read-only.
+            perm: if is_light { IndiPerm::Ro } else { IndiPerm::from_json(&p["perm"]) },
+            rule: IndiRule::from_json(&p["rule"]),
+            full: p["label"].is_string(),
+            elements,
+            name,
+        })
+    }
+
+    /// Merge a compact update (pushed `device_property_get`) into an existing
+    /// full record: element values + property state only — labels, group,
+    /// perm, rule and number min/max/step/format are preserved.
+    pub fn merge_compact(&mut self, p: &serde_json::Value) {
+        self.state = IndiState::from_json(&p["state"]);
+        let arr = p["switches"]
+            .as_array()
+            .or_else(|| p["numbers"].as_array())
+            .or_else(|| p["texts"].as_array())
+            .or_else(|| p["lights"].as_array());
+        let Some(arr) = arr else { return };
+        for el in arr {
+            let Some(n) = el["name"].as_str() else { continue };
+            let Some(existing) = self.elements.iter_mut().find(|e| e.name == n) else { continue };
+            match &mut existing.value {
+                IndiElementValue::Number { value, .. } => {
+                    if let Some(v) = el["value"].as_f64() {
+                        *value = v;
+                    }
+                }
+                IndiElementValue::Text(t) => {
+                    if let Some(v) = el["text"].as_str() {
+                        *t = v.to_string();
+                    }
+                }
+                IndiElementValue::Switch(on) => *on = switch_state_from_json(el),
+                IndiElementValue::Light(st) => *st = IndiState::from_json(&el["state"]),
+            }
+        }
+    }
+}
+
 /// Aggregated state from `new_livestacker_state`. KStars sends two flavours:
 /// state-only updates (`{state:"..."}`) and stacking updates with stats. We
 /// merge both into this struct, preserving prior numeric fields when only the

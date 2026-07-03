@@ -28,7 +28,7 @@ use i18n::Lang;
 use ws::{AlignDefaultsData, SolveRadius};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tab { Sky, Mount, Focus, Imaging, Files, PolarAlign, Guide, Scheduler, Mosaic, FlatCal, Profiles }
+pub enum Tab { Sky, Mount, Focus, Imaging, Files, PolarAlign, Guide, Scheduler, Mosaic, FlatCal, Devices, Profiles }
 
 #[derive(Clone, Copy)]
 pub struct ActiveTabCtx(pub RwSignal<Tab>);

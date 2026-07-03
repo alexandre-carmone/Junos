@@ -983,5 +983,9 @@
   "rig_module_guide": "Guidage",
   "rig_module_align": "Align.",
   "rig_module_mount": "Monture",
-  "rig_apply_config": "Appliquer la config"
+  "rig_apply_config": "Appliquer la config",
+  "dev_select_device": "Choisir un appareil",
+  "dev_loading_props": "Chargement\u2026",
+  "dev_no_properties": "Aucune propriété",
+  "dev_messages_title": "Messages"
 }

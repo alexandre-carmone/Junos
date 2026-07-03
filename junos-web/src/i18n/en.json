@@ -893,5 +893,9 @@
   "rig_module_guide": "Guide",
   "rig_module_align": "Align",
   "rig_module_mount": "Mount",
-  "rig_apply_config": "Apply rig configuration"
+  "rig_apply_config": "Apply rig configuration",
+  "dev_select_device": "Select a device",
+  "dev_loading_props": "Loading properties\u2026",
+  "dev_no_properties": "No properties",
+  "dev_messages_title": "Messages"
 }

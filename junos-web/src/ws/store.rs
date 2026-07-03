@@ -76,6 +76,15 @@ pub struct DeviceStore {
     /// to make a one-shot startup decision (e.g. default to Profiles tab
     /// when KStars isn't running).
     pub kstars_state_known: RwSignal<bool>,
+    /// Generic INDI property mirror for the Devices tab, keyed by device
+    /// name. The Vec preserves KStars definition order (drives group
+    /// ordering in the UI). Populated lazily by `device_get` when a device
+    /// is selected in the Devices tab, then kept fresh by compact
+    /// `device_property_get` pushes (subscribe-all) merged in place.
+    pub indi_properties: RwSignal<std::collections::HashMap<String, Vec<IndiProperty>>>,
+    /// Per-device INFO/WARNING/ERROR lines from `device_message` pushes,
+    /// newest last, capped at 100 per device.
+    pub indi_messages: RwSignal<std::collections::HashMap<String, Vec<String>>>,
     /// Active modal dialog pushed by KStars (`dialog_get_info`). Holds the
     /// raw payload `{title, message, icon, timeout, buttons:[..], default}`
     /// while a dialog is open; `None` when the dialog is dismissed (KStars
@@ -142,8 +151,41 @@ impl DeviceStore {
             kstars_running: RwSignal::new(false),
             phd2_running: RwSignal::new(false),
             kstars_state_known: RwSignal::new(false),
+            indi_properties: RwSignal::new(std::collections::HashMap::new()),
+            indi_messages: RwSignal::new(std::collections::HashMap::new()),
             active_dialog: RwSignal::new(None),
         }
+    }
+
+    /// Upsert one INDI property payload into `indi_properties` (generic
+    /// mirror for the Devices tab). Full payloads (non-compact — detected by
+    /// the top-level `label` KStars only adds in that mode, indistd.cpp:1709)
+    /// replace the record; compact ones merge element values into the
+    /// existing record, or insert a label-less record when the property is
+    /// still unknown (push arriving before `device_get`).
+    fn upsert_indi_property(&self, payload: &serde_json::Value) {
+        let Some(device) = payload["device"].as_str().filter(|d| !d.is_empty()) else {
+            return;
+        };
+        let Some(name) = payload["name"].as_str().filter(|n| !n.is_empty()) else {
+            return;
+        };
+        let is_full = payload["label"].is_string();
+        self.indi_properties.update(|m| {
+            let props = m.entry(device.to_string()).or_default();
+            let idx = props.iter().position(|p| p.name == name);
+            match idx {
+                Some(i) if !is_full => props[i].merge_compact(payload),
+                _ => {
+                    if let Some(parsed) = IndiProperty::from_json(payload) {
+                        match idx {
+                            Some(i) => props[i] = parsed,
+                            None => props.push(parsed),
+                        }
+                    }
+                }
+            }
+        });
     }
 
     pub(super) fn apply_ekos_event(&self, type_str: &str, payload: &serde_json::Value) {
@@ -187,6 +229,8 @@ impl DeviceStore {
                     self.mosaic_tiles.set(None);
                     self.livestacker_state.set(None);
                     self.dustcap_status.set(None);
+                    self.indi_properties.set(std::collections::HashMap::new());
+                    self.indi_messages.set(std::collections::HashMap::new());
                 }
             }
 
@@ -406,6 +450,10 @@ impl DeviceStore {
                     payload["device"].as_str().unwrap_or("?"),
                     prop
                 );
+
+                // Generic mirror for the Devices tab — runs before the
+                // named-property whitelist below (which stays untouched).
+                self.upsert_indi_property(payload);
 
                 if prop == "CCD_INFO" {
                     let max_x = extract_indi_number(payload, "CCD_MAX_X");
@@ -667,6 +715,63 @@ impl DeviceStore {
                         });
                     }
                 }
+            }
+
+            // Full property enumeration for one device (Devices tab).
+            // Reply to `device_get` — payload `{device, properties:[...]}`,
+            // each entry non-compact (message.cpp:1680).
+            "device_get" => {
+                let Some(device) = payload["device"].as_str().filter(|d| !d.is_empty()) else {
+                    return;
+                };
+                let props: Vec<IndiProperty> = payload["properties"]
+                    .as_array()
+                    .map(|arr| arr.iter().filter_map(IndiProperty::from_json).collect())
+                    .unwrap_or_default();
+                let device = device.to_string();
+                self.indi_properties.update(|m| {
+                    m.insert(device, props);
+                });
+            }
+
+            // New INDI property defined after initial enumeration — payload
+            // is a full non-compact property object (message.cpp:2738).
+            "device_property_add" => {
+                self.upsert_indi_property(payload);
+            }
+
+            // INDI property deleted — payload `{device, name}` (message.cpp:2757).
+            "device_property_remove" => {
+                let (Some(device), Some(name)) =
+                    (payload["device"].as_str(), payload["name"].as_str())
+                else {
+                    return;
+                };
+                self.indi_properties.update(|m| {
+                    if let Some(props) = m.get_mut(device) {
+                        props.retain(|p| p.name != name);
+                    }
+                });
+            }
+
+            // Driver INFO/WARNING/ERROR log line — payload `{device, message}`
+            // (message.cpp:2769, gated on ekosLiveNotifications in KStars).
+            "device_message" => {
+                let (Some(device), Some(msg)) =
+                    (payload["device"].as_str(), payload["message"].as_str())
+                else {
+                    return;
+                };
+                let device = device.to_string();
+                let msg = msg.to_string();
+                self.indi_messages.update(|m| {
+                    let log = m.entry(device).or_default();
+                    log.push(msg);
+                    if log.len() > 100 {
+                        let excess = log.len() - 100;
+                        log.drain(0..excess);
+                    }
+                });
             }
 
             // Focus module state. Partial payloads: any subset of

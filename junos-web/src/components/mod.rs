@@ -1,4 +1,5 @@
 pub mod coord_input;
+pub mod devices;
 pub mod dialog_modal;
 pub mod files;
 pub mod flat_cal;

@@ -11,6 +11,7 @@ use leptos::prelude::*;
 use crate::compat::{
     self, FilterWheelSnapshot, MosaicSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot,
 };
+use crate::components::devices::DevicesTab;
 use crate::components::files::FilesTab;
 use crate::components::flat_cal::FlatCalTab;
 use crate::components::focus::FocusTab;
@@ -70,6 +71,7 @@ pub fn TabContent(
     let send_scheduler = Arc::clone(&send);
     let send_files = Arc::clone(&send);
     let send_profiles = Arc::clone(&send);
+    let send_devices = Arc::clone(&send);
     let send_mosaic = send;
 
     let sky_visible = move || active_tab.get() == Tab::Sky;
@@ -83,6 +85,7 @@ pub fn TabContent(
     let scheduler_visible = move || active_tab.get() == Tab::Scheduler;
     let mosaic_visible = move || active_tab.get() == Tab::Mosaic;
     let profiles_visible = move || active_tab.get() == Tab::Profiles;
+    let devices_visible = move || active_tab.get() == Tab::Devices;
 
     view! {
         <div style=move || format!(
@@ -157,6 +160,17 @@ pub fn TabContent(
                     home_dir=home_dir
                     mosaic_tiles=store.mosaic_tiles
                     send=Arc::clone(&send_mosaic)
+                />
+            </div>
+        </Show>
+        <Show when=devices_visible>
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
+                <DevicesTab
+                    devices=store.devices
+                    indi_properties=store.indi_properties
+                    indi_messages=store.indi_messages
+                    online=store.online
+                    send=Arc::clone(&send_devices)
                 />
             </div>
         </Show>

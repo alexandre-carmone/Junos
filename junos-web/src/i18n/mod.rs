@@ -190,6 +190,8 @@ translations! {
     rig_new_scope, rig_edit_scope, rig_confirm_delete_scope,
     rig_modules_section, rig_module_capture, rig_module_focus, rig_module_guide,
     rig_module_align, rig_module_mount, rig_apply_config,
+    // Devices tab (INDI control panel)
+    dev_select_device, dev_loading_props, dev_no_properties, dev_messages_title,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────
