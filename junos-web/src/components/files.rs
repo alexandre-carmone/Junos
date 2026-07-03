@@ -22,7 +22,7 @@ mod settings;
 mod types;
 mod utils;
 
-use actions::{copy_to_clipboard, delete_file_action, download_file, rename_file_action};
+use actions::{copy_to_clipboard, delete_file_action, download_file, rename_file_action, resolve_and_slew};
 use api::{fetch_list, fetch_meta, newest_image_in_abs_dir, resolve_abs};
 use browser::{filter_button, render_dirs, render_files};
 use livestack::render_livestack_workspace;
@@ -184,6 +184,9 @@ pub fn FilesTab(
 
     let send_controls = Arc::clone(&send);
     let send_settings = Arc::clone(&send);
+    // Stashed in a StoredValue (Copy) so the reactive <Show> children — which
+    // must be `Fn` — can clone it out on each re-render.
+    let send_sv = StoredValue::new(Arc::clone(&send));
 
     // Mobile tab switcher: 0 = Browser, 1 = LiveStacker
     let mobile_tab = RwSignal::new(0u8);
@@ -329,20 +332,25 @@ pub fn FilesTab(
             </div>
 
             <Show when=move || preview_open.get()>
-                {move || render_preview_modal(
-                    selected.get(),
-                    selected_meta.get(),
-                    meta_error.get(),
-                    tr(),
-                    refresh_tick,
-                    selected,
-                    flash,
-                    preview_open,
-                )}
+                {
+                    move || render_preview_modal(
+                        selected.get(),
+                        selected_meta.get(),
+                        meta_error.get(),
+                        tr(),
+                        refresh_tick,
+                        selected,
+                        flash,
+                        preview_open,
+                        send_sv.get_value(),
+                    )
+                }
             </Show>
 
             <Show when=move || file_menu.get().is_some()>
-                {move || render_file_menu(file_menu, refresh_tick, selected, flash, tr())}
+                {
+                    move || render_file_menu(file_menu, refresh_tick, selected, flash, send_sv.get_value(), tr())
+                }
             </Show>
         </div>
     }
@@ -353,6 +361,7 @@ fn render_file_menu(
     refresh_tick: RwSignal<u32>,
     selected: RwSignal<Option<String>>,
     flash: RwSignal<Option<String>>,
+    send: SendCmd,
     tr: &'static crate::i18n::Translations,
 ) -> impl IntoView + use<> {
     let state = file_menu.get_untracked().unwrap_or(FileMenuState {
@@ -370,6 +379,7 @@ fn render_file_menu(
     let rel_r = state.rel.clone();
     let rel_x = state.rel.clone();
     let rel_c = state.rel.clone();
+    let rel_s = state.rel.clone();
 
     view! {
         <div class="fixed inset-0 z-50" on:click=move |_| close()>
@@ -378,6 +388,10 @@ fn render_file_menu(
                 style=style
                 on:click=move |ev| ev.stop_propagation()
             >
+                <button class="btn btn--sm btn-primary w-full justify-start" on:click=move |_| {
+                    resolve_and_slew(&rel_s, Arc::clone(&send), flash, tr);
+                    close();
+                }>{tr.files_resolve_slew}</button>
                 <button class="btn btn--sm btn-ghost w-full justify-start" on:click=move |_| {
                     download_file(&rel_d);
                     close();

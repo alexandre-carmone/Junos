@@ -150,6 +150,7 @@ translations! {
     files_filter_images, files_filter_fits, files_filter_jpg, files_filter_placeholder, files_refresh, files_download,
     files_rename, files_delete, files_copy_path, files_confirm_delete, files_rename_prompt, files_section_browser,
     files_section_preview, files_path_copied, files_open_in_files, files_reveal_captures, files_action_menu,
+    files_resolve_slew, files_resolve_slew_confirm, files_resolve_slew_sent, files_resolve_slew_fail,
     livestack_section_directories, livestack_section_alignment, livestack_section_stacking, livestack_section_rejection,
     livestack_section_postprocess, livestack_section_calibration, livestack_num_in_mem, livestack_weighting,
     livestack_downscale, livestack_post_process, livestack_sharpen, livestack_denoise, livestack_deconv,

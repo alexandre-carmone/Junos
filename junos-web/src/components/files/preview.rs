@@ -1,9 +1,12 @@
 use leptos::prelude::*;
 use serde_json::Value;
 
-use crate::i18n::Translations;
+use std::sync::Arc;
 
-use super::actions::{copy_to_clipboard, delete_file_action, download_file};
+use crate::i18n::Translations;
+use crate::ws::SendCmd;
+
+use super::actions::{copy_to_clipboard, delete_file_action, download_file, resolve_and_slew};
 use super::types::{FileMeta, FitsRow};
 use super::utils::{format_mtime, format_size, fov_str, kv, url_encode, value_or_dash, SMALL_BTN};
 
@@ -16,6 +19,7 @@ pub(super) fn render_preview_modal(
     selected: RwSignal<Option<String>>,
     flash: RwSignal<Option<String>>,
     preview_open: RwSignal<bool>,
+    send: SendCmd,
 ) -> impl IntoView {
     let Some(rel) = sel else {
         preview_open.set(false);
@@ -30,6 +34,11 @@ pub(super) fn render_preview_modal(
     let rel_download_mob = rel.clone();
     let rel_delete_mob = rel.clone();
     let rel_copy_mob = rel.clone();
+    // Resolve & Slew clones (desktop + mobile) and command sinks
+    let rel_slew = rel.clone();
+    let rel_slew_mob = rel.clone();
+    let send_slew = Arc::clone(&send);
+    let send_slew_mob = Arc::clone(&send);
     let meta_view = match (err, meta) {
         (Some(e), _) => view! { <div class="p-sp-4 text-sm text-state-err">{format!("{}: {}", tr.files_error, e)}</div> }.into_any(),
         (_, None) => view! { <div class="p-sp-5 text-center text-sm text-text-faint">{tr.files_loading}</div> }.into_any(),
@@ -49,6 +58,7 @@ pub(super) fn render_preview_modal(
                 </div>
                 // Desktop-only inline action buttons
                 <div class="flex items-center gap-sp-2 max-[639px]:hidden">
+                    <button class="btn btn--sm btn-primary" on:click=move |_| resolve_and_slew(&rel_slew, Arc::clone(&send_slew), flash, tr)>{tr.files_resolve_slew}</button>
                     <button class=SMALL_BTN on:click=move |_| download_file(&rel_download)>{tr.files_download}</button>
                     <button class=SMALL_BTN on:click=move |_| copy_to_clipboard(&rel_copy, flash, tr.files_path_copied)>{tr.files_copy_path}</button>
                     <button class="btn btn--sm btn-danger" on:click=move |_| delete_file_action(&rel_delete, refresh_tick, selected, flash, tr)>{tr.files_delete}</button>
@@ -67,7 +77,8 @@ pub(super) fn render_preview_modal(
             </div>
 
             // ── Mobile-only bottom action bar (<640px) ────────────────────
-            <div class="hidden border-t border-border bg-bg-panel-solid px-sp-3 py-sp-2 max-[639px]:grid max-[639px]:grid-cols-4 gap-sp-2">
+            <div class="hidden border-t border-border bg-bg-panel-solid px-sp-3 py-sp-2 max-[639px]:grid max-[639px]:grid-cols-2 gap-sp-2">
+                <button class="btn btn--sm btn-primary col-span-2" on:click=move |_| resolve_and_slew(&rel_slew_mob, Arc::clone(&send_slew_mob), flash, tr)>{tr.files_resolve_slew}</button>
                 <button class="btn btn--sm btn-ghost" on:click=move |_| download_file(&rel_download_mob)>{tr.files_download}</button>
                 <button class="btn btn--sm btn-ghost" on:click=move |_| copy_to_clipboard(&rel_copy_mob, flash, tr.files_path_copied)>{tr.files_copy_path}</button>
                 <button class="btn btn--sm btn-danger" on:click=move |_| delete_file_action(&rel_delete_mob, refresh_tick, selected, flash, tr)>{tr.files_delete}</button>
