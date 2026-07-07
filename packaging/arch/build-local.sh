@@ -27,12 +27,16 @@ echo ">> packing working tree (HEAD) -> $(basename "$tarball")"
 git -C "$repo" archive --prefix="${prefix}/" -o "$tarball" HEAD
 
 echo ">> building in $image ($platform)"
+# Only base-devel (for makepkg) + sudo are pre-installed. `makepkg -s` then reads
+# depends/makedepends straight from the PKGBUILD and installs them via pacman —
+# so the package list lives in ONE place (the PKGBUILD), not duplicated here.
 docker run --rm --platform "$platform" -v "$here":/build "$image" bash -c '
   set -euo pipefail
-  pacman -Syu --noconfirm --needed base-devel git rust rust-wasm trunk tailwindcss
+  pacman -Syu --noconfirm --needed base-devel sudo
   useradd -m builder
+  echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
   chown -R builder /build
-  su builder -c "cd /build && makepkg -f --skipinteg --noconfirm"
+  su builder -c "cd /build && makepkg -sf --skipinteg --noconfirm"
 '
 echo ">> done. Package(s):"
 ls -1 "$here"/*.pkg.tar.zst
