@@ -1,0 +1,24 @@
+[Unit]
+Description=junos-web KStars Ekos Live LAN relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# HTTP on :8090 because :8080 is already taken on the target host.
+# KStars' Ekos Live config must point at http://<host>:8090.
+ExecStart=/usr/bin/junos-server --http-addr 0.0.0.0:8090 --https-addr 0.0.0.0:8443 --dist-dir /usr/share/junos-web/dist
+WorkingDirectory=/var/lib/junos-web
+StateDirectory=junos-web
+StateDirectoryMode=0750
+DynamicUser=true
+Restart=on-failure
+RestartSec=5s
+# Hardening (mirrors nix/module.nix)
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

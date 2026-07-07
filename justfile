@@ -67,6 +67,13 @@ gen-cert:
         -keyout .certs/key.pem -out .certs/cert.pem
     @echo "Wrote .certs/cert.pem and .certs/key.pem"
 
+# Build the Arch Linux package (x86_64 or aarch64) from the local git tree in an
+# Arch container. Needs Docker with network access to Arch mirrors. Output lands
+# in packaging/arch/*.pkg.tar.zst. Pass `arm64` to cross-build for Raspberry Pi
+# (via qemu; slow — prefer `makepkg -si` natively on the Pi). Default: amd64.
+arch-pkg arch="amd64":
+    ./packaging/arch/build-local.sh {{arch}}
+
 # Download the Tailwind v3 standalone binary (re-run to upgrade).
 setup-tailwind:
     mkdir -p junos-web/bin

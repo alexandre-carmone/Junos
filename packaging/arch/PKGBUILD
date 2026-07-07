@@ -1,0 +1,56 @@
+# Maintainer: Alexandre Carmone <carmonealexandre@hotmail.fr>
+pkgname=junos-web
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Local KStars/Ekos Live LAN relay + WebGPU planetarium web client"
+arch=('x86_64' 'aarch64')
+url="https://github.com/alexandre-carmone/ekos-web-rust"
+# No LICENSE file in the repo yet; update once one is added.
+license=('custom:unknown')
+depends=('glibc')
+# Arch's `rust` ships host std only -> `rust-wasm` provides the
+# wasm32-unknown-unknown target. `trunk` builds the frontend and auto-fetches a
+# matching wasm-bindgen-cli (Cargo.lock pins 0.2.118) + wasm-opt. `tailwindcss`
+# replaces the repo's hardcoded linux-x64 standalone binary (arch-correct on
+# both x86_64 and aarch64). Network is used during build() (cargo + trunk).
+makedepends=('rust' 'rust-wasm' 'trunk' 'tailwindcss')
+options=('!lto')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
+        "junos-web.service")
+sha256sums=('SKIP'
+            'SKIP')
+
+# GitHub tarball top-level dir: <repo>-<tag-without-v>. Adjust if the tag differs.
+_srcdir="ekos-web-rust-$pkgver"
+
+prepare() {
+  cd "$_srcdir"
+  # Trunk's pre_build hook (junos-web/Trunk.toml) runs `bin/tailwindcss`.
+  # Point it at the Arch-packaged, arch-correct tailwind binary instead of the
+  # repo's hardcoded tailwindcss-linux-x64 download.
+  mkdir -p junos-web/bin
+  ln -sf "$(command -v tailwindcss)" junos-web/bin/tailwindcss
+}
+
+build() {
+  cd "$_srcdir"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  # Frontend (wasm + styles + public/ catalogs) -> junos-web/dist/
+  ( cd junos-web && trunk build --release )
+  # Server binary -> $CARGO_TARGET_DIR/release/junos-server
+  cargo build --release -p junos-server
+}
+
+package() {
+  cd "$_srcdir"
+  install -Dm755 "$srcdir/target/release/junos-server" \
+    "$pkgdir/usr/bin/junos-server"
+
+  # Compiled frontend, served at runtime via --dist-dir.
+  install -d "$pkgdir/usr/share/junos-web/dist"
+  cp -a junos-web/dist/. "$pkgdir/usr/share/junos-web/dist/"
+
+  install -Dm644 "$srcdir/junos-web.service" \
+    "$pkgdir/usr/lib/systemd/system/junos-web.service"
+}
