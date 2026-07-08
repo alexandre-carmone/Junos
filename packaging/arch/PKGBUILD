@@ -8,44 +8,53 @@ url="https://github.com/alexandre-carmone/ekos-web-rust"
 # No LICENSE file in the repo yet; update once one is added.
 license=('custom:unknown')
 depends=('glibc')
-# Arch's `rust` ships host std only -> `rust-wasm` provides the
-# wasm32-unknown-unknown target. `trunk` builds the frontend and auto-fetches a
-# matching wasm-bindgen-cli (Cargo.lock pins 0.2.118) + wasm-opt. `tailwindcss`
-# replaces the repo's hardcoded linux-x64 standalone binary (arch-correct on
-# both x86_64 and aarch64). Network is used during build() (cargo + trunk).
-makedepends=('rust' 'rust-wasm' 'trunk' 'tailwindcss')
-options=('!lto')
+# rustup provides cargo + the wasm32-unknown-unknown target. That target's std is
+# architecture-independent and rustup fetches it, so this works identically on
+# x86_64 and aarch64 — Arch Linux ARM has NO `rust-wasm` package and its `rust`
+# does not bundle the wasm target. `trunk` bundles the frontend (packaged on both
+# arches). The Tailwind CLI is not packaged on ALARM, so it is fetched per-arch as
+# a checksummed source below. Network is used in build() (rustup toolchain +
+# cargo crates + trunk's wasm-bindgen/wasm-opt).
+makedepends=('rustup' 'trunk')
+_twver=3.4.17
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
         "junos-web.service")
+source_x86_64=("tailwindcss-$pkgver-x86_64::https://github.com/tailwindlabs/tailwindcss/releases/download/v$_twver/tailwindcss-linux-x64")
+source_aarch64=("tailwindcss-$pkgver-aarch64::https://github.com/tailwindlabs/tailwindcss/releases/download/v$_twver/tailwindcss-linux-arm64")
 sha256sums=('SKIP'
             'SKIP')
+sha256sums_x86_64=('7d24f7fa191d2193b78cd5f5a42a6093e14409521908529f42d80b11fde1f1d4')
+sha256sums_aarch64=('69b1378b8133192d7d2feb12a116fa12d035594f58db3eff215879e4ad8cf39b')
 
 # GitHub tarball top-level dir: <repo>-<tag-without-v>. Adjust if the tag differs.
 _srcdir="ekos-web-rust-$pkgver"
 
 prepare() {
-  cd "$_srcdir"
-  # Trunk's pre_build hook (junos-web/Trunk.toml) runs `bin/tailwindcss`.
-  # Point it at the Arch-packaged, arch-correct tailwind binary instead of the
-  # repo's hardcoded tailwindcss-linux-x64 download.
-  mkdir -p junos-web/bin
-  ln -sf "$(command -v tailwindcss)" junos-web/bin/tailwindcss
+  cd "$srcdir/$_srcdir"
+  # Install the arch-correct Tailwind standalone binary where Trunk's pre_build
+  # hook expects it (junos-web/Trunk.toml runs `bin/tailwindcss`).
+  install -Dm755 "$srcdir/tailwindcss-$pkgver-$CARCH" junos-web/bin/tailwindcss
 }
 
 build() {
-  cd "$_srcdir"
-  export RUSTUP_TOOLCHAIN=stable
-  export CARGO_TARGET_DIR="$srcdir/target"
+  cd "$srcdir/$_srcdir"
+  # Hermetic rust toolchain under $srcdir (don't touch the user's ~/.rustup) —
+  # gives us the arch-independent wasm32 std that Arch's `rust` package omits.
+  export RUSTUP_HOME="$srcdir/rustup" CARGO_HOME="$srcdir/cargo"
+  export PATH="$CARGO_HOME/bin:$PATH"
+  rustup toolchain install stable --profile minimal --no-self-update
+  rustup default stable
+  rustup target add wasm32-unknown-unknown
+
   # Frontend (wasm + styles + public/ catalogs) -> junos-web/dist/
   ( cd junos-web && trunk build --release )
-  # Server binary -> $CARGO_TARGET_DIR/release/junos-server
+  # Server binary -> target/release/junos-server
   cargo build --release -p junos-server
 }
 
 package() {
-  cd "$_srcdir"
-  install -Dm755 "$srcdir/target/release/junos-server" \
-    "$pkgdir/usr/bin/junos-server"
+  cd "$srcdir/$_srcdir"
+  install -Dm755 target/release/junos-server "$pkgdir/usr/bin/junos-server"
 
   # Compiled frontend, served at runtime via --dist-dir.
   install -d "$pkgdir/usr/share/junos-web/dist"

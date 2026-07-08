@@ -6,16 +6,21 @@ Wants=network-online.target
 [Service]
 # HTTP on :8090 because :8080 is already taken on the target host.
 # KStars' Ekos Live config must point at http://<host>:8090.
-ExecStart=/usr/bin/junos-server --http-addr 0.0.0.0:8090 --https-addr 0.0.0.0:8443 --dist-dir /usr/share/junos-web/dist
+# --captures-dir points the Files tab at the astronaut user's Pictures folder.
+ExecStart=/usr/bin/junos-server --http-addr 0.0.0.0:8090 --https-addr 0.0.0.0:8443 --dist-dir /usr/share/junos-web/dist --captures-dir /home/astronaut/Pictures
 WorkingDirectory=/var/lib/junos-web
 StateDirectory=junos-web
 StateDirectoryMode=0750
-DynamicUser=true
+# Run as the real 'astronaut' user so the service can read/write that user's
+# home (a DynamicUser gets a random UID that cannot enter a 0700 home dir).
+User=astronaut
 Restart=on-failure
 RestartSec=5s
-# Hardening (mirrors nix/module.nix)
+# Hardening (mirrors nix/module.nix). ProtectHome is relaxed to read-write so
+# the captures dir under /home is reachable; the captures path is whitelisted.
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=false
+ReadWritePaths=/home/astronaut/Pictures
 PrivateTmp=true
 NoNewPrivileges=true
 RestrictAddressFamilies=AF_INET AF_INET6

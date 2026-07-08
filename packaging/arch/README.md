@@ -16,9 +16,14 @@ test build against an unreleased tree, create the tarball yourself and point the
 `source=()` at it (or drop a `junos-web-<ver>.tar.gz` next to the PKGBUILD and set
 `sha256sums`).
 
-Build dependencies (`rust`, `rust-wasm`, `trunk`, `tailwindcss`) are all available
-on both `x86_64` and `aarch64`. The build reaches the network (cargo crate fetch +
-`trunk` fetching `wasm-bindgen-cli`/`wasm-opt`).
+Build dependencies are `rustup` + `trunk` (both packaged on `x86_64` and
+`aarch64`). `makepkg -s` installs them automatically. The toolchain itself is
+provisioned by `rustup` inside a hermetic `$srcdir` (stable + the
+`wasm32-unknown-unknown` target) — Arch Linux ARM has no `rust-wasm` package, so
+relying on `rustup` is what makes the aarch64 build work. The Tailwind CLI is not
+packaged on ALARM either, so the PKGBUILD downloads the arch-correct standalone
+binary (checksummed) into `junos-web/bin/`. The build reaches the network (rustup
+toolchain, cargo crates, and `trunk` fetching `wasm-bindgen-cli`/`wasm-opt`).
 
 ## Run
 

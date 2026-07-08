@@ -19,7 +19,7 @@ tarball="$here/junos-web-${pkgver}.tar.gz"   # must match source=() filename
 
 case "$arch" in
   amd64) image="archlinux:latest"; platform="linux/amd64" ;;
-  arm64) image="lopsided/archlinux-arm:latest"; platform="linux/arm64" ;;
+  arm64) image="menci/archlinuxarm:latest"; platform="linux/arm64" ;;
   *) echo "unknown arch: $arch (use amd64 or arm64)" >&2; exit 1 ;;
 esac
 
@@ -32,6 +32,10 @@ echo ">> building in $image ($platform)"
 # so the package list lives in ONE place (the PKGBUILD), not duplicated here.
 docker run --rm --platform "$platform" -v "$here":/build "$image" bash -c '
   set -euo pipefail
+  # pacman 7 downloads via a landlock+alpm-user sandbox that cannot initialize
+  # under qemu emulation ("switching to sandbox user alpm failed"). Disable it —
+  # emulation-only; a native Pi build (makepkg -si) does not need this.
+  sed -i "/^\[options\]/a DisableSandbox" /etc/pacman.conf
   pacman -Syu --noconfirm --needed base-devel sudo
   useradd -m builder
   echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
@@ -39,4 +43,5 @@ docker run --rm --platform "$platform" -v "$here":/build "$image" bash -c '
   su builder -c "cd /build && makepkg -sf --skipinteg --noconfirm"
 '
 echo ">> done. Package(s):"
-ls -1 "$here"/*.pkg.tar.zst
+# PKGEXT varies by image (.zst on Arch x86, .xz on the ALARM image), so match any.
+ls -1 "$here"/*.pkg.tar.* 2>/dev/null || echo "  (no package produced — check build output above)"

@@ -1,5 +1,6 @@
 # makepkg / build-local.sh build artifacts
 *.tar.gz
-*.pkg.tar.zst
+*.pkg.tar.*
+tailwindcss-*
 src/
 pkg/
