@@ -13,13 +13,16 @@
 #   junos-web-update
 set -euo pipefail
 
-repo="alexandre-carmone/ekos-web-rust"
+repo="alexandre-carmone/Junos"
 pkgname="junos-web"
 arch="$(uname -m)"
 force=0
 [ "${1:-}" = "--force" ] && force=1
 
-api="https://api.github.com/repos/${repo}/releases/latest"
+# Use the releases *list* (not /releases/latest): the latter excludes drafts and
+# prereleases, and our releases are published as prereleases — it would 404.
+# The list is newest-first, so the first entry is the release we want.
+api="https://api.github.com/repos/${repo}/releases"
 
 echo ">> querying latest release of ${repo}"
 release_json="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$api")"
