@@ -19,8 +19,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64             = "0.22"
 clap               = { version = "4", features = ["derive", "env"] }
 anyhow             = "1"
-axum-server        = { version = "0.7", features = ["tls-rustls"] }
-rcgen              = "0.13"
+# Use rustls with the `ring` crypto provider instead of the default `aws-lc-rs`.
+# aws-lc-rs pulls in aws-lc-sys, whose C library fails to link in the Arch
+# packaging sandbox (undefined `aws_lc_0_*` symbols). ring is pure-ish and
+# builds portably. `tls-rustls-no-provider` avoids axum-server forcing aws-lc-rs;
+# the explicit rustls dep below supplies the `ring` provider that
+# `ServerConfig::builder()` resolves at compile time.
+axum-server        = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
+rustls             = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+rcgen              = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 if-addrs           = "0.13"
 image              = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 mime_guess         = "2"
