@@ -74,9 +74,14 @@ gen-cert:
 arch-pkg arch="amd64":
     ./packaging/arch/build-local.sh {{arch}}
 
-# Download the Tailwind v3 standalone binary (re-run to upgrade).
+# Download the Tailwind v3 standalone binary for the host arch (re-run to upgrade).
 setup-tailwind:
     mkdir -p junos-web/bin
+    case "$(uname -m)" in \
+      x86_64)        tw=tailwindcss-linux-x64 ;; \
+      aarch64|arm64) tw=tailwindcss-linux-arm64 ;; \
+      *) echo "unsupported arch: $(uname -m)"; exit 1 ;; \
+    esac; \
     curl -sLo junos-web/bin/tailwindcss \
-      https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/tailwindcss-linux-x64
+      "https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/$tw"
     chmod +x junos-web/bin/tailwindcss

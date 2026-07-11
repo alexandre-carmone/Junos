@@ -1,0 +1,151 @@
+name: Release
+
+# Builds junos-web for x86_64 and aarch64 (Raspberry Pi) — all Linux — and
+# attaches the artifacts to a GitHub Release. Both arches build NATIVELY on
+# GitHub-hosted runners (ubuntu-24.04 + ubuntu-24.04-arm), so no qemu.
+#
+# Triggers:
+#   * push a version tag  (e.g. `git tag 0.1.2 && git push origin 0.1.2`)
+#   * manual "Run workflow" (workflow_dispatch) — uploads artifacts only,
+#     does not create a Release.
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label baked into artifact names"
+        required: false
+        default: ""
+
+permissions:
+  contents: write        # create the Release + upload assets
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Portable tarball (binary + compiled frontend) ─────────────────────────
+  tarball:
+    name: tarball (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # tags, for `git describe`
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: Build portable tarball
+        env:
+          VERSION: ${{ inputs.version || github.ref_name }}
+          OUT_DIR: ${{ github.workspace }}/artifacts
+        run: ./packaging/portable/build-tarball.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ matrix.arch }}
+          path: artifacts/*
+
+      - name: Attach to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+
+  # ── Arch Linux package (.pkg.tar.zst) ─────────────────────────────────────
+  archpkg:
+    name: arch pkg (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # amd64 -> archlinux:latest, arm64 -> menci/archlinuxarm (see build-local.sh)
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # On a tag build, label the package with the tag. build-local.sh reads
+      # pkgver straight from the (mounted) working-tree PKGBUILD, so this sed
+      # flows into the tarball name / _srcdir / output filename consistently.
+      - name: Sync PKGBUILD pkgver to tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: sed -i "s/^pkgver=.*/pkgver=${GITHUB_REF_NAME}/" packaging/arch/PKGBUILD
+
+      - name: Build Arch package (native container)
+        run: ./packaging/arch/build-local.sh ${{ matrix.arch }}
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: archpkg-${{ matrix.arch }}
+          path: packaging/arch/*.pkg.tar.*
+
+      - name: Attach to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packaging/arch/*.pkg.tar.*
+
+  # ── Nix binary cache (for `nix`/NixOS installs) ───────────────────────────
+  # Builds the flake's default package for x86_64-linux and aarch64-linux and
+  # pushes the resulting store paths to Cachix, so NixOS users pull prebuilt
+  # binaries instead of compiling. See packaging/README.cicd for the
+  # substituter config to add on the consuming host.
+  #
+  # Requires repo secret CACHIX_AUTH_TOKEN (a write token for the cache named
+  # below). Without it, `nix build` still runs but nothing is pushed.
+  nix-cache:
+    name: nix cache (${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { system: x86_64-linux,  runner: ubuntu-24.04 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Set up Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: rekos-web                       # <-- change to your cache name
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      # Store paths built here are pushed to Cachix automatically by the action.
+      - name: Build flake (server + frontend)
+        run: |
+          nix build .#default --print-build-logs
+          nix build .#junosServer .#junosWebDist --print-build-logs

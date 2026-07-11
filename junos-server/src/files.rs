@@ -235,42 +235,53 @@ pub async fn thumb(
     if !meta.is_file() { return Err(StatusCode::BAD_REQUEST); }
     let size = q.size.clamp(64, 1024);
 
-    let cache_path = thumb_cache_path(&root, &target, size, mtime_secs(&meta));
-    if let Ok(bytes) = std::fs::read(&cache_path) {
-        return Ok(jpeg_response(bytes));
+    // Le cache est indexé par contenu ; l'extension distingue PNG (couleur
+    // débayerisée) et JPEG (mono). On sonde les deux avant de décoder.
+    let cache_base = thumb_cache_base(&root, &target, size, mtime_secs(&meta));
+    let png_cache = cache_base.with_extension("png");
+    let jpg_cache = cache_base.with_extension("jpg");
+    if let Ok(bytes) = std::fs::read(&png_cache) {
+        return Ok(image_response(bytes, true));
+    }
+    if let Ok(bytes) = std::fs::read(&jpg_cache) {
+        return Ok(image_response(bytes, false));
     }
 
     let ext = extension(&target);
     let bytes = std::fs::read(&target).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let jpeg = if is_fits_ext(&ext) {
-        fits_to_jpeg(&bytes, Some(size)).map_err(|e| {
+    let (img, is_png) = if is_fits_ext(&ext) {
+        fits_to_image(&bytes, Some(size)).map_err(|e| {
             warn!("FITS thumb failed for {}: {e}", target.display());
             StatusCode::INTERNAL_SERVER_ERROR
         })?
     } else {
-        image_resize_jpeg(&bytes, size).map_err(|e| {
+        (image_resize_jpeg(&bytes, size).map_err(|e| {
             warn!("Image thumb failed for {}: {e}", target.display());
             StatusCode::INTERNAL_SERVER_ERROR
-        })?
+        })?, false)
     };
+    let cache_path = if is_png { &png_cache } else { &jpg_cache };
     if let Some(parent) = cache_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&cache_path, &jpeg);
-    Ok(jpeg_response(jpeg))
+    let _ = std::fs::write(cache_path, &img);
+    Ok(image_response(img, is_png))
 }
 
-fn thumb_cache_path(root: &Path, target: &Path, size: u32, mtime: u64) -> PathBuf {
+/// Chemin de cache sans extension : l'appelant ajoute `.png`/`.jpg` selon le
+/// format effectivement produit par le décodage.
+fn thumb_cache_base(root: &Path, target: &Path, size: u32, mtime: u64) -> PathBuf {
     let mut h = DefaultHasher::new();
     target.hash(&mut h);
     mtime.hash(&mut h);
-    let key = format!("{:016x}_{}.jpg", h.finish(), size);
+    let key = format!("{:016x}_{}", h.finish(), size);
     root.join(".junos-thumbs").join(key)
 }
 
-fn jpeg_response(bytes: Vec<u8>) -> Response {
+fn image_response(bytes: Vec<u8>, is_png: bool) -> Response {
+    let ctype = if is_png { "image/png" } else { "image/jpeg" };
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, "image/jpeg".parse().unwrap());
+    headers.insert(header::CONTENT_TYPE, ctype.parse().unwrap());
     headers.insert(header::CACHE_CONTROL, "private, max-age=300".parse().unwrap());
     (StatusCode::OK, headers, Bytes::from(bytes)).into_response()
 }
@@ -290,11 +301,11 @@ pub async fn raw(
 
     if want_preview && is_fits_ext(&ext) {
         let bytes = std::fs::read(&target).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let jpeg = fits_to_jpeg(&bytes, None).map_err(|e| {
+        let (img, is_png) = fits_to_image(&bytes, None).map_err(|e| {
             warn!("FITS preview failed for {}: {e}", target.display());
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-        return Ok(jpeg_response(jpeg));
+        return Ok(image_response(img, is_png));
     }
 
     let bytes = std::fs::read(&target).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -482,9 +493,14 @@ fn parse_fits_meta(rows: &[FitsCard]) -> Value {
     })
 }
 
-// ── FITS pixel decode → JPEG (auto-stretched) ───────────────────────────────
+// ── FITS pixel decode → image (auto-stretched) ──────────────────────────────
+//
+// Renvoie `(octets, is_png)`. Les FITS mono sont auto-étirés en niveaux de gris
+// et encodés en JPEG (comportement historique). Les FITS OSC (mosaïque de Bayer,
+// carte `BAYERPAT` présente) sont débayerisés en couleur et encodés en PNG pour
+// éviter les artefacts JPEG sur des données fortement étirées.
 
-fn fits_to_jpeg(bytes: &[u8], max_side: Option<u32>) -> Result<Vec<u8>, String> {
+fn fits_to_image(bytes: &[u8], max_side: Option<u32>) -> Result<(Vec<u8>, bool), String> {
     let rows = parse_fits_header(bytes)?;
 
     let bitpix = header_i64(&rows, "BITPIX").ok_or("missing BITPIX")?;
@@ -545,7 +561,65 @@ fn fits_to_jpeg(bytes: &[u8], max_side: Option<u32>) -> Result<Vec<u8>, String> 
         other => return Err(format!("unsupported BITPIX {other}")),
     }
 
-    // Auto-stretch via percentile clip on a downsampled view.
+    // Motif de Bayer : présent ⇒ image couleur OSC à débayeriser. On ne tente
+    // rien sur les cubes déjà planaires (NAXIS >= 3).
+    let pattern = if naxis >= 3 {
+        None
+    } else {
+        header_get(&rows, "BAYERPAT")
+            .map(|p| p.trim().to_ascii_uppercase())
+            .filter(|p| matches!(p.as_str(), "RGGB" | "BGGR" | "GRBG" | "GBRG"))
+    };
+
+    if let Some(pat) = pattern {
+        // ── Couleur : débayerisation super-pixel 2×2 → RGB (w/2 × h/2). ──
+        let (rgb, cw, ch) = debayer_superpixel(&floats, w, h, &pat);
+        let npx = cw * ch;
+
+        // Auto-étirement par canal : approxime une balance des blancs, sinon
+        // les données OSC (vert dominant) tirent vers le vert.
+        let mut chan: [Vec<f32>; 3] = [
+            Vec::with_capacity(npx),
+            Vec::with_capacity(npx),
+            Vec::with_capacity(npx),
+        ];
+        for px in rgb.chunks_exact(3) {
+            chan[0].push(px[0]);
+            chan[1].push(px[1]);
+            chan[2].push(px[2]);
+        }
+        let ranges: Vec<(f32, f32)> = chan
+            .iter()
+            .map(|c| {
+                let (lo, hi) = percentile_range(c, 0.02, 0.995);
+                (lo, (hi - lo).max(1e-6))
+            })
+            .collect();
+
+        let mut u8buf = vec![0u8; npx * 3];
+        for (dst, src) in u8buf.chunks_exact_mut(3).zip(rgb.chunks_exact(3)) {
+            for c in 0..3 {
+                let (lo, span) = ranges[c];
+                let n = ((src[c] - lo) / span).clamp(0.0, 1.0);
+                dst[c] = (n * 255.0) as u8;
+            }
+        }
+
+        let img = image::RgbImage::from_raw(cw as u32, ch as u32, u8buf)
+            .ok_or("image build failed")?;
+        let dyn_img = image::DynamicImage::ImageRgb8(img);
+        let final_img = match max_side {
+            Some(m) => dyn_img.thumbnail(m, m),
+            None => dyn_img,
+        };
+        let mut out = Vec::new();
+        final_img
+            .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
+        return Ok((out, true));
+    }
+
+    // ── Mono : auto-stretch via percentile clip sur une vue sous-échantillonnée.
     let (lo, hi) = percentile_range(&floats, 0.02, 0.995);
     let span = (hi - lo).max(1e-6);
     let mut u8buf = vec![0u8; plane_pixels];
@@ -565,7 +639,41 @@ fn fits_to_jpeg(bytes: &[u8], max_side: Option<u32>) -> Result<Vec<u8>, String> 
     final_img
         .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Jpeg)
         .map_err(|e| e.to_string())?;
-    Ok(out)
+    Ok((out, false))
+}
+
+/// Débayerisation « super-pixel » : chaque cellule de Bayer 2×2 donne un pixel
+/// RGB (R, moyenne des deux verts, B). Rapide et sans artefact — idéal pour des
+/// aperçus/vignettes. Décalage de Bayer supposé nul (XBAYROFF/YBAYROFF ignorés).
+/// Renvoie `(rgb, largeur/2, hauteur/2)` en f32 entrelacé.
+fn debayer_superpixel(floats: &[f32], w: usize, h: usize, pattern: &str) -> (Vec<f32>, usize, usize) {
+    let cw = w / 2;
+    let ch = h / 2;
+    // Position (ligne, colonne) de R, G1, G2, B dans la cellule 2×2 :
+    //   idx 0 = (0,0), 1 = (0,1), 2 = (1,0), 3 = (1,1)
+    let (r, g1, g2, b) = match pattern {
+        "RGGB" => (0usize, 1usize, 2usize, 3usize),
+        "BGGR" => (3, 1, 2, 0),
+        "GRBG" => (1, 0, 3, 2),
+        "GBRG" => (2, 0, 3, 1),
+        _ => (0, 1, 2, 3),
+    };
+    let cell = |base: usize, idx: usize| -> f32 {
+        let dr = idx / 2;
+        let dc = idx % 2;
+        floats[base + dr * w + dc]
+    };
+    let mut rgb = vec![0f32; cw * ch * 3];
+    for y in 0..ch {
+        for x in 0..cw {
+            let base = (y * 2) * w + (x * 2);
+            let out = (y * cw + x) * 3;
+            rgb[out] = cell(base, r);
+            rgb[out + 1] = 0.5 * (cell(base, g1) + cell(base, g2));
+            rgb[out + 2] = cell(base, b);
+        }
+    }
+    (rgb, cw, ch)
 }
 
 fn find_header_end(bytes: &[u8]) -> Result<usize, String> {
@@ -769,4 +877,56 @@ pub async fn resolve_abs(
 #[allow(dead_code)]
 fn _ensure_resolve_new_used(state: &AppState, rel: &str) -> Result<(PathBuf, PathBuf), StatusCode> {
     resolve_new(state, rel)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal 8-bit 2D FITS with the given extra cards.
+    fn make_fits(w: usize, h: usize, extra: &[(&str, &str)]) -> Vec<u8> {
+        fn card(key: &str, value: &str) -> Vec<u8> {
+            let text = format!("{key:<8}= {value}");
+            let mut rec = text.into_bytes();
+            rec.resize(FITS_RECORD, b' ');
+            rec
+        }
+        let mut hdr = Vec::new();
+        hdr.extend(card("SIMPLE", "T"));
+        hdr.extend(card("BITPIX", "8"));
+        hdr.extend(card("NAXIS", "2"));
+        hdr.extend(card("NAXIS1", &w.to_string()));
+        hdr.extend(card("NAXIS2", &h.to_string()));
+        for (k, v) in extra {
+            hdr.extend(card(k, v));
+        }
+        // END card, then pad the header to a 2880 block.
+        let mut end = b"END".to_vec();
+        end.resize(FITS_RECORD, b' ');
+        hdr.extend(end);
+        let pad = (hdr.len() + FITS_BLOCK - 1) / FITS_BLOCK * FITS_BLOCK - hdr.len();
+        hdr.extend(std::iter::repeat(b' ').take(pad));
+        // Ramp pixel data, padded to a full block.
+        let mut data: Vec<u8> = (0..w * h).map(|i| (i % 256) as u8).collect();
+        let dpad = (data.len() + FITS_BLOCK - 1) / FITS_BLOCK * FITS_BLOCK - data.len();
+        data.extend(std::iter::repeat(0u8).take(dpad));
+        hdr.extend(data);
+        hdr
+    }
+
+    #[test]
+    fn mono_fits_renders_jpeg() {
+        let fits = make_fits(8, 8, &[]);
+        let (bytes, is_png) = fits_to_image(&fits, None).unwrap();
+        assert!(!is_png);
+        assert!(bytes.starts_with(&[0xFF, 0xD8, 0xFF])); // JPEG SOI
+    }
+
+    #[test]
+    fn bayer_fits_debayers_to_png() {
+        let fits = make_fits(8, 8, &[("BAYERPAT", "'RGGB    '")]);
+        let (bytes, is_png) = fits_to_image(&fits, None).unwrap();
+        assert!(is_png);
+        assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G'])); // PNG signature
+    }
 }
