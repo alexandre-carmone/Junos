@@ -11,6 +11,62 @@ cd packaging/arch
 makepkg -si          # build + install (pulls makedepends automatically)
 ```
 
+## Update from GitHub Releases
+
+No local build needed on the target host — `update.sh` fetches the latest
+release package for the running architecture (`x86_64` or `aarch64`) and
+installs it with `pacman -U`:
+
+```bash
+./update.sh              # update if a newer release exists
+./update.sh --force      # reinstall even if already current
+```
+
+Install it as a short system command:
+
+```bash
+sudo install -Dm755 update.sh /usr/local/bin/junos-web-update
+junos-web-update
+```
+
+### Nightly auto-update (optional)
+
+Run the updater on a timer. Create the unit + timer, then enable:
+
+```bash
+sudo tee /etc/systemd/system/junos-web-update.service >/dev/null <<'EOF'
+[Unit]
+Description=Update junos-web from GitHub Releases
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/junos-web-update
+# pacman -U here restarts nothing; bounce the service if it updated:
+ExecStartPost=-/usr/bin/systemctl try-restart junos-web.service
+EOF
+
+sudo tee /etc/systemd/system/junos-web-update.timer >/dev/null <<'EOF'
+[Unit]
+Description=Nightly junos-web update check
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now junos-web-update.timer
+```
+
+`update.sh` runs `sudo pacman -U`; for an unattended timer either run the
+service as root (as above — no `sudo` prompt) or add a NOPASSWD sudoers rule.
+
 `makepkg` fetches the source tarball for tag `v$pkgver` from GitHub. For a local
 test build against an unreleased tree, create the tarball yourself and point the
 `source=()` at it (or drop a `junos-web-<ver>.tar.gz` next to the PKGBUILD and set
