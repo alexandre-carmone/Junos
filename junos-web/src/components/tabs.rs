@@ -31,6 +31,8 @@ pub fn TabContent(
     store: DeviceStore,
     send: SendCmd,
     site: Signal<SiteSnapshot>,
+    set_site_location: Arc<dyn Fn(f64, f64) + Send + Sync>,
+    mount_device: Signal<Option<String>>,
     sky_center_alt: RwSignal<f64>,
     sky_center_az: RwSignal<f64>,
     sky_fov_radius: RwSignal<f64>,
@@ -96,6 +98,8 @@ pub fn TabContent(
                 mount=mount
                 camera=camera
                 site=site
+                set_site_location=set_site_location
+                mount_device=mount_device
                 solve=solve
                 focal_length_mm=focal_length_mm
                 scheduler=scheduler_snapshot

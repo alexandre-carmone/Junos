@@ -70,6 +70,22 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
         .browser_tx
         .send(connection_state_msg(true, Some(home.as_str())));
 
+    // Prime the observer site once per attach. KStars answers with
+    // {name, latitude, longitude, elevation, tz, tz0}; that reply is snapshotted
+    // below and replayed to every browser on connect. Not gated on Ekos-online
+    // (handled before KStars' startup gate, message.cpp:251).
+    if let Err(e) = sink.send(Message::Text(astro_get_location_msg().into())).await {
+        warn!("Failed to request astro_get_location from KStars: {e}");
+    }
+
+    // KStars never pushes a location change over Ekos Live (astro_get_location
+    // is response-only, message.cpp:1861), so re-poll it periodically to pick
+    // up site edits made in KStars after attach. Replies are only forwarded to
+    // browsers when the value actually changed (see the stream branch), so a
+    // steady site costs nothing beyond the request.
+    let mut site_poll = tokio::time::interval(std::time::Duration::from_secs(10));
+    site_poll.tick().await; // consume the immediate first tick — we just primed above
+
     loop {
         tokio::select! {
             // KStars → browsers
@@ -85,6 +101,16 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
                         // get the full connected+online state on connect.
                         if message_is_type(&text, "new_connection_state") {
                             *hub.last_connection_state.lock().await = Some(text.to_string());
+                        }
+                        // Observer site: cache for late-joining browsers, but
+                        // only forward when it actually changed so the periodic
+                        // poll doesn't spam browsers with identical updates.
+                        if message_is_type(&text, "astro_get_location") {
+                            let mut cached = hub.last_site_location.lock().await;
+                            if cached.as_deref() == Some(text.as_str()) {
+                                continue; // unchanged — swallow
+                            }
+                            *cached = Some(text.to_string());
                         }
                         let _ = hub.browser_tx.send(text.to_string());
                     }
@@ -121,6 +147,14 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
                     }
                 }
             }
+
+            // Periodically re-query the observer site to catch KStars-side edits.
+            _ = site_poll.tick() => {
+                if let Err(e) = sink.send(Message::Text(astro_get_location_msg().into())).await {
+                    warn!("Failed to poll astro_get_location from KStars: {e}");
+                    break;
+                }
+            }
         }
     }
 
@@ -135,6 +169,7 @@ async fn clear_kstars_sender(hub: &Hub) {
     let mut guard = hub.kstars_msg_tx.lock().await;
     *guard = None;
     *hub.last_connection_state.lock().await = None;
+    *hub.last_site_location.lock().await = None;
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +265,16 @@ fn set_client_state_msg() -> String {
     json!({
         "type": "set_client_state",
         "payload": { "state": true }
+    })
+    .to_string()
+}
+
+/// Ask KStars for the observer's geographic site. Sent once per KStars attach;
+/// the reply (`astro_get_location`) is cached and replayed to browsers.
+fn astro_get_location_msg() -> String {
+    json!({
+        "type": "astro_get_location",
+        "payload": {}
     })
     .to_string()
 }

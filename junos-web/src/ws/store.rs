@@ -24,6 +24,10 @@ pub struct DeviceStore {
     /// All connected INDI devices, from `get_devices`. Used by the rig editor
     /// to populate per-role device dropdowns (filtered by interface bitfield).
     pub devices: RwSignal<Vec<DeviceInfo>>,
+    /// KStars' observer geographic location, from `astro_get_location`.
+    /// `None` until KStars answers on connect; the planetarium falls back to
+    /// its local (Paris) default until then, then adopts this as authoritative.
+    pub site: RwSignal<Option<SiteInfo>>,
     /// Per-module optical-train assignment, from `train_get_profiles`. Raw map
     /// `{ "<ProfileSettings enum>": <trainId>, … }` (0=Primary 1=Capture
     /// 2=Focus 3=Mount 4=Guide 5=Align 6=DarkLibrary).
@@ -121,6 +125,7 @@ impl DeviceStore {
             optical_trains: RwSignal::new(Vec::new()),
             scopes: RwSignal::new(Vec::new()),
             devices: RwSignal::new(Vec::new()),
+            site: RwSignal::new(None),
             module_trains: RwSignal::new(serde_json::Value::Null),
             focus_status: RwSignal::new(None),
             focus_settings: RwSignal::new(serde_json::Value::Null),
@@ -195,6 +200,15 @@ impl DeviceStore {
                     if !s.is_empty() {
                         self.home_dir.set(s.to_string());
                     }
+                }
+            }
+
+            // KStars' observer site, answered from our `astro_get_location`
+            // prime on connect. Adopted as the authoritative planetarium
+            // location (see the Effect in main.rs). Not gated on Ekos-online.
+            "astro_get_location" => {
+                if payload.is_object() {
+                    self.site.set(Some(SiteInfo::from_json(payload)));
                 }
             }
 

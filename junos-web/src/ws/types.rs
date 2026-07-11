@@ -207,6 +207,30 @@ impl ScopeInfo {
     }
 }
 
+/// KStars' observer geographic location, from `astro_get_location`
+/// (message.cpp:1848). This is the authoritative site the planetarium must
+/// use so its horizontal-coordinate math matches KStars; the browser's
+/// hardcoded default (Paris) is only a fallback before this arrives.
+#[derive(Debug, Clone, Default)]
+pub struct SiteInfo {
+    pub name: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    /// Metres above sea level. Not yet used by the sky math, kept for parity.
+    pub elevation: f64,
+}
+
+impl SiteInfo {
+    pub(super) fn from_json(v: &serde_json::Value) -> Self {
+        Self {
+            name: v["name"].as_str().unwrap_or("").to_string(),
+            latitude: v["latitude"].as_f64().unwrap_or(0.0),
+            longitude: v["longitude"].as_f64().unwrap_or(0.0),
+            elevation: v["elevation"].as_f64().unwrap_or(0.0),
+        }
+    }
+}
+
 /// Connected INDI device, from `get_devices` (message.cpp:342). `interface`
 /// is the libindi driver-interface bitfield (basedevice.h) — used to filter
 /// devices by role when building optical-train slots.

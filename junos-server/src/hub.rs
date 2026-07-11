@@ -29,6 +29,11 @@ pub struct Hub {
     /// Last `new_connection_state` received from KStars, replayed to browsers
     /// on connect so a page refresh gets the full connected+online state.
     pub last_connection_state: Arc<Mutex<Option<String>>>,
+
+    /// Last `astro_get_location` reply from KStars (the observer site), replayed
+    /// to browsers on connect so a late-joining page gets KStars' real location
+    /// immediately without having to re-query it. Primed once per KStars attach.
+    pub last_site_location: Arc<Mutex<Option<String>>>,
 }
 
 impl Hub {
@@ -38,6 +43,7 @@ impl Hub {
             browser_tx,
             kstars_msg_tx: Arc::new(Mutex::new(None)),
             last_connection_state: Arc::new(Mutex::new(None)),
+            last_site_location: Arc::new(Mutex::new(None)),
         }
     }
 

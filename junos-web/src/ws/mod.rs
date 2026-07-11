@@ -106,6 +106,10 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
             if connected_sig.get() {
                 prime_send(r#"{"type":"get_profiles","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"get_drivers","payload":{}}"#.to_string());
+                // Note: the observer site (astro_get_location) is primed and
+                // cached by junos-server on KStars attach, then replayed to each
+                // browser on connect (proxy.rs) — no per-browser request needed.
+                // The store arm for "astro_get_location" consumes that replay.
             }
         });
     }

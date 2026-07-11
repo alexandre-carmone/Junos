@@ -44,6 +44,13 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
     };
     let _ = sink.send(Message::Text(init.into())).await;
 
+    // Replay the cached observer site (if KStars is attached and has answered)
+    // so this browser gets KStars' real location immediately, even when it
+    // opened after KStars was already up.
+    if let Some(site) = hub.last_site_location.lock().await.clone() {
+        let _ = sink.send(Message::Text(site.into())).await;
+    }
+
     // Also send the current app (KStars / PHD2) running state so the browser
     // gets an up-to-date badge immediately on (re)connect.
     let app_status = state.app_manager.status_json().await;

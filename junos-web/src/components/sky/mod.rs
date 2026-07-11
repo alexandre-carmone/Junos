@@ -306,6 +306,8 @@ pub fn SkyTab(
     #[prop(into)] mount: Signal<MountSnapshot>,
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] site: Signal<SiteSnapshot>,
+    set_site_location: Arc<dyn Fn(f64, f64) + Send + Sync>,
+    #[prop(into)] mount_device: Signal<Option<String>>,
     #[prop(into)] solve: Signal<SolveSnapshot>,
     #[prop(into)] focal_length_mm: Signal<Option<f64>>,
     #[prop(into)] scheduler: Signal<SchedulerSnapshot>,
@@ -1246,10 +1248,6 @@ pub fn SkyTab(
     };
 
     let send_for_ctx = Arc::clone(&send);
-    let send_for_location = Arc::clone(&send);
-    let set_site_location_fn: Arc<dyn Fn(f64, f64) + Send + Sync> = Arc::new(move |lat: f64, lon: f64| {
-        send_for_location(serde_json::json!({"type":"option_set","payload":{"Latitude":lat,"Longitude":lon}}).to_string());
-    });
 
     let mosaic_input = "bg-bg-input text-[#ccc] border border-border-input font-mono text-[12px] py-[2px] px-[5px]";
     let mosaic_row_label = "text-text-muted min-w-[52px]";
@@ -1389,7 +1387,8 @@ pub fn SkyTab(
                 toggles=toggles
                 set_follow_mount=set_follow_mount
                 site=site
-                set_site_location=set_site_location_fn.clone()
+                set_site_location=set_site_location
+                mount_device=mount_device
             />
 
 

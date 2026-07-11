@@ -63,7 +63,7 @@ translations! {
     profile_name, delete_label, profiles, profile_modified, no_log_entries, toggle_controls, sky_section, objects_section,
     settings_section, stars_checkbox, names_checkbox, constellations, grid, eq_grid, fov, all_dso,
     galaxies, open_clusters, globular_clusters, nebulae, planetary_nebulae, supernova_remnants, galaxy_clusters, mag_limit,
-    fl_mm, follow_mount, location_section, latitude_label, longitude_label, set_location_btn, get_location_btn, goto_btn,
+    fl_mm, follow_mount, location_section, latitude_label, longitude_label, set_location_btn, get_location_btn, location_needs_mount, goto_btn,
     now, reset, goto_here, cancel, search_placeholder, ecliptic, zenith, solar_system,
     solve_marker, slew_trail, cursor, info_close, body_sun, body_moon, body_mercury, body_venus,
     body_mars, body_jupiter, body_saturn, body_uranus, body_neptune, mag_label, size_label, phase_label,

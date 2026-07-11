@@ -103,6 +103,7 @@
   "longitude_label": "Lon (°E)",
   "set_location_btn": "SET",
   "get_location_btn": "GPS",
+  "location_needs_mount": "Requires a connected mount",
   "goto_btn": "↯ Goto",
   "now": "Now",
   "reset": "Reset",

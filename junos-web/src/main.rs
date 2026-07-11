@@ -155,6 +155,54 @@ fn App() -> impl IntoView {
         latitude:  site_lat.get(),
         longitude: site_lon.get(),
     });
+    // KStars is the single source of truth for the observer site: whenever it
+    // answers our `astro_get_location` prime (or the server's periodic re-poll),
+    // adopt its lat/lon and persist. A manual entry (below) writes KStars' truth
+    // via the mount, so it too flows back through here.
+    {
+        let store_site = store.site;
+        Effect::new(move |_| {
+            if let Some(s) = store_site.get() {
+                site_lat.set(s.latitude);
+                site_lon.set(s.longitude);
+                if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+                    let _ = ls.set_item("site_latitude", &s.latitude.to_string());
+                    let _ = ls.set_item("site_longitude", &s.longitude.to_string());
+                }
+            }
+        });
+    }
+
+    // Connected mount device name, or None. Used as the GEOGRAPHIC_COORD write
+    // target and to gate (grey out) the location controls: KStars only accepts a
+    // location pushed through a connected device that is its `locationSource`.
+    let mount_device: Signal<Option<String>> = {
+        let mount_snap = compat::derive_mount(&store);
+        Signal::derive(move || {
+            let m = mount_snap.get();
+            if m.connected {
+                m.device_name.filter(|d| !d.is_empty() && d != "--")
+            } else {
+                None
+            }
+        })
+    };
+
+    // Manual location writer (GPS button / lat-lon inputs). Pushes the new site
+    // into KStars' live location via the mount (option_set locationSource +
+    // GEOGRAPHIC_COORD write); the server's astro_get_location poll then flows it
+    // back through the Effect above (KStars stays the source). Also optimistically
+    // moves the map now so the user gets immediate feedback. No-op without a mount
+    // (the controls are greyed then).
+    let set_site_location: Arc<dyn Fn(f64, f64) + Send + Sync> = {
+        let send = Arc::clone(&send);
+        Arc::new(move |lat, lon| {
+            let Some(dev) = mount_device.get_untracked() else { return };
+            site_lat.set(lat);
+            site_lon.set(lon);
+            ws_helpers::push_site_to_kstars(&send, &dev, lat, lon);
+        })
+    };
 
     // ── Language ──────────────────────────────────────────────────────────
     let saved_lang = ls.as_ref()
@@ -248,6 +296,8 @@ fn App() -> impl IntoView {
                 store=store.clone()
                 send=Arc::clone(&send)
                 site=site
+                set_site_location=set_site_location
+                mount_device=mount_device
                 sky_center_alt=sky_center_alt
                 sky_center_az=sky_center_az
                 sky_fov_radius=sky_fov_radius

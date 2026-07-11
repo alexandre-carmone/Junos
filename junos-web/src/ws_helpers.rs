@@ -43,6 +43,25 @@ pub fn send_device_property_set(send: &SendCmd, device: &str, property: &str, el
     }));
 }
 
+/// Push a new observer location into KStars' live `geo()` truth. KStars exposes
+/// no direct "set location" command; the only path is via a connected INDI
+/// device: point KStars' `locationSource` at the mount, then write
+/// `GEOGRAPHIC_COORD` to it. The driver echoes it back `IPS_OK` and KStars'
+/// `GenericDevice::processNumber` (indistd.cpp:361) calls `setLocation()`.
+/// INDI `LONG` is 0..360° East, so a Western (negative) longitude is wrapped.
+/// `ELEV` is intentionally omitted so KStars keeps its current elevation.
+pub fn push_site_to_kstars(send: &SendCmd, device: &str, lat: f64, lon: f64) {
+    // "Set & leave": make the mount KStars' location master (idempotent).
+    send_cmd(send, "option_set", json!({
+        "options": [ { "name": "locationSource", "value": device } ],
+    }));
+    let lon_east = if lon < 0.0 { lon + 360.0 } else { lon };
+    send_device_property_set(send, device, "GEOGRAPHIC_COORD", json!([
+        { "name": "LAT",  "value": lat },
+        { "name": "LONG", "value": lon_east },
+    ]));
+}
+
 pub fn extract_indi_number(payload: &Value, name: &str) -> Option<f64> {
     payload["numbers"].as_array()?
         .iter()

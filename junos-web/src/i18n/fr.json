@@ -193,6 +193,7 @@
   "longitude_label": "Lon (°E)",
   "set_location_btn": "DÉF.",
   "get_location_btn": "GPS",
+  "location_needs_mount": "Monture requise",
   "goto_btn": "↯ Goto",
   "now": "Maint.",
   "reset": "Remise à zéro",

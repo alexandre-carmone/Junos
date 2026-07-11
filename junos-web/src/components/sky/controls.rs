@@ -32,6 +32,7 @@ pub fn SkyControls(
     set_follow_mount: WriteSignal<bool>,
     #[prop(into)] site: Signal<SiteSnapshot>,
     set_site_location: Arc<dyn Fn(f64, f64) + Send + Sync>,
+    #[prop(into)] mount_device: Signal<Option<String>>,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
@@ -40,6 +41,8 @@ pub fn SkyControls(
     let lat_str = RwSignal::new(format!("{:.4}", s.latitude));
     let lon_str = RwSignal::new(format!("{:.4}", s.longitude));
     let send_location = StoredValue::new(Arc::clone(&set_site_location));
+    // Writing KStars' location requires a connected mount to relay through.
+    let has_mount = move || mount_device.get().is_some();
 
     view! {
         <div class="absolute top-2 right-2 max-md:!top-[34px] flex flex-col items-end gap-1 z-50"
@@ -284,7 +287,9 @@ pub fn SkyControls(
                                 <div class="flex gap-1 flex-wrap">
                                     <button
                                         class=CONTROLS_BTN
+                                        prop:disabled=move || !has_mount()
                                         on:click=move |_| {
+                                            if !has_mount() { return; }
                                             let lat = lat_str.get().parse::<f64>().unwrap_or(0.0);
                                             let lon = lon_str.get().parse::<f64>().unwrap_or(0.0);
                                             send_location.get_value()(lat, lon);
@@ -293,7 +298,9 @@ pub fn SkyControls(
                                     </button>
                                     <button
                                         class=format!("{CONTROLS_BTN} !bg-bg-button-ok !text-accent-green-soft !border-border-ok")
+                                        prop:disabled=move || !has_mount()
                                         on:click=move |_| {
+                                            if !has_mount() { return; }
                                             let lat_s = lat_str;
                                             let lon_s = lon_str;
                                             let send_loc = send_location.get_value();
@@ -322,6 +329,11 @@ pub fn SkyControls(
                                         {move || tr().get_location_btn}
                                     </button>
                                 </div>
+                                <Show when=move || !has_mount()>
+                                    <div class="text-text-muted text-[11px] mt-[3px]">
+                                        {move || tr().location_needs_mount}
+                                    </div>
+                                </Show>
                             </div>
                         </div>
                     })}
