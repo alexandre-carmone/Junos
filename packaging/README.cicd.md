@@ -12,14 +12,13 @@ mirroring `just check`. No artifacts. Runs on x86_64.
 Triggered by pushing a version tag (`git tag 0.1.2 && git push origin 0.1.2`)
 or the **Run workflow** button (`workflow_dispatch`). Both x86_64 and **aarch64
 (Raspberry Pi)** build **natively** — x86_64 on `ubuntu-24.04`, aarch64 on
-`ubuntu-24.04-arm` — so there is no qemu emulation. Three jobs, each a 2-arch
+`ubuntu-24.04-arm` — so there is no qemu emulation. Two jobs, each a 2-arch
 matrix:
 
 | Job         | Produces                                   | How |
 |-------------|--------------------------------------------|-----|
 | `tarball`   | `junos-web-<ver>-<arch>-linux.tar.gz` (+ `.sha256`) — binary, `dist/`, sample unit, run notes. Runs on any glibc Linux. | `packaging/portable/build-tarball.sh` |
 | `archpkg`   | `junos-web-<ver>-<arch>.pkg.tar.zst` for Arch / Arch Linux ARM | `packaging/arch/build-local.sh` (native container) |
-| `nix-cache` | Pushes prebuilt store paths to Cachix for `nix`/NixOS installs | flake `.#default`, `.#junosServer`, `.#junosWebDist` |
 
 On a **tag** the `tarball` and `archpkg` artifacts are attached to the matching
 GitHub Release (created automatically). On **manual dispatch** they are uploaded
@@ -32,35 +31,67 @@ label; otherwise the tag name / `git describe` is used.
 `sed`s it to the tag name so the package is labelled correctly. Keep tags in the
 `MAJOR.MINOR.PATCH` shape the trigger expects (`0.1.2`, not `v0.1.2`).
 
-## Nix binary cache (NixOS installs)
+## (Optional, not enabled) Nix binary cache — self-hosted Attic
 
-`nix-cache` builds the flake for `x86_64-linux` and `aarch64-linux` and pushes
-the results to **Cachix**, so consumers substitute prebuilt binaries instead of
-compiling (a full build is slow, especially on a Pi).
+The release workflow does **not** currently build or push a Nix cache. If you
+later want NixOS consumers to substitute prebuilt binaries instead of compiling
+(a full build is slow, especially on a Pi), add a job that builds the flake for
+`x86_64-linux` and `aarch64-linux` and pushes to a self-hosted
+[Attic](https://github.com/zhaofengli/attic) server. Sketch:
 
-**One-time setup:**
+```yaml
+  nix-cache:
+    if: vars.ATTIC_ENDPOINT != ''
+    strategy: { matrix: { include: [
+      { system: x86_64-linux,  runner: ubuntu-24.04 },
+      { system: aarch64-linux, runner: ubuntu-24.04-arm } ] } }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v30
+        with: { extra_nix_config: "experimental-features = nix-command flakes" }
+      - uses: ryanccn/attic-action@v0
+        with:
+          endpoint: ${{ vars.ATTIC_ENDPOINT }}
+          cache: ${{ vars.ATTIC_CACHE || 'rekos-web' }}
+          token: ${{ secrets.ATTIC_TOKEN }}
+      - run: nix build .#default .#junosServer .#junosWebDist -L
+```
 
-1. Create a cache at <https://app.cachix.org> (e.g. `rekos-web`).
-2. If your chosen name differs, update the `name:` under **Set up Cachix** in
-   `.github/workflows/release.yml`.
-3. Generate a write auth token and add it as the repo secret
-   `CACHIX_AUTH_TOKEN` (**Settings → Secrets and variables → Actions**).
+**Server + secrets setup:**
 
-Without the secret the job still builds but pushes nothing.
+1. Run an Attic server somewhere reachable (container/binary) and create a cache:
+   ```bash
+   atticd                                  # the server (behind HTTPS)
+   atticadm make-token --sub ci --push rekos-web   # -> push token for CI
+   attic cache create rekos-web            # from an authed client
+   ```
+2. In the repo, **Settings → Secrets and variables → Actions**:
+   - **Variables:** `ATTIC_ENDPOINT` = `https://cache.yourdomain.org`
+     (and optionally `ATTIC_CACHE` if not `rekos-web`).
+   - **Secrets:** `ATTIC_TOKEN` = the push token from step 1.
 
-**Consume it** — on the installing host / in your NixOS config add the
-substituter (replace `rekos-web` with your cache name):
+**Consume it** — on the installing host / in your NixOS config:
 
 ```nix
 nix.settings = {
-  substituters = [ "https://rekos-web.cachix.org" ];
-  trusted-public-keys = [ "rekos-web.cachix.org-1:<PUBLIC-KEY-FROM-CACHIX>" ];
+  substituters = [ "https://cache.yourdomain.org/rekos-web" ];
+  trusted-public-keys = [ "rekos-web:<PUBLIC-KEY>" ];
 };
 ```
 
-Then install via the flake (module + `services.junos-web.enable = true;`, see
-`flake.nix` / `nix/module.nix`) or `nix profile install github:alexandre-carmone/ekos-web-rust`.
-The public key is shown on the cache's Cachix page.
+Get the public key with `attic cache info rekos-web` (or from the server). Then
+install via the flake (module + `services.junos-web.enable = true;`, see
+`flake.nix` / `nix/module.nix`) or
+`nix profile install github:alexandre-carmone/ekos-web-rust`.
+
+### Alternative backends
+
+Attic isn't the only option — the same job can instead sign paths and
+`nix copy` to an **S3/MinIO** bucket (`s3://…?endpoint=…`) or push over **SSH**
+to a box running **Harmonia**/`nix-serve`. All three need a signing keypair
+(`nix key generate-secret …`); the consumer config is the same shape (a
+`substituters` URL + `trusted-public-keys`).
 
 ## ARM runner availability
 

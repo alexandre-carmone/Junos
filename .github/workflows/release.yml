@@ -112,40 +112,6 @@ jobs:
         with:
           files: packaging/arch/*.pkg.tar.*
 
-  # ── Nix binary cache (for `nix`/NixOS installs) ───────────────────────────
-  # Builds the flake's default package for x86_64-linux and aarch64-linux and
-  # pushes the resulting store paths to Cachix, so NixOS users pull prebuilt
-  # binaries instead of compiling. See packaging/README.cicd for the
-  # substituter config to add on the consuming host.
-  #
-  # Requires repo secret CACHIX_AUTH_TOKEN (a write token for the cache named
-  # below). Without it, `nix build` still runs but nothing is pushed.
-  nix-cache:
-    name: nix cache (${{ matrix.system }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { system: x86_64-linux,  runner: ubuntu-24.04 }
-          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Nix
-        uses: cachix/install-nix-action@v30
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Set up Cachix
-        uses: cachix/cachix-action@v15
-        with:
-          name: rekos-web                       # <-- change to your cache name
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-      # Store paths built here are pushed to Cachix automatically by the action.
-      - name: Build flake (server + frontend)
-        run: |
-          nix build .#default --print-build-logs
-          nix build .#junosServer .#junosWebDist --print-build-logs
+  # Note: a Nix binary-cache job (self-hosted Attic) was intentionally left out.
+  # See packaging/README.cicd.md for how to add it back if you want prebuilt
+  # NixOS substitutes later.
