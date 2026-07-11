@@ -5,6 +5,7 @@ mod files;
 mod hub;
 mod kstars_ws;
 mod proxy;
+mod starfind;
 mod tls;
 
 use std::net::SocketAddr;
@@ -78,6 +79,7 @@ async fn main() {
         .route("/api/files/rename",   post(files::rename))
         .route("/api/files/delete",   delete(files::delete))
         .route("/api/files/resolve",  get(files::resolve_abs))
+        .route("/api/files/tilt",     get(files::tilt))
         .fallback_service(ServeDir::new(&dist_dir).append_index_html_on_directories(true))
         .with_state(state);
 

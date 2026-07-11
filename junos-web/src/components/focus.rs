@@ -20,6 +20,10 @@ use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
 
+mod abmath;
+mod aberration;
+use aberration::AberrationInspector;
+
 fn status_color(status: &str) -> &'static str {
     let s = status.to_lowercase();
     if s.contains("fail") || s.contains("abort") { "var(--state-err)" }
@@ -92,8 +96,6 @@ pub fn FocusTab(
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] send:   SendCmd,
 ) -> impl IntoView {
-    let _ = camera; // Reserved for future use (CCD_INFO-driven frame sizing).
-
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
 
@@ -304,6 +306,7 @@ pub fn FocusTab(
     // non-Copy SendCmd through two layers of Fn closures. We rebuild the
     // dispatcher fresh on each reactive evaluation.
     let send_sv = StoredValue::new(send.clone());
+    let send_ab = send.clone();
 
     let settings_rows = move || {
         let settings = focus.with(|f| f.settings.clone());
@@ -421,6 +424,7 @@ pub fn FocusTab(
                                 on:click=move |_| settings_open.set(true)>
                                 {move || tr().guide_settings_button}
                             </button>
+                            <AberrationInspector focus=focus camera=camera send=send_ab.clone() />
                         </div>
                     </fieldset>
 

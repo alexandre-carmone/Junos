@@ -75,6 +75,21 @@ pub struct RawQ {
     pub r#as: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TiltQ {
+    #[serde(default)]
+    pub path: String,
+    /// Mosaic tile side as a percent of image width (KStars default: 25).
+    #[serde(default = "default_tile_pct")]
+    pub tile_pct: f64,
+    /// Minimum stars in a tile for its HFR to be reported (else `null`).
+    #[serde(default = "default_min_stars")]
+    pub min_stars: usize,
+}
+
+fn default_tile_pct() -> f64 { 25.0 }
+fn default_min_stars() -> usize { 3 }
+
 // ── Sandbox resolution ───────────────────────────────────────────────────────
 
 /// Resolve a user-supplied relative path against the captures root.
@@ -500,7 +515,21 @@ fn parse_fits_meta(rows: &[FitsCard]) -> Value {
 // carte `BAYERPAT` présente) sont débayerisés en couleur et encodés en PNG pour
 // éviter les artefacts JPEG sur des données fortement étirées.
 
-fn fits_to_image(bytes: &[u8], max_side: Option<u32>) -> Result<(Vec<u8>, bool), String> {
+/// Decoded first image plane of a FITS: pixel values as `f32` (BZERO/BSCALE
+/// applied), the plane dimensions, the parsed header, and NAXIS. Shared by the
+/// preview renderer (`fits_to_image`) and the tilt analyzer (`analyze_tilt`).
+struct FitsPlane {
+    floats: Vec<f32>,
+    w: usize,
+    h: usize,
+    rows: Vec<FitsCard>,
+    naxis: i64,
+}
+
+/// Parse the header and decode the first 2D image plane into `f32`. For NAXIS≥3
+/// cubes this reads only the first plane (`w*h` samples). Bayer data is left as
+/// the raw mosaic — callers that want colour debayer it themselves.
+fn decode_fits_plane(bytes: &[u8]) -> Result<FitsPlane, String> {
     let rows = parse_fits_header(bytes)?;
 
     let bitpix = header_i64(&rows, "BITPIX").ok_or("missing BITPIX")?;
@@ -560,6 +589,13 @@ fn fits_to_image(bytes: &[u8], max_side: Option<u32>) -> Result<(Vec<u8>, bool),
         }
         other => return Err(format!("unsupported BITPIX {other}")),
     }
+
+    Ok(FitsPlane { floats, w, h, rows, naxis })
+}
+
+fn fits_to_image(bytes: &[u8], max_side: Option<u32>) -> Result<(Vec<u8>, bool), String> {
+    let FitsPlane { floats, w, h, rows, naxis } = decode_fits_plane(bytes)?;
+    let plane_pixels = w * h;
 
     // Motif de Bayer : présent ⇒ image couleur OSC à débayeriser. On ne tente
     // rien sur les cubes déjà planaires (NAXIS >= 3).
@@ -697,6 +733,119 @@ fn percentile_range(samples: &[f32], lo_p: f64, hi_p: f64) -> (f32, f32) {
     let lo_idx = ((sub.len() as f64) * lo_p).floor() as usize;
     let hi_idx = (((sub.len() as f64) * hi_p).floor() as usize).min(sub.len() - 1);
     (sub[lo_idx], sub[hi_idx])
+}
+
+// ── /tilt ────────────────────────────────────────────────────────────────────
+//
+// Per-tile HFR for the aberration/tilt inspector. Decodes a FITS to its first
+// image plane, detects stars, buckets them into the same 3×3 mosaic grid Ekos
+// uses (`ImageMosaicMask`), and returns a 2σ-clipped mean HFR per tile. The
+// client runs one of these per focuser position, fits a V-curve per tile, and
+// derives tilt/backfocus from the per-tile best-focus positions.
+
+/// The 9 mosaic tiles as `(x, y, side)` in pixels, replicating KStars'
+/// `ImageMosaicMask::refresh()` layout (index order TL,TM,TR,CL,CM,CR,BL,BM,BR).
+fn mosaic_tiles(w: usize, h: usize, tile_pct: f64) -> (usize, [(usize, usize, usize); 9]) {
+    let side = ((w as f64) * tile_pct / 100.0).round() as usize;
+    let side = side.clamp(1, w.min(h));
+    // Middle row/column origin: integer `(dim - side) / 2`, matching KStars'
+    // `std::lround((width - tileWidth) / 2)` (integer division truncates).
+    let xs = [0usize, w.saturating_sub(side) / 2, w.saturating_sub(side + 1)];
+    let ys = [0usize, h.saturating_sub(side) / 2, h.saturating_sub(side + 1)];
+    let mut tiles = [(0usize, 0usize, 0usize); 9];
+    for row in 0..3 {
+        for col in 0..3 {
+            tiles[row * 3 + col] = (xs[col], ys[row], side);
+        }
+    }
+    (side, tiles)
+}
+
+/// One iterative 2σ-clip pass set; returns the robust mean, or `None` if empty.
+fn sigma_clipped_mean(vals: &[f64], sigma: f64) -> Option<f64> {
+    if vals.is_empty() { return None; }
+    let mut kept: Vec<f64> = vals.to_vec();
+    for _ in 0..3 {
+        let n = kept.len() as f64;
+        if n < 3.0 { break; }
+        let mean = kept.iter().sum::<f64>() / n;
+        let var = kept.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
+        let sd = var.sqrt();
+        if sd <= f64::EPSILON { break; }
+        let before = kept.len();
+        kept.retain(|v| (v - mean).abs() <= sigma * sd);
+        if kept.is_empty() { kept = vals.to_vec(); break; }
+        if kept.len() == before { break; }
+    }
+    Some(kept.iter().sum::<f64>() / kept.len() as f64)
+}
+
+/// Analyze a decoded plane into per-tile HFR. Pure (no I/O) so it is unit-tested.
+fn analyze_tilt(plane: &[f32], w: usize, h: usize, tile_pct: f64, min_stars: usize) -> Value {
+    let stars = crate::starfind::detect_stars(plane, w, h, &crate::starfind::DetectParams::default());
+    let (side, tiles) = mosaic_tiles(w, h, tile_pct);
+
+    let mut buckets: [Vec<f64>; 9] = Default::default();
+    for s in &stars {
+        // First tile (index order) whose rect contains the star centre.
+        for (idx, &(tx, ty, ts)) in tiles.iter().enumerate() {
+            let sx = s.x;
+            let sy = s.y;
+            if sx >= tx as f64 && sx < (tx + ts) as f64
+                && sy >= ty as f64 && sy < (ty + ts) as f64
+            {
+                buckets[idx].push(s.hfr);
+                break;
+            }
+        }
+    }
+
+    let tiles_json: Vec<Value> = (0..9)
+        .map(|idx| {
+            let (tx, ty, ts) = tiles[idx];
+            let n = buckets[idx].len();
+            let hfr = if n >= min_stars {
+                sigma_clipped_mean(&buckets[idx], 2.0)
+            } else {
+                None
+            };
+            json!({
+                "idx": idx,
+                "n_stars": n,
+                "hfr": hfr,
+                "cx": tx as f64 + ts as f64 / 2.0,
+                "cy": ty as f64 + ts as f64 / 2.0,
+            })
+        })
+        .collect();
+
+    let all_hfr: Vec<f64> = stars.iter().map(|s| s.hfr).collect();
+    json!({
+        "naxis1": w,
+        "naxis2": h,
+        "tile_side_px": side,
+        "n_stars_total": stars.len(),
+        "overall_hfr": sigma_clipped_mean(&all_hfr, 2.0),
+        "tiles": tiles_json,
+    })
+}
+
+pub async fn tilt(
+    State(state): State<AppState>,
+    Query(q): Query<TiltQ>,
+) -> Result<Json<Value>, StatusCode> {
+    let (_root, target) = resolve(&state, &q.path)?;
+    let meta = std::fs::metadata(&target).map_err(|_| StatusCode::NOT_FOUND)?;
+    if !meta.is_file() { return Err(StatusCode::BAD_REQUEST); }
+    if !is_fits_ext(&extension(&target)) { return Err(StatusCode::BAD_REQUEST); }
+
+    let bytes = std::fs::read(&target).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let plane = decode_fits_plane(&bytes).map_err(|e| {
+        warn!("FITS tilt decode failed for {}: {e}", target.display());
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let tile_pct = q.tile_pct.clamp(5.0, 33.0);
+    Ok(Json(analyze_tilt(&plane.floats, plane.w, plane.h, tile_pct, q.min_stars.max(1))))
 }
 
 // ── /download ────────────────────────────────────────────────────────────────
@@ -928,5 +1077,48 @@ mod tests {
         let (bytes, is_png) = fits_to_image(&fits, None).unwrap();
         assert!(is_png);
         assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G'])); // PNG signature
+    }
+
+    #[test]
+    fn mosaic_tile_layout_matches_kstars() {
+        // 100-wide, 25% ⇒ side 25, corners flush, right col at w-side-1.
+        let (side, tiles) = mosaic_tiles(100, 80, 25.0);
+        assert_eq!(side, 25);
+        assert_eq!(tiles[0], (0, 0, 25));        // TL
+        assert_eq!(tiles[2].0, 100 - 25 - 1);    // TR x = w-side-1
+        assert_eq!(tiles[6].1, 80 - 25 - 1);     // BL y = h-side-1
+        assert_eq!(tiles[4], (37, 27, 25));      // CM: (100-25)/2=37, (80-25)/2=27 (int div)
+    }
+
+    #[test]
+    fn analyze_tilt_buckets_stars_into_correct_tiles() {
+        // Paint one bright star into the top-left and one into the bottom-right
+        // tile of a 300×300 frame (25% ⇒ side 75) and check bucketing.
+        let (w, h) = (300usize, 300usize);
+        let mut plane = vec![100.0f32; w * h];
+        let mut paint = |cx: i64, cy: i64| {
+            for dy in -3..=3 {
+                for dx in -3..=3 {
+                    let x = cx + dx;
+                    let y = cy + dy;
+                    if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 { continue; }
+                    let r2 = (dx * dx + dy * dy) as f64;
+                    plane[y as usize * w + x as usize] += (3000.0 * (-r2 / 8.0).exp()) as f32;
+                }
+            }
+        };
+        // Several well-separated stars per tile so they clear the min_stars
+        // gate without merging into one connected blob. TL tile is x,y∈[0,75);
+        // BR tile is x,y∈[224,299].
+        for &(x, y) in &[(15, 15), (15, 45), (45, 15), (45, 45)] { paint(x, y); }   // TL (idx 0)
+        for &(x, y) in &[(240, 240), (240, 270), (270, 240), (270, 270)] { paint(x, y); } // BR (idx 8)
+        drop(paint);
+
+        let v = analyze_tilt(&plane, w, h, 25.0, 3);
+        let tiles = v["tiles"].as_array().unwrap();
+        assert!(tiles[0]["hfr"].is_f64(), "TL tile should have an HFR");
+        assert!(tiles[8]["hfr"].is_f64(), "BR tile should have an HFR");
+        assert!(tiles[4]["hfr"].is_null(), "empty centre tile should be null");
+        assert_eq!(v["tile_side_px"], 75);
     }
 }

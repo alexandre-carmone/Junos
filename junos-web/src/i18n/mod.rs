@@ -196,6 +196,15 @@ translations! {
     rig_module_align, rig_module_mount, rig_apply_config,
     // Devices tab (INDI control panel)
     dev_select_device, dev_loading_props, dev_no_properties, dev_messages_title,
+    // Aberration / tilt inspector (Focus tab)
+    ab_open_btn, ab_title, ab_close, ab_run, ab_run_again, ab_abort,
+    ab_config_positions, ab_config_step, ab_config_um_per_step, ab_config_exposure,
+    ab_config_tile_pct, ab_config_backfocus_mode, ab_mode_corners, ab_mode_all, ab_note,
+    ab_position, ab_status_moving, ab_status_capturing, ab_status_analyzing,
+    ab_status_restoring, ab_status_done, ab_status_aborted,
+    ab_result_tilt_lr, ab_result_tilt_tb, ab_result_diagonal, ab_result_backfocus,
+    ab_move_sensor_in, ab_move_sensor_out,
+    ab_err_no_focuser, ab_err_no_camera, ab_err_no_file, ab_err_fit,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────
