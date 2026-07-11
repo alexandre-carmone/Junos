@@ -34,7 +34,7 @@ const SECTION_CLS: &str = "fieldset m-0";
 const LEGEND_CLS: &str = "fieldset__legend";
 const INPUT_CLS: &str = "input input--sm flex-1 min-w-0 font-mono";
 const ELEM_LABEL_CLS: &str =
-    "basis-[clamp(90px,30%,180px)] grow-0 shrink-0 text-text-blue text-sm overflow-hidden text-ellipsis whitespace-nowrap";
+    "basis-[clamp(90px,30%,180px)] grow-0 shrink-0 max-md:basis-full text-text-blue text-sm overflow-hidden text-ellipsis whitespace-nowrap";
 
 fn state_color(s: IndiState) -> &'static str {
     match s {
@@ -214,7 +214,7 @@ pub fn DevicesTab(
         <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] overflow-hidden">
 
             // ── Header: device selector ───────────────────────────────
-            <div class="flex items-center gap-x-sp-2 gap-y-sp-1 flex-wrap min-h-[48px] py-sp-2 pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)]">
+            <div class="flex items-center gap-x-sp-2 gap-y-sp-1 flex-wrap max-md:flex-nowrap max-md:overflow-x-auto md:flex-wrap min-h-[48px] py-sp-2 pr-5 max-md:pr-3 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)]">
                 <Show when=move || devices.with(|d| d.is_empty())>
                     <span class="text-sm text-text-muted">{move || tr().no_devices}</span>
                 </Show>
@@ -228,7 +228,7 @@ pub fn DevicesTab(
                         let dot = if d.connected { "var(--state-ok)" } else { "var(--text-muted)" };
                         view! {
                             <button
-                                class="btn btn-ghost flex items-center gap-sp-1 text-sm"
+                                class="btn btn-ghost flex items-center gap-sp-1 text-sm shrink-0"
                                 class:btn-primary=move || selected.get().as_deref() == Some(name_active.as_str())
                                 on:click=move |_| selected.set(Some(name_click.clone()))
                             >
@@ -241,7 +241,7 @@ pub fn DevicesTab(
             </div>
 
             // ── Body: grouped properties ──────────────────────────────
-            <div class="overflow-y-auto py-4 px-5 flex flex-col gap-sp-4 max-w-[860px] w-full">
+            <div class="overflow-y-auto py-4 px-5 max-md:px-3 flex flex-col gap-sp-4 max-w-[860px] w-full">
 
                 <Show when=move || selected.with(|s| s.is_none())>
                     <div class="text-sm text-text-muted py-sp-3 px-sp-3 border border-border-base">
@@ -532,14 +532,14 @@ fn render_scalar_element(
                             prop:value=slider_val
                             on:input=on_input
                         />
-                        <span class="text-sm w-[72px] text-right shrink-0">{display}</span>
+                        <span class="text-sm w-[72px] text-right shrink-0 max-md:w-auto max-md:text-left">{display}</span>
                     }
                     .into_any()
                 } else {
                     // Plain text input so sexagesimal strings ("12:30:00")
                     // stay typeable — KStars parses them server-side.
                     view! {
-                        <span class="text-sm text-text-muted w-[88px] text-right shrink-0 overflow-hidden text-ellipsis">
+                        <span class="text-sm text-text-muted w-[88px] text-right shrink-0 max-md:w-auto max-md:text-left overflow-hidden text-ellipsis">
                             {current_txt}
                         </span>
                         <input
@@ -611,7 +611,7 @@ fn render_scalar_element(
     };
 
     view! {
-        <div class="flex items-center gap-sp-2 text-sm min-h-[26px]">
+        <div class="flex items-center gap-sp-2 text-sm min-h-[26px] max-md:flex-wrap">
             <span class=ELEM_LABEL_CLS title=el_name>{label}</span>
             {widget}
         </div>
