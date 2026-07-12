@@ -427,6 +427,7 @@
   "focus_in_btn": "◂ In",
   "focus_out_btn": "Out ▸",
   "focus_no_frame": "No focus frame yet — click Capture or Loop",
+  "focus_stars_toggle": "Stars",
   "focus_settings_not_loaded": "Settings not loaded yet",
   "ab_open_btn": "Aberration Inspector",
   "ab_title": "Aberration Inspector",

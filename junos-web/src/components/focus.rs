@@ -104,6 +104,11 @@ pub fn FocusTab(
     // Settings overlay open/closed (mirrors guide tab pattern).
     let settings_open = RwSignal::new(false);
 
+    // Detected-stars overlay: on by default. `resize_tick` is bumped by a
+    // ResizeObserver so the draw Effect re-runs when the preview box changes size.
+    let show_stars = RwSignal::new(true);
+    let resize_tick = RwSignal::new(0u32);
+
     // Escape closes the overlay. forget() the closure (one persistent listener
     // per FocusTab mount); calls into a disposed RwSignal are a no-op in
     // leptos 0.7, so leftover listeners after a tab switch are harmless.
@@ -300,6 +305,83 @@ pub fn FocusTab(
         }
     });
 
+    // ── Detected-stars overlay ────────────────────────────────────────────
+    // Canvas painted over the preview <img>. Star coords are in focus-JPEG
+    // pixel space (server-side detection, kstars_ws.rs); we map them onto the
+    // letterboxed `object-contain` image via a min-fit scale + centering offset.
+    let preview_box_ref = NodeRef::<html::Div>::new();
+    let stars_canvas_ref = NodeRef::<html::Canvas>::new();
+
+    // Re-run the draw Effect on window resize so the overlay tracks the
+    // preview box as the layout reflows.
+    {
+        let cb = Closure::<dyn FnMut()>::new(move || {
+            resize_tick.update(|n| *n = n.wrapping_add(1));
+        });
+        if let Some(win) = web_sys::window() {
+            let _ = win
+                .add_event_listener_with_callback("resize", cb.as_ref().unchecked_ref());
+        }
+        cb.forget();
+    }
+
+    Effect::new(move |_| {
+        resize_tick.track();
+        let on = show_stars.get();
+        let stars = focus.with(|f| f.stars.clone());
+        let (Some(container), Some(canvas)) =
+            (preview_box_ref.get(), stars_canvas_ref.get())
+        else { return };
+        let container: web_sys::HtmlElement = container.unchecked_into();
+        let canvas: HtmlCanvasElement = canvas.unchecked_into();
+
+        let cw = container.client_width().max(0) as f64;
+        let ch = container.client_height().max(0) as f64;
+        if cw <= 0.0 || ch <= 0.0 { return; }
+        canvas.set_width(cw as u32);
+        canvas.set_height(ch as u32);
+
+        let Ok(Some(ctx)) = canvas.get_context("2d") else { return };
+        let ctx: CanvasRenderingContext2d = ctx.unchecked_into();
+        ctx.clear_rect(0.0, 0.0, cw, ch);
+
+        let Some(fs) = stars else { return };
+        if !on || fs.img_w <= 0.0 || fs.img_h <= 0.0 || fs.stars.is_empty() { return; }
+
+        // object-contain fit of the JPEG inside the container.
+        let scale = (cw / fs.img_w).min(ch / fs.img_h);
+        let ox = (cw - fs.img_w * scale) / 2.0;
+        let oy = (ch - fs.img_h * scale) / 2.0;
+
+        // Ring radius ∝ HFR, with a gain so tight stars stay visible, clamped.
+        const GAIN: f64 = 2.0;
+        ctx.set_stroke_style_str("rgba(80, 220, 255, 0.85)");
+        ctx.set_line_width(1.25);
+        let mut hfr_sum = 0.0;
+        for s in &fs.stars {
+            let sx = ox + s.x * scale;
+            let sy = oy + s.y * scale;
+            let r = (s.hfr * scale * GAIN).clamp(2.5, 40.0);
+            ctx.begin_path();
+            let _ = ctx.arc(sx, sy, r, 0.0, std::f64::consts::TAU);
+            let _ = ctx.stroke();
+            hfr_sum += s.hfr;
+        }
+
+        // Count + mean-HFR readout (top-left).
+        let n = fs.stars.len();
+        let mean = hfr_sum / n as f64;
+        ctx.set_font("11px monospace");
+        ctx.set_text_align("left");
+        ctx.set_text_baseline("top");
+        let label = format!("{} stars · HFR {:.2}", n, mean);
+        ctx.set_fill_style_str("rgba(0,0,0,0.55)");
+        let tw = ctx.measure_text(&label).map(|m| m.width()).unwrap_or(120.0);
+        ctx.fill_rect(6.0, 6.0, tw + 10.0, 16.0);
+        ctx.set_fill_style_str("rgba(80, 220, 255, 0.95)");
+        let _ = ctx.fill_text(&label, 11.0, 9.0);
+    });
+
     // ── Settings grid ─────────────────────────────────────────────────────
     // Stash `send` in a StoredValue so the reactive closure that renders
     // settings rows (now nested inside <Show>) doesn't have to capture a
@@ -379,7 +461,10 @@ pub fn FocusTab(
             <div class="grid grid-cols-[1fr_320px] max-[1199px]:grid-cols-[minmax(0,1fr)_280px] max-[759px]:flex max-[759px]:flex-col min-h-0">
                 // Left — preview + HFR plot
                 <div class="grid grid-rows-[1fr_110px] min-h-0 border-r border-border-base max-[759px]:shrink-0 max-[759px]:min-h-[180px] max-[759px]:max-h-[38vh] max-[759px]:border-r-0 max-[759px]:border-b max-[759px]:border-border-base">
-                    <div class="relative min-h-0 overflow-hidden flex items-center justify-center bg-bg-input-deep">
+                    <div
+                        node_ref=preview_box_ref
+                        class="relative min-h-0 overflow-hidden flex items-center justify-center bg-bg-input-deep"
+                    >
                         {move || match focus.with(|f| f.preview_url.clone()) {
                             Some(url) => view! {
                                 <img
@@ -394,6 +479,24 @@ pub fn FocusTab(
                                 </div>
                             }.into_any(),
                         }}
+                        // Detected-stars overlay (pointer-events-none so the
+                        // crosshair click on the <img> still fires through it).
+                        <canvas
+                            node_ref=stars_canvas_ref
+                            class="absolute inset-0 w-full h-full pointer-events-none"
+                        ></canvas>
+                        <Show when=move || focus.with(|f| f.preview_url.is_some())>
+                            <button
+                                class="absolute top-2 right-2 py-[3px] px-[10px] rounded-[12px] text-sm border border-current cursor-pointer bg-[rgba(6,6,15,0.7)]"
+                                style=move || format!(
+                                    "color:{};",
+                                    if show_stars.get() { "var(--accent-cyan)" } else { "var(--text-muted)" }
+                                )
+                                on:click=move |_| show_stars.update(|v| *v = !*v)
+                            >
+                                {move || tr().focus_stars_toggle}
+                            </button>
+                        </Show>
                     </div>
                     <div class="border-t border-border-base p-sp-2 bg-bg-input-deep">
                         <canvas

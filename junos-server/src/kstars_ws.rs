@@ -250,15 +250,52 @@ fn decode_media_frame(data: &[u8]) -> Option<String> {
     let payload = &data[METADATA_PACKET..];
     let data_b64 = BASE64.encode(payload);
 
+    let mut out_payload = json!({
+        "metadata": metadata,
+        "data":     data_b64,
+    });
+
+    // Focus frames (uuid "+F", kstars media.cpp:752) get a server-side star
+    // detection pass so the browser can overlay detected stars with a per-star
+    // HFR size ring. We detect on the exact JPEG that gets displayed, so the
+    // star coordinates map straight onto the preview image with no rescaling.
+    let uuid = metadata.get("uuid").and_then(Value::as_str).unwrap_or("");
+    let ext = metadata.get("ext").and_then(Value::as_str).unwrap_or("");
+    if uuid.starts_with("+F") && ext == "jpg" {
+        if let Some((stars, w, h)) = detect_focus_stars(payload) {
+            let arr: Vec<Value> = stars
+                .iter()
+                .map(|s| json!({ "x": s.x, "y": s.y, "hfr": s.hfr }))
+                .collect();
+            out_payload["stars"] = Value::Array(arr);
+            out_payload["star_w"] = json!(w);
+            out_payload["star_h"] = json!(h);
+        }
+    }
+
     let msg = json!({
         "type": "new_preview_image",
-        "payload": {
-            "metadata": metadata,
-            "data":     data_b64,
-        }
+        "payload": out_payload,
     });
 
     Some(msg.to_string())
+}
+
+/// Decode a focus JPEG and detect its stars. Returns `(stars, width, height)`
+/// in JPEG pixel space, or `None` if the payload isn't a decodable JPEG.
+fn detect_focus_stars(jpeg: &[u8]) -> Option<(Vec<crate::starfind::Star>, u32, u32)> {
+    use image::ImageFormat;
+    let img = image::load_from_memory_with_format(jpeg, ImageFormat::Jpeg).ok()?;
+    let luma = img.to_luma8();
+    let (w, h) = luma.dimensions();
+    let plane: Vec<f32> = luma.iter().map(|&p| p as f32).collect();
+    let stars = crate::starfind::detect_stars(
+        &plane,
+        w as usize,
+        h as usize,
+        &crate::starfind::DetectParams::default(),
+    );
+    Some((stars, w, h))
 }
 
 fn set_client_state_msg() -> String {
@@ -368,6 +405,49 @@ mod tests {
         let decoded = decode_media_frame(&frame).expect("frame should decode");
         let parsed: Value = serde_json::from_str(&decoded).expect("decoded json");
         assert_eq!(parsed["payload"]["metadata"]["raw"], "not-json");
+    }
+
+    /// Encode a small grayscale image with a few bright blobs as a JPEG.
+    fn synthetic_star_jpeg(w: u32, h: u32) -> Vec<u8> {
+        use image::{codecs::jpeg::JpegEncoder, ExtendedColorType};
+        let mut buf = vec![10u8; (w * h) as usize];
+        for &(cx, cy) in &[(20u32, 20u32), (60, 40), (40, 70)] {
+            for dy in -2i32..=2 {
+                for dx in -2i32..=2 {
+                    let x = cx as i32 + dx;
+                    let y = cy as i32 + dy;
+                    if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
+                        buf[(y as u32 * w + x as u32) as usize] = 240;
+                    }
+                }
+            }
+        }
+        let mut jpeg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpeg, 95)
+            .encode(&buf, w, h, ExtendedColorType::L8)
+            .expect("encode jpeg");
+        jpeg
+    }
+
+    #[test]
+    fn focus_frame_gains_stars() {
+        let jpeg = synthetic_star_jpeg(96, 96);
+        let frame = build_media_frame(r#"{"uuid":"+F","ext":"jpg"}"#, &jpeg);
+        let decoded = decode_media_frame(&frame).expect("frame should decode");
+        let parsed: Value = serde_json::from_str(&decoded).expect("decoded json");
+        let stars = parsed["payload"]["stars"].as_array().expect("stars array");
+        assert!(!stars.is_empty(), "focus frame should yield detected stars");
+        assert!(parsed["payload"]["star_w"].as_u64().unwrap() > 0);
+        assert!(stars[0]["hfr"].is_number());
+    }
+
+    #[test]
+    fn non_focus_frame_has_no_stars() {
+        let jpeg = synthetic_star_jpeg(96, 96);
+        let frame = build_media_frame(r#"{"uuid":"+A","ext":"jpg"}"#, &jpeg);
+        let decoded = decode_media_frame(&frame).expect("frame should decode");
+        let parsed: Value = serde_json::from_str(&decoded).expect("decoded json");
+        assert!(parsed["payload"].get("stars").is_none(), "align frame must not detect stars");
     }
 
     #[test]

@@ -6,7 +6,7 @@
 use leptos::prelude::*;
 
 use crate::ws::{
-    DeviceStore, DustCapParkState, GuideDriftSample, GuideStateSample, HfrSample,
+    DeviceStore, DustCapParkState, FocusStars, GuideDriftSample, GuideStateSample, HfrSample,
     PolarVectorData,
 };
 
@@ -128,6 +128,7 @@ pub struct FocusSnapshot {
     pub temperature: Option<f64>,
     pub log: String,
     pub preview_url: Option<String>,
+    pub stars: Option<FocusStars>,
     pub history: Vec<HfrSample>,
     pub settings: serde_json::Value,
 }
@@ -167,6 +168,7 @@ pub fn derive_focus(store: &DeviceStore) -> Signal<FocusSnapshot> {
     let focus_status      = store.focus_status;
     let focus_settings    = store.focus_settings;
     let focus_preview_url = store.focus_preview_url;
+    let focus_stars       = store.focus_stars;
     let focus_hfr_history = store.focus_hfr_history;
     Signal::derive(move || {
         let (device, connected, status, hfr, position, temperature, log) =
@@ -183,6 +185,7 @@ pub fn derive_focus(store: &DeviceStore) -> Signal<FocusSnapshot> {
             temperature,
             log,
             preview_url: focus_preview_url.get(),
+            stars: focus_stars.get(),
             history: focus_hfr_history.get(),
             settings: focus_settings.get(),
         }

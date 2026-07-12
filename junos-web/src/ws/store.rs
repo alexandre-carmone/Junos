@@ -35,6 +35,7 @@ pub struct DeviceStore {
     pub focus_status: RwSignal<Option<FocusStatusData>>,
     pub focus_settings: RwSignal<serde_json::Value>,
     pub focus_preview_url: RwSignal<Option<String>>,
+    pub focus_stars: RwSignal<Option<FocusStars>>,
     pub focus_hfr_history: RwSignal<Vec<HfrSample>>,
     pub capture_status: RwSignal<CaptureStatusData>,
     pub capture_settings: RwSignal<serde_json::Value>,
@@ -130,6 +131,7 @@ impl DeviceStore {
             focus_status: RwSignal::new(None),
             focus_settings: RwSignal::new(serde_json::Value::Null),
             focus_preview_url: RwSignal::new(None),
+            focus_stars: RwSignal::new(None),
             focus_hfr_history: RwSignal::new(Vec::new()),
             capture_status: RwSignal::new(CaptureStatusData::default()),
             capture_settings: RwSignal::new(serde_json::Value::Null),
@@ -1129,6 +1131,30 @@ impl DeviceStore {
                     // Everything else → capture preview target.
                     if uuid.starts_with("+F") {
                         self.focus_preview_url.set(Some(url));
+                        // Optional server-side star detection (kstars_ws.rs).
+                        // Absent on older servers / non-JPEG frames → clear.
+                        match payload["stars"].as_array() {
+                            Some(arr) => {
+                                let stars: Vec<FocusStar> = arr
+                                    .iter()
+                                    .filter_map(|s| {
+                                        Some(FocusStar {
+                                            x: s["x"].as_f64()?,
+                                            y: s["y"].as_f64()?,
+                                            hfr: s["hfr"].as_f64()?,
+                                        })
+                                    })
+                                    .collect();
+                                let img_w = payload["star_w"].as_f64().unwrap_or(0.0);
+                                let img_h = payload["star_h"].as_f64().unwrap_or(0.0);
+                                self.focus_stars.set(Some(FocusStars {
+                                    img_w,
+                                    img_h,
+                                    stars,
+                                }));
+                            }
+                            None => self.focus_stars.set(None),
+                        }
                     } else if uuid.starts_with("+A") {
                         self.align_preview_url.set(Some(url));
                     } else if uuid.starts_with("+G") {

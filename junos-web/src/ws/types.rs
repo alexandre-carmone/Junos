@@ -177,6 +177,24 @@ pub struct HfrSample {
     pub position: Option<i64>,
 }
 
+/// A single star detected server-side in a focus frame (coordinates in the
+/// focus JPEG's pixel space — the same image shown in the preview).
+#[derive(Debug, Clone)]
+pub struct FocusStar {
+    pub x: f64,
+    pub y: f64,
+    pub hfr: f64,
+}
+
+/// Detected stars for the current focus frame, plus the JPEG dimensions the
+/// coordinates are relative to (needed to map onto the letterboxed preview).
+#[derive(Debug, Clone)]
+pub struct FocusStars {
+    pub img_w: f64,
+    pub img_h: f64,
+    pub stars: Vec<FocusStar>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ScopeInfo {
     /// OAL DB row id (string). Empty for a not-yet-saved scope. Required for
