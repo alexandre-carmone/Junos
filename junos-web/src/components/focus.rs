@@ -167,142 +167,183 @@ pub fn FocusTab(
     // ── HFR history mini-plot ─────────────────────────────────────────────
     let canvas_ref = NodeRef::<html::Canvas>::new();
     Effect::new(move |_| {
+        // Redraw on layout changes as well as data changes.
+        resize_tick.track();
         let history = focus.with(|f| f.history.clone());
         let Some(canvas) = canvas_ref.get() else { return };
         let canvas: HtmlCanvasElement = canvas.unchecked_into();
-        let w = canvas.width() as f64;
-        let h = canvas.height() as f64;
+
+        // ── Crisp, HiDPI-aware sizing ─────────────────────────────────────
+        // The canvas is CSS-sized (w-full h-full); size its backing store to
+        // the displayed size × devicePixelRatio and draw in CSS-pixel space so
+        // nothing is stretched. Mirrors components/sky/mod.rs.
+        let dpr = web_sys::window()
+            .map(|w| w.device_pixel_ratio())
+            .unwrap_or(1.0)
+            .clamp(1.0, 2.0);
+        let cw = canvas.client_width() as f64;
+        let ch = canvas.client_height() as f64;
+        if cw <= 0.0 || ch <= 0.0 { return; }
+        let bw = (cw * dpr).round() as u32;
+        let bh = (ch * dpr).round() as u32;
+        if canvas.width() != bw { canvas.set_width(bw); }
+        if canvas.height() != bh { canvas.set_height(bh); }
+
         let Ok(Some(ctx)) = canvas.get_context("2d") else { return };
         let ctx: CanvasRenderingContext2d = ctx.unchecked_into();
+        // Reset any prior transform, then scale so 1 unit = 1 CSS pixel.
+        let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+        ctx.clear_rect(0.0, 0.0, bw as f64, bh as f64);
+        let _ = ctx.scale(dpr, dpr);
 
-        // Background.
-        ctx.set_fill_style_str("#0a0a0f");
-        ctx.fill_rect(0.0, 0.0, w, h);
+        // Palette (literals from styles/tokens.css — Canvas2D can't read var()).
+        const CYAN: &str = "#5beaff";       // --accent-cyan
+        const CYAN_FILL_TOP: &str = "rgba(91, 234, 255, 0.28)";
+        const CYAN_FILL_BOT: &str = "rgba(91, 234, 255, 0.0)";
+        const BRIGHT: &str = "#c1d2ff";      // --text-blue-bright
+        const MUTED: &str = "#9aa3b8";       // --text-muted
+        const BORDER: &str = "#1c1e2c";      // --border
 
-        // Margined plot box — leave room for Y tick labels (left) and X tick
-        // labels (bottom). Compact: tuned to the ~90 px backing height.
-        let ml = 34.0; // left  — Y tick labels
-        let mb = 14.0; // bottom — X tick labels
-        let mt = 8.0;  // top
-        let mr = 8.0;  // right
-        let px0 = ml;
-        let py0 = mt;
-        let pw = (w - ml - mr).max(1.0);
-        let ph = (h - mt - mb).max(1.0);
-        let px1 = px0 + pw;
+        // Plot box — tight insets; no Y-tick column, minimal chrome.
+        let pad_l = 6.0;
+        let pad_r = 8.0;
+        let pad_t = 14.0; // room for the top-left "HFR" label
+        let pad_b = 12.0; // room for the baseline + "#n"
+        let px0 = pad_l;
+        let py0 = pad_t;
+        let pw = (cw - pad_l - pad_r).max(1.0);
+        let ph = (ch - pad_t - pad_b).max(1.0);
         let py1 = py0 + ph;
 
-        // Plot frame (Y axis + X axis lines).
-        ctx.set_stroke_style_str("#2a2c3a");
-        ctx.set_line_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(px0 + 0.5, py0);
-        ctx.line_to(px0 + 0.5, py1 + 0.5);
-        ctx.line_to(px1, py1 + 0.5);
-        let _ = ctx.stroke();
-
-        let _ = ctx.set_font("9px monospace");
-
-        // HFR (Y) value range, with a small headroom pad so the curve never
-        // touches the frame. `span` floor keeps flat-HFR runs from collapsing.
-        let raw_min = history.iter().map(|s| s.hfr).fold(f64::INFINITY, f64::min);
-        let raw_max = history.iter().map(|s| s.hfr).fold(f64::NEG_INFINITY, f64::max);
-        let (y_min, y_max) = if history.is_empty() || !raw_min.is_finite() {
-            (0.0, 1.0)
-        } else {
-            let span = (raw_max - raw_min).max(0.1);
-            let pad = span * 0.12;
-            (raw_min - pad, raw_max + pad)
+        let baseline = || {
+            ctx.set_stroke_style_str(BORDER);
+            ctx.set_line_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(px0, py1 + 0.5);
+            ctx.line_to(px0 + pw, py1 + 0.5);
+            let _ = ctx.stroke();
         };
-        let y_span = (y_max - y_min).max(0.1);
-        let y_of = |hfr: f64| py1 - (hfr - y_min) / y_span * ph;
+        let unit_label = || {
+            let _ = ctx.set_font("10px monospace");
+            ctx.set_fill_style_str(MUTED);
+            ctx.set_text_align("left");
+            ctx.set_text_baseline("top");
+            let _ = ctx.fill_text("HFR", px0, 1.0);
+        };
 
-        // Y gridlines + tick labels at min / mid / max of the padded range.
-        ctx.set_text_align("right");
-        ctx.set_text_baseline("middle");
-        for k in 0..3 {
-            let val = y_min + y_span * (k as f64) / 2.0;
-            let y = y_of(val);
-            if k > 0 && k < 2 {
-                ctx.set_stroke_style_str("#1e2030");
-                ctx.set_line_width(1.0);
-                ctx.begin_path();
-                ctx.move_to(px0 + 1.0, y + 0.5);
-                ctx.line_to(px1, y + 0.5);
-                let _ = ctx.stroke();
-            }
-            ctx.set_fill_style_str("#8896b5");
-            let _ = ctx.fill_text(&format!("{:.2}", val), px0 - 4.0, y);
-        }
-
-        // Axis titles.
-        ctx.set_fill_style_str("#6b7591");
-        ctx.set_text_align("left");
-        ctx.set_text_baseline("top");
-        let _ = ctx.fill_text("HFR", 2.0, 1.0);
-        ctx.set_text_align("right");
-        let _ = ctx.fill_text("#", w - 2.0, py1 + 3.0);
-
+        // Empty / single-sample: just the label + baseline (never blank/garbled).
         if history.len() < 2 {
-            // Empty / single-sample: leave the labelled frame visible.
+            baseline();
+            unit_label();
             return;
         }
+
+        // Y range with headroom so the curve never touches the edges; span floor
+        // keeps a flat-HFR run from collapsing to a line.
+        let raw_min = history.iter().map(|s| s.hfr).fold(f64::INFINITY, f64::min);
+        let raw_max = history.iter().map(|s| s.hfr).fold(f64::NEG_INFINITY, f64::max);
+        let span = (raw_max - raw_min).max(0.1);
+        let pad = span * 0.16;
+        let y_min = raw_min - pad;
+        let y_max = raw_max + pad;
+        let y_span = (y_max - y_min).max(0.1);
+        let y_of = |hfr: f64| py1 - (hfr - y_min) / y_span * ph;
 
         let n = history.len();
         let x_of = |i: usize| px0 + (i as f64) * pw / ((n - 1) as f64);
 
-        // X (sample index) ticks — cap at ~6 labels, always include the last.
-        ctx.set_text_align("center");
-        ctx.set_text_baseline("top");
-        let step = ((n - 1) / 5).max(1);
-        let mut idx = 0usize;
-        while idx < n {
-            let x = x_of(idx);
-            ctx.set_stroke_style_str("#2a2c3a");
-            ctx.set_line_width(1.0);
-            ctx.begin_path();
-            ctx.move_to(x + 0.5, py1);
-            ctx.line_to(x + 0.5, py1 + 2.5);
-            let _ = ctx.stroke();
-            ctx.set_fill_style_str("#8896b5");
-            let _ = ctx.fill_text(&format!("{}", idx + 1), x, py1 + 3.0);
-            idx += step;
-        }
-        // Always label the final sample.
+        // ── Gradient area fill under the curve ────────────────────────────
         {
-            let x = x_of(n - 1);
-            ctx.set_stroke_style_str("#2a2c3a");
-            ctx.set_line_width(1.0);
+            let grad = ctx.create_linear_gradient(0.0, py0, 0.0, py1);
+            let _ = grad.add_color_stop(0.0, CYAN_FILL_TOP);
+            let _ = grad.add_color_stop(1.0, CYAN_FILL_BOT);
             ctx.begin_path();
-            ctx.move_to(x + 0.5, py1);
-            ctx.line_to(x + 0.5, py1 + 2.5);
-            let _ = ctx.stroke();
-            ctx.set_fill_style_str("#8896b5");
-            let _ = ctx.fill_text(&format!("{}", n), x, py1 + 3.0);
+            ctx.move_to(x_of(0), py1);
+            for (i, s) in history.iter().enumerate() {
+                ctx.line_to(x_of(i), y_of(s.hfr));
+            }
+            ctx.line_to(x_of(n - 1), py1);
+            ctx.close_path();
+            ctx.set_fill_style_canvas_gradient(&grad);
+            ctx.fill();
         }
 
-        // Series polyline.
-        ctx.set_stroke_style_str("#88aaff");
-        ctx.set_line_width(1.5);
+        // ── HFR line ──────────────────────────────────────────────────────
+        ctx.set_stroke_style_str(CYAN);
+        ctx.set_line_width(1.75);
+        ctx.set_line_join("round");
+        ctx.set_line_cap("round");
         ctx.begin_path();
         for (i, s) in history.iter().enumerate() {
-            let x = x_of(i);
-            let y = y_of(s.hfr);
+            let (x, y) = (x_of(i), y_of(s.hfr));
             if i == 0 { ctx.move_to(x, y); } else { ctx.line_to(x, y); }
         }
         let _ = ctx.stroke();
 
-        // Per-sample dots, with the last (current) sample emphasised.
-        for (i, s) in history.iter().enumerate() {
-            let x = x_of(i);
-            let y = y_of(s.hfr);
-            let last = i == n - 1;
-            ctx.set_fill_style_str(if last { "#ffffff" } else { "#cfe0ff" });
+        baseline();
+        unit_label();
+
+        // ── Best (min) marker — a small upward caret + muted label ─────────
+        let min_idx = history
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1.hfr.partial_cmp(&b.1.hfr).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i)
+            .unwrap_or(n - 1);
+        if min_idx != n - 1 {
+            let mx = x_of(min_idx);
+            let my = y_of(history[min_idx].hfr);
+            ctx.set_fill_style_str(MUTED);
             ctx.begin_path();
-            let _ = ctx.arc(x, y, if last { 2.4 } else { 1.6 }, 0.0,
-                std::f64::consts::TAU);
+            ctx.move_to(mx, my + 5.0);
+            ctx.line_to(mx - 3.0, my + 10.0);
+            ctx.line_to(mx + 3.0, my + 10.0);
+            ctx.close_path();
             ctx.fill();
+            let _ = ctx.set_font("10px monospace");
+            ctx.set_text_baseline("top");
+            // Keep the label inside the box: right-align if near the right edge.
+            let lbl = format!("best {:.2}", history[min_idx].hfr);
+            if mx > px0 + pw * 0.6 {
+                ctx.set_text_align("right");
+                let _ = ctx.fill_text(&lbl, (mx - 5.0).min(px0 + pw), my + 11.0);
+            } else {
+                ctx.set_text_align("left");
+                let _ = ctx.fill_text(&lbl, (mx + 5.0).max(px0), my + 11.0);
+            }
         }
+
+        // ── Current point + value callout ─────────────────────────────────
+        let last = &history[n - 1];
+        let (lx, ly) = (x_of(n - 1), y_of(last.hfr));
+        ctx.set_fill_style_str(CYAN);
+        ctx.begin_path();
+        let _ = ctx.arc(lx, ly, 3.4, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+        ctx.set_fill_style_str("#ffffff");
+        ctx.begin_path();
+        let _ = ctx.arc(lx, ly, 1.6, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+
+        let _ = ctx.set_font("11px monospace");
+        ctx.set_fill_style_str(BRIGHT);
+        ctx.set_text_baseline("middle");
+        let val = format!("{:.2}", last.hfr);
+        // Place the label left of the dot when it's near the right edge.
+        if lx > px0 + pw * 0.72 {
+            ctx.set_text_align("right");
+            let _ = ctx.fill_text(&val, lx - 6.0, ly.clamp(py0 + 6.0, py1 - 6.0));
+        } else {
+            ctx.set_text_align("left");
+            let _ = ctx.fill_text(&val, lx + 6.0, ly.clamp(py0 + 6.0, py1 - 6.0));
+        }
+
+        // Sample count, bottom-right.
+        let _ = ctx.set_font("10px monospace");
+        ctx.set_fill_style_str(MUTED);
+        ctx.set_text_align("right");
+        ctx.set_text_baseline("bottom");
+        let _ = ctx.fill_text(&format!("#{n}"), px0 + pw, ch - 1.0);
     });
 
     // ── Detected-stars overlay ────────────────────────────────────────────
@@ -501,9 +542,7 @@ pub fn FocusTab(
                     <div class="border-t border-border-base p-sp-2 bg-bg-input-deep">
                         <canvas
                             node_ref=canvas_ref
-                            class="w-full h-[94px] max-[759px]:h-[72px] block"
-                            width="640"
-                            height="90"
+                            class="block w-full h-full"
                         ></canvas>
                     </div>
                 </div>
