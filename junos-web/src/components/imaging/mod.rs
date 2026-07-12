@@ -55,6 +55,8 @@ pub fn ImagingTab(
     // Imaging's draft sequence — owned locally exactly like Scheduler/Mosaic.
     // Submitted to KStars in one shot via `capture_load_sequence_file {filedata}`.
     let seq_frames: RwSignal<Vec<SeqFrame>> = RwSignal::new(vec![SeqFrame::default()]);
+    // Destination folder for captured .fits; defaults from CaptureDirCtx.
+    let seq_fits_dir: RwSignal<String> = RwSignal::new(String::new());
 
     let on_toggle_preview = move |_: web_sys::MouseEvent| {
         preview_visible.update(|v| *v = !*v);
@@ -94,7 +96,7 @@ pub fn ImagingTab(
         if frames.is_empty() {
             return;
         }
-        let xml = build_esq_xml("", &frames);
+        let xml = build_esq_xml("", &seq_fits_dir.get_untracked(), &frames);
         let s = sv_send_seq.get_value();
         send_cmd(
             &s,
@@ -692,7 +694,7 @@ pub fn ImagingTab(
                                 <button class=GHOST_BTN on:click=move |_| editor_open.set(false)>{move || tr().imaging_close}</button>
                             </div>
                             <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 max-[759px]:p-sp-3">
-                                <SequenceEditor frames=seq_frames camera=camera filter_wheel=filter_wheel />
+                                <SequenceEditor frames=seq_frames fits_dir=seq_fits_dir camera=camera filter_wheel=filter_wheel />
                             </div>
                             <div class="flex justify-end gap-sp-2 py-sp-3 px-sp-4 border-t border-border-base bg-[rgba(10,12,20,0.8)]">
                                 <button class=GHOST_BTN on:click=move |_| editor_open.set(false)>{move || tr().imaging_close}</button>

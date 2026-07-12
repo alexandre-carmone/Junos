@@ -605,6 +605,7 @@
   "field_directory": "Répertoire",
   "field_enforce_temp": "Forcer la température cible",
   "field_job_temp_c": "Temp. cible °C",
+  "seq_dest_folder": "Dossier dest.",
   "pa_enabled_label": "Activé :",
   "pa_pre_start": "Options avant démarrage",
   "pa_rotation_deg_label": "Rotation °",

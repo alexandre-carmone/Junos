@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
+    extract::State,
     response::Json,
     routing::{delete, get, post},
     Router,
@@ -145,6 +146,11 @@ fn log_exit(
     }
 }
 
-async fn api_config() -> Json<serde_json::Value> {
-    Json(json!({ "server": "junos-server" }))
+async fn api_config(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let dir = state.config.resolved_captures_dir();
+    let dir = dir.canonicalize().unwrap_or(dir);
+    Json(json!({
+        "server": "junos-server",
+        "captures_dir": dir.to_string_lossy(),
+    }))
 }

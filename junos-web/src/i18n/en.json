@@ -515,6 +515,7 @@
   "field_directory": "Directory",
   "field_enforce_temp": "Enforce target temperature",
   "field_job_temp_c": "Job target °C",
+  "seq_dest_folder": "Destination folder",
   "pa_enabled_label": "Enabled:",
   "pa_pre_start": "Pre-start options",
   "pa_rotation_deg_label": "Rotation °",

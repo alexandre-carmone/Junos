@@ -154,6 +154,8 @@ pub fn SchedulerTab(
 
     // Sequence frames — start with one default Light row
     let seq_frames: RwSignal<Vec<SeqFrame>> = RwSignal::new(vec![SeqFrame::default()]);
+    // Destination folder for captured .fits; defaults from CaptureDirCtx.
+    let seq_fits_dir: RwSignal<String> = RwSignal::new(String::new());
 
     // Derived: total exposure summary
     let seq_total_hint = Signal::derive(move || {
@@ -279,7 +281,7 @@ pub fn SchedulerTab(
 
         form_error.set(None);
 
-        let xml = build_esq_xml(&name, &frames);
+        let xml = build_esq_xml(&name, &seq_fits_dir.get_untracked(), &frames);
         let safe_name = sanitize_name(if name.is_empty() { "sequence" } else { &name });
         let rel_path  = format!(".junos-sequences/{}.esq", safe_name);
         let abs_path  = if home.is_empty() {
@@ -398,6 +400,7 @@ pub fn SchedulerTab(
                                 completion_count=completion_count
                                 completion_at=completion_at
                                 seq_frames=seq_frames
+                                seq_fits_dir=seq_fits_dir
                                 coords_hint=coords_hint
                                 seq_total_hint=seq_total_hint
                                 on_catalog_search=Arc::clone(&on_catalog_search)

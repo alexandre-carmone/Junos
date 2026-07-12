@@ -46,6 +46,12 @@ pub struct TabLabelsCtx(pub RwSignal<bool>);
 #[derive(Clone, Copy)]
 pub struct RevealInFilesCtx(pub RwSignal<Option<String>>);
 
+/// Server-side captures directory (from `--captures-dir`), fetched once from
+/// `/api/config`. Used as the default "Destination folder" in the sequencer
+/// forms so captured `.fits` land where the Files tab can browse them.
+#[derive(Clone, Copy)]
+pub struct CaptureDirCtx(pub RwSignal<String>);
+
 // ---------------------------------------------------------------------------
 // Context newtypes kept for sky/actions.rs. They are optional at the call
 // site (use_context returns Option) so providing defaults is sufficient.
@@ -289,6 +295,22 @@ fn App() -> impl IntoView {
     // last frame filename), consumed by the Files tab on mount.
     let reveal_ctx = RwSignal::new(None::<String>);
     provide_context(RevealInFilesCtx(reveal_ctx));
+
+    // Default capture destination folder, fetched once from the server. Used
+    // by the sequencer forms as the initial "Destination folder" value.
+    let capture_dir = RwSignal::new(String::new());
+    provide_context(CaptureDirCtx(capture_dir));
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Ok(resp) = gloo_net::http::Request::get("/api/config").send().await {
+            if let Ok(v) = resp.json::<serde_json::Value>().await {
+                if let Some(d) = v.get("captures_dir").and_then(|d| d.as_str()) {
+                    if !d.is_empty() {
+                        capture_dir.set(d.to_string());
+                    }
+                }
+            }
+        }
+    });
 
     view! {
         <div id="junos-app" class="fixed inset-0 bg-bg text-[var(--text)] font-ui overflow-hidden">

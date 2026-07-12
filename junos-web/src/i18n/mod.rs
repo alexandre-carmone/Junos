@@ -112,7 +112,7 @@ translations! {
     imaging_one_shot, imaging_add_exposure, imaging_send_sequence, imaging_sequence_editor, imaging_job_detail, imaging_close,
     field_exposure_s,
     field_frame_type, field_count, field_delay_s, field_bin_x, field_bin_y, field_format, field_encoding, field_gain,
-    field_offset, field_iso, field_filter, field_filter_none, field_target_name, field_directory, field_enforce_temp, field_job_temp_c, pa_enabled_label,
+    field_offset, field_iso, field_filter, field_filter_none, field_target_name, field_directory, field_enforce_temp, field_job_temp_c, seq_dest_folder, pa_enabled_label,
     pa_pre_start, pa_rotation_deg_label, pa_mount_speed_label, pa_manual_slew_label, pa_start_btn_long, pa_stop_btn_long, pa_capture_solve, pa_running,
     pa_abort_short, pa_manual_rotation_section, pa_manual_rotate_instr, pa_rotation_done, pa_refresh_correct, pa_exposure_s_label, pa_algorithm_label, pa_original,
     pa_updated, pa_total_label, pa_az_label_long, pa_alt_label_long, pa_start_refresh, pa_stop_refresh, pa_algo_plate_solve, pa_algo_move_star,

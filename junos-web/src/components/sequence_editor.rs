@@ -66,7 +66,11 @@ impl Default for SeqFrame {
 }
 
 /// Generate a minimal ESQ XML from a list of sequence frames.
-pub fn build_esq_xml(job_name: &str, frames: &[SeqFrame]) -> String {
+///
+/// `fits_dir` is written into every job's `<FITSDirectory>` (KStars parses it
+/// into `SJ_LocalDirectory`, then combines it with the placeholder path). When
+/// empty, the element is left empty so KStars keeps its own default location.
+pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame]) -> String {
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<SequenceQueue version='2.1'>\n");
     xml.push_str("<GuideDeviation enabled='false'>0</GuideDeviation>\n");
@@ -99,7 +103,7 @@ pub fn build_esq_xml(job_name: &str, frames: &[SeqFrame]) -> String {
             xml.push_str(&format!("<TargetName>{}</TargetName>\n", job_name));
         }
         xml.push_str("<GuideDitherPerJob>-1</GuideDitherPerJob>\n");
-        xml.push_str("<FITSDirectory></FITSDirectory>\n");
+        xml.push_str(&format!("<FITSDirectory>{}</FITSDirectory>\n", fits_dir));
         xml.push_str("<PlaceholderFormat>/%T/%F/Light/%T_%F_%e_secs_%04d</PlaceholderFormat>\n");
         xml.push_str("<PlaceholderSuffix>0</PlaceholderSuffix>\n");
         xml.push_str("<UploadMode>0</UploadMode>\n");
@@ -138,11 +142,26 @@ pub fn SequenceEditor(
     /// Caller-owned row list. The editor reads and mutates it directly so the
     /// caller can serialize it (e.g. via `build_esq_xml`) on submit.
     frames: RwSignal<Vec<SeqFrame>>,
+    /// Caller-owned destination folder. Written into each job's
+    /// `<FITSDirectory>` on serialize. Defaults from `CaptureDirCtx`.
+    fits_dir: RwSignal<String>,
     #[prop(into)] camera:       Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
+
+    // Pre-fill the destination folder from the server captures dir once it
+    // loads, but only while the user hasn't typed a path of their own.
+    let capture_dir = use_context::<crate::CaptureDirCtx>();
+    Effect::new(move |_| {
+        if let Some(cd) = capture_dir {
+            let d = cd.0.get();
+            if !d.is_empty() && fits_dir.with(|v| v.is_empty()) {
+                fits_dir.set(d);
+            }
+        }
+    });
 
     // Per-row "advanced" panel toggle, parallel to `frames`. Owned internally —
     // neither caller persists this state.
@@ -162,6 +181,20 @@ pub fn SequenceEditor(
 
     view! {
         <div class="flex flex-col gap-1">
+            // Destination folder — applies to every job in this form.
+            <label class="flex items-center gap-2 text-sm mb-1">
+                <span class="text-text-blue whitespace-nowrap">{move || tr().seq_dest_folder}</span>
+                <input type="text"
+                       class=format!("{INPUT_BASE} flex-1 min-w-0")
+                       placeholder="/home/user/Pictures"
+                       prop:value=move || fits_dir.get()
+                       on:input=move |ev| {
+                           let v = ev.target().unwrap()
+                               .unchecked_into::<web_sys::HtmlInputElement>().value();
+                           fits_dir.set(v);
+                       } />
+            </label>
+
             // Column headers
             <div class="grid grid-cols-[88px_1fr_72px_56px_28px_28px] gap-1 text-sm text-[#666] px-[2px] pb-1">
                 <span>{move || tr().field_frame_type}</span>

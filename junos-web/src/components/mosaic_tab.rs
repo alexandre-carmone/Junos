@@ -69,6 +69,8 @@ pub fn MosaicTab(
 
     // ── Sequence rows ──────────────────────────────────────────────────────
     let seq_frames: RwSignal<Vec<SeqFrame>> = RwSignal::new(vec![SeqFrame::default()]);
+    // Destination folder for captured .fits; defaults from CaptureDirCtx.
+    let seq_fits_dir: RwSignal<String> = RwSignal::new(String::new());
 
     // ── Startup flags ──────────────────────────────────────────────────────
     let step_track = RwSignal::new(true);
@@ -172,7 +174,7 @@ pub fn MosaicTab(
             format!("{}/.junos-sequences/{}.esq", home, safe_name)
         };
 
-        let xml = build_esq_xml(&safe_name, &valid_frames);
+        let xml = build_esq_xml(&safe_name, &seq_fits_dir.get_untracked(), &valid_frames);
         if !home.is_empty() {
             send_cmd(&send_s, "file_directory_operation", serde_json::json!({
                 "operation": "create",
@@ -407,7 +409,7 @@ pub fn MosaicTab(
             // ── Capture Sequence ─────────────────────────────────────────────
             <div class="flex flex-col gap-2">
                 <div class=SECTION_TITLE>{move || tr().mosaic_capture_seq}</div>
-                <SequenceEditor frames=seq_frames camera=camera filter_wheel=filter_wheel />
+                <SequenceEditor frames=seq_frames fits_dir=seq_fits_dir camera=camera filter_wheel=filter_wheel />
 
                 // Startup flags
                 <div class="flex gap-4 flex-wrap text-sm pt-1">
