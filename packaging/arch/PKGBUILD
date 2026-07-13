@@ -7,6 +7,14 @@ arch=('x86_64' 'aarch64')
 url="https://github.com/alexandre-carmone/ekos-web-rust"
 # No LICENSE file in the repo yet; update once one is added.
 license=('custom:unknown')
+# Disable makepkg's default LTO. Arch mainline's makepkg.conf enables `lto`,
+# which injects `-flto` into CFLAGS/LDFLAGS. `ring`'s build.rs compiles its C
+# limb functions through the `cc` crate (which honours CFLAGS), turning them
+# into GCC LTO bitcode objects that rust-lld cannot resolve — the build then
+# fails to link with `undefined symbol: ring_core_0_17_*` (LIMB_is_zero,
+# p256_mul_mont, x25519_*, …). See rust-lang/rust#142752. The Arch Linux ARM
+# image doesn't enable lto, which is why the aarch64 package built fine.
+options=('!lto')
 depends=('glibc')
 # rustup provides cargo + the wasm32-unknown-unknown target. That target's std is
 # architecture-independent and rustup fetches it, so this works identically on
