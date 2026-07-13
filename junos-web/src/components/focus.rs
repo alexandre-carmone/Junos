@@ -198,8 +198,6 @@ pub fn FocusTab(
 
         // Palette (literals from styles/tokens.css — Canvas2D can't read var()).
         const CYAN: &str = "#5beaff";       // --accent-cyan
-        const CYAN_FILL_TOP: &str = "rgba(91, 234, 255, 0.28)";
-        const CYAN_FILL_BOT: &str = "rgba(91, 234, 255, 0.0)";
         const BRIGHT: &str = "#c1d2ff";      // --text-blue-bright
         const MUTED: &str = "#9aa3b8";       // --text-muted
         const BORDER: &str = "#1c1e2c";      // --border
@@ -252,33 +250,14 @@ pub fn FocusTab(
         let n = history.len();
         let x_of = |i: usize| px0 + (i as f64) * pw / ((n - 1) as f64);
 
-        // ── Gradient area fill under the curve ────────────────────────────
-        {
-            let grad = ctx.create_linear_gradient(0.0, py0, 0.0, py1);
-            let _ = grad.add_color_stop(0.0, CYAN_FILL_TOP);
-            let _ = grad.add_color_stop(1.0, CYAN_FILL_BOT);
+        // ── HFR scatter points ─────────────────────────────────────────────
+        // One dot per sample; no connecting line (point chart, not line chart).
+        ctx.set_fill_style_str(CYAN);
+        for (i, s) in history.iter().enumerate() {
             ctx.begin_path();
-            ctx.move_to(x_of(0), py1);
-            for (i, s) in history.iter().enumerate() {
-                ctx.line_to(x_of(i), y_of(s.hfr));
-            }
-            ctx.line_to(x_of(n - 1), py1);
-            ctx.close_path();
-            ctx.set_fill_style_canvas_gradient(&grad);
+            let _ = ctx.arc(x_of(i), y_of(s.hfr), 2.2, 0.0, std::f64::consts::TAU);
             ctx.fill();
         }
-
-        // ── HFR line ──────────────────────────────────────────────────────
-        ctx.set_stroke_style_str(CYAN);
-        ctx.set_line_width(1.75);
-        ctx.set_line_join("round");
-        ctx.set_line_cap("round");
-        ctx.begin_path();
-        for (i, s) in history.iter().enumerate() {
-            let (x, y) = (x_of(i), y_of(s.hfr));
-            if i == 0 { ctx.move_to(x, y); } else { ctx.line_to(x, y); }
-        }
-        let _ = ctx.stroke();
 
         baseline();
         unit_label();
@@ -352,6 +331,7 @@ pub fn FocusTab(
     // letterboxed `object-contain` image via a min-fit scale + centering offset.
     let preview_box_ref = NodeRef::<html::Div>::new();
     let stars_canvas_ref = NodeRef::<html::Canvas>::new();
+    let img_ref = NodeRef::<html::Img>::new();
 
     // Re-run the draw Effect on window resize so the overlay tracks the
     // preview box as the layout reflows.
@@ -389,23 +369,40 @@ pub fn FocusTab(
         let Some(fs) = stars else { return };
         if !on || fs.img_w <= 0.0 || fs.img_h <= 0.0 || fs.stars.is_empty() { return; }
 
-        // object-contain fit of the JPEG inside the container.
-        let scale = (cw / fs.img_w).min(ch / fs.img_h);
-        let ox = (cw - fs.img_w * scale) / 2.0;
-        let oy = (ch - fs.img_h * scale) / 2.0;
+        // Map JPEG pixel space onto the *actually rendered* image rectangle.
+        // The <img> uses `max-w-full max-h-full object-contain`, so a frame
+        // smaller than the container renders at natural size (never scaled up);
+        // recomputing an object-contain fit from the container over-scales it.
+        // Prefer the img element's real geometry; fall back to container-based
+        // object-contain math when the img isn't laid out yet (offset_* == 0).
+        let img_box = img_ref.get().and_then(|img| {
+            let img: web_sys::HtmlElement = img.unchecked_into();
+            let iw = img.offset_width() as f64;
+            let ih = img.offset_height() as f64;
+            if iw > 0.0 && ih > 0.0 { Some((iw, ih)) } else { None }
+        });
+        let (scale, ox, oy) = match img_box {
+            Some((iw, ih)) => {
+                // Aspect is preserved, so iw/img_w == ih/img_h. The flex
+                // container centers the img, matching (cw - iw)/2 offsets.
+                (iw / fs.img_w, (cw - iw) / 2.0, (ch - ih) / 2.0)
+            }
+            None => {
+                let scale = (cw / fs.img_w).min(ch / fs.img_h);
+                (scale, (cw - fs.img_w * scale) / 2.0, (ch - fs.img_h * scale) / 2.0)
+            }
+        };
 
-        // Ring radius ∝ HFR, with a gain so tight stars stay visible, clamped.
-        const GAIN: f64 = 2.0;
-        ctx.set_stroke_style_str("rgba(80, 220, 255, 0.85)");
-        ctx.set_line_width(1.25);
+        // Per-star size (HFR) as a numeric label at the star's position.
+        ctx.set_font("10px monospace");
+        ctx.set_text_align("center");
+        ctx.set_text_baseline("middle");
+        ctx.set_fill_style_str("rgba(80, 220, 255, 0.9)");
         let mut hfr_sum = 0.0;
         for s in &fs.stars {
             let sx = ox + s.x * scale;
             let sy = oy + s.y * scale;
-            let r = (s.hfr * scale * GAIN).clamp(2.5, 40.0);
-            ctx.begin_path();
-            let _ = ctx.arc(sx, sy, r, 0.0, std::f64::consts::TAU);
-            let _ = ctx.stroke();
+            let _ = ctx.fill_text(&format!("{:.1}", s.hfr), sx, sy);
             hfr_sum += s.hfr;
         }
 
@@ -509,9 +506,11 @@ pub fn FocusTab(
                         {move || match focus.with(|f| f.preview_url.clone()) {
                             Some(url) => view! {
                                 <img
+                                    node_ref=img_ref
                                     src=url
                                     class="max-w-full max-h-full object-contain cursor-crosshair [image-rendering:pixelated]"
                                     on:click=on_preview_click.clone()
+                                    on:load=move |_| resize_tick.update(|n| *n = n.wrapping_add(1))
                                 />
                             }.into_any(),
                             None => view! {

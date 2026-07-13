@@ -799,6 +799,27 @@ impl DeviceStore {
                 let pos = payload["pos"]
                     .as_i64()
                     .or_else(|| payload["pos"].as_f64().map(|v| v as i64));
+
+                // Detect the start of a new autofocus run: a transition from a
+                // non-running status into a running one ("In Progress" /
+                // "Framing", ekos.h:119; autofocus first emits "In Progress",
+                // focus.cpp:1395). Clear the HFR history so the chart shows only
+                // the new run. Covers both the Start button and scheduler-
+                // triggered runs. Done before the push below so the run's first
+                // sample survives.
+                let is_running = |s: &str| {
+                    let s = s.to_lowercase();
+                    s.contains("progress") || s.contains("framing")
+                };
+                if let Some(new_status) = payload["status"].as_str() {
+                    let prev_running = self
+                        .focus_status
+                        .with_untracked(|opt| opt.as_ref().map_or(false, |fs| is_running(&fs.status)));
+                    if !prev_running && is_running(new_status) {
+                        self.focus_hfr_history.set(Vec::new());
+                    }
+                }
+
                 self.focus_status.update(|opt| {
                     let fs = opt.get_or_insert_with(FocusStatusData::default);
                     fs.connected = true;
