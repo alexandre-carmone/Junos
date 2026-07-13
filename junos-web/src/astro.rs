@@ -188,3 +188,21 @@ pub fn fov_deg(focal_mm: f64, sensor_px: f64, pixel_um: f64) -> f64 {
     let sensor_mm = sensor_px * pixel_um / 1000.0;
     2.0 * (sensor_mm / (2.0 * focal_mm)).atan().to_degrees()
 }
+
+/// Effective focal length (mm) back-computed from a plate solve's measured pixel
+/// scale. `pixscale_arcsec` is arcsec per **binned** pixel (as reported by the
+/// astrometry solver), `pixel_um` is the native (unbinned) pixel size, and
+/// `bin` is the binning factor the solve ran at. Mirrors KStars'
+/// `calculateEffectiveFocalLength` (align.cpp:1089) / the pixscale relation at
+/// align.cpp:2212: `arcsec/binned_px = 206.265 * (pixel_um * bin) / focal_mm`.
+///
+/// This makes the FOV reticle self-correct after the first solve regardless of
+/// wrong scope focal, wrong/binned pixel size, etc. Returns `None` on invalid
+/// inputs.
+pub fn effective_focal_mm(pixscale_arcsec: f64, pixel_um: f64, bin: f64) -> Option<f64> {
+    if pixscale_arcsec > 0.0 && pixel_um > 0.0 && bin > 0.0 {
+        Some(206.264_806_247_096_36 * pixel_um * bin / pixscale_arcsec)
+    } else {
+        None
+    }
+}

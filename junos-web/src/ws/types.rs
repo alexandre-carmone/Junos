@@ -37,6 +37,11 @@ pub struct CameraStatusData {
     pub pixel_size_um: Option<f64>,
     pub sensor_width: Option<u32>,
     pub sensor_height: Option<u32>,
+    // Binning factor from INDI CCD_BINNING (HOR_BIN/VER_BIN). Needed to convert
+    // a plate solve's per-binned-pixel scale back into an effective focal
+    // length (see astro::effective_focal_mm). None until CCD_BINNING arrives.
+    pub bin_x: Option<u32>,
+    pub bin_y: Option<u32>,
     // Live imaging state — driven by new_camera_state / new_capture_state /
     // INDI CCD_TEMPERATURE / CCD_COOLER.
     pub temperature: Option<f64>,

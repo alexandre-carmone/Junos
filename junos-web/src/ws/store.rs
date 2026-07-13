@@ -480,6 +480,14 @@ impl DeviceStore {
                     let pix = pix_x.or(pix_y).or(pix_any);
                     let sw = max_x.map(|v| v as u32);
                     let sh = max_y.map(|v| v as u32);
+                    // Diagnostic: dump the raw sensor geometry so a real driver's
+                    // (possibly wrong / binned) CCD_INFO can be compared against
+                    // KStars' Align FOV readout.
+                    leptos::logging::log!(
+                        "[ws] CCD_INFO device={} max_x={:?} max_y={:?} pix_x={:?} pix_y={:?} pix_any={:?}",
+                        payload["device"].as_str().unwrap_or("?"),
+                        max_x, max_y, pix_x, pix_y, pix_any
+                    );
                     if pix.is_some() || sw.is_some() || sh.is_some() {
                         self.camera_status.update(|opt| {
                             let cs = opt.get_or_insert_with(CameraStatusData::default);
@@ -491,6 +499,27 @@ impl DeviceStore {
                             }
                             if sh.is_some() {
                                 cs.sensor_height = sh;
+                            }
+                        });
+                    }
+                } else if prop == "CCD_BINNING" {
+                    // Binning factor (HOR_BIN/VER_BIN). Needed to turn a solve's
+                    // per-binned-pixel scale into an effective focal length.
+                    let bx = extract_indi_number(payload, "HOR_BIN").map(|v| v as u32);
+                    let by = extract_indi_number(payload, "VER_BIN").map(|v| v as u32);
+                    leptos::logging::log!(
+                        "[ws] CCD_BINNING device={} hor={:?} ver={:?}",
+                        payload["device"].as_str().unwrap_or("?"),
+                        bx, by
+                    );
+                    if bx.is_some() || by.is_some() {
+                        self.camera_status.update(|opt| {
+                            let cs = opt.get_or_insert_with(CameraStatusData::default);
+                            if bx.is_some() {
+                                cs.bin_x = bx;
+                            }
+                            if by.is_some() {
+                                cs.bin_y = by;
                             }
                         });
                     }
@@ -1029,6 +1058,22 @@ impl DeviceStore {
                             a.solved_at_ms = Some(web_sys::js_sys::Date::now());
                         });
                     }
+                    // Diagnostic for the post-sync mount shift: compare the
+                    // solve's JNow RA/Dec against the mount's currently-reported
+                    // EQUATORIAL_EOD_COORD and the site lat/long the renderer
+                    // uses. If mount≈solve but both sit off the star field →
+                    // site/LST; if mount lags the solve by a few degrees →
+                    // stale post-sync mount coords (CLAUDE.md pitfalls #4/#5).
+                    let (m_ra_h, m_de) = self
+                        .mount_status
+                        .with_untracked(|o| o.as_ref().map_or((None, None), |m| (m.ra_h, m.dec_deg)));
+                    let (site_lat, site_lon) = self
+                        .site
+                        .with_untracked(|o| o.as_ref().map_or((None, None), |s| (Some(s.latitude), Some(s.longitude))));
+                    leptos::logging::log!(
+                        "[ws] sync-diag solve(JNow) ra_h={:?} de={:?} | mount(EOD) ra_h={:?} de={:?} | site lat={:?} lon={:?}",
+                        ra_h, de_d, m_ra_h, m_de, site_lat, site_lon
+                    );
                 }
             }
 

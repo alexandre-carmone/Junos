@@ -117,7 +117,7 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             if let Some(cam) = cap_train.as_ref().map(|t| t.camera.as_str())
                 .filter(|c| !c.is_empty() && *c != "--")
             {
-                for prop in ["CCD_INFO", "CCD_TEMPERATURE", "CCD_COOLER"] {
+                for prop in ["CCD_INFO", "CCD_BINNING", "CCD_TEMPERATURE", "CCD_COOLER"] {
                     send(serde_json::json!({
                         "type": "device_property_get",
                         "payload": { "device": cam, "property": prop, "compact": true }

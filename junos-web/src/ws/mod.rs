@@ -321,6 +321,14 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
                     camera_sig,
                     |cs| cs.as_ref().and_then(|c| c.sensor_width).is_some(),
                 );
+                // Binning — feeds the effective-focal-from-solve FOV correction.
+                spawn_retry_property(
+                    send_for_effect.clone(),
+                    train.camera.clone(),
+                    "CCD_BINNING",
+                    camera_sig,
+                    |cs| cs.as_ref().and_then(|c| c.bin_x).is_some(),
+                );
                 spawn_retry_property(
                     send_for_effect.clone(),
                     train.camera.clone(),

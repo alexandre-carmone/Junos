@@ -553,6 +553,34 @@ pub fn SkyTab(
         });
     });
 
+    // ── FOV diagnostics ───────────────────────────────────────────────────
+    // Log the inputs and the resulting reticle FOV whenever the camera geometry,
+    // the last solve, or the nominal focal length changes (NOT per frame). Lets
+    // us compare junos-web's FOV against KStars' Align FOV readout on real gear.
+    Effect::new(move || {
+        let cam = camera.get();
+        let sv = solve.get();
+        let nominal_fl = focal_length_mm.get();
+        let eff_fl = match (sv.pixscale_arcsec, cam.pixel_size_um, cam.bin_x) {
+            (Some(px), Some(pum), Some(bin)) => {
+                crate::astro::effective_focal_mm(px, pum, bin as f64)
+            }
+            _ => None,
+        };
+        let fl = eff_fl.or(nominal_fl);
+        if let (Some(fl), Some(pum), Some(sw), Some(sh)) =
+            (fl, cam.pixel_size_um, cam.sensor_width, cam.sensor_height)
+        {
+            let fov_w = crate::astro::fov_deg(fl, sw as f64, pum);
+            let fov_h = crate::astro::fov_deg(fl, sh as f64, pum);
+            leptos::logging::log!(
+                "[sky] FOV inputs: fl={:.1}mm (nominal={:?} eff_from_solve={:?}) sensor={}x{}px pixel={:.2}um bin={:?} pixscale={:?}\"/px -> {:.1}'x{:.1}'",
+                fl, nominal_fl, eff_fl, sw, sh, pum, cam.bin_x, sv.pixscale_arcsec,
+                fov_w * 60.0, fov_h * 60.0
+            );
+        }
+    });
+
     // ── Idle-activity tracker ─────────────────────────────────────────────
     // Bumped whenever an input that affects the rendered scene changes. The
     // RAF loop reads it to decide whether to re-tick at ~30 fps (recent
@@ -641,7 +669,20 @@ pub fn SkyTab(
         let dso_gal = dso_filter_galaxy_cluster.get();
         let dso_mag = dso_mag_limit.get();
         let scheduler_jobs_on = show_scheduler_jobs.get();
-        let fl = focal_length_mm.get();
+        // Prefer a focal length back-computed from the last plate solve's
+        // measured pixel scale over the nominal scope focal × CCD_INFO. This
+        // makes the FOV reticle (and mosaic preview / scheduler-job frames,
+        // all of which read this `fl`) self-correct after the first solve
+        // regardless of a wrong scope focal or a wrong/binned CCD_INFO pixel
+        // size — mirroring KStars' effective focal length (align.cpp:1089).
+        // Requires pixscale + native pixel size + binning; else nominal.
+        let nominal_fl = focal_length_mm.get();
+        let fl = match (sv.pixscale_arcsec, cam.pixel_size_um, cam.bin_x) {
+            (Some(px), Some(pum), Some(bin)) => {
+                crate::astro::effective_focal_mm(px, pum, bin as f64).or(nominal_fl)
+            }
+            _ => nominal_fl,
+        };
         let follow = follow_mount.get();
         let has_gpu = gpu_ready.get();
         let cur_lang = lang.get();
