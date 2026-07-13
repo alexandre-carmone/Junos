@@ -464,41 +464,74 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
     // Dedicated fast loop for mount RA/Dec freshness + self-healing re-subscribe.
     spawn_mount_coord_loop(send_fn.clone(), store.clone());
 
+    // Reconnect loop. The socket is re-opened whenever it drops (server restart,
+    // KStars relay bounce, sleep/wake, Wi-Fi blip) so the browser recovers without
+    // a page reload. `cmd_rx` is *borrowed* by the writer future — never moved into
+    // a detached task — so it survives across reconnects; the UI-facing `send_fn`
+    // (which only feeds `cmd_tx`) needs no changes. Commands sent while offline
+    // buffer in the unbounded channel and flush on reconnect, and the prime Effects
+    // above re-fire on the `connected`/`online` rising edges the server replays.
     let store_for_ws = store.clone();
     spawn_local(async move {
-        let ws = match WebSocket::open(&ws_url) {
-            Ok(ws) => ws,
-            Err(e) => {
-                leptos::logging::error!("WS open failed: {:?}", e);
-                return;
-            }
-        };
-        let (mut writer, mut reader) = ws.split();
+        use gloo_timers::future::TimeoutFuture;
+        // Exponential backoff on failed opens; reset after a successful connect so
+        // a brief blip reconnects fast but a down server isn't hammered.
+        const BACKOFF_MIN_MS: u32 = 500;
+        const BACKOFF_MAX_MS: u32 = 10_000;
+        let mut backoff_ms = BACKOFF_MIN_MS;
 
-        spawn_local(async move {
-            while let Some(msg) = cmd_rx.next().await {
-                if writer.send(Message::Text(msg)).await.is_err() { break; }
-            }
-        });
-
-        while let Some(msg) = reader.next().await {
-            match msg {
-                Ok(Message::Text(text)) => {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                        let type_str = val["type"].as_str().unwrap_or("").to_string();
-                        let payload  = val["payload"].clone();
-                        leptos::logging::log!("[ws] recv type={}", type_str);
-                        store_for_ws.apply_ekos_event(&type_str, &payload);
-                    }
-                }
-                Ok(_) => {}
+        loop {
+            let ws = match WebSocket::open(&ws_url) {
+                Ok(ws) => ws,
                 Err(e) => {
-                    leptos::logging::error!("WS error: {:?}", e);
+                    leptos::logging::error!("WS open failed: {:?}", e);
                     store_for_ws.connected.set(false);
                     store_for_ws.online.set(false);
-                    break;
+                    TimeoutFuture::new(backoff_ms).await;
+                    backoff_ms = (backoff_ms * 2).min(BACKOFF_MAX_MS);
+                    continue;
                 }
-            }
+            };
+            backoff_ms = BACKOFF_MIN_MS;
+            let (mut writer, mut reader) = ws.split();
+
+            // Reader: process inbound frames until the socket errors or closes.
+            let store_reader = store_for_ws.clone();
+            let reader_fut = async move {
+                while let Some(msg) = reader.next().await {
+                    match msg {
+                        Ok(Message::Text(text)) => {
+                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                                let type_str = val["type"].as_str().unwrap_or("").to_string();
+                                let payload  = val["payload"].clone();
+                                leptos::logging::log!("[ws] recv type={}", type_str);
+                                store_reader.apply_ekos_event(&type_str, &payload);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            leptos::logging::error!("WS error: {:?}", e);
+                            break;
+                        }
+                    }
+                }
+            };
+
+            // Writer: drain buffered/live commands into the socket. Borrows
+            // `cmd_rx` so ownership returns to this loop intact on disconnect.
+            let writer_fut = async {
+                while let Some(msg) = cmd_rx.next().await {
+                    if writer.send(Message::Text(msg)).await.is_err() { break; }
+                }
+            };
+
+            // Whichever side finishes first means the connection is gone.
+            futures::pin_mut!(reader_fut, writer_fut);
+            futures::future::select(reader_fut, writer_fut).await;
+
+            store_for_ws.connected.set(false);
+            store_for_ws.online.set(false);
+            TimeoutFuture::new(BACKOFF_MIN_MS).await;
         }
     });
 
