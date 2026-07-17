@@ -7,8 +7,7 @@
 //! Until this module landed, hit items were appended inside the Canvas2D
 //! `render.rs` functions, which meant turning off Canvas2D rendering also
 //! lost click targets. With picking now standalone, the GPU symbol path
-//! can run alone and the Canvas2D fallback can shrink to non-clickable
-//! decorations (nebula textures only) without breaking interaction.
+//! can run alone without breaking interaction.
 
 use std::sync::Arc;
 
@@ -21,6 +20,7 @@ use crate::i18n::Lang;
 
 use super::dso_index::DsoIndex;
 use super::dso_render::KindFilter;
+use super::dso_shape::dso_shape;
 use super::gpu::LineView;
 use super::render::{HitItem, HitKind};
 
@@ -163,12 +163,25 @@ fn push_dsos(
         let Some((sx, sy)) = v.project(alt, az) else { continue };
         if sx < -40.0 || sx > v.wf + 40.0 || sy < -40.0 || sy > v.hf + 40.0 { continue; }
 
-        let px_size = (dso.size_arcmin as f64 / 60.0 / (v.fov * 2.0) * scale * 2.0)
-            .clamp(4.0, 40.0);
-        let r = px_size / 2.0;
+        // Hit radius follows the drawn symbol but stays bounded: symbols are
+        // drawn at true angular extent, and a zoomed-in M31 must not swallow
+        // every click in the view.
+        let project = |alt: f64, az: f64| v.project(alt, az);
+        let shape = dso_shape(
+            dso,
+            sx,
+            sy,
+            dso_jnow.ra_deg,
+            dso_jnow.dec_deg,
+            v.lst,
+            v.latitude,
+            v.fov,
+            scale,
+            &project,
+        );
         out.push(HitItem {
             sx, sy,
-            radius: r.max(8.0),
+            radius: shape.half_w.clamp(8.0, 40.0),
             kind: HitKind::Dso(dso.kind),
             name: dso.display_label(lang),
             mag: Some(dso.mag),

@@ -10,6 +10,7 @@ mod actions;
 mod controls;
 pub(crate) mod dso_index;
 mod dso_render;
+mod dso_shape;
 pub(crate) mod gpu;
 mod hud;
 mod picking;
@@ -41,7 +42,6 @@ use crate::catalog::CatalogData;
 use crate::dso_catalog::DsoCatalogData;
 use self::gpu::{LineView, SkyRenderer, Uniforms};
 use crate::i18n::{Lang, t};
-use crate::nebulae::NebulaeIndex;
 
 use actions::SkyContextMenu;
 use controls::SkyControls;
@@ -542,16 +542,6 @@ pub fn SkyTab(
     let render_pipeline: Rc<RefCell<RenderPipeline>> =
         Rc::new(RefCell::new(RenderPipeline::standard()));
 
-    // Nebulae index: fetched once from /nebulae.json at startup
-    let (nebulae_index, set_nebulae_index) = signal(None::<Arc<NebulaeIndex>>);
-    Effect::new(move || {
-        wasm_bindgen_futures::spawn_local(async move {
-            if let Some(idx) = crate::nebulae::fetch_nebulae_index().await {
-                set_nebulae_index.set(Some(idx));
-            }
-        });
-    });
-
     // ── FOV diagnostics ───────────────────────────────────────────────────
     // Log the inputs and the resulting reticle FOV whenever the camera geometry,
     // the last solve, or the nominal focal length changes (NOT per frame). Lets
@@ -859,7 +849,6 @@ pub fn SkyTab(
             &mosaic_target_name,
         );
 
-        let nb_idx = nebulae_index.get_untracked();
         let mut hits = hit_items_for_render.borrow_mut();
         hits.clear();
         // Build hit list directly from catalogs / ephemerides — independent
@@ -943,7 +932,6 @@ pub fn SkyTab(
             stars: cat.as_ref(),
             dso: dso_cat.as_ref(),
             dso_index: dso_idx.as_deref(),
-            nebulae: nb_idx.as_deref(),
         };
         let mut frame = Frame {
             view: &view,

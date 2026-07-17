@@ -8,6 +8,11 @@ mod components;
 mod dso_catalog;
 mod ephemeris;
 mod i18n;
+/// Unreferenced since the sky map dropped the image-footprint quads: DSO
+/// symbols now come from the catalog's own MajAx/MinAx/PosAng, and framing
+/// mode fetches its preview from hips2fits. Kept with `public/nebulae*` for
+/// whoever wants the thumbnails back.
+#[allow(dead_code)]
 mod nebulae;
 mod ws;
 mod ws_helpers;

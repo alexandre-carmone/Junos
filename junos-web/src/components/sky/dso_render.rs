@@ -1,9 +1,10 @@
 //! CPU-side DSO instance + label builder.
 //!
-//! Mirrors the projection / culling / sizing logic in `render::render_dso`
-//! but emits GPU-ready instances and text items instead of issuing Canvas2D
-//! draws. The Canvas2D code path still handles nebula thumbnails and hit
-//! tests for now; this module only covers the symbol + label layers.
+//! Mirrors the projection / culling logic in `render::render_dso` but emits
+//! GPU-ready instances and text items instead of issuing Canvas2D draws.
+//! Symbol geometry is shared with the Canvas2D path via `dso_shape`. Hit
+//! tests still flow through `picking`; this module only covers the symbol +
+//! label layers.
 
 use std::sync::Arc;
 
@@ -13,6 +14,7 @@ use crate::dso_catalog::{DsoCatalogData, DsoType};
 use crate::i18n::Lang;
 
 use super::dso_index::DsoIndex;
+use super::dso_shape::dso_shape;
 use super::gpu::layers::dso::DsoInstance;
 use super::gpu::text::{FontAtlas, TextInstance};
 use super::gpu::LineView;
@@ -137,30 +139,28 @@ pub fn build(
         let Some((sx, sy)) = v.project(alt, az) else { continue };
         if sx < -40.0 || sx > v.wf + 40.0 || sy < -40.0 || sy > v.hf + 40.0 { continue; }
 
-        // Major axis half-size in pixels.
-        let half_w = (dso.size_arcmin as f64 / 60.0 / (v.fov * 2.0) * scale)
-            .clamp(2.0, 20.0);
-        // Galaxies use the minor axis when known; everything else is square.
-        let half_h = if matches!(dso.kind, DsoType::Galaxy) && dso.size_minor_arcmin > 0.0 {
-            (dso.size_minor_arcmin as f64 / 60.0 / (v.fov * 2.0) * scale).clamp(1.0, half_w)
-        } else {
-            half_w
-        };
-        let (cos_rot, sin_rot) = if matches!(dso.kind, DsoType::Galaxy) {
-            let a = (dso.pa_deg as f64).to_radians();
-            (a.cos(), a.sin())
-        } else {
-            (1.0, 0.0)
-        };
+        let project = |alt: f64, az: f64| v.project(alt, az);
+        let shape = dso_shape(
+            dso,
+            sx,
+            sy,
+            dso_jnow.ra_deg,
+            dso_jnow.dec_deg,
+            v.lst,
+            v.latitude,
+            v.fov,
+            scale,
+            &project,
+        );
 
         let color = kind_color(dso.kind);
         out_dso.push(DsoInstance {
             pos_x: sx as f32,
             pos_y: sy as f32,
-            half_w: half_w as f32,
-            half_h: half_h as f32,
-            cos_rot: cos_rot as f32,
-            sin_rot: sin_rot as f32,
+            half_w: shape.half_w as f32,
+            half_h: shape.half_h as f32,
+            cos_rot: shape.cos_rot as f32,
+            sin_rot: shape.sin_rot as f32,
             kind: kind_to_u32(dso.kind),
             _pad0: 0,
             color_r: color[0],
@@ -175,10 +175,13 @@ pub fn build(
         if p.names_on && v.fov < label_fov_gate && label_mag_ok {
             if let Some(atlas) = atlas {
                 let label = dso.display_label(p.lang);
+                // Cap the offset: large objects draw at true extent, and a
+                // label pushed out to their edge reads as unattached.
+                let off = shape.half_w.min(40.0) as f32;
                 atlas.push_text(
                     out_text,
                     &label,
-                    sx as f32 + half_w as f32 + 3.0,
+                    sx as f32 + off + 3.0,
                     sy as f32 - 5.0,
                     12.0,
                     color,

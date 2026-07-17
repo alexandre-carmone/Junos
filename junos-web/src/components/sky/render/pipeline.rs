@@ -65,7 +65,7 @@ impl RenderPipeline {
         p.register(Box::new(StarsLayer));
         // Constellation names (GPU-mode label companion).
         p.register(Box::new(ConstellationNamesLayer));
-        // DSO outlines, labels, nebulae thumbnails, hit items.
+        // DSO outlines, labels, hit items.
         p.register(Box::new(DsoLayer));
         // Sun / Moon / planets (skipped in GPU mode when solar_on_gpu).
         p.register(Box::new(SolarSystemLayer));

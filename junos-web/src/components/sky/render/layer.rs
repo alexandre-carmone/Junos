@@ -12,7 +12,6 @@ use web_sys::CanvasRenderingContext2d;
 
 use crate::catalog::CatalogData;
 use crate::dso_catalog::DsoCatalogData;
-use crate::nebulae::NebulaeIndex;
 
 use super::super::dso_index::DsoIndex;
 use super::super::gpu::layers::dso::DsoInstance;
@@ -25,7 +24,6 @@ pub struct Catalogs<'a> {
     pub stars: Option<&'a Arc<CatalogData>>,
     pub dso: Option<&'a Arc<DsoCatalogData>>,
     pub dso_index: Option<&'a DsoIndex>,
-    pub nebulae: Option<&'a NebulaeIndex>,
 }
 
 /// GPU instance buffers a layer's `prepare` may append to. The pipeline

@@ -30,9 +30,9 @@ use crate::coords::{JNow, J2000};
 use crate::dso_catalog::{DsoCatalogData, DsoType};
 use crate::ephemeris;
 use crate::i18n::{constellation_name, t};
-use crate::nebulae::NebulaeIndex;
 
 use super::dso_index::DsoIndex;
+use super::dso_shape::dso_shape;
 
 use super::utils::bv_to_rgb;
 
@@ -428,12 +428,9 @@ pub(super) fn render_dso(
     dso_index: Option<&DsoIndex>,
     project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
     scale: f64,
-    nebulae_index: Option<&NebulaeIndex>,
 ) {
     let Some(dso_cat) = dso_cat else { return };
     let lst_rad = f.scene.lst.to_radians();
-    let cx = f.view.wf / 2.0;
-    let cy = f.view.hf / 2.0;
     ctx.set_line_width(1.0);
     ctx.set_font("12px monospace");
 
@@ -451,7 +448,8 @@ pub(super) fn render_dso(
     let v_sin_dec = v_dec_rad.sin();
     let v_cos_dec = v_dec_rad.cos();
     // Cap radius generously: render rejects beyond fov*1.5; add margin for
-    // wide-field nebulae whose center is just outside but corners are in.
+    // wide-field objects whose centre is just outside but whose outline
+    // still reaches into the view.
     let cap_radius_deg = f.view.fov * 1.5 + 6.0;
     let cos_cap = if cap_radius_deg >= 180.0 {
         -1.0
@@ -524,120 +522,77 @@ pub(super) fn render_dso(
             continue;
         }
 
-        let px_size =
-            (dso.size_arcmin as f64 / 60.0 / (f.view.fov * 2.0) * scale * 2.0).clamp(4.0, 40.0);
-        let r = px_size / 2.0;
+        let shape = dso_shape(
+            dso,
+            sx,
+            sy,
+            dso_jnow.ra_deg,
+            dso_jnow.dec_deg,
+            f.scene.lst,
+            f.scene.latitude,
+            f.view.fov,
+            scale,
+            project,
+        );
+        let r = shape.half_w;
+        let angle = shape.sin_rot.atan2(shape.cos_rot);
 
-        // ── Outline from Stellarium nebulae corner data ──────────────────────
-        // Framing mode owns the photographic preview now (hips2fits proxy);
-        // the main sky map only needs the true image footprint as a quad
-        // outline, not the raster thumbnail itself.
-        let drew_image = if let Some(tex) = nebulae_index.and_then(|idx| idx.map.get(&dso.name)) {
-            // Project all 4 corners with no distance cutoff so that
-            // large objects don't disappear when some corner is off-FOV.
-            let mut pts = [(0.0_f64, 0.0_f64); 4];
-            let mut ok = true;
-            for (i, &(cra, cdec)) in tex.corners.iter().enumerate() {
-                let corner_jnow = J2000::new(cra as f64, cdec as f64).to_jnow(f.scene.jd);
-                let (calt, caz) = astro::eq_to_altaz(
-                    corner_jnow.ra_deg,
-                    corner_jnow.dec_deg,
-                    f.scene.lst,
-                    f.scene.latitude,
-                );
-                let (nx, ny) =
-                    astro::project_unclamped(calt, caz, f.view.c_alt, f.view.c_az, f.view.fov);
-                let px = cx + nx * scale;
-                let py = cy - ny * scale;
-                // Reject absurdly far-off points (e.g. back-hemisphere)
-                if !px.is_finite()
-                    || !py.is_finite()
-                    || px.abs() > f.view.wf * 20.0
-                    || py.abs() > f.view.hf * 20.0
-                {
-                    ok = false;
-                    break;
-                }
-                pts[i] = (px, py);
-            }
-            if ok {
-                ctx.set_stroke_style_str("rgba(60,220,100,0.75)");
-                ctx.set_line_width(1.0);
-                ctx.begin_path();
-                ctx.move_to(pts[0].0, pts[0].1);
-                for &(px, py) in &pts[1..] {
-                    ctx.line_to(px, py);
-                }
-                ctx.close_path();
-                ctx.stroke();
-                true
-            } else {
-                false
-            }
-        } else {
-            false // no corner data for this DSO
-        };
-
-        // ── Symbol fallback (when no image available / loaded) ──────────────
         // When `dso_on_gpu` is set, the GPU DsoLayer renders the symbol —
-        // skip the Canvas2D outline entirely (nebula thumbnails still flow
-        // through the GPU-skipped path above when an image is available).
-        if !drew_image && !f.mode.is_gpu() {
+        // skip the Canvas2D outline entirely.
+        //
+        // Every symbol is drawn in the object's own frame: origin at its
+        // centre, +x along the major axis. `half_w`/`half_h` are the true
+        // angular semi-axes in px, so the outline traces the object's real
+        // extent and orientation rather than a fixed-size glyph.
+        if !f.mode.is_gpu() {
+            let (a, b) = (shape.half_w, shape.half_h);
+            ctx.save();
+            ctx.translate(sx, sy).unwrap();
+            ctx.rotate(angle).unwrap();
             match dso.kind {
                 DsoType::Galaxy => {
-                    let minor_px = if dso.size_minor_arcmin > 0.0 {
-                        (dso.size_minor_arcmin as f64 / 60.0 / (f.view.fov * 2.0) * scale * 2.0)
-                            .clamp(2.0, r)
-                    } else {
-                        r * 0.45
-                    };
-                    let angle = (dso.pa_deg as f64).to_radians();
-                    ctx.save();
-                    ctx.translate(sx, sy).unwrap();
-                    ctx.rotate(angle).unwrap();
                     ctx.set_stroke_style_str("rgba(0,200,220,0.75)");
                     ctx.begin_path();
-                    ctx.ellipse(0.0, 0.0, r, minor_px, 0.0, 0.0, 2.0 * PI)
-                        .unwrap();
+                    ctx.ellipse(0.0, 0.0, a, b, 0.0, 0.0, 2.0 * PI).unwrap();
                     ctx.stroke();
-                    ctx.restore();
                 }
                 DsoType::OpenCluster => {
                     ctx.set_stroke_style_str("rgba(255,220,50,0.8)");
                     ctx.set_line_dash(&js_sys::Array::of2(&3.0_f64.into(), &3.0_f64.into()))
                         .unwrap();
                     ctx.begin_path();
-                    ctx.arc(sx, sy, r, 0.0, 2.0 * PI).unwrap();
+                    ctx.ellipse(0.0, 0.0, a, b, 0.0, 0.0, 2.0 * PI).unwrap();
                     ctx.stroke();
                     ctx.set_line_dash(&js_sys::Array::new()).unwrap();
                 }
                 DsoType::GlobularCluster => {
                     ctx.set_stroke_style_str("rgba(255,160,60,0.8)");
                     ctx.begin_path();
-                    ctx.arc(sx, sy, r, 0.0, 2.0 * PI).unwrap();
+                    ctx.ellipse(0.0, 0.0, a, b, 0.0, 0.0, 2.0 * PI).unwrap();
                     ctx.stroke();
                     ctx.begin_path();
-                    ctx.move_to(sx - r, sy);
-                    ctx.line_to(sx + r, sy);
-                    ctx.move_to(sx, sy - r);
-                    ctx.line_to(sx, sy + r);
+                    ctx.move_to(-a, 0.0);
+                    ctx.line_to(a, 0.0);
+                    ctx.move_to(0.0, -b);
+                    ctx.line_to(0.0, b);
                     ctx.stroke();
                 }
                 DsoType::PlanetaryNebula => {
                     ctx.set_stroke_style_str("rgba(0,230,180,0.85)");
                     ctx.begin_path();
-                    ctx.arc(sx, sy, r, 0.0, 2.0 * PI).unwrap();
+                    ctx.ellipse(0.0, 0.0, a, b, 0.0, 0.0, 2.0 * PI).unwrap();
                     ctx.stroke();
-                    let tick = r * 0.5;
+                    let tick_a = a * 0.5;
+                    let tick_b = b * 0.5;
                     ctx.begin_path();
-                    ctx.move_to(sx - r - tick, sy);
-                    ctx.line_to(sx - r, sy);
-                    ctx.move_to(sx + r, sy);
-                    ctx.line_to(sx + r + tick, sy);
-                    ctx.move_to(sx, sy - r - tick);
-                    ctx.line_to(sx, sy - r);
-                    ctx.move_to(sx, sy + r);
-                    ctx.line_to(sx, sy + r + tick);
+                    ctx.move_to(-a - tick_a, 0.0);
+                    ctx.line_to(-a, 0.0);
+                    ctx.move_to(a, 0.0);
+                    ctx.line_to(a + tick_a, 0.0);
+                    ctx.move_to(0.0, -b - tick_b);
+                    ctx.line_to(0.0, -b);
+                    ctx.move_to(0.0, b);
+                    ctx.line_to(0.0, b + tick_b);
                     ctx.stroke();
                 }
                 DsoType::GalaxyCluster => {
@@ -645,15 +600,16 @@ pub(super) fn render_dso(
                     ctx.set_line_dash(&js_sys::Array::of2(&2.0_f64.into(), &4.0_f64.into()))
                         .unwrap();
                     ctx.begin_path();
-                    ctx.arc(sx, sy, r, 0.0, 2.0 * PI).unwrap();
+                    ctx.ellipse(0.0, 0.0, a, b, 0.0, 0.0, 2.0 * PI).unwrap();
                     ctx.stroke();
                     ctx.set_line_dash(&js_sys::Array::new()).unwrap();
                 }
                 DsoType::Nebula | DsoType::SupernovaRemnant => {
                     ctx.set_stroke_style_str("rgba(60,220,100,0.75)");
-                    ctx.stroke_rect(sx - r, sy - r, px_size, px_size);
+                    ctx.stroke_rect(-a, -b, a * 2.0, b * 2.0);
                 }
             }
+            ctx.restore();
         }
 
         let label = dso.display_label(f.scene.cur_lang);
@@ -662,7 +618,10 @@ pub(super) fn render_dso(
             f.hit_items.push(HitItem {
                 sx,
                 sy,
-                radius: r.max(8.0),
+                // Bounded like `picking::push_dso_hit_items`: symbols draw at
+                // true angular extent, but a zoomed-in M31 must not swallow
+                // every click in the view.
+                radius: r.clamp(8.0, 40.0),
                 kind: HitKind::Dso(dso.kind),
                 name: label.clone(),
                 mag: Some(dso.mag),
@@ -673,7 +632,6 @@ pub(super) fn render_dso(
             });
         }
 
-        // Label (always, image or symbol).
         // On mobile, only label objects clearly brighter than the cutoff and
         // tighten the FOV gate; this drops fillText calls per frame when many
         // faint DSOs cluster near the centre at moderate zoom.
@@ -689,7 +647,9 @@ pub(super) fn render_dso(
                 _ => "rgba(60,220,100,0.85)",
             });
             ctx.set_text_align("left");
-            let _ = ctx.fill_text(&label, sx + r + 3.0, sy + 4.0);
+            // Offset capped like the GPU label path: a label pushed out to the
+            // edge of a large object reads as unattached.
+            let _ = ctx.fill_text(&label, sx + r.min(40.0) + 3.0, sy + 4.0);
         }
     }
 }
