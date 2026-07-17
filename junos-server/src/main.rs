@@ -5,6 +5,7 @@ mod files;
 mod hub;
 mod kstars_ws;
 mod proxy;
+mod skysurvey;
 mod starfind;
 mod tls;
 
@@ -70,6 +71,7 @@ async fn main() {
         .route("/api/apps/launch", post(apps::launch_handler))
         .route("/api/apps/stop",   post(apps::stop_handler))
         .route("/api/apps/state",  get(apps::state_handler))
+        .route("/api/skysurvey",   get(skysurvey::skysurvey))
         .route("/message/ekos", get(kstars_ws::message_handler))
         .route("/media/ekos", get(kstars_ws::media_handler))
         .route("/api/files/list",     get(files::list))

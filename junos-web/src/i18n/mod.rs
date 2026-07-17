@@ -205,6 +205,13 @@ translations! {
     ab_result_tilt_lr, ab_result_tilt_tb, ab_result_diagonal, ab_result_backfocus,
     ab_move_sensor_in, ab_move_sensor_out,
     ab_err_no_focuser, ab_err_no_camera, ab_err_no_file, ab_err_fit,
+    // Framing assistant (Sky tab)
+    framing_toggle, framing_title, framing_focal_length, framing_pixel_size,
+    framing_sensor_wh, framing_rotation, framing_load_preview, framing_loading,
+    framing_load_error,
+    sky_framing, framing_target, framing_grid, framing_overlap, framing_pa,
+    framing_center, framing_ra, framing_dec, framing_tile_fov, framing_total_fov,
+    framing_send_mosaic, framing_reload, framing_no_fov,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ pub use pipeline::RenderPipeline;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use web_sys::{CanvasRenderingContext2d, HtmlImageElement};
+use web_sys::CanvasRenderingContext2d;
 
 use crate::astro;
 use crate::catalog::CatalogData;
@@ -528,96 +528,54 @@ pub(super) fn render_dso(
             (dso.size_arcmin as f64 / 60.0 / (f.view.fov * 2.0) * scale * 2.0).clamp(4.0, 40.0);
         let r = px_size / 2.0;
 
-        // ── Try real image from Stellarium nebulae set ──────────────────────
+        // ── Outline from Stellarium nebulae corner data ──────────────────────
+        // Framing mode owns the photographic preview now (hips2fits proxy);
+        // the main sky map only needs the true image footprint as a quad
+        // outline, not the raster thumbnail itself.
         let drew_image = if let Some(tex) = nebulae_index.and_then(|idx| idx.map.get(&dso.name)) {
-            // Lazy-load: insert HtmlImageElement on first encounter
-            if !f.nebulae_cache.contains_key(&tex.path) {
-                if let Ok(img) = HtmlImageElement::new() {
-                    img.set_src(&format!("/{}", tex.path));
-                    f.nebulae_cache.insert(tex.path.clone(), img);
+            // Project all 4 corners with no distance cutoff so that
+            // large objects don't disappear when some corner is off-FOV.
+            let mut pts = [(0.0_f64, 0.0_f64); 4];
+            let mut ok = true;
+            for (i, &(cra, cdec)) in tex.corners.iter().enumerate() {
+                let corner_jnow = J2000::new(cra as f64, cdec as f64).to_jnow(f.scene.jd);
+                let (calt, caz) = astro::eq_to_altaz(
+                    corner_jnow.ra_deg,
+                    corner_jnow.dec_deg,
+                    f.scene.lst,
+                    f.scene.latitude,
+                );
+                let (nx, ny) =
+                    astro::project_unclamped(calt, caz, f.view.c_alt, f.view.c_az, f.view.fov);
+                let px = cx + nx * scale;
+                let py = cy - ny * scale;
+                // Reject absurdly far-off points (e.g. back-hemisphere)
+                if !px.is_finite()
+                    || !py.is_finite()
+                    || px.abs() > f.view.wf * 20.0
+                    || py.abs() > f.view.hf * 20.0
+                {
+                    ok = false;
+                    break;
                 }
+                pts[i] = (px, py);
             }
-            // Draw only when the image has finished loading
-            if let Some(img) = f.nebulae_cache.get(&tex.path) {
-                if img.complete() && img.natural_width() > 0 {
-                    // Project all 4 corners with no distance cutoff so that
-                    // large objects don't disappear when some corner is off-FOV.
-                    // Canvas2D clips anything outside the canvas bounds.
-                    let mut pts = [(0.0_f64, 0.0_f64); 4];
-                    let mut ok = true;
-                    for (i, &(cra, cdec)) in tex.corners.iter().enumerate() {
-                        let corner_jnow = J2000::new(cra as f64, cdec as f64).to_jnow(f.scene.jd);
-                        let (calt, caz) = astro::eq_to_altaz(
-                            corner_jnow.ra_deg,
-                            corner_jnow.dec_deg,
-                            f.scene.lst,
-                            f.scene.latitude,
-                        );
-                        let (nx, ny) = astro::project_unclamped(
-                            calt,
-                            caz,
-                            f.view.c_alt,
-                            f.view.c_az,
-                            f.view.fov,
-                        );
-                        let px = cx + nx * scale;
-                        let py = cy - ny * scale;
-                        // Reject absurdly far-off points (e.g. back-hemisphere)
-                        if !px.is_finite()
-                            || !py.is_finite()
-                            || px.abs() > f.view.wf * 20.0
-                            || py.abs() > f.view.hf * 20.0
-                        {
-                            ok = false;
-                            break;
-                        }
-                        pts[i] = (px, py);
-                    }
-                    if ok {
-                        // Affine: maps texture [0,1]² to the sky quad.
-                        // Stellarium worldCoords order (OpenGL UV): BL(0,0), BR(1,0), TR(1,1), TL(0,1)
-                        // Canvas2D drawImage UV (0,0) = image top-left, (0,1) = image bottom-left.
-                        // OpenGL UV(0,0) = image bottom-left → Canvas2D (0,1).
-                        // So: pts[3] (TL/OpenGL) = image top-left → Canvas2D (0,0)
-                        //     pts[2] (TR/OpenGL) = image top-right → Canvas2D (1,0)
-                        //     pts[0] (BL/OpenGL) = image bottom-left → Canvas2D (0,1)
-                        let p0 = pts[3]; // TL → canvas (0,0) = image top-left
-                        let p1 = pts[2]; // TR → canvas (1,0) = image top-right
-                        let p3 = pts[0]; // BL → canvas (0,1) = image bottom-left
-                        let a = p1.0 - p0.0;
-                        let b = p1.1 - p0.1;
-                        let c = p3.0 - p0.0;
-                        let d = p3.1 - p0.1;
-                        let e = p0.0;
-                        let f = p0.1;
-                        ctx.save();
-                        // transform() multiplies with the current matrix (DPR
-                        // scale stays intact), so coordinates are in CSS pixels.
-                        let _ = ctx.transform(a, b, c, d, e, f);
-                        // Thumbnails carry a baked alpha (scripts/feather_nebulae.py)
-                        // so source-over draws straight onto the sky without the
-                        // legacy 0.85 fade. `lighten` makes the composite purely
-                        // additive: residual dark pixels can never darken the
-                        // stars underneath, which matches the physics of
-                        // emission/reflection nebulae.
-                        let _ = ctx.set_global_composite_operation("lighten");
-                        let _ = ctx.draw_image_with_html_image_element_and_dw_and_dh(
-                            img, 0.0, 0.0, 1.0, 1.0,
-                        );
-                        let _ = ctx.set_global_composite_operation("source-over");
-                        ctx.restore();
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false // image still loading
+            if ok {
+                ctx.set_stroke_style_str("rgba(60,220,100,0.75)");
+                ctx.set_line_width(1.0);
+                ctx.begin_path();
+                ctx.move_to(pts[0].0, pts[0].1);
+                for &(px, py) in &pts[1..] {
+                    ctx.line_to(px, py);
                 }
+                ctx.close_path();
+                ctx.stroke();
+                true
             } else {
                 false
             }
         } else {
-            false // no nebula image for this DSO
+            false // no corner data for this DSO
         };
 
         // ── Symbol fallback (when no image available / loaded) ──────────────

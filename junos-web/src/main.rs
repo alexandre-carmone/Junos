@@ -19,7 +19,7 @@ use leptos::prelude::*;
 use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
 use components::sky::dso_index::DsoIndex;
-use components::sky::MosaicPlannerState;
+use components::sky::{FramingState, MosaicPlannerState};
 use components::dialog_modal::DialogModal;
 use components::tab_bar::TabBar;
 use components::tab_wheel::TabWheel;
@@ -72,6 +72,11 @@ pub struct AlignDefaultsCtx(pub RwSignal<AlignDefaultsData>);
 /// App-level context holding the shared mosaic planner signals.
 #[derive(Clone, Copy)]
 pub struct MosaicPlannerCtx(pub MosaicPlannerState);
+
+/// App-level context for the Framing Assistant overlay. Context rather than
+/// props because the sky right-click menu opens it.
+#[derive(Clone, Copy)]
+pub struct FramingCtx(pub FramingState);
 
 /// Prefill data passed from the sky right-click menu to the scheduler job builder.
 /// Set to Some((name, ra_deg, dec_deg)) when the user clicks "Add to Scheduler".
@@ -268,6 +273,19 @@ fn App() -> impl IntoView {
         dir:            RwSignal::new(String::new()),
     };
     provide_context(MosaicPlannerCtx(mosaic_planner));
+
+    // ── Framing assistant shared state ────────────────────────────────────
+    // Grid defaults to 1×1: framing is single-target first, mosaic on demand.
+    let framing = FramingState {
+        open:    RwSignal::new(false),
+        center:  RwSignal::new(None::<(f64, f64)>),
+        target:  RwSignal::new(String::new()),
+        grid_w:  RwSignal::new(1u32),
+        grid_h:  RwSignal::new(1u32),
+        overlap: RwSignal::new(10.0f64),
+        pa:      RwSignal::new(0.0f64),
+    };
+    provide_context(FramingCtx(framing));
 
     let active_tab = RwSignal::new(Tab::Sky);
     provide_context(ActiveTabCtx(active_tab));

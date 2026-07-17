@@ -8,7 +8,7 @@ use crate::i18n::{Lang, t};
 
 use crate::CameraDeviceCtx;
 use crate::ws::SendCmd;
-use crate::{ActiveTabCtx, AlignDefaultsCtx, AlignSolveRadiusCtx, MosaicPlannerCtx, MountDeviceCtx, SchedulerPrefillCtx, Tab};
+use crate::{ActiveTabCtx, AlignDefaultsCtx, AlignSolveRadiusCtx, MountDeviceCtx, SchedulerPrefillCtx, Tab};
 
 /// Build a `mount_goto_rade` message.
 ///
@@ -57,7 +57,7 @@ pub fn SkyContextMenu(
     let align_defaults_ctx = use_context::<AlignDefaultsCtx>();
     let prefill_ctx = use_context::<SchedulerPrefillCtx>();
     let active_tab_ctx = use_context::<ActiveTabCtx>();
-    let planner_ctx = use_context::<MosaicPlannerCtx>();
+    let framing_ctx = use_context::<crate::FramingCtx>();
 
     let busy_ctx = use_context::<crate::ServiceBusyCtx>();
     let mount_busy = Signal::derive(move || busy_ctx.and_then(|c| c.mount_busy.get()));
@@ -99,12 +99,14 @@ pub fn SkyContextMenu(
         }
     };
 
-    let on_create_mosaic = move |_| {
+    let on_open_framing = move |_| {
         if let Some((_sx, _sy, ra_deg, dec_deg)) = ctx_menu.get_untracked() {
-            if let Some(pctx) = planner_ctx {
-                pctx.0.center.set(Some((ra_deg, dec_deg)));
-                pctx.0.picking_center.set(false);
-                pctx.0.planning.set(true);
+            if let Some(fctx) = framing_ctx {
+                // Menu coords are already of-date (JNow), same epoch as
+                // `FramingState::center` — no conversion.
+                fctx.0.center.set(Some((ra_deg, dec_deg)));
+                fctx.0.target.set(String::new());
+                fctx.0.open.set(true);
             }
             set_ctx_menu.set(None);
         }
@@ -169,8 +171,8 @@ pub fn SkyContextMenu(
                         </button>
                         <button
                             class=format!("{btn_base} bg-bg-button-info text-accent-cyan-dim border border-border-info mt-1")
-                            on:click=on_create_mosaic.clone()>
-                            {move || tr().sky_create_mosaic}
+                            on:click=on_open_framing.clone()>
+                            {move || tr().sky_framing}
                         </button>
                     </div>
                 }

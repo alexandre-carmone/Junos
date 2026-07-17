@@ -15,21 +15,21 @@ mod hud;
 mod picking;
 mod solar_render;
 mod info_popup;
+mod framing;
 mod object_search;
 pub(crate) mod render;
 mod search;
 pub(crate) mod utils;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
-    CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement, MouseEvent, TouchEvent,
-    WheelEvent,
+    CanvasRenderingContext2d, HtmlCanvasElement, MouseEvent, TouchEvent, WheelEvent,
 };
 
 use crate::compat::{CameraSnapshot, MountSnapshot, MosaicSnapshot, SchedulerSnapshot, SiteSnapshot, SolveSnapshot};
@@ -45,7 +45,10 @@ use crate::nebulae::NebulaeIndex;
 
 use actions::SkyContextMenu;
 use controls::SkyControls;
+use framing::FramingOverlay;
 use info_popup::SkyInfoPopup;
+
+pub use framing::FramingState;
 use render::{HitItem, MosaicPlanRender, MosaicTileRender, SchedulerJobRender};
 use render::layer::{Catalogs, Frame};
 use render::params::{LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
@@ -539,10 +542,6 @@ pub fn SkyTab(
     let render_pipeline: Rc<RefCell<RenderPipeline>> =
         Rc::new(RefCell::new(RenderPipeline::standard()));
 
-    // Nebulae image cache: URL path → HtmlImageElement (lazily loaded)
-    let nebulae_images: Rc<RefCell<HashMap<String, HtmlImageElement>>> =
-        Rc::new(RefCell::new(HashMap::new()));
-
     // Nebulae index: fetched once from /nebulae.json at startup
     let (nebulae_index, set_nebulae_index) = signal(None::<Arc<NebulaeIndex>>);
     Effect::new(move || {
@@ -632,7 +631,6 @@ pub fn SkyTab(
     // ── Render function ────────────────────────────────────────────────────
     let gpu_for_render = Rc::clone(&gpu_renderer);
     let pipeline_for_render = Rc::clone(&render_pipeline);
-    let nebulae_for_render = Rc::clone(&nebulae_images);
     let hit_items_for_render = Rc::clone(&hit_items);
     let trail_for_render = Rc::clone(&slew_trail);
     let trail_for_sample = Rc::clone(&slew_trail);
@@ -862,7 +860,6 @@ pub fn SkyTab(
         );
 
         let nb_idx = nebulae_index.get_untracked();
-        let mut nebulae_cache = nebulae_for_render.borrow_mut();
         let mut hits = hit_items_for_render.borrow_mut();
         hits.clear();
         // Build hit list directly from catalogs / ephemerides — independent
@@ -956,7 +953,6 @@ pub fn SkyTab(
             mode,
             catalogs: &catalogs,
             hit_items: &mut hits,
-            nebulae_cache: &mut nebulae_cache,
             slew_trail: trail_slice,
         };
         if has_gpu {
@@ -1290,9 +1286,6 @@ pub fn SkyTab(
 
     let send_for_ctx = Arc::clone(&send);
 
-    let mosaic_input = "bg-bg-input text-[#ccc] border border-border-input font-mono text-[12px] py-[2px] px-[5px]";
-    let mosaic_row_label = "text-text-muted min-w-[52px]";
-    let mosaic_row_sep = "text-text-faint min-w-0";
 
     view! {
         <div class="relative w-full h-[100dvh] overflow-hidden"
@@ -1432,6 +1425,13 @@ pub fn SkyTab(
                 mount_device=mount_device
             />
 
+            // ── Framing assistant overlay (opened from the context menu) ────
+            <FramingOverlay
+                camera=camera
+                focal_length_mm=focal_length_mm
+                catalog_sig=catalog_sig
+                dso_catalog_sig=dso_catalog_sig
+            />
 
             // ── Context menu ────────────────────────────────────────────────
             <SkyContextMenu
@@ -1446,120 +1446,6 @@ pub fn SkyTab(
                 info_popup=info_popup
                 set_info_popup=set_info_popup
             />
-
-            // ── Floating mosaic editor (shown while planning == true) ──────────
-            {move || planner.planning.get().then(|| view! {
-                <div
-                    class="absolute bottom-20 right-[max(6px,env(safe-area-inset-right))] z-[110] w-[min(240px,calc(100vw-12px))] bg-[rgba(8,8,20,0.94)] border border-border-info rounded-md py-[10px] px-3 font-mono text-[12px] text-text flex flex-col gap-[7px]"
-                    on:click=move |ev| ev.stop_propagation()
-                    on:mousedown=move |ev| ev.stop_propagation()
-                >
-                    <div class="flex justify-between items-center">
-                        <span class="text-accent-cyan-dim font-bold">{"Mosaic Setup"}</span>
-                        <button
-                            class="bg-none border-none text-text-faint cursor-pointer text-base leading-none px-[2px]"
-                            on:click=move |_| {
-                                planner.planning.set(false);
-                                planner.center.set(None);
-                            }>
-                            {"\u{00d7}"}
-                        </button>
-                    </div>
-
-                    {move || planner.center.get().map(|(ra_deg, dec_deg)| {
-                        let ra_h = ra_deg / 15.0;
-                        let rah  = ra_h as u32;
-                        let ram  = ((ra_h - rah as f64) * 60.0).abs() as u32;
-                        let ds   = if dec_deg < 0.0 { "\u{2212}" } else { "+" };
-                        let da   = dec_deg.abs();
-                        let decd = da as u32;
-                        let decm = ((da - decd as f64) * 60.0) as u32;
-                        view! {
-                            <div class="text-sm text-text-blue">
-                                {format!("Center  {:02}h{:02}m  {}{}\u{00b0}{:02}\u{2019}", rah, ram, ds, decd, decm)}
-                            </div>
-                        }
-                    })}
-
-                    <label class="flex items-center gap-[5px]">
-                        <span class=mosaic_row_label>{"Target:"}</span>
-                        <input type="text" placeholder="e.g. M31"
-                               class=format!("{mosaic_input} flex-1")
-                               prop:value=move || planner.target.get()
-                               on:input=move |ev| {
-                                   planner.target.set(
-                                       ev.target().unwrap()
-                                         .unchecked_into::<web_sys::HtmlInputElement>().value()
-                                   );
-                               } />
-                    </label>
-
-                    <div class="flex items-center gap-1">
-                        <span class=mosaic_row_label>{"Grid:"}</span>
-                        <input type="number" min="1" max="10"
-                               class=format!("{mosaic_input} w-10 text-center")
-                               prop:value=move || planner.grid_w.get().to_string()
-                               on:input=move |ev| {
-                                   if let Ok(n) = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value()
-                                       .parse::<u32>() {
-                                       planner.grid_w.set(n.clamp(1, 10));
-                                   }
-                               } />
-                        <span class=mosaic_row_sep>{"\u{00d7}"}</span>
-                        <input type="number" min="1" max="10"
-                               class=format!("{mosaic_input} w-10 text-center")
-                               prop:value=move || planner.grid_h.get().to_string()
-                               on:input=move |ev| {
-                                   if let Ok(n) = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value()
-                                       .parse::<u32>() {
-                                       planner.grid_h.set(n.clamp(1, 10));
-                                   }
-                               } />
-                    </div>
-
-                    <label class="flex items-center gap-1">
-                        <span class=mosaic_row_label>{"Overlap:"}</span>
-                        <input type="number" min="0" max="50" step="1"
-                               class=format!("{mosaic_input} w-12")
-                               prop:value=move || format!("{:.0}", planner.overlap.get())
-                               on:input=move |ev| {
-                                   if let Ok(n) = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value()
-                                       .parse::<f64>() {
-                                       planner.overlap.set(n.clamp(0.0, 50.0));
-                                   }
-                               } />
-                        <span class=mosaic_row_sep>{"%"}</span>
-                    </label>
-
-                    <label class="flex items-center gap-1">
-                        <span class=mosaic_row_label>{"PA:"}</span>
-                        <input type="number" min="-180" max="180" step="1"
-                               class=format!("{mosaic_input} w-[54px]")
-                               prop:value=move || format!("{:.0}", planner.pa.get())
-                               on:input=move |ev| {
-                                   if let Ok(n) = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value()
-                                       .parse::<f64>() {
-                                       planner.pa.set(n);
-                                   }
-                               } />
-                        <span class=mosaic_row_sep>{"\u{00b0}"}</span>
-                    </label>
-
-                    <button
-                        class="mt-1 py-[6px] bg-bg-button-info text-text-blue border border-border-accent cursor-pointer font-mono text-[12px] rounded-[3px] text-center"
-                        on:click=move |_| {
-                            if let Some(ctx) = tab_ctx {
-                                ctx.0.set(Tab::Mosaic);
-                            }
-                        }>
-                        {"Open Mosaic Planner \u{2192}"}
-                    </button>
-                </div>
-            })}
         </div>
     }
 }
