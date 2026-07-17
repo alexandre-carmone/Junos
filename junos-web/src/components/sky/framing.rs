@@ -1,24 +1,30 @@
 //! Framing Assistant — fullscreen overlay.
 //!
 //! Opened from the sky right-click menu with the clicked coordinate. Shows a
-//! hips2fits survey cutout of the region (via `junos-server`'s
-//! `/api/skysurvey` proxy — the browser can't call hips2fits directly under
-//! CORS) with the camera's mosaic tile grid drawn over it, then hands the
-//! whole plan off to the Mosaic planner tab.
+//! survey preview of the region with the camera's mosaic tile grid drawn over
+//! it, then hands the whole plan off to the Mosaic planner tab.
+//!
+//! The preview is built **entirely from the offline cache** (`crate::dso_tiles`
+//! — pre-downloaded hips2fits tiles, one per catalog object). `load_preview`
+//! collects every cached tile overlapping the selected zone and stamps them
+//! onto one black offscreen canvas (`PinnedImage`), so an arbitrary zone —
+//! wider than any single tile, or spanning several objects — renders as one
+//! adapted image with uncovered sky left black. Nothing hits the network; a
+//! zone with no cached coverage is simply the grid over black.
 //!
 //! Two invariants worth knowing before editing:
 //!
 //! * **Epoch.** `FramingState::center` is of-date (JNow), matching both the
 //!   right-click menu's coords and `MosaicPlannerState::center`. It is
-//!   converted to J2000 only when building the hips2fits URL (`coordsys=icrs`)
-//!   and from J2000 only when accepting a catalog search hit.
+//!   converted to J2000 only to query the cache (tiles are ICRS/J2000) and
+//!   from J2000 only when accepting a catalog search hit.
 //! * **Geometry.** Tile layout comes from `super::derive_planner_mosaic_plan`
 //!   — the same function that feeds the on-sky `MosaicLayer` and, through the
 //!   planner, KStars. Camera/focal inputs are read live from the same signals
 //!   the Mosaic tab uses, never overridden here, so what's previewed is what
 //!   gets sent.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use leptos::prelude::*;
@@ -50,15 +56,16 @@ pub struct FramingState {
     pub pa: RwSignal<f64>,
 }
 
-/// A loaded survey cutout, pinned to the sky position it was fetched for.
-/// Tiles project against *this* center, not the live one, so dragging slides
-/// the grid across a static image instead of refetching per pixel.
+/// The composited preview: an offscreen canvas holding every cached tile that
+/// overlaps the zone, stamped onto black, pinned to the zone center it was
+/// built for. The grid projects against *this* center, not the live one, so
+/// dragging slides the grid across a static image instead of recompositing.
 struct PinnedImage {
-    img: HtmlImageElement,
-    /// JNow center the cutout was fetched for.
+    canvas: web_sys::HtmlCanvasElement,
+    /// JNow center the composite was built for (== the mosaic center).
     ra_deg: f64,
     dec_deg: f64,
-    /// Angular span of the (square) cutout.
+    /// Angular span of the (square) composite.
     fov_deg: f64,
 }
 
@@ -69,10 +76,15 @@ const NUM_INPUT: &str = "input input--sm font-mono w-[92px]";
 /// Extra sky around the mosaic bounding box, applied to its diagonal (so any
 /// position angle stays covered).
 const PREVIEW_MARGIN: f64 = 1.3;
-const PREVIEW_PX: u32 = 768;
-/// Server clamps to 0.01..10; stay inside that.
+/// Side of the offscreen composite the tiles are stamped onto. Independent of
+/// the visible canvas (which is sized to its parent); this just sets how much
+/// detail the composite retains when scaled down for display.
+const COMPOSITE_PX: u32 = 1536;
+/// Preview field bounds. No server clamp binds anymore (everything is served
+/// from the local cache), so the ceiling only exists to keep the composite
+/// pixel scale and tile count sane for very wide zones.
 const FOV_MIN_DEG: f64 = 0.02;
-const FOV_MAX_DEG: f64 = 9.0;
+const FOV_MAX_DEG: f64 = 40.0;
 
 fn now_jd() -> f64 {
     let now = js_sys::Date::new_0();
@@ -84,6 +96,22 @@ fn now_jd() -> f64 {
         now.get_utc_minutes(),
         now.get_utc_seconds() as f64 + now.get_utc_milliseconds() as f64 / 1000.0,
     )
+}
+
+/// A square offscreen canvas and its 2D context, for compositing tiles before
+/// they're blitted onto the visible preview canvas.
+fn offscreen_canvas(px: u32) -> Option<(web_sys::HtmlCanvasElement, web_sys::CanvasRenderingContext2d)> {
+    let doc = web_sys::window()?.document()?;
+    let canvas: web_sys::HtmlCanvasElement =
+        doc.create_element("canvas").ok()?.dyn_into().ok()?;
+    canvas.set_width(px);
+    canvas.set_height(px);
+    let ctx = canvas
+        .get_context("2d")
+        .ok()??
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
+        .ok()?;
+    Some((canvas, ctx))
 }
 
 /// Angular span (arcmin) of the whole mosaic bounding box, before rotation.
@@ -119,11 +147,23 @@ pub fn FramingOverlay(
     let planner_ctx = use_context::<MosaicPlannerCtx>();
     let tab_ctx = use_context::<ActiveTabCtx>();
 
+    // Optional — an unpopulated tile cache leaves this `None` forever, in which
+    // case every preview is just the grid over black.
+    let tile_index = use_context::<crate::DsoTilesCtx>()
+        .map(|c| c.0)
+        .unwrap_or_else(|| RwSignal::new(None));
+
     let search_text = RwSignal::new(String::new());
     let loading = RwSignal::new(false);
     let load_error = RwSignal::new(false);
-    // Bumped after each fetch so the redraw Effect re-runs on a new image.
+    // How many cached tiles the current composite is built from (0 = all black).
+    let tiles_used = RwSignal::new(0usize);
+    // Bumped after each composite so the redraw Effect re-runs on a new image.
     let image_epoch = RwSignal::new(0u32);
+    // Bumped each time a compose is kicked off; a batch that finishes stale
+    // (its generation superseded) is discarded instead of clobbering a newer
+    // one. Guards rapid Reload / reopen.
+    let load_gen = StoredValue::new(0u32);
 
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     let pinned: Rc<RefCell<Option<PinnedImage>>> = Rc::new(RefCell::new(None));
@@ -174,13 +214,13 @@ pub fn FramingOverlay(
             let cx = w / 2.0;
             let cy = h / 2.0;
 
-            // The cutout is square; draw it "contain"-style so it never
+            // The composite is square; draw it "contain"-style so it never
             // distorts, and derive the sky scale from the drawn extent.
             let borrow = pinned.borrow();
             let Some(pin) = borrow.as_ref() else { return };
             let draw_size = w.min(h);
-            let _ = ctx.draw_image_with_html_image_element_and_dw_and_dh(
-                &pin.img,
+            let _ = ctx.draw_image_with_html_canvas_element_and_dw_and_dh(
+                &pin.canvas,
                 cx - draw_size / 2.0,
                 cy - draw_size / 2.0,
                 draw_size,
@@ -258,7 +298,10 @@ pub fn FramingOverlay(
         cb.forget();
     }
 
-    // ── Survey fetch ─────────────────────────────────────────────────────
+    // ── Compose preview from cached tiles ────────────────────────────────
+    // Gather every cached tile overlapping the zone, stamp each onto one black
+    // offscreen canvas at its tangent-plane offset, and pin that composite to
+    // the zone centre. Uncovered sky stays black; nothing hits the network.
     let load_preview = {
         let pinned = Rc::clone(&pinned);
         move || {
@@ -275,37 +318,127 @@ pub fn FramingOverlay(
             let diag_deg = (span_w_am * span_w_am + span_h_am * span_h_am).sqrt() / 60.0;
             let fov = (diag_deg * PREVIEW_MARGIN).clamp(FOV_MIN_DEG, FOV_MAX_DEG);
 
-            // hips2fits is queried in ICRS/J2000; our centre is of-date.
-            let j2000 = JNow::new(ra_jnow, dec_jnow).to_j2000(now_jd());
+            // The cache is J2000/ICRS; the zone centre is of-date.
+            let jd = now_jd();
+            let j2000 = JNow::new(ra_jnow, dec_jnow).to_j2000(jd);
+            let cos_dec = j2000.dec_deg.to_radians().cos();
+
+            // Snapshot the overlapping tiles out of the Arc so the borrow isn't
+            // held across the async image loads.
+            let tiles: Vec<(String, f64, f64, f64)> = tile_index
+                .get_untracked()
+                .map(|idx| {
+                    idx.find_overlapping(j2000.ra_deg, j2000.dec_deg, fov)
+                        .into_iter()
+                        .map(|t| (t.url(), t.ra, t.dec, t.fov))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            // New generation — a batch that finishes after this call was
+            // superseded (e.g. rapid Reload) discards its result.
+            let generation = load_gen.get_value().wrapping_add(1);
+            load_gen.set_value(generation);
 
             loading.set(true);
             load_error.set(false);
-            let url = format!(
-                "/api/skysurvey?ra={}&dec={}&fov={}&w={PREVIEW_PX}&h={PREVIEW_PX}",
-                j2000.ra_deg, j2000.dec_deg, fov
-            );
-            let Ok(img) = HtmlImageElement::new() else { return };
-            let img_cl = img.clone();
-            let pinned_cl = Rc::clone(&pinned);
-            let onload = Closure::<dyn FnMut()>::new(move || {
-                pinned_cl.borrow_mut().replace(PinnedImage {
-                    img: img_cl.clone(),
-                    ra_deg: ra_jnow,
-                    dec_deg: dec_jnow,
-                    fov_deg: fov,
-                });
-                loading.set(false);
-                image_epoch.update(|v| *v += 1);
-            });
-            let onerror = Closure::<dyn FnMut()>::new(move || {
+
+            let Some((canvas, cctx)) = offscreen_canvas(COMPOSITE_PX) else {
                 loading.set(false);
                 load_error.set(true);
-            });
-            img.set_onload(Some(onload.as_ref().unchecked_ref()));
-            img.set_onerror(Some(onerror.as_ref().unchecked_ref()));
-            onload.forget();
-            onerror.forget();
-            img.set_src(&url);
+                return;
+            };
+            cctx.set_fill_style_str("#000");
+            cctx.fill_rect(0.0, 0.0, COMPOSITE_PX as f64, COMPOSITE_PX as f64);
+
+            let ppd = COMPOSITE_PX as f64 / fov;
+            let mid = COMPOSITE_PX as f64 / 2.0;
+
+            // Pin the finished composite and wake the redraw. Rc so both the
+            // per-tile onload/onerror closures can call it.
+            let finalize: Rc<dyn Fn(usize)> = {
+                let pinned = Rc::clone(&pinned);
+                Rc::new(move |n_used: usize| {
+                    if load_gen.get_value() != generation {
+                        return; // superseded by a newer load
+                    }
+                    pinned.borrow_mut().replace(PinnedImage {
+                        canvas: canvas.clone(),
+                        ra_deg: ra_jnow,
+                        dec_deg: dec_jnow,
+                        fov_deg: fov,
+                    });
+                    tiles_used.set(n_used);
+                    loading.set(false);
+                    image_epoch.update(|v| *v += 1);
+                })
+            };
+
+            // Zero coverage → an all-black preview, immediately.
+            if tiles.is_empty() {
+                finalize(0);
+                return;
+            }
+
+            // Each tile resolves (loaded or errored) independently; the last one
+            // to settle finalizes with however many actually stamped.
+            let pending = Rc::new(Cell::new(tiles.len()));
+            let used = Rc::new(Cell::new(0usize));
+
+            for (url, t_ra, t_dec, t_fov) in tiles {
+                let Ok(img) = HtmlImageElement::new() else {
+                    let left = pending.get() - 1;
+                    pending.set(left);
+                    if left == 0 {
+                        finalize(used.get());
+                    }
+                    continue;
+                };
+
+                // Tangent-plane offset of the tile centre from the zone centre.
+                // +RA (east) goes LEFT, +Dec (north) UP — same convention the
+                // grid loop uses, so imagery and grid stay registered.
+                let dx = (t_ra - j2000.ra_deg) * cos_dec;
+                let dy = t_dec - j2000.dec_deg;
+                let size = t_fov * ppd;
+                let x = mid - dx * ppd - size / 2.0;
+                let y = mid - dy * ppd - size / 2.0;
+
+                let img_cl = img.clone();
+                let cctx_cl = cctx.clone();
+                let pending_l = Rc::clone(&pending);
+                let used_l = Rc::clone(&used);
+                let finalize_l = Rc::clone(&finalize);
+                let onload = Closure::<dyn FnMut()>::new(move || {
+                    let _ = cctx_cl.draw_image_with_html_image_element_and_dw_and_dh(
+                        &img_cl, x, y, size, size,
+                    );
+                    used_l.set(used_l.get() + 1);
+                    let left = pending_l.get() - 1;
+                    pending_l.set(left);
+                    if left == 0 {
+                        finalize_l(used_l.get());
+                    }
+                });
+
+                let pending_e = Rc::clone(&pending);
+                let used_e = Rc::clone(&used);
+                let finalize_e = Rc::clone(&finalize);
+                let onerror = Closure::<dyn FnMut()>::new(move || {
+                    // A missing tile just leaves its patch black.
+                    let left = pending_e.get() - 1;
+                    pending_e.set(left);
+                    if left == 0 {
+                        finalize_e(used_e.get());
+                    }
+                });
+
+                img.set_onload(Some(onload.as_ref().unchecked_ref()));
+                img.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+                onload.forget();
+                onerror.forget();
+                img.set_src(&url);
+            }
         }
     };
     let load_preview = StoredValue::new_local(load_preview);
@@ -569,6 +702,19 @@ pub fn FramingOverlay(
                                         <div>{format!("{} {:.1}' \u{00d7} {:.1}'", tr().framing_total_fov, sw_am, sh_am)}</div>
                                     </div>
                                 }
+                            })}
+
+                            // How many cached tiles the composite is built from
+                            // — 0 means the zone isn't covered and the preview
+                            // is all black.
+                            {move || (!loading.get() && !load_error.get()).then(|| {
+                                let n = tiles_used.get();
+                                let label = if n == 0 {
+                                    tr().framing_src_none.to_string()
+                                } else {
+                                    format!("{} \u{00b7} {}", tr().framing_src_cache, n)
+                                };
+                                view! { <div class="text-text-muted text-[11px]">{label}</div> }
                             })}
 
                             <button

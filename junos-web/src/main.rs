@@ -6,6 +6,7 @@ mod compat;
 mod coords;
 mod components;
 mod dso_catalog;
+mod dso_tiles;
 mod ephemeris;
 mod i18n;
 /// Unreferenced since the sky map dropped the image-footprint quads: DSO
@@ -83,6 +84,11 @@ pub struct MosaicPlannerCtx(pub MosaicPlannerState);
 #[derive(Clone, Copy)]
 pub struct FramingCtx(pub FramingState);
 
+/// Index of pre-downloaded DSO survey tiles, or `None` until `/api/dso_tiles`
+/// answers. Lets the Framing Assistant preview a target with no internet.
+#[derive(Clone, Copy)]
+pub struct DsoTilesCtx(pub RwSignal<Option<Arc<dso_tiles::DsoTileIndex>>>);
+
 /// Prefill data passed from the sky right-click menu to the scheduler job builder.
 /// Set to Some((name, ra_deg, dec_deg)) when the user clicks "Add to Scheduler".
 /// Consumed (and cleared) by SchedulerTab when it opens the job builder.
@@ -124,9 +130,19 @@ fn App() -> impl IntoView {
             }
         }
     });
+    // Offline survey tiles for the Framing Assistant. Optional: an absent or
+    // empty cache just means framing always uses the live hips2fits proxy.
+    let dso_tiles_sig = RwSignal::new(None::<Arc<dso_tiles::DsoTileIndex>>);
+    wasm_bindgen_futures::spawn_local({
+        let s = dso_tiles_sig;
+        async move {
+            if let Some(idx) = dso_tiles::fetch_dso_tile_index().await { s.set(Some(idx)); }
+        }
+    });
     provide_context(catalog_sig);
     provide_context(dso_catalog_sig);
     provide_context(dso_index_sig);
+    provide_context(DsoTilesCtx(dso_tiles_sig));
 
     // ── WebSocket ─────────────────────────────────────────────────────────
     let (store, send) = ws::use_junos_ws();

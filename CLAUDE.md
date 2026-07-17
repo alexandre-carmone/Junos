@@ -147,6 +147,38 @@ In Leptos `view! {}`, prefer `class="…"` over inline `style="…"`. Use `class
 
 When migrating a previously-untouched tab, add a new `components/<tab>.css`, replace its inline styles with class names, and link the new file from `index.html`. Sky and the tab wheel are migrated; the other tabs (mount, focus, imaging, scheduler, polar_align, mosaic, guide, files) still use inline styles and `const CSS: &str` blocks — convert opportunistically when next editing them.
 
+## Offline DSO tiles (Framing Assistant)
+
+The Framing Assistant previews a target **entirely from a local tile cache** —
+pre-downloaded hips2fits cutouts, one per catalog object. It never hits the
+network. Generate the cache with:
+
+```bash
+uv run scripts/prefetch_dso_tiles.py            # all 7960 objects, hours
+uv run scripts/prefetch_dso_tiles.py --status   # coverage report, no downloads
+uv run scripts/prefetch_dso_tiles.py --limit 50 # smoke test
+uv run scripts/prefetch_dso_tiles.py --index-only  # rebuild index.json from disk
+```
+
+Output goes to `.cache/dso_tiles/` (gitignored — **not** `junos-web/public/`,
+unlike the other catalogs; ~1 GB+, size scales with `TILE_PX`). Override the dir
+with `--dso-tile-dir` / `DSO_TILE_DIR`. Resumable: existing tiles are skipped
+regardless of size, so changing `TILE_PX` leaves a resolution mix — `--status`
+shows it, `--force` refetches.
+
+`junos-server/src/dso_tiles.rs` serves the directory at `/api/dso_tiles/*`.
+The cache is **optional** — a missing directory serves an empty index, and an
+uncovered zone just previews as the mosaic grid over black.
+
+Preview compositing lives in `junos-web/src/dso_tiles.rs::find_overlapping` +
+`components/sky/framing.rs::load_preview`: every cached tile overlapping the
+selected zone is stamped (simple TAN offset, no reprojection) onto one black
+offscreen canvas sized to the zone, so a zone wider than any single tile or
+spanning several objects renders as one adapted image with uncovered sky black.
+Tiles are J2000/ICRS; `framing.rs` works in JNow and converts at the boundary.
+The server's `/api/skysurvey` proxy is no longer used by the framing path (route
+left in place, unused).
+
 ## Static assets
 
 `junos-web/public/` contains binary catalogs — `junos.bin` (star catalog), `dso.bin` (deep-sky catalog), `nebulae.json` + `nebulae/` (thumbnails). Trunk copies these into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes. The Python regen tools live in `scripts/` (run with `uv run`).

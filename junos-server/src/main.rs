@@ -1,6 +1,7 @@
 mod apps;
 mod auth;
 mod config;
+mod dso_tiles;
 mod files;
 mod hub;
 mod kstars_ws;
@@ -72,6 +73,8 @@ async fn main() {
         .route("/api/apps/stop",   post(apps::stop_handler))
         .route("/api/apps/state",  get(apps::state_handler))
         .route("/api/skysurvey",   get(skysurvey::skysurvey))
+        .route("/api/dso_tiles/index.json", get(dso_tiles::index))
+        .route("/api/dso_tiles/:name",      get(dso_tiles::tile))
         .route("/message/ekos", get(kstars_ws::message_handler))
         .route("/media/ekos", get(kstars_ws::media_handler))
         .route("/api/files/list",     get(files::list))

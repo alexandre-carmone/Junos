@@ -5,5 +5,7 @@ junos-web/dist
 junos-web/styles/tailwind.css
 junos-web/bin/
 .certs
+# Offline DSO survey tiles (~1 GB) written by scripts/prefetch_dso_tiles.py
+.cache
 result
 .claude

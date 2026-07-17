@@ -212,6 +212,7 @@ translations! {
     sky_framing, framing_target, framing_grid, framing_overlap, framing_pa,
     framing_center, framing_ra, framing_dec, framing_tile_fov, framing_total_fov,
     framing_send_mosaic, framing_reload, framing_no_fov,
+    framing_src_cache, framing_src_live, framing_src_none,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

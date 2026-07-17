@@ -44,6 +44,14 @@ pub struct Config {
     /// and finally to the current working directory.
     #[arg(long, env = "CAPTURES_DIR")]
     pub captures_dir: Option<PathBuf>,
+
+    /// Directory holding the offline DSO survey tiles served at
+    /// `/api/dso_tiles/*`, as written by `scripts/prefetch_dso_tiles.py`.
+    /// Defaults to `.cache/dso_tiles` next to the working directory. The
+    /// directory is optional — without it the Framing Assistant simply always
+    /// uses the live hips2fits proxy.
+    #[arg(long, env = "DSO_TILE_DIR")]
+    pub dso_tile_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -59,5 +67,12 @@ impl Config {
             }
         }
         PathBuf::from(".")
+    }
+
+    /// Resolve the offline DSO tile cache: flag → `.cache/dso_tiles`.
+    pub fn resolved_dso_tile_dir(&self) -> PathBuf {
+        self.dso_tile_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(".cache").join("dso_tiles"))
     }
 }
