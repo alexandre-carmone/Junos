@@ -244,7 +244,13 @@ pub fn FramingOverlay(
             };
 
             let cos_dec = pin.dec_deg.to_radians().cos();
-            let rot = plan.pa_deg.to_radians();
+            // `derive_planner_mosaic_plan` already rotated the tile *positions*
+            // around the mosaic centre (KStars rotatePoint, ang = -PA). To keep
+            // the mosaic a rigid body — the whole grid rotating together rather
+            // than each rectangle spinning in place — each rectangle must rotate
+            // the same way its centre moved, which in this east-left/north-up
+            // screen frame is -PA.
+            let rot = -plan.pa_deg.to_radians();
             let rect_w = fov_w_deg * px_per_deg;
             let rect_h = fov_h_deg * px_per_deg;
 
