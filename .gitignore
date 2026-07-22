@@ -9,3 +9,4 @@ junos-web/bin/
 .cache
 result
 .claude
+*.pyc

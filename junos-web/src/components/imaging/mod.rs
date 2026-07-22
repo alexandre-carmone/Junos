@@ -51,6 +51,8 @@ pub fn ImagingTab(
     let oneshot_open = RwSignal::new(true);
     let editor_open = RwSignal::new(false);
     let job_detail_idx = RwSignal::new(None::<usize>);
+    // Fullscreen click-to-zoom overlay for the capture preview.
+    let zoom_open = RwSignal::new(false);
 
     // Imaging's draft sequence — owned locally exactly like Scheduler/Mosaic.
     // Submitted to KStars in one shot via `capture_load_sequence_file {filedata}`.
@@ -511,7 +513,11 @@ pub fn ImagingTab(
                     }>
                     {move || match capture.with(|c| c.preview_url.clone()) {
                         Some(url) => view! {
-                            <img class="max-w-full max-h-[35vh] object-contain [image-rendering:pixelated]" src=url />
+                            <img
+                                class="max-w-full max-h-[35vh] object-contain [image-rendering:pixelated] cursor-zoom-in"
+                                title=move || tr().imaging_view_fullres
+                                src=url
+                                on:click=move |_| zoom_open.set(true) />
                         }.into_any(),
                         None => view! {
                             <div class="text-[#444] text-sm text-center px-3">
@@ -684,6 +690,32 @@ pub fn ImagingTab(
                         }}
                     </div>
                 </section>
+
+                // ─ Preview zoom (full-screen overlay) ────────────────────
+                // Click the inline preview to inspect the frame as large as the
+                // viewport allows. Reuses the live `capture.preview_url` so a
+                // newer frame arriving while open updates in place. Note: KStars
+                // sends previews as stretched JPEGs (media.cpp), so this is the
+                // transmitted resolution, not the raw sensor FITS.
+                <Show when=move || zoom_open.get()>
+                    {move || match capture.with(|c| c.preview_url.clone()) {
+                        None => { zoom_open.set(false); view! {}.into_any() }
+                        Some(url) => view! {
+                            <div
+                                class="fixed inset-0 z-[80] bg-[rgba(0,0,0,0.9)] flex items-center justify-center p-sp-4"
+                                on:click=move |_| zoom_open.set(false)>
+                                <button
+                                    class=format!("{GHOST_BTN} absolute top-sp-3 right-sp-3 text-lg")
+                                    title=move || tr().imaging_close
+                                    on:click=move |ev| { ev.stop_propagation(); zoom_open.set(false); }>"×"</button>
+                                <img
+                                    class="max-w-full max-h-full object-contain [image-rendering:pixelated]"
+                                    src=url
+                                    on:click=move |ev| ev.stop_propagation() />
+                            </div>
+                        }.into_any(),
+                    }}
+                </Show>
 
                 // ─ Sequence editor (full-screen overlay) ─────────────────
                 <Show when=move || editor_open.get()>

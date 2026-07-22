@@ -499,6 +499,7 @@
   "imaging_sequence_editor": "Sequence Editor",
   "imaging_job_detail": "Job details",
   "imaging_close": "Close",
+  "imaging_view_fullres": "Full resolution",
   "field_exposure_s": "Exposure (s)",
   "field_frame_type": "Frame type",
   "field_count": "Count",

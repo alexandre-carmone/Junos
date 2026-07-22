@@ -589,6 +589,7 @@
   "imaging_sequence_editor": "Éditeur de séquence",
   "imaging_job_detail": "Détails du job",
   "imaging_close": "Fermer",
+  "imaging_view_fullres": "Plein écran",
   "field_exposure_s": "Pose (s)",
   "field_frame_type": "Type de trame",
   "field_count": "Nombre",
