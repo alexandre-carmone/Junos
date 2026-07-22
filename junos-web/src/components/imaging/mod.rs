@@ -16,8 +16,11 @@ mod styles;
 mod types;
 mod util;
 
+use std::collections::HashMap;
+
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
+use web_sys::{PointerEvent, WheelEvent};
 
 use crate::compat::{CameraSnapshot, CaptureSnapshot, FilterWheelSnapshot};
 use crate::i18n::{t, Lang};
@@ -51,8 +54,126 @@ pub fn ImagingTab(
     let oneshot_open = RwSignal::new(true);
     let editor_open = RwSignal::new(false);
     let job_detail_idx = RwSignal::new(None::<usize>);
-    // Fullscreen click-to-zoom overlay for the capture preview.
+    // Fullscreen pan/zoom overlay for the capture preview.
     let zoom_open = RwSignal::new(false);
+    // Transform state applied to the overlay <img>: scale factor + translation
+    // (in screen px, relative to the container centre). scale 1 == fit-to-screen.
+    let zoom_scale = RwSignal::new(1.0_f64);
+    let zoom_tx = RwSignal::new(0.0_f64);
+    let zoom_ty = RwSignal::new(0.0_f64);
+    // Active pointers (id -> client x/y) for drag-pan and two-finger pinch-zoom.
+    // Held in signals (not Rc<RefCell>) so the handlers stay Copy + Send + Sync,
+    // as required by the reactive <Show> child they live in. Nothing subscribes
+    // to these, so updating them never re-renders.
+    let zoom_ptrs = RwSignal::new(HashMap::<i32, (f64, f64)>::new());
+    // Pinch baseline: last (centroid_x, centroid_y, distance) in client px.
+    let zoom_pinch = RwSignal::new(None::<(f64, f64, f64)>);
+    // Did the current gesture move? Suppresses backdrop-close on drag release.
+    let zoom_dragged = RwSignal::new(false);
+
+    let reset_zoom = move || {
+        zoom_scale.set(1.0);
+        zoom_tx.set(0.0);
+        zoom_ty.set(0.0);
+    };
+
+    // Zoom by `f` about the cursor/centroid point (`cx`,`cy` relative to the
+    // container centre), keeping that point stationary on screen. Derivation:
+    // a point maps to screen as `t + s·v`; solving for the new translation that
+    // holds the anchor fixed gives `t' = c·(1-f) + f·t`.
+    let apply_zoom = move |f: f64, cx: f64, cy: f64| {
+        let s = zoom_scale.get_untracked();
+        let s2 = (s * f).clamp(1.0, 20.0);
+        let rf = s2 / s;
+        if s2 <= 1.000_1 {
+            zoom_scale.set(1.0);
+            zoom_tx.set(0.0);
+            zoom_ty.set(0.0);
+            return;
+        }
+        let tx = zoom_tx.get_untracked();
+        let ty = zoom_ty.get_untracked();
+        zoom_scale.set(s2);
+        zoom_tx.set(cx * (1.0 - rf) + rf * tx);
+        zoom_ty.set(cy * (1.0 - rf) + rf * ty);
+    };
+
+    let on_zoom_wheel = move |ev: WheelEvent| {
+        ev.prevent_default();
+        let (ccx, ccy) = element_center(ev.current_target());
+        let f = if ev.delta_y() < 0.0 { 1.15 } else { 1.0 / 1.15 };
+        apply_zoom(f, ev.client_x() as f64 - ccx, ev.client_y() as f64 - ccy);
+    };
+
+    let on_zoom_pointer_down = move |ev: PointerEvent| {
+        ev.prevent_default();
+        if let Some(el) = ev
+            .current_target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        {
+            let _ = el.set_pointer_capture(ev.pointer_id());
+        }
+        zoom_dragged.set(false);
+        zoom_ptrs.update(|m| {
+            m.insert(ev.pointer_id(), (ev.client_x() as f64, ev.client_y() as f64));
+        });
+        if zoom_ptrs.with_untracked(|m| m.len()) == 2 {
+            zoom_pinch.set(None); // re-baseline the pinch on next move
+        }
+    };
+
+    let on_zoom_pointer_move = move |ev: PointerEvent| {
+        let id = ev.pointer_id();
+        let prev = zoom_ptrs.with_untracked(|m| m.get(&id).copied());
+        let Some((ox, oy)) = prev else { return };
+        let (nx, ny) = (ev.client_x() as f64, ev.client_y() as f64);
+        zoom_ptrs.update(|m| {
+            m.insert(id, (nx, ny));
+        });
+        match zoom_ptrs.with_untracked(|m| m.len()) {
+            1 => {
+                zoom_dragged.set(true);
+                zoom_tx.update(|v| *v += nx - ox);
+                zoom_ty.update(|v| *v += ny - oy);
+            }
+            2 => {
+                zoom_dragged.set(true);
+                let pts: Vec<(f64, f64)> = zoom_ptrs.with_untracked(|m| m.values().copied().collect());
+                let ((ax, ay), (bx, by)) = (pts[0], pts[1]);
+                let centroid_x = (ax + bx) / 2.0;
+                let centroid_y = (ay + by) / 2.0;
+                let dist = ((ax - bx).powi(2) + (ay - by).powi(2)).sqrt();
+                let (ccx, ccy) = element_center(ev.current_target());
+                if let Some((_, _, prev_dist)) = zoom_pinch.get_untracked() {
+                    if prev_dist > 0.0 {
+                        apply_zoom(dist / prev_dist, centroid_x - ccx, centroid_y - ccy);
+                    }
+                }
+                zoom_pinch.set(Some((centroid_x, centroid_y, dist)));
+            }
+            _ => {}
+        }
+    };
+
+    let on_zoom_pointer_up = move |ev: PointerEvent| {
+        zoom_ptrs.update(|m| {
+            m.remove(&ev.pointer_id());
+        });
+        if zoom_ptrs.with_untracked(|m| m.len()) < 2 {
+            zoom_pinch.set(None);
+        }
+    };
+
+    let on_zoom_backdrop = move |_| {
+        // Only dismiss on a clean click at fit scale; while zoomed the click
+        // is for inspecting, so keep the overlay and rely on the × button.
+        if zoom_dragged.get_untracked() {
+            return;
+        }
+        if zoom_scale.get_untracked() <= 1.000_1 {
+            zoom_open.set(false);
+        }
+    };
 
     // Imaging's draft sequence — owned locally exactly like Scheduler/Mosaic.
     // Submitted to KStars in one shot via `capture_load_sequence_file {filedata}`.
@@ -517,7 +638,7 @@ pub fn ImagingTab(
                                 class="max-w-full max-h-[35vh] object-contain [image-rendering:pixelated] cursor-zoom-in"
                                 title=move || tr().imaging_view_fullres
                                 src=url
-                                on:click=move |_| zoom_open.set(true) />
+                                on:click=move |_| { reset_zoom(); zoom_open.set(true); } />
                         }.into_any(),
                         None => view! {
                             <div class="text-[#444] text-sm text-center px-3">
@@ -701,17 +822,32 @@ pub fn ImagingTab(
                     {move || match capture.with(|c| c.preview_url.clone()) {
                         None => { zoom_open.set(false); view! {}.into_any() }
                         Some(url) => view! {
-                            <div
-                                class="fixed inset-0 z-[80] bg-[rgba(0,0,0,0.9)] flex items-center justify-center p-sp-4"
-                                on:click=move |_| zoom_open.set(false)>
+                            <div class="fixed inset-0 z-[80] bg-[rgba(0,0,0,0.92)]">
+                                // Pan/zoom surface: wheel/pinch to zoom about the
+                                // pointer, drag to pan, double-click to reset.
+                                <div
+                                    class="absolute inset-0 flex items-center justify-center overflow-hidden \
+                                           select-none cursor-move [touch-action:none]"
+                                    on:wheel=on_zoom_wheel
+                                    on:pointerdown=on_zoom_pointer_down
+                                    on:pointermove=on_zoom_pointer_move
+                                    on:pointerup=on_zoom_pointer_up
+                                    on:pointercancel=on_zoom_pointer_up
+                                    on:dblclick=move |_| reset_zoom()
+                                    on:click=on_zoom_backdrop>
+                                    <img
+                                        class="max-w-full max-h-full object-contain [image-rendering:pixelated] \
+                                               pointer-events-none select-none will-change-transform"
+                                        style=move || format!(
+                                            "transform:translate({}px,{}px) scale({});transform-origin:center center;",
+                                            zoom_tx.get(), zoom_ty.get(), zoom_scale.get(),
+                                        )
+                                        src=url />
+                                </div>
                                 <button
                                     class=format!("{GHOST_BTN} absolute top-sp-3 right-sp-3 text-lg")
                                     title=move || tr().imaging_close
-                                    on:click=move |ev| { ev.stop_propagation(); zoom_open.set(false); }>"×"</button>
-                                <img
-                                    class="max-w-full max-h-full object-contain [image-rendering:pixelated]"
-                                    src=url
-                                    on:click=move |ev| ev.stop_propagation() />
+                                    on:click=move |_| zoom_open.set(false)>"×"</button>
                             </div>
                         }.into_any(),
                     }}
@@ -778,4 +914,16 @@ pub fn ImagingTab(
             </div>
         </div>
     }
+}
+
+/// Screen coordinates of an event target's bounding-box centre. Used to express
+/// wheel/pinch anchor points relative to the pan/zoom container centre.
+fn element_center(target: Option<web_sys::EventTarget>) -> (f64, f64) {
+    target
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        .map(|el| {
+            let r = el.get_bounding_client_rect();
+            (r.left() + r.width() * 0.5, r.top() + r.height() * 0.5)
+        })
+        .unwrap_or((0.0, 0.0))
 }
