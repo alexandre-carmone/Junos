@@ -59,6 +59,15 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
     let app_init = build_app_state_msg(kstars, phd2);
     let _ = sink.send(Message::Text(app_init.into())).await;
 
+    // Replay the cached KStars state (last preview image, recent guiding
+    // metrics, FOV geometry) so a dropped/refreshed browser recovers it
+    // immediately instead of waiting for KStars to push again.
+    for msg in hub.replay_snapshot().await {
+        if sink.send(Message::Text(msg.into())).await.is_err() {
+            return;
+        }
+    }
+
     loop {
         tokio::select! {
             // KStars event → browser

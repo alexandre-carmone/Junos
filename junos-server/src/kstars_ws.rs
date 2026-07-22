@@ -51,6 +51,10 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(CMD_CAP);
     publish_message_sender(&hub, cmd_tx).await;
 
+    // Fresh session: drop any replay snapshot left over from a previous KStars
+    // attach so a reconnecting browser doesn't recover stale state.
+    hub.reset_replay().await;
+
     // Prime KStars: tell it a client is ready so it starts emitting responses.
     // Without this, `Node::sendResponse` in KStars silently drops events because
     // `m_ClientState` defaults to false.
@@ -112,6 +116,10 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
                             }
                             *cached = Some(text.to_string());
                         }
+                        // Fold state-bearing frames into the replay snapshot so
+                        // a reconnecting browser recovers them (guide metrics,
+                        // FOV geometry, module states).
+                        hub.capture(&text).await;
                         let _ = hub.browser_tx.send(text.to_string());
                     }
                     Some(Ok(Message::Ping(data))) => {
@@ -193,6 +201,9 @@ async fn handle_media(socket: WebSocket, hub: Hub) {
             Ok(Message::Binary(data)) => {
                 debug!(bytes = data.len(), channel = "/media/ekos", "KStars media frame");
                 if let Some(json) = decode_media_frame(&data) {
+                    // Retain the latest preview so a reconnecting browser sees
+                    // the last frame immediately.
+                    hub.capture_preview(&json).await;
                     let _ = hub.browser_tx.send(json);
                 }
             }
