@@ -208,6 +208,8 @@ def tile_url(ra: float, dec: float, fov: float) -> str:
 def fetch(url: str, timeout: float, retries: int, delay: float) -> bytes | None:
     """GET with bounded retries. Returns None once the budget is spent."""
     for attempt in range(retries + 1):
+
+        time.sleep(1)
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "junos-web/prefetch"})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
