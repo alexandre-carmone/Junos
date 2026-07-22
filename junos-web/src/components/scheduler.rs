@@ -110,8 +110,14 @@ pub fn SchedulerTab(
     let f_target_name = RwSignal::new(String::new());
     let f_ra_h        = RwSignal::new(String::new());
     let f_dec_deg     = RwSignal::new(String::new());
+    let f_use_alt     = RwSignal::new(true);
     let f_min_alt     = RwSignal::new("30".to_string());
+    let f_use_moon    = RwSignal::new(false);
     let f_min_moon    = RwSignal::new("0".to_string());
+    let f_use_moon_alt = RwSignal::new(false);
+    let f_moon_max_alt = RwSignal::new("90".to_string());
+    let f_twilight    = RwSignal::new(true);
+    let f_horizon     = RwSignal::new(true);
     let f_pa          = RwSignal::new("0".to_string());
     let search_result = RwSignal::new(Option::<String>::None);
     let form_error    = RwSignal::new(Option::<String>::None);
@@ -229,8 +235,14 @@ pub fn SchedulerTab(
         f_target_name.set(String::new());
         f_ra_h.set(String::new());
         f_dec_deg.set(String::new());
+        f_use_alt.set(true);
         f_min_alt.set("30".to_string());
+        f_use_moon.set(false);
         f_min_moon.set("0".to_string());
+        f_use_moon_alt.set(false);
+        f_moon_max_alt.set("90".to_string());
+        f_twilight.set(true);
+        f_horizon.set(true);
         f_pa.set("0".to_string());
         search_result.set(None);
         form_error.set(None);
@@ -310,9 +322,15 @@ pub fn SchedulerTab(
             "raBox":             format!("{:.6}", ra_f),
             "decBox":            format!("{:.6}", dec_f),
             "sequenceEdit":      abs_path,
-            "minAltitude":       f_min_alt.get_untracked().parse::<f64>().unwrap_or(30.0),
-            "minMoonSeparation": f_min_moon.get_untracked().parse::<f64>().unwrap_or(0.0),
-            "positionAngleSpin": f_pa.get_untracked().parse::<f64>().unwrap_or(0.0),
+            "schedulerAltitude":              f_use_alt.get_untracked(),
+            "schedulerAltitudeValue":         f_min_alt.get_untracked().parse::<f64>().unwrap_or(30.0),
+            "schedulerMoonSeparation":        f_use_moon.get_untracked(),
+            "schedulerMoonSeparationValue":   f_min_moon.get_untracked().parse::<f64>().unwrap_or(0.0),
+            "schedulerMoonAltitude":          f_use_moon_alt.get_untracked(),
+            "schedulerMoonAltitudeMaxValue":  f_moon_max_alt.get_untracked().parse::<f64>().unwrap_or(90.0),
+            "schedulerTwilight":              f_twilight.get_untracked(),
+            "schedulerHorizon":               f_horizon.get_untracked(),
+            "positionAngleSpin":              f_pa.get_untracked().parse::<f64>().unwrap_or(0.0),
             "schedulerTrackStep": step_track.get_untracked(),
             "schedulerFocusStep": step_focus.get_untracked(),
             "schedulerAlignStep": step_align.get_untracked(),
@@ -385,8 +403,14 @@ pub fn SchedulerTab(
                                 f_target_name=f_target_name
                                 f_ra_h=f_ra_h
                                 f_dec_deg=f_dec_deg
+                                f_use_alt=f_use_alt
                                 f_min_alt=f_min_alt
+                                f_use_moon=f_use_moon
                                 f_min_moon=f_min_moon
+                                f_use_moon_alt=f_use_moon_alt
+                                f_moon_max_alt=f_moon_max_alt
+                                f_twilight=f_twilight
+                                f_horizon=f_horizon
                                 f_pa=f_pa
                                 search_result=search_result
                                 form_error=form_error

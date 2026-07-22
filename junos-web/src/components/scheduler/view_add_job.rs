@@ -19,8 +19,14 @@ pub fn SchedulerAddJobSection(
     f_target_name: RwSignal<String>,
     f_ra_h: RwSignal<String>,
     f_dec_deg: RwSignal<String>,
+    f_use_alt: RwSignal<bool>,
     f_min_alt: RwSignal<String>,
+    f_use_moon: RwSignal<bool>,
     f_min_moon: RwSignal<String>,
+    f_use_moon_alt: RwSignal<bool>,
+    f_moon_max_alt: RwSignal<String>,
+    f_twilight: RwSignal<bool>,
+    f_horizon: RwSignal<bool>,
     f_pa: RwSignal<String>,
     search_result: RwSignal<Option<String>>,
     form_error: RwSignal<Option<String>>,
@@ -159,50 +165,150 @@ pub fn SchedulerAddJobSection(
                         <div class="sched-coords-hint">{h}</div>
                     })}
 
-                    <div class="sched-field-row">
-                        <span class="sched-field-label">{move || tr().sched_min_alt}</span>
-                        <input
-                            class="sched-input sched-input-small"
-                            prop:value=move || f_min_alt.get()
-                            on:input=move |ev| {
-                                f_min_alt.set(
-                                    ev.target()
-                                        .unwrap()
-                                        .unchecked_into::<web_sys::HtmlInputElement>()
-                                        .value(),
-                                );
-                            }
-                        />
-                        <span class="sched-field-unit">"°"</span>
-                        <span class="sched-field-label sched-field-label-offset">{move || tr().sched_moon_sep}</span>
-                        <input
-                            class="sched-input sched-input-small"
-                            prop:value=move || f_min_moon.get()
-                            on:input=move |ev| {
-                                f_min_moon.set(
-                                    ev.target()
-                                        .unwrap()
-                                        .unchecked_into::<web_sys::HtmlInputElement>()
-                                        .value(),
-                                );
-                            }
-                        />
-                        <span class="sched-field-unit">"°"</span>
-                        <span class="sched-field-label sched-field-label-offset">{move || tr().sched_pa_label}</span>
-                        <input
-                            class="sched-input sched-input-small"
-                            prop:value=move || f_pa.get()
-                            on:input=move |ev| {
-                                f_pa.set(
-                                    ev.target()
-                                        .unwrap()
-                                        .unchecked_into::<web_sys::HtmlInputElement>()
-                                        .value(),
-                                );
-                            }
-                        />
-                        <span class="sched-field-unit">"°"</span>
-                    </div>
+                    <fieldset class="sched-fieldset">
+                        <legend>{move || tr().sched_constraints_legend}</legend>
+
+                        // ── Min altitude ────────────────────────────────────
+                        <div class="sched-field-row">
+                            <label class="sched-toggle-label">
+                                <input type="checkbox"
+                                    prop:checked=move || f_use_alt.get()
+                                    on:change=move |ev| {
+                                        f_use_alt.set(
+                                            ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlInputElement>()
+                                                .checked(),
+                                        );
+                                    }
+                                />
+                                {move || tr().sched_min_alt}
+                            </label>
+                            <input
+                                class="sched-input sched-input-small"
+                                type="number"
+                                prop:disabled=move || !f_use_alt.get()
+                                prop:value=move || f_min_alt.get()
+                                on:input=move |ev| {
+                                    f_min_alt.set(
+                                        ev.target().unwrap()
+                                            .unchecked_into::<web_sys::HtmlInputElement>()
+                                            .value(),
+                                    );
+                                }
+                            />
+                            <span class="sched-field-unit">"°"</span>
+                        </div>
+
+                        // ── Moon min separation ─────────────────────────────
+                        <div class="sched-field-row">
+                            <label class="sched-toggle-label">
+                                <input type="checkbox"
+                                    prop:checked=move || f_use_moon.get()
+                                    on:change=move |ev| {
+                                        f_use_moon.set(
+                                            ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlInputElement>()
+                                                .checked(),
+                                        );
+                                    }
+                                />
+                                {move || tr().sched_moon_sep}
+                            </label>
+                            <input
+                                class="sched-input sched-input-small"
+                                type="number"
+                                prop:disabled=move || !f_use_moon.get()
+                                prop:value=move || f_min_moon.get()
+                                on:input=move |ev| {
+                                    f_min_moon.set(
+                                        ev.target().unwrap()
+                                            .unchecked_into::<web_sys::HtmlInputElement>()
+                                            .value(),
+                                    );
+                                }
+                            />
+                            <span class="sched-field-unit">"°"</span>
+                        </div>
+
+                        // ── Moon max altitude ───────────────────────────────
+                        <div class="sched-field-row">
+                            <label class="sched-toggle-label">
+                                <input type="checkbox"
+                                    prop:checked=move || f_use_moon_alt.get()
+                                    on:change=move |ev| {
+                                        f_use_moon_alt.set(
+                                            ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlInputElement>()
+                                                .checked(),
+                                        );
+                                    }
+                                />
+                                {move || tr().sched_moon_max_alt}
+                            </label>
+                            <input
+                                class="sched-input sched-input-small"
+                                type="number"
+                                prop:disabled=move || !f_use_moon_alt.get()
+                                prop:value=move || f_moon_max_alt.get()
+                                on:input=move |ev| {
+                                    f_moon_max_alt.set(
+                                        ev.target().unwrap()
+                                            .unchecked_into::<web_sys::HtmlInputElement>()
+                                            .value(),
+                                    );
+                                }
+                            />
+                            <span class="sched-field-unit">"°"</span>
+                        </div>
+
+                        // ── Twilight + Artificial horizon (toggles only) ────
+                        <div class="sched-field-row sched-field-row-gap16">
+                            <label class="sched-toggle-label">
+                                <input type="checkbox"
+                                    prop:checked=move || f_twilight.get()
+                                    on:change=move |ev| {
+                                        f_twilight.set(
+                                            ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlInputElement>()
+                                                .checked(),
+                                        );
+                                    }
+                                />
+                                {move || tr().sched_twilight}
+                            </label>
+                            <label class="sched-toggle-label">
+                                <input type="checkbox"
+                                    prop:checked=move || f_horizon.get()
+                                    on:change=move |ev| {
+                                        f_horizon.set(
+                                            ev.target().unwrap()
+                                                .unchecked_into::<web_sys::HtmlInputElement>()
+                                                .checked(),
+                                        );
+                                    }
+                                />
+                                {move || tr().sched_horizon}
+                            </label>
+                        </div>
+
+                        // ── Position angle (framing rotation) ───────────────
+                        <div class="sched-field-row">
+                            <span class="sched-field-label">{move || tr().sched_pa_label}</span>
+                            <input
+                                class="sched-input sched-input-small"
+                                type="number"
+                                prop:value=move || f_pa.get()
+                                on:input=move |ev| {
+                                    f_pa.set(
+                                        ev.target().unwrap()
+                                            .unchecked_into::<web_sys::HtmlInputElement>()
+                                            .value(),
+                                    );
+                                }
+                            />
+                            <span class="sched-field-unit">"°"</span>
+                        </div>
+                    </fieldset>
 
                     <fieldset class="sched-fieldset">
                         <legend>{move || tr().sched_steps_legend}</legend>

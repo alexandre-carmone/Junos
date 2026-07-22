@@ -88,8 +88,14 @@ pub fn MosaicTab(
     let completion_cond  = RwSignal::new("sequence".to_string());
     let completion_count = RwSignal::new("1".to_string());
     // Constraints
-    let min_alt  = RwSignal::new("30".to_string());
-    let min_moon = RwSignal::new("0".to_string());
+    let use_alt      = RwSignal::new(true);
+    let min_alt      = RwSignal::new("30".to_string());
+    let use_moon     = RwSignal::new(false);
+    let min_moon     = RwSignal::new("0".to_string());
+    let use_moon_alt = RwSignal::new(false);
+    let moon_max_alt = RwSignal::new("90".to_string());
+    let twilight     = RwSignal::new(true);
+    let horizon      = RwSignal::new(true);
 
     // ── Error display ──────────────────────────────────────────────────────
     let form_error: RwSignal<Option<String>> = RwSignal::new(None);
@@ -204,8 +210,14 @@ pub fn MosaicTab(
             "asapConditionR":        asap_r,
             "startupTimeConditionR": start_time_r,
             "startupTimeEdit":       start_time_val,
-            "minAltitude":           min_alt.get_untracked().parse::<f64>().unwrap_or(30.0),
-            "minMoonSeparation":     min_moon.get_untracked().parse::<f64>().unwrap_or(0.0),
+            "schedulerAltitude":              use_alt.get_untracked(),
+            "schedulerAltitudeValue":         min_alt.get_untracked().parse::<f64>().unwrap_or(30.0),
+            "schedulerMoonSeparation":        use_moon.get_untracked(),
+            "schedulerMoonSeparationValue":   min_moon.get_untracked().parse::<f64>().unwrap_or(0.0),
+            "schedulerMoonAltitude":          use_moon_alt.get_untracked(),
+            "schedulerMoonAltitudeMaxValue":  moon_max_alt.get_untracked().parse::<f64>().unwrap_or(90.0),
+            "schedulerTwilight":              twilight.get_untracked(),
+            "schedulerHorizon":               horizon.get_untracked(),
         }));
 
         send_cmd(&send_s, "scheduler_import_mosaic", serde_json::json!({
@@ -531,9 +543,17 @@ pub fn MosaicTab(
                 // Constraints
                 <div class="flex items-center gap-[14px] flex-wrap">
                     <label class=PARAM_LABEL>
+                        <input type="checkbox"
+                               prop:checked=move || use_alt.get()
+                               on:change=move |ev| {
+                                   let c = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
+                                   use_alt.set(c);
+                               } />
                         {move || tr().sched_min_alt}
                         <input type="number" min="0" max="90" step="1"
                                class=format!("{INPUT_BASE} w-[56px]")
+                               prop:disabled=move || !use_alt.get()
                                prop:value=move || min_alt.get()
                                on:input=move |ev| {
                                    let v = ev.target().unwrap()
@@ -543,9 +563,17 @@ pub fn MosaicTab(
                         {"\u{00b0}"}
                     </label>
                     <label class=PARAM_LABEL>
+                        <input type="checkbox"
+                               prop:checked=move || use_moon.get()
+                               on:change=move |ev| {
+                                   let c = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
+                                   use_moon.set(c);
+                               } />
                         {move || tr().sched_moon_sep}
                         <input type="number" min="0" max="180" step="1"
                                class=format!("{INPUT_BASE} w-[56px]")
+                               prop:disabled=move || !use_moon.get()
                                prop:value=move || min_moon.get()
                                on:input=move |ev| {
                                    let v = ev.target().unwrap()
@@ -553,6 +581,50 @@ pub fn MosaicTab(
                                    min_moon.set(v);
                                } />
                         {"\u{00b0}"}
+                    </label>
+                    <label class=PARAM_LABEL>
+                        <input type="checkbox"
+                               prop:checked=move || use_moon_alt.get()
+                               on:change=move |ev| {
+                                   let c = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
+                                   use_moon_alt.set(c);
+                               } />
+                        {move || tr().sched_moon_max_alt}
+                        <input type="number" min="0" max="90" step="1"
+                               class=format!("{INPUT_BASE} w-[56px]")
+                               prop:disabled=move || !use_moon_alt.get()
+                               prop:value=move || moon_max_alt.get()
+                               on:input=move |ev| {
+                                   let v = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
+                                   moon_max_alt.set(v);
+                               } />
+                        {"\u{00b0}"}
+                    </label>
+                </div>
+
+                // Constraints (toggles)
+                <div class="flex items-center gap-4 flex-wrap text-sm">
+                    <label class="flex items-center gap-1 cursor-pointer">
+                        <input type="checkbox"
+                               prop:checked=move || twilight.get()
+                               on:change=move |ev| {
+                                   let c = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
+                                   twilight.set(c);
+                               } />
+                        {move || tr().sched_twilight}
+                    </label>
+                    <label class="flex items-center gap-1 cursor-pointer">
+                        <input type="checkbox"
+                               prop:checked=move || horizon.get()
+                               on:change=move |ev| {
+                                   let c = ev.target().unwrap()
+                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
+                                   horizon.set(c);
+                               } />
+                        {move || tr().sched_horizon}
                     </label>
                 </div>
             </div>
