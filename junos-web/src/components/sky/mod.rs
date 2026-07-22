@@ -979,6 +979,14 @@ pub fn SkyTab(
         // arrives without ever reporting slewing (e.g. pre-existing idle state).
         if was && !is_slewing && pending_solve_after_slew.get() {
             pending_solve_after_slew.set(false);
+            // Force the solver's post-solve action to "Slew to target" so the
+            // goto+solve flow re-centers the mount after solving, regardless of
+            // whatever GOTO mode is currently selected in Ekos' Align tab.
+            // `slewR` is the object name of the align "Slew to target" radio.
+            send_for_align_after_slew(
+                serde_json::json!({"type":"align_set_all_settings","payload":{"slewR":true}})
+                    .to_string(),
+            );
             send_for_align_after_slew(
                 serde_json::json!({"type":"align_solve","payload":{}}).to_string(),
             );
