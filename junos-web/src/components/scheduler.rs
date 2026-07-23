@@ -293,8 +293,21 @@ pub fn SchedulerTab(
 
         form_error.set(None);
 
-        let xml = build_esq_xml(&name, &seq_fits_dir.get_untracked(), &frames, true);
         let safe_name = sanitize_name(if name.is_empty() { "sequence" } else { &name });
+
+        // Bake the sanitized name straight into the capture folder path rather
+        // than deriving the subfolder from the object name (%T) at runtime.
+        // KStars would otherwise build the subfolder from the job's target name;
+        // joining it into the path keeps all frames under one predictable
+        // directory. (Mirrors the mosaic import path in `mosaic_tab.rs`.)
+        let fits_root = seq_fits_dir.get_untracked();
+        let fits_root = fits_root.trim().trim_end_matches('/');
+        let seq_fits_path = if fits_root.is_empty() {
+            safe_name.clone()
+        } else {
+            format!("{}/{}", fits_root, safe_name)
+        };
+        let xml = build_esq_xml("", &seq_fits_path, &frames, false);
         let rel_path  = format!(".junos-sequences/{}.esq", safe_name);
         let abs_path  = if home.is_empty() {
             format!(".junos-sequences/{}.esq", safe_name)

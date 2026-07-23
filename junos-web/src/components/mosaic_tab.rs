@@ -194,18 +194,28 @@ pub fn MosaicTab(
             format!("{}/.junos-sequences/{}.esq", home, safe_name)
         };
 
-        // Bake the sanitized name straight into the capture folder path rather
-        // than adding it as the target/object name (%T). KStars would otherwise
-        // derive the subfolder from %T at runtime; putting it in the path keeps
-        // all tiles of this mosaic under one predictable directory.
-        let fits_root = seq_fits_dir.get_untracked();
-        let fits_root = fits_root.trim().trim_end_matches('/');
-        let mosaic_fits_dir = if fits_root.is_empty() {
-            safe_name.clone()
-        } else {
-            format!("{}/{}", fits_root, safe_name)
+        // Base capture directory (Output field → sequence destination → home).
+        // Each tile job KStars generates is named `<safe_name>-Part_<N>`, and the
+        // `%T` placeholder resolves to that job name at capture time, so the
+        // frames land under `<base>/<safe_name>-Part_<N>/...`. We therefore leave
+        // the base bare here (no `safe_name`) and let `%T` supply the per-tile
+        // leaf folder.
+        let import_base = {
+            let d = dir.trim();
+            if !d.is_empty() {
+                d.to_string()
+            } else {
+                let fits = seq_fits_dir.get_untracked();
+                let fits = fits.trim();
+                if !fits.is_empty() { fits.to_string() } else { home.clone() }
+            }
         };
-        let xml = build_esq_xml("", &mosaic_fits_dir, &valid_frames, false);
+        let import_base = import_base.trim().trim_end_matches('/').to_string();
+        // Emit a non-empty <TargetName> so KStars' createJobSequence rewrites it
+        // per tile to `<safe_name>-Part_<N>`; the `%T` placeholder then resolves
+        // to that job name at capture time. Leaving it empty drops the element,
+        // so `%T` would resolve to nothing and every frame lands flat in the base.
+        let xml = build_esq_xml(&safe_name, &import_base, &valid_frames, true);
         if !home.is_empty() {
             send_cmd(&send_s, "file_directory_operation", serde_json::json!({
                 "operation": "create",
@@ -245,27 +255,13 @@ pub fn MosaicTab(
             "schedulerHorizon":               horizon.get_untracked(),
         }));
 
-        // KStars' importMosaic builds the capture subfolder as
-        // `{directory}/{sanitized target}` and mkpath()s it itself. If the user
-        // left the Output dir blank, fall back to the sequence destination
-        // folder (then home) so the subfolder lands somewhere predictable
-        // instead of KStars' silent ~/ fallback.
-        let import_dir = {
-            let d = dir.trim();
-            if !d.is_empty() {
-                d.to_string()
-            } else {
-                let fits = seq_fits_dir.get_untracked();
-                let fits = fits.trim();
-                if !fits.is_empty() { fits.to_string() } else { home.clone() }
-            }
-        };
-
+        // Hand KStars the bare base directory; the `<safe_name>-Part_<N>` leaf
+        // comes from the `%T` placeholder baked into the sequence above.
         send_cmd(&send_s, "scheduler_import_mosaic", serde_json::json!({
             "csv":      csv,
             "sequence": abs_path,
             "target":   safe_name,
-            "directory": import_dir,
+            "directory": import_base,
             "track":    step_track.get_untracked(),
             "focus":    step_focus.get_untracked(),
             "align":    step_align.get_untracked(),

@@ -108,8 +108,13 @@ pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame], target
         }
         xml.push_str("<GuideDitherPerJob>-1</GuideDitherPerJob>\n");
         xml.push_str(&format!("<FITSDirectory>{}</FITSDirectory>\n", fits_dir));
+        // %t = target name (per-tile job name for mosaics), %F = Filter,
+        // %T = frame Type, %e = exposure (adds "_secs"), %D = datetime.
+        // The target folder must use %t, NOT %T — %T expands to the frame type
+        // (e.g. "Light"), so it never carries the target/mosaic name. Filename
+        // pattern: target_filter_type_exposure_date.
         let placeholder = if target_folder {
-            "/%T/%F/Light/%T_%F_%e_secs_%04d"
+            "/%t/%t_%F_%T_%e_%D"
         } else {
             "/%F/Light/%F_%e_secs_%04d"
         };
