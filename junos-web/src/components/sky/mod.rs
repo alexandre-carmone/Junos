@@ -187,6 +187,7 @@ fn build_uniforms(
 fn derive_scheduler_jobs(
     scheduler_jobs_on: bool,
     scheduler: &SchedulerSnapshot,
+    jd: f64,
 ) -> Vec<SchedulerJobRender> {
     if !scheduler_jobs_on {
         return Vec::new();
@@ -196,30 +197,41 @@ fn derive_scheduler_jobs(
         .iter()
         .filter_map(|j| {
             let name = j["name"].as_str()?.to_string();
-            let ra_h = j["targetRA"].as_f64()?;
-            let dec_deg = j["targetDEC"].as_f64()?;
+            // KStars serializes targetRA/targetDEC as ra0()/dec0() (J2000).
+            // render_scheduler_jobs projects with eq_to_altaz (JNow), so
+            // precess J2000→JNow here or the box draws ~0.4° off (2026).
+            let ra_j2000 = j["targetRA"].as_f64()? * 15.0;
+            let dec_j2000 = j["targetDEC"].as_f64()?;
+            let jnow = crate::coords::J2000::new(ra_j2000, dec_j2000).to_jnow(jd);
             let state = j["state"].as_i64().unwrap_or(0);
             Some(SchedulerJobRender {
                 name,
-                ra_h,
-                dec_deg,
+                ra_h: jnow.ra_deg / 15.0,
+                dec_deg: jnow.dec_deg,
                 state,
             })
         })
         .collect()
 }
 
-fn derive_kstars_mosaic_plan(mosaic: &MosaicSnapshot) -> Option<MosaicPlanRender> {
+fn derive_kstars_mosaic_plan(mosaic: &MosaicSnapshot, jd: f64) -> Option<MosaicPlanRender> {
     if mosaic.tiles.is_empty() {
         return None;
     }
+    // KStars publishes tile centers as J2000 (skyCenter.ra0/dec0). The render
+    // path projects with astro::eq_to_altaz, which assumes JNow, so precess
+    // each tile J2000→JNow first — otherwise the overlay draws ~0.4° off the
+    // JNow star field and mount crosshair.
     let tiles = mosaic
         .tiles
         .iter()
-        .map(|tile| MosaicTileRender {
-            ra_deg: tile.ra_deg,
-            dec_deg: tile.dec_deg,
-            rotation: tile.rotation,
+        .map(|tile| {
+            let jnow = crate::coords::J2000::new(tile.ra_deg, tile.dec_deg).to_jnow(jd);
+            MosaicTileRender {
+                ra_deg: jnow.ra_deg,
+                dec_deg: jnow.dec_deg,
+                rotation: tile.rotation,
+            }
         })
         .collect::<Vec<_>>();
     Some(MosaicPlanRender {
@@ -826,10 +838,10 @@ pub fn SkyTab(
         });
 
         // ── Derive scheduler job render list ───────────────────────────
-        let scheduler_jobs_data = derive_scheduler_jobs(scheduler_jobs_on, &sched);
+        let scheduler_jobs_data = derive_scheduler_jobs(scheduler_jobs_on, &sched, jd);
 
         // ── KStars mosaic tiles → MosaicPlanRender ─────────────────────
-        let mosaic_kstars_render = derive_kstars_mosaic_plan(&mos);
+        let mosaic_kstars_render = derive_kstars_mosaic_plan(&mos, jd);
 
         // ── In-app mosaic planner preview ──────────────────────────────
         // Mirrors KStars' MosaicTiles::updateTiles (mosaictiles.cpp:370-435):

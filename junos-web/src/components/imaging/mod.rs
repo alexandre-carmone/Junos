@@ -219,7 +219,7 @@ pub fn ImagingTab(
         if frames.is_empty() {
             return;
         }
-        let xml = build_esq_xml("", &seq_fits_dir.get_untracked(), &frames);
+        let xml = build_esq_xml("", &seq_fits_dir.get_untracked(), &frames, true);
         let s = sv_send_seq.get_value();
         send_cmd(
             &s,

@@ -293,7 +293,7 @@ pub fn SchedulerTab(
 
         form_error.set(None);
 
-        let xml = build_esq_xml(&name, &seq_fits_dir.get_untracked(), &frames);
+        let xml = build_esq_xml(&name, &seq_fits_dir.get_untracked(), &frames, true);
         let safe_name = sanitize_name(if name.is_empty() { "sequence" } else { &name });
         let rel_path  = format!(".junos-sequences/{}.esq", safe_name);
         let abs_path  = if home.is_empty() {

@@ -70,7 +70,11 @@ impl Default for SeqFrame {
 /// `fits_dir` is written into every job's `<FITSDirectory>` (KStars parses it
 /// into `SJ_LocalDirectory`, then combines it with the placeholder path). When
 /// empty, the element is left empty so KStars keeps its own default location.
-pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame]) -> String {
+/// `target_folder` controls whether the capture path derives its per-target
+/// subfolder from the `%T` (target name) placeholder. The mosaic flow bakes the
+/// sanitized name straight into `fits_dir` instead, so it passes `false` to drop
+/// the `%T` folder and avoid a doubled-up subfolder.
+pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame], target_folder: bool) -> String {
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<SequenceQueue version='2.1'>\n");
     xml.push_str("<GuideDeviation enabled='false'>0</GuideDeviation>\n");
@@ -104,7 +108,12 @@ pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame]) -> Str
         }
         xml.push_str("<GuideDitherPerJob>-1</GuideDitherPerJob>\n");
         xml.push_str(&format!("<FITSDirectory>{}</FITSDirectory>\n", fits_dir));
-        xml.push_str("<PlaceholderFormat>/%T/%F/Light/%T_%F_%e_secs_%04d</PlaceholderFormat>\n");
+        let placeholder = if target_folder {
+            "/%T/%F/Light/%T_%F_%e_secs_%04d"
+        } else {
+            "/%F/Light/%F_%e_secs_%04d"
+        };
+        xml.push_str(&format!("<PlaceholderFormat>{}</PlaceholderFormat>\n", placeholder));
         xml.push_str("<PlaceholderSuffix>0</PlaceholderSuffix>\n");
         xml.push_str("<UploadMode>0</UploadMode>\n");
         if !f.iso.is_empty() {

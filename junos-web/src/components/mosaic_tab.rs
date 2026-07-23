@@ -147,8 +147,22 @@ pub fn MosaicTab(
         let fov_h = astro::fov_deg(fl_mm, sh as f64, px_um);
         let fov_w_arcmin = fov_w * 60.0;
         let fov_h_arcmin = fov_h * 60.0;
-        let center_ra_hms  = fmt_hms(center_ra_deg);
-        let center_dec_dms = fmt_dms(center_dec_deg);
+        // planner.center is JNow, but KStars' parseMosaicCSV reads the CSV
+        // RA/DEC into RA0/Dec0 (J2000) and precesses it forward again. Convert
+        // JNow→J2000 here so the round-trip lands on the intended position
+        // instead of a doubly-precessed one (~0.4° off in 2026).
+        let now = js_sys::Date::new_0();
+        let jd = astro::julian_date(
+            now.get_utc_full_year() as i32,
+            now.get_utc_month() + 1,
+            now.get_utc_date(),
+            now.get_utc_hours(),
+            now.get_utc_minutes(),
+            now.get_utc_seconds() as f64 + now.get_utc_milliseconds() as f64 / 1000.0,
+        );
+        let j2000 = crate::coords::JNow::new(center_ra_deg, center_dec_deg).to_j2000(jd);
+        let center_ra_hms  = fmt_hms(j2000.ra_deg);
+        let center_dec_dms = fmt_dms(j2000.dec_deg);
         let overlap_str = format!("{:.0}%", overlap);
 
         let mut csv = String::from(
@@ -180,7 +194,18 @@ pub fn MosaicTab(
             format!("{}/.junos-sequences/{}.esq", home, safe_name)
         };
 
-        let xml = build_esq_xml(&safe_name, &seq_fits_dir.get_untracked(), &valid_frames);
+        // Bake the sanitized name straight into the capture folder path rather
+        // than adding it as the target/object name (%T). KStars would otherwise
+        // derive the subfolder from %T at runtime; putting it in the path keeps
+        // all tiles of this mosaic under one predictable directory.
+        let fits_root = seq_fits_dir.get_untracked();
+        let fits_root = fits_root.trim().trim_end_matches('/');
+        let mosaic_fits_dir = if fits_root.is_empty() {
+            safe_name.clone()
+        } else {
+            format!("{}/{}", fits_root, safe_name)
+        };
+        let xml = build_esq_xml("", &mosaic_fits_dir, &valid_frames, false);
         if !home.is_empty() {
             send_cmd(&send_s, "file_directory_operation", serde_json::json!({
                 "operation": "create",
@@ -220,11 +245,27 @@ pub fn MosaicTab(
             "schedulerHorizon":               horizon.get_untracked(),
         }));
 
+        // KStars' importMosaic builds the capture subfolder as
+        // `{directory}/{sanitized target}` and mkpath()s it itself. If the user
+        // left the Output dir blank, fall back to the sequence destination
+        // folder (then home) so the subfolder lands somewhere predictable
+        // instead of KStars' silent ~/ fallback.
+        let import_dir = {
+            let d = dir.trim();
+            if !d.is_empty() {
+                d.to_string()
+            } else {
+                let fits = seq_fits_dir.get_untracked();
+                let fits = fits.trim();
+                if !fits.is_empty() { fits.to_string() } else { home.clone() }
+            }
+        };
+
         send_cmd(&send_s, "scheduler_import_mosaic", serde_json::json!({
             "csv":      csv,
             "sequence": abs_path,
             "target":   safe_name,
-            "directory": dir,
+            "directory": import_dir,
             "track":    step_track.get_untracked(),
             "focus":    step_focus.get_untracked(),
             "align":    step_align.get_untracked(),
