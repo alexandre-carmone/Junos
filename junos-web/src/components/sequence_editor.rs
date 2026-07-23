@@ -119,7 +119,9 @@ pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame], target
             "/%F/Light/%F_%e_secs_%04d"
         };
         xml.push_str(&format!("<PlaceholderFormat>{}</PlaceholderFormat>\n", placeholder));
-        xml.push_str("<PlaceholderSuffix>0</PlaceholderSuffix>\n");
+        // KStars auto-appends a `_%s<suffix>` frame counter to every filename;
+        // the suffix value is its zero-padding width. Use 4 → `_0001`, `_0002`, …
+        xml.push_str("<PlaceholderSuffix>4</PlaceholderSuffix>\n");
         xml.push_str("<UploadMode>0</UploadMode>\n");
         if !f.iso.is_empty() {
             xml.push_str(&format!("<ISOIndex>{}</ISOIndex>\n", f.iso));
