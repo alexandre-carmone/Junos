@@ -54,7 +54,9 @@ from concurrent.futures import ThreadPoolExecutor
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(SCRIPT_DIR)
 DSO_BIN = os.path.join(ROOT_DIR, "junos-web", "public", "dso.bin")
-DEFAULT_OUT = os.path.join(ROOT_DIR, ".cache", "dso_tiles")
+# Honour DSO_TILE_DIR so a single env var configures both this prefetcher and
+# junos-server (which reads the same var); --out still overrides it.
+DEFAULT_OUT = os.environ.get("DSO_TILE_DIR") or os.path.join(ROOT_DIR, ".cache", "dso_tiles")
 
 # Mirror junos-server/src/skysurvey.rs so cached tiles and live cutouts come
 # from the same survey — otherwise the preview would change appearance

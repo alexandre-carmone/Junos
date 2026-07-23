@@ -136,6 +136,22 @@ in
       '';
     };
 
+    dsoTileDir = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = "/srv/astro/dso_tiles";
+      description = ''
+        Directory holding the offline DSO survey tiles served at
+        `/api/dso_tiles/*`, as written by `scripts/prefetch_dso_tiles.py`.
+        When null the server falls back to `.cache/dso_tiles` under its
+        WorkingDirectory (${"/var/lib/junos-web"}, the StateDirectory) — set
+        this to point at a pre-populated cache stored elsewhere. The path is
+        added to ReadOnlyPaths (or bind-mounted when under /home) so the
+        hardened unit can reach it. The cache is optional — without it the
+        Framing Assistant simply always uses the live hips2fits proxy.
+      '';
+    };
+
     extraArgs = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -172,10 +188,18 @@ in
           capturesPath = if cfg.capturesDir != null then toString cfg.capturesDir else null;
           capturesArgs = optionals (capturesPath != null) [ "--captures-dir" capturesPath ];
 
-          # When capturesDir lives under /home, ProtectHome=true would mask
-          # it. Switch ProtectHome to "tmpfs" (still hides every other home)
-          # and bind-mount the captures path so the service can reach it.
-          capturesUnderHome = capturesPath != null && hasPrefix "/home/" capturesPath;
+          dsoTilePath = if cfg.dsoTileDir != null then toString cfg.dsoTileDir else null;
+          dsoTileArgs = optionals (dsoTilePath != null) [ "--dso-tile-dir" dsoTilePath ];
+
+          # When an external path lives under /home, ProtectHome=true would
+          # mask it. Switch ProtectHome to "tmpfs" (still hides every other
+          # home) and bind-mount those paths so the service can reach them.
+          # Non-home paths are already reachable read-only under
+          # ProtectSystem=strict, so only captures (which needs write) has to
+          # be listed there — the DSO cache is read-only.
+          underHome = p: p != null && hasPrefix "/home/" p;
+          homePaths = filter underHome [ capturesPath dsoTilePath ];
+          anyUnderHome = homePaths != [ ];
         in
         {
           ExecStart = concatStringsSep " " (
@@ -186,11 +210,12 @@ in
             ++ optional (!cfg.enableHttps) "--no-https"
             ++ tlsArgs
             ++ capturesArgs
+            ++ dsoTileArgs
             ++ map escapeShellArg cfg.extraArgs
           );
 
-          ReadWritePaths = optional (capturesPath != null && !capturesUnderHome) capturesPath;
-          BindPaths      = optional capturesUnderHome capturesPath;
+          ReadWritePaths = optional (capturesPath != null && !(underHome capturesPath)) capturesPath;
+          BindPaths      = homePaths;
 
           ExecStartPre = mkIf (cfg.enableHttps && cfg.tls.autoGenerate && cfg.tls.cert == null)
             [ "${generateCertScript}" ];
@@ -205,7 +230,7 @@ in
           DynamicUser = true;
           PrivateTmp = true;
           ProtectSystem = "strict";
-          ProtectHome = if capturesUnderHome then "tmpfs" else true;
+          ProtectHome = if anyUnderHome then "tmpfs" else true;
           NoNewPrivileges = true;
           RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
         };
