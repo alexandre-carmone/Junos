@@ -61,7 +61,18 @@ DEFAULT_OUT = os.environ.get("DSO_TILE_DIR") or os.path.join(ROOT_DIR, ".cache",
 # Mirror junos-server/src/skysurvey.rs so cached tiles and live cutouts come
 # from the same survey — otherwise the preview would change appearance
 # depending on whether it was served from cache.
-HIPS2FITS_URL = "https://alaskybis.u-strasbg.fr/hips-image-services/hips2fits"
+#
+# hips2fits is the same API across every CDS host, so these are drop-in
+# fallbacks: a tile that a throttled/unavailable mirror refuses is retried
+# against the next one. They all draw from the same CDS HiPS collection, so the
+# "same survey" invariant above still holds whichever mirror serves the tile.
+# The first entry matches junos-server; keep them in sync.
+HIPS2FITS_MIRRORS = [
+    #"https://alaskybis.u-strasbg.fr/hips-image-services/hips2fits",
+    "https://alasky.u-strasbg.fr/hips-image-services/hips2fits",
+    "https://alaskybis.cds.unistra.fr/hips-image-services/hips2fits",
+    "https://alasky.cds.unistra.fr/hips-image-services/hips2fits",
+]
 HIPS = "CDS/P/DSS2/color"
 
 TILE_PX = 1024 * 4
@@ -192,7 +203,7 @@ def human_bytes(n: float) -> str:
 
 # ── download ─────────────────────────────────────────────────────────────────
 
-def tile_url(ra: float, dec: float, fov: float) -> str:
+def tile_url(base: str, ra: float, dec: float, fov: float) -> str:
     q = urllib.parse.urlencode({
         "hips": HIPS,
         "width": TILE_PX,
@@ -204,11 +215,11 @@ def tile_url(ra: float, dec: float, fov: float) -> str:
         "dec": f"{dec:.6f}",
         "format": "jpg",
     })
-    return f"{HIPS2FITS_URL}?{q}"
+    return f"{base}?{q}"
 
 
-def fetch(url: str, timeout: float, retries: int, delay: float) -> bytes | None:
-    """GET with bounded retries. Returns None once the budget is spent."""
+def fetch_one(url: str, timeout: float, retries: int, delay: float) -> bytes | None:
+    """GET one URL with bounded retries. Returns None once the budget is spent."""
     for attempt in range(retries + 1):
 
         time.sleep(1)
@@ -227,6 +238,19 @@ def fetch(url: str, timeout: float, retries: int, delay: float) -> bytes | None:
                 return None
             # Back off; hips2fits throttles under load.
             time.sleep(delay * (2 ** attempt))
+    return None
+
+
+def fetch(ra: float, dec: float, fov: float,
+          timeout: float, retries: int, delay: float) -> bytes | None:
+    """Try each mirror in turn; a tile only counts as failed once every mirror
+    has spent its retry budget."""
+    for i, base in enumerate(HIPS2FITS_MIRRORS):
+        data = fetch_one(tile_url(base, ra, dec, fov), timeout, retries, delay)
+        if data is not None:
+            return data
+        if i + 1 < len(HIPS2FITS_MIRRORS):
+            print(f"    mirror {base} failed, trying next", file=sys.stderr)
     return None
 
 
@@ -356,7 +380,7 @@ def main() -> int:
 
     def work(entry: dict) -> None:
         nonlocal done
-        data = fetch(tile_url(entry["ra"], entry["dec"], entry["fov"]),
+        data = fetch(entry["ra"], entry["dec"], entry["fov"],
                      args.timeout, args.retries, args.delay)
         with lock:
             done += 1
