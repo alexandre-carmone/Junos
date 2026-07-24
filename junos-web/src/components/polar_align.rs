@@ -29,10 +29,22 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
+use crate::components::branding::{POLAR_LOGO_SVG, junos_header, section_card};
 use crate::compat::{MountSnapshot, PolarAlignSnapshot};
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::{PolarVectorData, SendCmd};
 use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
+
+// Section header glyphs. 24×24 viewBox, `currentColor` so each inherits the
+// accent color of its card header. Style matches `tab_wheel_icons.rs`.
+/// Sliders — pre-start setup parameters.
+const ICON_SETUP: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 8 L20 8 M4 16 L20 16"/><circle cx="9" cy="8" r="2.6"/><circle cx="15" cy="16" r="2.6"/></svg>"##;
+/// Camera — capture & solve in progress.
+const ICON_CAPTURE: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8 L8 8 L9.5 5.5 L14.5 5.5 L16 8 L20 8 A1 1 0 0 1 21 9 L21 18 A1 1 0 0 1 20 19 L4 19 A1 1 0 0 1 3 18 L3 9 A1 1 0 0 1 4 8 Z"/><circle cx="12" cy="13" r="4"/></svg>"##;
+/// Circular arrow — manual mount rotation step.
+const ICON_ROTATE: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 L20 11 L15 11"/><path d="M20 11 A8 8 0 1 0 18.5 15"/></svg>"##;
+/// Crosshair — refresh & correct to center.
+const ICON_ADJUST: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></svg>"##;
 
 /// Wire values for the direction dropdown (sent to KStars as-is).
 const DIRECTION_WIRE: &[&str] = &["West", "East"];
@@ -404,42 +416,56 @@ pub fn PolarAlignTab(
 
     const POLAR_INPUT: &str = "input input--sm flex-1 min-w-0 font-mono";
     const FIELD_LABEL: &str = "basis-[clamp(80px,22%,120px)] grow-0 shrink-0 text-text-blue text-sm max-[759px]:basis-[110px] max-[420px]:basis-auto";
-    const SECTION_CLS: &str = "fieldset";
     const BTN_START: &str = "btn btn-primary";
     const BTN_STOP: &str = "btn btn-danger";
     const BTN_ROTATION: &str = "btn btn-ghost text-accent-amber !border-accent-amber";
     const HEADER_LABEL: &str = "text-text-blue";
 
     view! {
-        <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] overflow-hidden">
+        // `grid-cols-[minmax(0,1fr)]` caps the implicit column at the container
+        // width — without it an `auto` column sizes to the widest content (the
+        // align-frame preview at its natural width) and overflows off-screen.
+        <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] grid-cols-[minmax(0,1fr)] overflow-hidden">
 
             // ── Header ────────────────────────────────────────────────
-            <div class="flex items-center gap-y-sp-2 gap-x-sp-4 flex-wrap min-h-[48px] py-sp-2 pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:gap-x-3 max-[759px]:gap-y-[6px] max-[759px]:text-sm max-[374px]:pl-12 max-[374px]:text-sm">
-                <span class="inline-block py-1 px-sp-3 rounded-[14px] text-sm border border-current max-[374px]:text-[10px] max-[374px]:py-[3px] max-[374px]:px-2"
-                      style=move || format!(
-                    "color:{};",
-                    stage_color(&polar.with(|p| p.stage.clone()))
-                )>
-                    {move || {
-                        let s = polar.with(|p| p.stage.clone());
-                        if s.is_empty() { tr().pa_idle.to_string() } else { s }
-                    }}
-                </span>
-                <span class=HEADER_LABEL>{move || tr().pa_enabled_label}</span>
-                <span>{move || if polar.with(|p| p.enabled) { tr().yes } else { tr().no }}</span>
-                <span class="flex-1 text-text overflow-hidden whitespace-nowrap text-ellipsis"
-                      title=move || polar.with(|p| p.message.clone())>
-                    {move || polar.with(|p| p.message.clone())}
-                </span>
+            <div class="flex items-center gap-x-sp-4 gap-y-sp-2 flex-wrap min-h-[48px] py-sp-2 pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:gap-x-3 max-[759px]:text-sm max-[374px]:pl-12">
+                <div class="shrink-0">
+                    {junos_header(POLAR_LOGO_SVG, move || tr().tab_polar_align.to_string())}
+                </div>
+                <span class="w-px self-stretch bg-border-strong my-1 max-[759px]:hidden"></span>
+
+                // Status cluster — flows and truncates independently of the brand.
+                <div class="flex items-center gap-x-sp-4 gap-y-[6px] flex-wrap flex-1 min-w-0 max-[759px]:gap-x-3 max-[759px]:basis-full">
+                    <span class="inline-block py-1 px-sp-3 rounded-[14px] text-sm border border-current min-w-0 max-w-full max-[374px]:text-[10px] max-[374px]:py-[3px] max-[374px]:px-2"
+                          style=move || format!(
+                        "color:{};",
+                        stage_color(&polar.with(|p| p.stage.clone()))
+                    )>
+                        {move || {
+                            let s = polar.with(|p| p.stage.clone());
+                            if s.is_empty() { tr().pa_idle.to_string() } else { s }
+                        }}
+                    </span>
+                    <span class=format!("{HEADER_LABEL} shrink-0")>{move || tr().pa_enabled_label}</span>
+                    <span class="shrink-0">{move || if polar.with(|p| p.enabled) { tr().yes } else { tr().no }}</span>
+                    <span class="flex-1 min-w-0 basis-[120px] text-text overflow-hidden whitespace-nowrap text-ellipsis"
+                          title=move || polar.with(|p| p.message.clone())>
+                        {move || polar.with(|p| p.message.clone())}
+                    </span>
+                </div>
             </div>
 
             // ── Body ──────────────────────────────────────────────────
-            <div class="overflow-y-auto py-4 px-5 flex flex-col gap-sp-4 max-[759px]:p-sp-3">
+            // `min-h-0` is required: this is the `1fr` grid track, whose default
+            // `min-height:auto` would otherwise let it grow to its content's
+            // height and overflow the fixed-height root (clipped by the root's
+            // `overflow-hidden`) instead of scrolling here.
+            <div class="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden py-4 px-5 flex flex-col gap-sp-4 max-[759px]:p-sp-3">
 
                 // Live frame from KStars align module (uuid "+A" — every
                 // capture, solve, and refresh iteration streams a JPEG).
                 <Show when=move || polar.with(|p| p.preview_url.is_some())>
-                    <div class="flex justify-center items-center bg-bg-input-deep border border-border-base p-sp-2 min-h-[220px] max-h-[440px]">
+                    <div class="shrink-0 min-w-0 flex justify-center items-center bg-bg-input-deep border border-border-base p-sp-2 min-h-[220px] max-h-[440px]">
                         <img
                             src=move || polar.with(|p|
                                 p.preview_url.clone().unwrap_or_default())
@@ -451,10 +477,8 @@ pub fn PolarAlignTab(
 
                 // Intro section
                 <Show when=intro_visible>
-                    <fieldset class=SECTION_CLS>
-                        <legend class="px-sp-1 text-sm text-text-blue">
-                            {move || tr().pa_pre_start}
-                        </legend>
+                    {section_card("text-accent-cyan", "bg-accent-cyan", ICON_SETUP,
+                        move || tr().pa_pre_start, view! {
                         <div class="flex flex-col gap-sp-2">
 
                             // Direction
@@ -540,15 +564,13 @@ pub fn PolarAlignTab(
                                 </button>
                             </div>
                         </div>
-                    </fieldset>
+                    })}
                 </Show>
 
                 // Progress section
                 <Show when=progress_visible>
-                    <fieldset class=SECTION_CLS>
-                        <legend class="px-sp-1 text-sm text-text-blue">
-                            {move || tr().pa_capture_solve}
-                        </legend>
+                    {section_card("text-accent-violet", "bg-accent-violet", ICON_CAPTURE,
+                        move || tr().pa_capture_solve, view! {
                         <div class="text-text-dim py-2">
                             {move || {
                                 let m = polar.with(|p| p.message.clone());
@@ -560,15 +582,13 @@ pub fn PolarAlignTab(
                                 {move || tr().pa_abort_short}
                             </button>
                         </div>
-                    </fieldset>
+                    })}
                 </Show>
 
                 // Manual rotation section
                 <Show when=rotation_visible>
-                    <fieldset class=SECTION_CLS>
-                        <legend class="px-sp-1 text-sm text-accent-amber">
-                            {move || tr().pa_manual_rotation_section}
-                        </legend>
+                    {section_card("text-accent-amber", "bg-accent-amber", ICON_ROTATE,
+                        move || tr().pa_manual_rotation_section, view! {
                         <div class="text-text-dim pt-1 pb-[10px]">
                             {move || tr().pa_manual_rotate_instr}
                         </div>
@@ -577,15 +597,13 @@ pub fn PolarAlignTab(
                                 {move || tr().pa_rotation_done}
                             </button>
                         </div>
-                    </fieldset>
+                    })}
                 </Show>
 
                 // Refresh section
                 <Show when=refresh_visible>
-                    <fieldset class=SECTION_CLS>
-                        <legend class="px-sp-1 text-sm text-accent-green">
-                            {move || tr().pa_refresh_correct}
-                        </legend>
+                    {section_card("text-accent-green", "bg-accent-green", ICON_ADJUST,
+                        move || tr().pa_refresh_correct, view! {
                         <div class="flex flex-wrap gap-sp-4 items-start">
                             <div class="flex flex-col gap-sp-2 flex-[1_1_260px] min-w-0">
 
@@ -741,11 +759,11 @@ pub fn PolarAlignTab(
                                 {move || correction_svg(polar.with(|p| p.vector.clone()))}
                             </div>
                         </div>
-                    </fieldset>
+                    })}
                 </Show>
 
                 // Footer — always-visible global Stop
-                <div class="flex gap-sp-2">
+                <div class="shrink-0 flex gap-sp-2">
                     <button on:click=on_stop_footer class=BTN_STOP>
                         {move || tr().pa_stop_btn_long}
                     </button>

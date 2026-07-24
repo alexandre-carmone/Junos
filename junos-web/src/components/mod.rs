@@ -1,3 +1,4 @@
+pub mod branding;
 pub mod coord_input;
 pub mod devices;
 pub mod dialog_modal;
