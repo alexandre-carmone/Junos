@@ -802,6 +802,8 @@
   "sched_jobs_section": "Tâches",
   "sched_refresh_jobs": "Actualiser la liste",
   "sched_no_jobs": "Aucune tâche planifiée. Ajoutez-en une ci-dessous ou chargez un planning dans KStars.",
+  "sched_log_title": "Journal",
+  "sched_log_empty": "Journal vide. Démarrez le planificateur pour suivre l'activité.",
   "sched_col_name": "Nom",
   "sched_col_coords": "Coords",
   "sched_col_state": "État",

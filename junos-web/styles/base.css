@@ -475,6 +475,31 @@ textarea:focus-visible,
     font-weight: 600;
 }
 
+/* ── Scheduler log panel ──────────────────────────────────────────── */
+.sched-log-wrap { padding: var(--sp-2) 16px 0; }
+.sched-log-panel {
+    margin: 0;
+    max-height: 240px;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: var(--sp-2) var(--sp-3);
+    background: color-mix(in srgb, var(--bg-input-deep) 80%, black);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.sched-log-empty {
+    padding: var(--sp-3);
+    color: var(--text-faint);
+    font-size: var(--fs-sm);
+    font-style: italic;
+}
+
 .sched-table-wrap { overflow-x: auto; padding: 0 16px 12px; }
 .sched-table {
     width: 100%;

@@ -135,7 +135,7 @@ translations! {
     sched_title, sched_job_singular, sched_job_plural, sched_status_idle, sched_status_running, sched_status_paused, sched_status_unknown, sched_status_startup, sched_status_shutdown, sched_status_loading, sched_status_aborted, sched_state_idle,
     sched_state_evaluating, sched_state_scheduled, sched_state_active, sched_state_error, sched_state_aborted, sched_state_invalid, sched_state_complete, sched_stage_slewing,
     sched_stage_slew_done, sched_stage_focusing, sched_stage_focus_done, sched_stage_aligning, sched_stage_align_done, sched_stage_reslewing, sched_stage_reslew_done, sched_stage_post_focus,
-    sched_stage_post_focus_done, sched_stage_guiding, sched_stage_guide_done, sched_stage_capturing, sched_stage_done, sched_jobs_section, sched_refresh_jobs, sched_no_jobs,
+    sched_stage_post_focus_done, sched_stage_guiding, sched_stage_guide_done, sched_stage_capturing, sched_stage_done, sched_jobs_section, sched_refresh_jobs, sched_no_jobs, sched_log_title, sched_log_empty,
     sched_col_name, sched_col_coords, sched_col_state, sched_col_alt, sched_col_progress, sched_col_start, sched_col_end, sched_remove_job,
     sched_btn_start, sched_btn_stop, sched_settings_section, sched_greedy, sched_remember_progress, sched_reschedule_error, sched_scripts_section, sched_startup_legend,
     sched_enable_startup, sched_pre_script, sched_post_script, sched_shutdown_legend, sched_enable_shutdown, sched_apply_scripts, sched_add_job_section, sched_target_label,

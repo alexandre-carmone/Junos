@@ -18,6 +18,7 @@ mod labels;
 mod mapping;
 mod view_add_job;
 mod view_jobs;
+mod view_log;
 mod view_scripts;
 mod view_settings;
 
@@ -32,6 +33,7 @@ use labels::{dec_to_dms, ra_to_hms, sanitize_name};
 use mapping::{resolve_completion_condition, resolve_startup_condition};
 use view_add_job::SchedulerAddJobSection;
 use view_jobs::{SchedulerJobsSection, SchedulerToolbar};
+use view_log::SchedulerLogSection;
 use view_scripts::SchedulerScriptsSection;
 use view_settings::SchedulerSettingsSection;
 
@@ -384,9 +386,10 @@ pub fn SchedulerTab(
                 on_open_settings=Arc::clone(&on_open_settings)
             />
 
-            // ── Body: jobs list only ─────────────────────────────────────────
+            // ── Body: jobs list + live scheduler log ─────────────────────────
             <div class="sched-body">
                 <SchedulerJobsSection scheduler=scheduler send=Arc::clone(&send) lang=lang />
+                <SchedulerLogSection scheduler=scheduler lang=lang />
             </div>
 
             // ── Add-job overlay ──────────────────────────────────────────────

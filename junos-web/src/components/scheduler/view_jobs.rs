@@ -83,8 +83,14 @@ pub fn SchedulerToolbar(
             </div>
             <div class="sched-log-row">
                 {move || {
-                    let log = scheduler.get().log;
-                    if log.is_empty() { String::new() } else { log }
+                    // Show only the latest line here; the full log lives in the
+                    // scrollable panel below the jobs table.
+                    scheduler.get().log
+                        .lines()
+                        .rev()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or("")
+                        .to_string()
                 }}
             </div>
         </div>

@@ -712,6 +712,8 @@
   "sched_jobs_section": "Jobs",
   "sched_refresh_jobs": "Refresh job list",
   "sched_no_jobs": "No scheduled jobs. Add one below or load a schedule in KStars.",
+  "sched_log_title": "Scheduler log",
+  "sched_log_empty": "No log yet. Start the scheduler to see activity here.",
   "sched_col_name": "Name",
   "sched_col_coords": "Coords",
   "sched_col_state": "State",
