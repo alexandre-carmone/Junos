@@ -25,7 +25,7 @@ use leptos::prelude::*;
 use catalog::CatalogData;
 use dso_catalog::DsoCatalogData;
 use components::sky::dso_index::DsoIndex;
-use components::sky::{FramingState, MosaicPlannerState};
+use components::sky::{FramingState, MosaicParams, MosaicPlannerState};
 use components::dialog_modal::DialogModal;
 use components::tab_bar::TabBar;
 use components::tab_wheel::TabWheel;
@@ -285,12 +285,14 @@ fn App() -> impl IntoView {
     let mosaic_planner = MosaicPlannerState {
         planning:       RwSignal::new(false),
         picking_center: RwSignal::new(false),
-        center:         RwSignal::new(None::<(f64, f64)>),
-        grid_w:         RwSignal::new(3u32),
-        grid_h:         RwSignal::new(3u32),
-        overlap:        RwSignal::new(10.0f64),
-        pa:             RwSignal::new(0.0f64),
-        target:         RwSignal::new(String::new()),
+        params: MosaicParams {
+            center:  RwSignal::new(None::<(f64, f64)>),
+            target:  RwSignal::new(String::new()),
+            grid_w:  RwSignal::new(3u32),
+            grid_h:  RwSignal::new(3u32),
+            overlap: RwSignal::new(10.0f64),
+            pa:      RwSignal::new(0.0f64),
+        },
         dir:            RwSignal::new(String::new()),
     };
     provide_context(MosaicPlannerCtx(mosaic_planner));
@@ -298,13 +300,15 @@ fn App() -> impl IntoView {
     // ── Framing assistant shared state ────────────────────────────────────
     // Grid defaults to 1×1: framing is single-target first, mosaic on demand.
     let framing = FramingState {
-        open:    RwSignal::new(false),
-        center:  RwSignal::new(None::<(f64, f64)>),
-        target:  RwSignal::new(String::new()),
-        grid_w:  RwSignal::new(1u32),
-        grid_h:  RwSignal::new(1u32),
-        overlap: RwSignal::new(10.0f64),
-        pa:      RwSignal::new(0.0f64),
+        open: RwSignal::new(false),
+        params: MosaicParams {
+            center:  RwSignal::new(None::<(f64, f64)>),
+            target:  RwSignal::new(String::new()),
+            grid_w:  RwSignal::new(1u32),
+            grid_h:  RwSignal::new(1u32),
+            overlap: RwSignal::new(10.0f64),
+            pa:      RwSignal::new(0.0f64),
+        },
     };
     provide_context(FramingCtx(framing));
 

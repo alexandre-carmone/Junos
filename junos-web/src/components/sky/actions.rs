@@ -103,9 +103,9 @@ pub fn SkyContextMenu(
         if let Some((_sx, _sy, ra_deg, dec_deg)) = ctx_menu.get_untracked() {
             if let Some(fctx) = framing_ctx {
                 // Menu coords are already of-date (JNow), same epoch as
-                // `FramingState::center` — no conversion.
-                fctx.0.center.set(Some((ra_deg, dec_deg)));
-                fctx.0.target.set(String::new());
+                // `FramingState::params.center` — no conversion.
+                fctx.0.params.center.set(Some((ra_deg, dec_deg)));
+                fctx.0.params.target.set(String::new());
                 fctx.0.open.set(true);
             }
             set_ctx_menu.set(None);

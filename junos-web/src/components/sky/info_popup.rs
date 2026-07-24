@@ -35,7 +35,7 @@ pub fn SkyInfoPopup(
                 let decm = ((dec_abs - decd as f64) * 60.0) as u32;
                 let decs = ((dec_abs - decd as f64) * 3600.0 - decm as f64 * 60.0) as u32;
                 // Catalog → J2000 (hit carries JNow; show both).
-                let j2000 = JNow::new(hit.ra_jnow_deg, hit.dec_jnow_deg).to_j2000(j_date_now());
+                let j2000 = JNow::new(hit.ra_jnow_deg, hit.dec_jnow_deg).to_j2000(crate::astro::now_jd());
                 let j_ra_h = j2000.ra_deg / 15.0;
                 let j_rah = j_ra_h as u32;
                 let j_ram = ((j_ra_h - j_rah as f64) * 60.0) as u32;
@@ -114,18 +114,4 @@ fn kind_label_for(kind: &HitKind, lang: Lang) -> &'static str {
             DsoType::GalaxyCluster    => s.kind_galaxy_cluster,
         },
     }
-}
-
-fn j_date_now() -> f64 {
-    // Thin wrapper so the popup doesn't need to thread the render's jd.
-    use crate::astro;
-    let d = js_sys::Date::new_0();
-    astro::julian_date(
-        d.get_utc_full_year() as i32,
-        d.get_utc_month() + 1,
-        d.get_utc_date(),
-        d.get_utc_hours(),
-        d.get_utc_minutes(),
-        d.get_utc_seconds() as f64 + d.get_utc_milliseconds() as f64 / 1000.0,
-    )
 }

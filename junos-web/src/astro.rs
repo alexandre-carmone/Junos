@@ -24,6 +24,19 @@ pub fn julian_date(y: i32, m: u32, d: u32, h: u32, min: u32, s: f64) -> f64 {
         - 1524.5
 }
 
+/// Julian Date for the current instant (UTC), read from the JS clock.
+pub fn now_jd() -> f64 {
+    let now = js_sys::Date::new_0();
+    julian_date(
+        now.get_utc_full_year() as i32,
+        now.get_utc_month() + 1,
+        now.get_utc_date(),
+        now.get_utc_hours(),
+        now.get_utc_minutes(),
+        now.get_utc_seconds() as f64 + now.get_utc_milliseconds() as f64 / 1000.0,
+    )
+}
+
 /// Greenwich Mean Sidereal Time in degrees from Julian Date.
 pub fn gmst_deg(jd: f64) -> f64 {
     let t = (jd - 2451545.0) / 36525.0;

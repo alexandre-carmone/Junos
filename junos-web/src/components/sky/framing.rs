@@ -14,8 +14,8 @@
 //!
 //! Two invariants worth knowing before editing:
 //!
-//! * **Epoch.** `FramingState::center` is of-date (JNow), matching both the
-//!   right-click menu's coords and `MosaicPlannerState::center`. It is
+//! * **Epoch.** `FramingState::params.center` is of-date (JNow), matching both
+//!   the right-click menu's coords and `MosaicPlannerState::params.center`. It is
 //!   converted to J2000 only to query the cache (tiles are ICRS/J2000) and
 //!   from J2000 only when accepting a catalog search hit.
 //! * **Geometry.** Tile layout comes from `super::derive_planner_mosaic_plan`
@@ -44,16 +44,11 @@ use super::object_search::search_objects;
 use super::utils::event_target_value;
 
 /// Signals for the Framing Assistant overlay (shared via App-level context).
+/// `params.center` is epoch-of-date (JNow) — see module docs.
 #[derive(Clone, Copy)]
 pub struct FramingState {
     pub open: RwSignal<bool>,
-    /// (ra_deg, dec_deg), epoch-of-date (JNow) — see module docs.
-    pub center: RwSignal<Option<(f64, f64)>>,
-    pub target: RwSignal<String>,
-    pub grid_w: RwSignal<u32>,
-    pub grid_h: RwSignal<u32>,
-    pub overlap: RwSignal<f64>,
-    pub pa: RwSignal<f64>,
+    pub params: super::MosaicParams,
 }
 
 /// The composited preview: an offscreen canvas holding every cached tile that
@@ -85,18 +80,6 @@ const COMPOSITE_PX: u32 = 1536;
 /// pixel scale and tile count sane for very wide zones.
 const FOV_MIN_DEG: f64 = 0.02;
 const FOV_MAX_DEG: f64 = 40.0;
-
-fn now_jd() -> f64 {
-    let now = js_sys::Date::new_0();
-    astro::julian_date(
-        now.get_utc_full_year() as i32,
-        now.get_utc_month() + 1,
-        now.get_utc_date(),
-        now.get_utc_hours(),
-        now.get_utc_minutes(),
-        now.get_utc_seconds() as f64 + now.get_utc_milliseconds() as f64 / 1000.0,
-    )
-}
 
 /// A square offscreen canvas and its 2D context, for compositing tiles before
 /// they're blitted onto the visible preview canvas.
@@ -231,14 +214,14 @@ pub fn FramingOverlay(
             let Some((fov_w_deg, fov_h_deg)) = tile_fov.get_untracked() else { return };
             let Some(plan) = super::derive_planner_mosaic_plan(
                 true,
-                framing.center.get_untracked(),
+                framing.params.center.get_untracked(),
                 focal_length_mm.get_untracked(),
                 &camera.get_untracked(),
-                framing.grid_w.get_untracked(),
-                framing.grid_h.get_untracked(),
-                framing.overlap.get_untracked(),
-                framing.pa.get_untracked(),
-                &framing.target.get_untracked(),
+                framing.params.grid_w.get_untracked(),
+                framing.params.grid_h.get_untracked(),
+                framing.params.overlap.get_untracked(),
+                framing.params.pa.get_untracked(),
+                &framing.params.target.get_untracked(),
             ) else {
                 return;
             };
@@ -283,11 +266,11 @@ pub fn FramingOverlay(
     // Redraw on any state change (no refetch).
     Effect::new(move |_| {
         framing.open.track();
-        framing.center.track();
-        framing.grid_w.track();
-        framing.grid_h.track();
-        framing.overlap.track();
-        framing.pa.track();
+        framing.params.center.track();
+        framing.params.grid_w.track();
+        framing.params.grid_h.track();
+        framing.params.overlap.track();
+        framing.params.pa.track();
         image_epoch.track();
         tile_fov.track();
         // The canvas only exists once `open` is true and <Show> has mounted it.
@@ -311,21 +294,21 @@ pub fn FramingOverlay(
     let load_preview = {
         let pinned = Rc::clone(&pinned);
         move || {
-            let Some((ra_jnow, dec_jnow)) = framing.center.get_untracked() else { return };
+            let Some((ra_jnow, dec_jnow)) = framing.params.center.get_untracked() else { return };
             let Some((fov_w_deg, fov_h_deg)) = tile_fov.get_untracked() else { return };
             let (span_w_am, span_h_am) = mosaic_span_am(
                 fov_w_deg,
                 fov_h_deg,
-                framing.grid_w.get_untracked(),
-                framing.grid_h.get_untracked(),
-                framing.overlap.get_untracked(),
+                framing.params.grid_w.get_untracked(),
+                framing.params.grid_h.get_untracked(),
+                framing.params.overlap.get_untracked(),
             );
             // Use the bbox diagonal so any position angle stays covered.
             let diag_deg = (span_w_am * span_w_am + span_h_am * span_h_am).sqrt() / 60.0;
             let fov = (diag_deg * PREVIEW_MARGIN).clamp(FOV_MIN_DEG, FOV_MAX_DEG);
 
             // The cache is J2000/ICRS; the zone centre is of-date.
-            let jd = now_jd();
+            let jd = astro::now_jd();
             let j2000 = JNow::new(ra_jnow, dec_jnow).to_j2000(jd);
             let cos_dec = j2000.dec_deg.to_radians().cos();
 
@@ -477,7 +460,7 @@ pub fn FramingOverlay(
         let dx = ev.client_x() as f64 - lx;
         let dy = ev.client_y() as f64 - ly;
         drag_last.set_value((ev.client_x() as f64, ev.client_y() as f64));
-        let Some((ra, dec)) = framing.center.get_untracked() else { return };
+        let Some((ra, dec)) = framing.params.center.get_untracked() else { return };
         let px_per_deg = pinned_for_drag.with_value(|p| {
             let borrow = p.borrow();
             let pin = borrow.as_ref()?;
@@ -495,7 +478,7 @@ pub fn FramingOverlay(
         let cos_dec = dec.to_radians().cos().abs().max(0.01);
         let new_ra = ra - (dx / px_per_deg) / cos_dec;
         let new_dec = (dec - dy / px_per_deg).clamp(-89.9, 89.9);
-        framing.center.set(Some((new_ra.rem_euclid(360.0), new_dec)));
+        framing.params.center.set(Some((new_ra.rem_euclid(360.0), new_dec)));
     };
     let on_mouseup = move |_: web_sys::MouseEvent| dragging.set_value(false);
 
@@ -503,19 +486,14 @@ pub fn FramingOverlay(
     let close = move || framing.open.set(false);
 
     let can_send = Signal::derive(move || {
-        framing.center.get().is_some() && tile_fov.get().is_some()
+        framing.params.center.get().is_some() && tile_fov.get().is_some()
     });
 
     let send_to_planner = move |_: web_sys::MouseEvent| {
         let Some(planner) = planner_ctx.map(|c| c.0) else { return };
-        let Some(center) = framing.center.get_untracked() else { return };
-        // Same epoch (JNow) on both sides — no conversion.
-        planner.center.set(Some(center));
-        planner.target.set(framing.target.get_untracked());
-        planner.grid_w.set(framing.grid_w.get_untracked());
-        planner.grid_h.set(framing.grid_h.get_untracked());
-        planner.overlap.set(framing.overlap.get_untracked());
-        planner.pa.set(framing.pa.get_untracked());
+        if framing.params.center.get_untracked().is_none() { return; }
+        // Same geometry, same epoch (JNow) on both sides — copy verbatim.
+        planner.params.copy_from(&framing.params);
         planner.planning.set(true);
         framing.open.set(false);
         if let Some(ctx) = tab_ctx {
@@ -596,9 +574,9 @@ pub fn FramingOverlay(
                                             class="py-[3px] px-sp-2 cursor-pointer text-text border-b border-[#1a1a2a] text-[12px]"
                                             on:click=move |_| {
                                                 // Catalog is J2000; our centre is of-date.
-                                                let jnow = J2000::new(ra_j2000, dec_j2000).to_jnow(now_jd());
-                                                framing.center.set(Some((jnow.ra_deg, jnow.dec_deg)));
-                                                framing.target.set(label.clone());
+                                                let jnow = J2000::new(ra_j2000, dec_j2000).to_jnow(astro::now_jd());
+                                                framing.params.center.set(Some((jnow.ra_deg, jnow.dec_deg)));
+                                                framing.params.target.set(label.clone());
                                                 search_text.set(String::new());
                                                 load_preview.with_value(|f| f());
                                             }
@@ -617,8 +595,8 @@ pub fn FramingOverlay(
                             <div class=SIDEBAR_ROW>
                                 <span class=LABEL>{move || tr().framing_target}</span>
                                 <input type="text" class=NUM_INPUT
-                                    prop:value=move || framing.target.get()
-                                    on:input=move |e| framing.target.set(event_target_value(&e))
+                                    prop:value=move || framing.params.target.get()
+                                    on:input=move |e| framing.params.target.set(event_target_value(&e))
                                 />
                             </div>
 
@@ -626,11 +604,11 @@ pub fn FramingOverlay(
                             <div class=SIDEBAR_ROW>
                                 <span class=LABEL>{move || tr().framing_ra}</span>
                                 <input type="number" step="0.0001" class=NUM_INPUT
-                                    prop:value=move || framing.center.get().map(|(ra, _)| format!("{:.4}", ra / 15.0)).unwrap_or_default()
+                                    prop:value=move || framing.params.center.get().map(|(ra, _)| format!("{:.4}", ra / 15.0)).unwrap_or_default()
                                     on:input=move |e| {
                                         if let Ok(h) = event_target_value(&e).parse::<f64>() {
-                                            let dec = framing.center.get_untracked().map(|(_, d)| d).unwrap_or(0.0);
-                                            framing.center.set(Some(((h * 15.0).rem_euclid(360.0), dec)));
+                                            let dec = framing.params.center.get_untracked().map(|(_, d)| d).unwrap_or(0.0);
+                                            framing.params.center.set(Some(((h * 15.0).rem_euclid(360.0), dec)));
                                         }
                                     }
                                 />
@@ -638,11 +616,11 @@ pub fn FramingOverlay(
                             <div class=SIDEBAR_ROW>
                                 <span class=LABEL>{move || tr().framing_dec}</span>
                                 <input type="number" step="0.0001" class=NUM_INPUT
-                                    prop:value=move || framing.center.get().map(|(_, dec)| format!("{:.4}", dec)).unwrap_or_default()
+                                    prop:value=move || framing.params.center.get().map(|(_, dec)| format!("{:.4}", dec)).unwrap_or_default()
                                     on:input=move |e| {
                                         if let Ok(d) = event_target_value(&e).parse::<f64>() {
-                                            let ra = framing.center.get_untracked().map(|(r, _)| r).unwrap_or(0.0);
-                                            framing.center.set(Some((ra, d.clamp(-89.9, 89.9))));
+                                            let ra = framing.params.center.get_untracked().map(|(r, _)| r).unwrap_or(0.0);
+                                            framing.params.center.set(Some((ra, d.clamp(-89.9, 89.9))));
                                         }
                                     }
                                 />
@@ -653,19 +631,19 @@ pub fn FramingOverlay(
                                 <span class=LABEL>{move || tr().framing_grid}</span>
                                 <div class="flex gap-1 items-center">
                                     <input type="number" min="1" max="10" class="input input--sm font-mono w-[42px] text-center"
-                                        prop:value=move || framing.grid_w.get().to_string()
+                                        prop:value=move || framing.params.grid_w.get().to_string()
                                         on:input=move |e| {
                                             if let Ok(n) = event_target_value(&e).parse::<u32>() {
-                                                framing.grid_w.set(n.clamp(1, 10));
+                                                framing.params.grid_w.set(n.clamp(1, 10));
                                             }
                                         }
                                     />
                                     <span class="text-text-faint">{"\u{00d7}"}</span>
                                     <input type="number" min="1" max="10" class="input input--sm font-mono w-[42px] text-center"
-                                        prop:value=move || framing.grid_h.get().to_string()
+                                        prop:value=move || framing.params.grid_h.get().to_string()
                                         on:input=move |e| {
                                             if let Ok(n) = event_target_value(&e).parse::<u32>() {
-                                                framing.grid_h.set(n.clamp(1, 10));
+                                                framing.params.grid_h.set(n.clamp(1, 10));
                                             }
                                         }
                                     />
@@ -674,10 +652,10 @@ pub fn FramingOverlay(
                             <div class=SIDEBAR_ROW>
                                 <span class=LABEL>{move || tr().framing_overlap}</span>
                                 <input type="number" min="0" max="50" class=NUM_INPUT
-                                    prop:value=move || format!("{:.0}", framing.overlap.get())
+                                    prop:value=move || format!("{:.0}", framing.params.overlap.get())
                                     on:input=move |e| {
                                         if let Ok(n) = event_target_value(&e).parse::<f64>() {
-                                            framing.overlap.set(n.clamp(0.0, 50.0));
+                                            framing.params.overlap.set(n.clamp(0.0, 50.0));
                                         }
                                     }
                                 />
@@ -685,10 +663,10 @@ pub fn FramingOverlay(
                             <div class=SIDEBAR_ROW>
                                 <span class=LABEL>{move || tr().framing_pa}</span>
                                 <input type="number" step="1" class=NUM_INPUT
-                                    prop:value=move || format!("{:.0}", framing.pa.get())
+                                    prop:value=move || format!("{:.0}", framing.params.pa.get())
                                     on:input=move |e| {
                                         if let Ok(n) = event_target_value(&e).parse::<f64>() {
-                                            framing.pa.set(n);
+                                            framing.params.pa.set(n);
                                         }
                                     }
                                 />
@@ -698,9 +676,9 @@ pub fn FramingOverlay(
                             {move || tile_fov.get().map(|(fw, fh)| {
                                 let (sw_am, sh_am) = mosaic_span_am(
                                     fw, fh,
-                                    framing.grid_w.get(),
-                                    framing.grid_h.get(),
-                                    framing.overlap.get(),
+                                    framing.params.grid_w.get(),
+                                    framing.params.grid_h.get(),
+                                    framing.params.overlap.get(),
                                 );
                                 view! {
                                     <div class="text-text-muted text-[11px] flex flex-col gap-[2px] pt-sp-1 border-t border-border-base">
@@ -725,7 +703,7 @@ pub fn FramingOverlay(
 
                             <button
                                 class="btn btn--sm btn-ghost text-text-blue"
-                                disabled=move || framing.center.get().is_none() || loading.get() || tile_fov.get().is_none()
+                                disabled=move || framing.params.center.get().is_none() || loading.get() || tile_fov.get().is_none()
                                 on:click=move |_| load_preview.with_value(|f| f())
                             >
                                 {move || tr().framing_reload}

@@ -87,17 +87,38 @@ pub struct SkyToggles {
     pub scheduler_jobs:     RwSignal<bool>,
 }
 
+/// The mosaic geometry shared verbatim by the Framing Assistant and the Mosaic
+/// planner tab: centre, target name, grid, overlap, position angle. Both
+/// `FramingState` and `MosaicPlannerState` embed one of these so the framing →
+/// planner hand-off is a single `copy_from` instead of a field-by-field copy.
+#[derive(Clone, Copy)]
+pub struct MosaicParams {
+    pub center:  RwSignal<Option<(f64, f64)>>,  // (ra_deg, dec_deg), JNow
+    pub target:  RwSignal<String>,
+    pub grid_w:  RwSignal<u32>,
+    pub grid_h:  RwSignal<u32>,
+    pub overlap: RwSignal<f64>,
+    pub pa:      RwSignal<f64>,
+}
+
+impl MosaicParams {
+    /// Copy every value out of `src` into these signals (framing → planner).
+    pub fn copy_from(&self, src: &MosaicParams) {
+        self.center.set(src.center.get_untracked());
+        self.target.set(src.target.get_untracked());
+        self.grid_w.set(src.grid_w.get_untracked());
+        self.grid_h.set(src.grid_h.get_untracked());
+        self.overlap.set(src.overlap.get_untracked());
+        self.pa.set(src.pa.get_untracked());
+    }
+}
+
 /// Signals for the in-app Mosaic Planner (shared via App-level context).
 #[derive(Clone, Copy)]
 pub struct MosaicPlannerState {
     pub planning:       RwSignal<bool>,
     pub picking_center: RwSignal<bool>,  // true while "Pick on Sky" is active
-    pub center:         RwSignal<Option<(f64, f64)>>,  // (ra_deg, dec_deg)
-    pub grid_w:         RwSignal<u32>,
-    pub grid_h:         RwSignal<u32>,
-    pub overlap:        RwSignal<f64>,
-    pub pa:             RwSignal<f64>,
-    pub target:         RwSignal<String>,
+    pub params:         MosaicParams,
     pub dir:            RwSignal<String>,
 }
 
@@ -688,12 +709,12 @@ pub fn SkyTab(
         let cur_lang = lang.get();
         let _frame = tick.get();
         let mosaic_planning_on = planner.planning.get();
-        let mosaic_center_val = planner.center.get();
-        let mosaic_gw = planner.grid_w.get();
-        let mosaic_gh = planner.grid_h.get();
-        let mosaic_overlap_pct = planner.overlap.get();
-        let mosaic_pa_val = planner.pa.get();
-        let mosaic_target_name = planner.target.get();
+        let mosaic_center_val = planner.params.center.get();
+        let mosaic_gw = planner.params.grid_w.get();
+        let mosaic_gh = planner.params.grid_h.get();
+        let mosaic_overlap_pct = planner.params.overlap.get();
+        let mosaic_pa_val = planner.params.pa.get();
+        let mosaic_target_name = planner.params.target.get();
 
         let cat = catalog_sig.get_untracked();
         let dso_cat = dso_catalog_sig.get_untracked();
@@ -1115,12 +1136,7 @@ pub fn SkyTab(
             let fov = fov_radius.get_untracked();
             let alt_s = center_alt.get_untracked();
             let az_s  = center_az.get_untracked();
-            let now = js_sys::Date::new_0();
-            let jd_now = astro::julian_date(
-                now.get_utc_full_year() as i32, now.get_utc_month() + 1, now.get_utc_date(),
-                now.get_utc_hours(), now.get_utc_minutes(),
-                now.get_utc_seconds() as f64 + now.get_utc_milliseconds() as f64 / 1000.0,
-            );
+            let jd_now = astro::now_jd();
             let gmst = astro::gmst_deg(jd_now);
             let lst  = astro::lst_deg(gmst, s.longitude);
             // Map CSS pixels → normalised disk coords → Alt/Az → RA/Dec
@@ -1132,7 +1148,7 @@ pub fn SkyTab(
                 let ny = -(cy - h / 2.0) / (h.min(w) / 2.0);
                 let (alt, az) = astro::unproject(nx, ny, alt_s, az_s, fov);
                 let (ra_deg, dec_deg) = astro::altaz_to_eq(alt, az, lst, s.latitude);
-                planner.center.set(Some((ra_deg, dec_deg)));
+                planner.params.center.set(Some((ra_deg, dec_deg)));
                 planner.picking_center.set(false);
                 planner.planning.set(true);
                 if let Some(ctx) = tab_ctx {

@@ -9,11 +9,11 @@
 use std::sync::Arc;
 
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 
 use crate::astro;
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
 use crate::components::sequence_editor::{SeqFrame, SequenceEditor, build_esq_xml};
+use crate::components::sky::utils::{event_target_checked, event_target_value, event_target_value_select};
 use crate::i18n::{Lang, t};
 use crate::ws::SendCmd;
 use crate::{ActiveTabCtx, MosaicPlannerCtx, Tab};
@@ -21,6 +21,46 @@ use crate::{ActiveTabCtx, MosaicPlannerCtx, Tab};
 fn send_cmd(send: &SendCmd, type_str: &str, payload: serde_json::Value) {
     let msg = serde_json::json!({"type": type_str, "payload": payload}).to_string();
     send(msg);
+}
+
+/// A labelled checkbox bound to a bool signal (startup flags, twilight/horizon).
+fn flag_toggle(
+    sig: RwSignal<bool>,
+    label: impl Fn() -> &'static str + Copy + Send + 'static,
+) -> impl IntoView {
+    view! {
+        <label class="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox"
+                   prop:checked=move || sig.get()
+                   on:change=move |ev| sig.set(event_target_checked(&ev)) />
+            {move || label()}
+        </label>
+    }
+}
+
+/// A checkbox that gates a numeric input with a `°` suffix (alt / moon
+/// constraints). `enabled` toggles the constraint; `value` holds its text.
+fn constraint_row(
+    enabled: RwSignal<bool>,
+    value: RwSignal<String>,
+    label: impl Fn() -> &'static str + Copy + Send + 'static,
+    min: &'static str,
+    max: &'static str,
+) -> impl IntoView {
+    view! {
+        <label class="text-sm flex items-center gap-1">
+            <input type="checkbox"
+                   prop:checked=move || enabled.get()
+                   on:change=move |ev| enabled.set(event_target_checked(&ev)) />
+            {move || label()}
+            <input type="number" min=min max=max step="1"
+                   class="input input--sm font-mono w-[56px]"
+                   prop:disabled=move || !enabled.get()
+                   prop:value=move || value.get()
+                   on:input=move |ev| value.set(event_target_value(&ev)) />
+            {"\u{00b0}"}
+        </label>
+    }
 }
 
 fn sanitize_name(name: &str) -> String {
@@ -108,17 +148,17 @@ pub fn MosaicTab(
     };
 
     let on_send = move |_| {
-        let Some((center_ra_deg, center_dec_deg)) = planner.center.get_untracked() else {
+        let Some((center_ra_deg, center_dec_deg)) = planner.params.center.get_untracked() else {
             form_error.set(Some(t(lang.get_untracked()).mosaic_err_no_center.to_string()));
             return;
         };
         let cam = camera.get_untracked();
         let fl  = focal_length_mm.get_untracked();
-        let gw  = planner.grid_w.get_untracked();
-        let gh  = planner.grid_h.get_untracked();
-        let overlap = planner.overlap.get_untracked();
-        let pa  = planner.pa.get_untracked();
-        let target = planner.target.get_untracked();
+        let gw  = planner.params.grid_w.get_untracked();
+        let gh  = planner.params.grid_h.get_untracked();
+        let overlap = planner.params.overlap.get_untracked();
+        let pa  = planner.params.pa.get_untracked();
+        let target = planner.params.target.get_untracked();
         let dir = planner.dir.get_untracked();
         let home = home_dir.get_untracked();
 
@@ -147,19 +187,11 @@ pub fn MosaicTab(
         let fov_h = astro::fov_deg(fl_mm, sh as f64, px_um);
         let fov_w_arcmin = fov_w * 60.0;
         let fov_h_arcmin = fov_h * 60.0;
-        // planner.center is JNow, but KStars' parseMosaicCSV reads the CSV
+        // planner.params.center is JNow, but KStars' parseMosaicCSV reads the CSV
         // RA/DEC into RA0/Dec0 (J2000) and precesses it forward again. Convert
         // JNow→J2000 here so the round-trip lands on the intended position
         // instead of a doubly-precessed one (~0.4° off in 2026).
-        let now = js_sys::Date::new_0();
-        let jd = astro::julian_date(
-            now.get_utc_full_year() as i32,
-            now.get_utc_month() + 1,
-            now.get_utc_date(),
-            now.get_utc_hours(),
-            now.get_utc_minutes(),
-            now.get_utc_seconds() as f64 + now.get_utc_milliseconds() as f64 / 1000.0,
-        );
+        let jd = astro::now_jd();
         let j2000 = crate::coords::JNow::new(center_ra_deg, center_dec_deg).to_j2000(jd);
         let center_ra_hms  = fmt_hms(j2000.ra_deg);
         let center_dec_dms = fmt_dms(j2000.dec_deg);
@@ -311,12 +343,8 @@ pub fn MosaicTab(
                         <input type="text"
                                class=format!("{INPUT_BASE} flex-1")
                                placeholder=move || tr().mosaic_target_placeholder
-                               prop:value=move || planner.target.get()
-                               on:input=move |ev| {
-                                   let v = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                   planner.target.set(v);
-                               } />
+                               prop:value=move || planner.params.target.get()
+                               on:input=move |ev| planner.params.target.set(event_target_value(&ev)) />
                     </label>
                     <button
                         class=move || {
@@ -331,7 +359,7 @@ pub fn MosaicTab(
                         {move || {
                             if planner.picking_center.get() {
                                 tr().mosaic_picking
-                            } else if planner.center.get().is_some() {
+                            } else if planner.params.center.get().is_some() {
                                 tr().mosaic_repick
                             } else {
                                 tr().mosaic_pick_sky
@@ -341,7 +369,7 @@ pub fn MosaicTab(
                 </div>
 
                 // Center display
-                {move || planner.center.get().map(|(ra_deg, dec_deg)| {
+                {move || planner.params.center.get().map(|(ra_deg, dec_deg)| {
                     let ra_h = ra_deg / 15.0;
                     let rah  = ra_h as u32;
                     let ram  = ((ra_h - rah as f64) * 60.0).abs() as u32;
@@ -363,23 +391,19 @@ pub fn MosaicTab(
                         {move || tr().mosaic_grid_label}
                         <input type="number" min="1" max="10"
                                class=format!("{INPUT_BASE} w-[44px] text-center")
-                               prop:value=move || planner.grid_w.get().to_string()
+                               prop:value=move || planner.params.grid_w.get().to_string()
                                on:input=move |ev| {
-                                   let v = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                   if let Ok(n) = v.parse::<u32>() {
-                                       planner.grid_w.set(n.clamp(1, 10));
+                                   if let Ok(n) = event_target_value(&ev).parse::<u32>() {
+                                       planner.params.grid_w.set(n.clamp(1, 10));
                                    }
                                } />
                         {"\u{00d7}"}
                         <input type="number" min="1" max="10"
                                class=format!("{INPUT_BASE} w-[44px] text-center")
-                               prop:value=move || planner.grid_h.get().to_string()
+                               prop:value=move || planner.params.grid_h.get().to_string()
                                on:input=move |ev| {
-                                   let v = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                   if let Ok(n) = v.parse::<u32>() {
-                                       planner.grid_h.set(n.clamp(1, 10));
+                                   if let Ok(n) = event_target_value(&ev).parse::<u32>() {
+                                       planner.params.grid_h.set(n.clamp(1, 10));
                                    }
                                } />
                     </label>
@@ -387,12 +411,10 @@ pub fn MosaicTab(
                         {move || tr().mosaic_overlap_label}
                         <input type="number" min="0" max="50" step="1"
                                class=format!("{INPUT_BASE} w-[50px]")
-                               prop:value=move || format!("{:.0}", planner.overlap.get())
+                               prop:value=move || format!("{:.0}", planner.params.overlap.get())
                                on:input=move |ev| {
-                                   let v = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                   if let Ok(n) = v.parse::<f64>() {
-                                       planner.overlap.set(n.clamp(0.0, 50.0));
+                                   if let Ok(n) = event_target_value(&ev).parse::<f64>() {
+                                       planner.params.overlap.set(n.clamp(0.0, 50.0));
                                    }
                                } />
                         {"%"}
@@ -401,12 +423,10 @@ pub fn MosaicTab(
                         {move || tr().mosaic_pa_label}
                         <input type="number" min="-180" max="180" step="1"
                                class=format!("{INPUT_BASE} w-[56px]")
-                               prop:value=move || format!("{:.0}", planner.pa.get())
+                               prop:value=move || format!("{:.0}", planner.params.pa.get())
                                on:input=move |ev| {
-                                   let v = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                   if let Ok(n) = v.parse::<f64>() {
-                                       planner.pa.set(n);
+                                   if let Ok(n) = event_target_value(&ev).parse::<f64>() {
+                                       planner.params.pa.set(n);
                                    }
                                } />
                         {"\u{00b0}"}
@@ -428,8 +448,8 @@ pub fn MosaicTab(
                     {
                         let fw = astro::fov_deg(fl_mm, sw as f64, px_um) * 60.0;
                         let fh = astro::fov_deg(fl_mm, sh as f64, px_um) * 60.0;
-                        let gw = planner.grid_w.get() as f64;
-                        let gh = planner.grid_h.get() as f64;
+                        let gw = planner.params.grid_w.get() as f64;
+                        let gh = planner.params.grid_h.get() as f64;
                         view! {
                             <div class="flex flex-col gap-[2px] py-[2px]">
                                 <div class="text-sm text-[#557]">
@@ -462,46 +482,10 @@ pub fn MosaicTab(
 
                 // Startup flags
                 <div class="flex gap-4 flex-wrap text-sm pt-1">
-                    <label class="flex items-center gap-1 cursor-pointer">
-                        <input type="checkbox"
-                               prop:checked=move || step_track.get()
-                               on:change=move |ev| {
-                                   let c = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
-                                   step_track.set(c);
-                               } />
-                        {move || tr().mosaic_step_track}
-                    </label>
-                    <label class="flex items-center gap-1 cursor-pointer">
-                        <input type="checkbox"
-                               prop:checked=move || step_focus.get()
-                               on:change=move |ev| {
-                                   let c = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
-                                   step_focus.set(c);
-                               } />
-                        {move || tr().mosaic_step_focus}
-                    </label>
-                    <label class="flex items-center gap-1 cursor-pointer">
-                        <input type="checkbox"
-                               prop:checked=move || step_align.get()
-                               on:change=move |ev| {
-                                   let c = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
-                                   step_align.set(c);
-                               } />
-                        {move || tr().mosaic_step_align}
-                    </label>
-                    <label class="flex items-center gap-1 cursor-pointer">
-                        <input type="checkbox"
-                               prop:checked=move || step_guide.get()
-                               on:change=move |ev| {
-                                   let c = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
-                                   step_guide.set(c);
-                               } />
-                        {move || tr().mosaic_step_guide}
-                    </label>
+                    {flag_toggle(step_track, move || tr().mosaic_step_track)}
+                    {flag_toggle(step_focus, move || tr().mosaic_step_focus)}
+                    {flag_toggle(step_align, move || tr().mosaic_step_align)}
+                    {flag_toggle(step_guide, move || tr().mosaic_step_guide)}
                 </div>
             </div>
 
@@ -515,11 +499,7 @@ pub fn MosaicTab(
                         {move || tr().sched_start_when}
                         <select class=format!("{INPUT_BASE} w-[140px]")
                                 prop:value=move || startup_cond.get()
-                                on:change=move |ev| {
-                                    let v = ev.target().unwrap()
-                                        .unchecked_into::<web_sys::HtmlSelectElement>().value();
-                                    startup_cond.set(v);
-                                }>
+                                on:change=move |ev| startup_cond.set(event_target_value_select(&ev))>
                             <option value="asap" selected=move || startup_cond.get() == "asap">
                                 {move || tr().sched_cond_asap}
                             </option>
@@ -532,11 +512,7 @@ pub fn MosaicTab(
                         <input type="datetime-local"
                                class=format!("{INPUT_BASE} w-[200px]")
                                prop:value=move || startup_at.get()
-                               on:input=move |ev| {
-                                   let v = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                   startup_at.set(v);
-                               } />
+                               on:input=move |ev| startup_at.set(event_target_value(&ev)) />
                     })}
                 </div>
 
@@ -546,11 +522,7 @@ pub fn MosaicTab(
                         {move || tr().sched_complete_when}
                         <select class=format!("{INPUT_BASE} w-[160px]")
                                 prop:value=move || completion_cond.get()
-                                on:change=move |ev| {
-                                    let v = ev.target().unwrap()
-                                        .unchecked_into::<web_sys::HtmlSelectElement>().value();
-                                    completion_cond.set(v);
-                                }>
+                                on:change=move |ev| completion_cond.set(event_target_value_select(&ev))>
                             <option value="sequence" selected=move || completion_cond.get() == "sequence">
                                 {move || tr().sched_cond_seq}
                             </option>
@@ -567,11 +539,7 @@ pub fn MosaicTab(
                             <input type="number" min="1" step="1"
                                    class=format!("{INPUT_BASE} w-[60px]")
                                    prop:value=move || completion_count.get()
-                                   on:input=move |ev| {
-                                       let v = ev.target().unwrap()
-                                           .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                       completion_count.set(v);
-                                   } />
+                                   on:input=move |ev| completion_count.set(event_target_value(&ev)) />
                             {move || tr().sched_times_unit}
                         </label>
                     })}
@@ -579,90 +547,15 @@ pub fn MosaicTab(
 
                 // Constraints
                 <div class="flex items-center gap-[14px] flex-wrap">
-                    <label class=PARAM_LABEL>
-                        <input type="checkbox"
-                               prop:checked=move || use_alt.get()
-                               on:change=move |ev| {
-                                   let c = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
-                                   use_alt.set(c);
-                               } />
-                        {move || tr().sched_min_alt}
-                        <input type="number" min="0" max="90" step="1"
-                               class=format!("{INPUT_BASE} w-[56px]")
-                               prop:disabled=move || !use_alt.get()
-                               prop:value=move || min_alt.get()
-                               on:input=move |ev| {
-                                   let v = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                   min_alt.set(v);
-                               } />
-                        {"\u{00b0}"}
-                    </label>
-                    <label class=PARAM_LABEL>
-                        <input type="checkbox"
-                               prop:checked=move || use_moon.get()
-                               on:change=move |ev| {
-                                   let c = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
-                                   use_moon.set(c);
-                               } />
-                        {move || tr().sched_moon_sep}
-                        <input type="number" min="0" max="180" step="1"
-                               class=format!("{INPUT_BASE} w-[56px]")
-                               prop:disabled=move || !use_moon.get()
-                               prop:value=move || min_moon.get()
-                               on:input=move |ev| {
-                                   let v = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                   min_moon.set(v);
-                               } />
-                        {"\u{00b0}"}
-                    </label>
-                    <label class=PARAM_LABEL>
-                        <input type="checkbox"
-                               prop:checked=move || use_moon_alt.get()
-                               on:change=move |ev| {
-                                   let c = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
-                                   use_moon_alt.set(c);
-                               } />
-                        {move || tr().sched_moon_max_alt}
-                        <input type="number" min="0" max="90" step="1"
-                               class=format!("{INPUT_BASE} w-[56px]")
-                               prop:disabled=move || !use_moon_alt.get()
-                               prop:value=move || moon_max_alt.get()
-                               on:input=move |ev| {
-                                   let v = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().value();
-                                   moon_max_alt.set(v);
-                               } />
-                        {"\u{00b0}"}
-                    </label>
+                    {constraint_row(use_alt,      min_alt,      move || tr().sched_min_alt,      "0", "90")}
+                    {constraint_row(use_moon,     min_moon,     move || tr().sched_moon_sep,     "0", "180")}
+                    {constraint_row(use_moon_alt, moon_max_alt, move || tr().sched_moon_max_alt, "0", "90")}
                 </div>
 
                 // Constraints (toggles)
                 <div class="flex items-center gap-4 flex-wrap text-sm">
-                    <label class="flex items-center gap-1 cursor-pointer">
-                        <input type="checkbox"
-                               prop:checked=move || twilight.get()
-                               on:change=move |ev| {
-                                   let c = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
-                                   twilight.set(c);
-                               } />
-                        {move || tr().sched_twilight}
-                    </label>
-                    <label class="flex items-center gap-1 cursor-pointer">
-                        <input type="checkbox"
-                               prop:checked=move || horizon.get()
-                               on:change=move |ev| {
-                                   let c = ev.target().unwrap()
-                                       .unchecked_into::<web_sys::HtmlInputElement>().checked();
-                                   horizon.set(c);
-                               } />
-                        {move || tr().sched_horizon}
-                    </label>
+                    {flag_toggle(twilight, move || tr().sched_twilight)}
+                    {flag_toggle(horizon, move || tr().sched_horizon)}
                 </div>
             </div>
 
@@ -675,11 +568,7 @@ pub fn MosaicTab(
                            class=format!("{INPUT_BASE} flex-1")
                            placeholder=move || tr().mosaic_output_placeholder
                            prop:value=move || planner.dir.get()
-                           on:input=move |ev| {
-                               let v = ev.target().unwrap()
-                                   .unchecked_into::<web_sys::HtmlInputElement>().value();
-                               planner.dir.set(v);
-                           } />
+                           on:input=move |ev| planner.dir.set(event_target_value(&ev)) />
                 </label>
             </div>
 
@@ -692,7 +581,7 @@ pub fn MosaicTab(
             <div class="flex justify-end pb-6">
                 <button
                     class="btn btn-primary px-7 font-bold"
-                    disabled=move || planner.center.get().is_none()
+                    disabled=move || planner.params.center.get().is_none()
                     on:click=on_send>
                     {move || tr().mosaic_send_scheduler}
                 </button>

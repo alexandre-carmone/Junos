@@ -46,3 +46,12 @@ pub fn event_target_checked(ev: &leptos::ev::Event) -> bool {
         .unchecked_into::<web_sys::HtmlInputElement>()
         .checked()
 }
+
+/// Like [`event_target_value`] but for `<select>` elements.
+pub fn event_target_value_select(ev: &leptos::ev::Event) -> String {
+    use wasm_bindgen::JsCast;
+    ev.target()
+        .unwrap()
+        .unchecked_into::<web_sys::HtmlSelectElement>()
+        .value()
+}
