@@ -28,14 +28,54 @@ use tracing::warn;
 
 use crate::AppState;
 
+// ── Captures root ────────────────────────────────────────────────────────────
+
+/// An error carrying both a status and a human-readable reason, so the Files
+/// tab can show *why* a listing failed instead of a bare `HTTP 500`.
+pub struct ApiErr {
+    pub status: StatusCode,
+    pub reason: String,
+}
+
+impl From<StatusCode> for ApiErr {
+    fn from(status: StatusCode) -> Self {
+        let reason = status.canonical_reason().unwrap_or("error").to_string();
+        ApiErr { status, reason }
+    }
+}
+
+impl IntoResponse for ApiErr {
+    fn into_response(self) -> Response {
+        (self.status, Json(json!({ "error": self.reason }))).into_response()
+    }
+}
+
+/// Canonical captures root, or a described error.
+///
+/// This is the single place the sandbox root is resolved. A missing or
+/// unreadable root used to surface as a silent `500` with no log line and no
+/// body — the Files tab just rendered empty. Now the reason (path + io error)
+/// is logged and handed back to the caller.
+fn captures_root(state: &AppState) -> Result<PathBuf, ApiErr> {
+    let root = state.config.resolved_captures_dir();
+    root.canonicalize().map_err(|e| {
+        let reason = format!(
+            "captures directory {} is not accessible: {e} \
+             (set --captures-dir / CAPTURES_DIR to an existing readable folder)",
+            root.display()
+        );
+        warn!("{reason}");
+        ApiErr { status: StatusCode::INTERNAL_SERVER_ERROR, reason }
+    })
+}
+
 // ── Helpers for write operations ─────────────────────────────────────────────
 
 /// Resolve a relative path for a write-operation target that may not exist
 /// yet (e.g. the new name for a rename). Validates the *parent* is inside
 /// the sandbox, and the joined target would also be inside.
 fn resolve_new(state: &AppState, rel: &str) -> Result<(PathBuf, PathBuf), StatusCode> {
-    let root = state.config.resolved_captures_dir();
-    let root = root.canonicalize().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let root = captures_root(state).map_err(|e| e.status)?;
     let trimmed = rel.trim_start_matches(['/', '\\']);
     if trimmed.is_empty() { return Err(StatusCode::BAD_REQUEST); }
     let joined = root.join(trimmed);
@@ -96,8 +136,7 @@ fn default_min_stars() -> usize { 3 }
 /// Returns `(canonical_root, canonical_target)` on success. The caller decides
 /// whether the target needs to exist (we run `canonicalize` only when it does).
 fn resolve(state: &AppState, rel: &str) -> Result<(PathBuf, PathBuf), StatusCode> {
-    let root = state.config.resolved_captures_dir();
-    let root = root.canonicalize().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let root = captures_root(state).map_err(|e| e.status)?;
 
     // Strip leading slashes so absolute-looking inputs are treated as relative.
     let trimmed = rel.trim_start_matches(['/', '\\']);
@@ -149,9 +188,19 @@ struct DirEntry {
 pub async fn list(
     State(state): State<AppState>,
     Query(q): Query<PathQ>,
-) -> Result<Json<Value>, StatusCode> {
-    let (root, target) = resolve(&state, &q.path)?;
-    let read = std::fs::read_dir(&target).map_err(|_| StatusCode::NOT_FOUND)?;
+) -> Result<Json<Value>, ApiErr> {
+    let root = captures_root(&state)?;
+    let (root, target) = resolve(&state, &q.path).map_err(|s| {
+        ApiErr {
+            status: s,
+            reason: format!("{} : {}", s.canonical_reason().unwrap_or("error"), q.path),
+        }
+    }).map(|(_, t)| (root, t))?;
+
+    let read = std::fs::read_dir(&target).map_err(|e| ApiErr {
+        status: StatusCode::NOT_FOUND,
+        reason: format!("cannot read {}: {e}", target.display()),
+    })?;
 
     let mut dirs: Vec<DirEntry> = Vec::new();
     let mut files: Vec<DirEntry> = Vec::new();
@@ -991,7 +1040,7 @@ pub async fn resolve_abs(
     State(state): State<AppState>,
     Query(q): Query<ResolveQ>,
 ) -> Json<Value> {
-    let root = match state.config.resolved_captures_dir().canonicalize() {
+    let root = match captures_root(&state) {
         Ok(r) => r,
         Err(_) => return Json(json!({ "in_sandbox": false })),
     };

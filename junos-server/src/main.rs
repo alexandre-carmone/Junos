@@ -52,6 +52,23 @@ async fn main() {
 
     info!("Serving frontend from: {}", config.dist_dir);
 
+    // Files tab sandbox. Create it when missing so a fresh install (or a
+    // service unit pointing at a folder KStars hasn't written to yet) doesn't
+    // make every /api/files request fail with an opaque 500.
+    {
+        let captures = config.resolved_captures_dir();
+        if !captures.is_dir() {
+            if let Err(e) = std::fs::create_dir_all(&captures) {
+                error!("Captures dir {} is missing and could not be created: {e} \
+                        — the Files tab will not work", captures.display());
+            }
+        }
+        match captures.canonicalize() {
+            Ok(c) => info!("Files tab captures dir: {}", c.display()),
+            Err(e) => error!("Files tab captures dir {} unusable: {e}", captures.display()),
+        }
+    }
+
     let hub = Hub::new();
     let app_manager = AppManager::new(hub.browser_tx.clone());
     app_manager.scan_existing().await;

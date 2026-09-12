@@ -122,6 +122,38 @@ in
       };
     };
 
+    user = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "alexandre";
+      description = ''
+        System user to run junos-server as. When null (the default) the unit
+        runs under a DynamicUser, which is the right choice when capturesDir
+        is a dedicated folder created for the service.
+
+        Set this when capturesDir lives on a disk owned by a real user: a
+        DynamicUser gets a random uid that cannot traverse a 0700 home or
+        removable-media mount point, and cannot write files owned by someone
+        else. `/api/files/*` then fails with an opaque 500 on every request.
+        Pointing the unit at the owning user fixes both the traversal and the
+        write side (thumbnail cache, rename, delete).
+
+        ProtectHome/ProtectSystem still apply, so this does not hand the
+        service the user's home — only the paths listed in capturesDir and
+        dsoTileDir are reachable.
+      '';
+    };
+
+    group = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "users";
+      description = ''
+        Primary group for the service. Only meaningful together with
+        services.junos-web.user; defaults to that user's own group.
+      '';
+    };
+
     capturesDir = mkOption {
       type = types.nullOr types.path;
       default = null;
@@ -227,13 +259,15 @@ in
           StateDirectoryMode = "0750";
           WorkingDirectory = "/var/lib/junos-web";
 
-          DynamicUser = true;
+          DynamicUser = cfg.user == null;
           PrivateTmp = true;
           ProtectSystem = "strict";
           ProtectHome = if anyUnderHome then "tmpfs" else true;
           NoNewPrivileges = true;
           RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
-        };
+        }
+        // optionalAttrs (cfg.user  != null) { User  = cfg.user;  }
+        // optionalAttrs (cfg.group != null) { Group = cfg.group; };
     };
 
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall (

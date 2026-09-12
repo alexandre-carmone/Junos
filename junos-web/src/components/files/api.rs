@@ -6,7 +6,20 @@ use super::utils::{is_image_ext, url_encode};
 pub(super) async fn fetch_list(path: &str) -> Result<ListReply, String> {
     let url = format!("/api/files/list?path={}", url_encode(path));
     let resp = gloo_net::http::Request::get(&url).send().await.map_err(|e| e.to_string())?;
-    if !resp.ok() { return Err(format!("HTTP {}", resp.status())); }
+    if !resp.ok() {
+        let status = resp.status();
+        // The server sends `{"error": "..."}` on failure — show that reason
+        // rather than a bare status the user can do nothing with.
+        let detail = resp
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()));
+        return Err(match detail {
+            Some(d) => format!("HTTP {status} — {d}"),
+            None => format!("HTTP {status}"),
+        });
+    }
     resp.json::<ListReply>().await.map_err(|e| e.to_string())
 }
 
