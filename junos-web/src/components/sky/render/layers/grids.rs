@@ -18,9 +18,6 @@ fn project(view: super::super::ViewParams) -> impl Fn(f64, f64) -> Option<(f64, 
 
 pub struct AltAzGridLayer;
 impl SkyLayer for AltAzGridLayer {
-    fn name(&self) -> &'static str {
-        "altaz_grid"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.grid_on
     }
@@ -85,9 +82,6 @@ impl SkyLayer for AltAzGridLayer {
 
 pub struct MeridianLayer;
 impl SkyLayer for MeridianLayer {
-    fn name(&self) -> &'static str {
-        "meridian"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.meridian_on
     }
@@ -130,9 +124,6 @@ impl SkyLayer for MeridianLayer {
 
 pub struct EqGridLayer;
 impl SkyLayer for EqGridLayer {
-    fn name(&self) -> &'static str {
-        "eq_grid"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.eq_grid_on
     }
@@ -223,9 +214,6 @@ impl SkyLayer for EqGridLayer {
 
 pub struct EclipticLayer;
 impl SkyLayer for EclipticLayer {
-    fn name(&self) -> &'static str {
-        "ecliptic"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.ecliptic_on
     }

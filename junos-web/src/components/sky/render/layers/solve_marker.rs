@@ -11,9 +11,6 @@ use crate::i18n::t;
 pub struct SolveMarkerLayer;
 
 impl SkyLayer for SolveMarkerLayer {
-    fn name(&self) -> &'static str {
-        "solve_marker"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.solve_marker_on
     }

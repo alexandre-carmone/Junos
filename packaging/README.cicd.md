@@ -83,7 +83,7 @@ nix.settings = {
 Get the public key with `attic cache info rekos-web` (or from the server). Then
 install via the flake (module + `services.junos-web.enable = true;`, see
 `flake.nix` / `nix/module.nix`) or
-`nix profile install github:alexandre-carmone/ekos-web-rust`.
+`nix profile install github:alexandre-carmone/Junos`.
 
 ### Alternative backends
 

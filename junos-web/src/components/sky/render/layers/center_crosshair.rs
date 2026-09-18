@@ -16,10 +16,6 @@ use crate::components::sky::gpu::layers::lines as gpu_lines;
 pub struct CenterCrosshairLayer;
 
 impl SkyLayer for CenterCrosshairLayer {
-    fn name(&self) -> &'static str {
-        "center_crosshair"
-    }
-
     fn prepare(&mut self, f: &mut Frame, gpu: Option<&mut GpuPrepare>) {
         if !f.mode.is_gpu() {
             return;

@@ -1,7 +1,5 @@
 //! Small DOM and data utilities used across the Imaging tab.
 
-use wasm_bindgen::JsCast;
-
 pub(super) fn default_capture_setting_value(key: &str) -> Option<serde_json::Value> {
     match key {
         // One-shot + sequence common defaults
@@ -43,18 +41,4 @@ pub(super) fn capture_reveal_path(settings: &serde_json::Value) -> Option<String
     } else {
         Some(dir.to_string())
     }
-}
-
-pub(super) fn event_target_value(ev: &web_sys::Event) -> String {
-    let Some(target) = ev.target() else { return String::new(); };
-    if let Ok(el) = target.clone().dyn_into::<web_sys::HtmlInputElement>() {
-        return el.value();
-    }
-    if let Ok(el) = target.clone().dyn_into::<web_sys::HtmlSelectElement>() {
-        return el.value();
-    }
-    if let Ok(el) = target.dyn_into::<web_sys::HtmlTextAreaElement>() {
-        return el.value();
-    }
-    String::new()
 }

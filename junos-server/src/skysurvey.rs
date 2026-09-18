@@ -4,6 +4,9 @@
 //! tangent-plane (TAN) cutout from CDS's `hips2fits` service server-side and
 //! streams the JPEG back same-origin — hips2fits does not send permissive
 //! CORS headers, so the browser cannot call it directly.
+//!
+//! Unused: the Framing Assistant now previews entirely from the offline tile
+//! cache (`dso_tiles.rs`). The route stays registered but nothing calls it.
 
 use axum::body::Bytes;
 use axum::extract::Query;

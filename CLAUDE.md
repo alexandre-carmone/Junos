@@ -17,7 +17,7 @@ Two crates:
 
 - `junos-server/`, `junos-web/` — the two workspace crates (see Architecture below).
 - `kstars/` — read-only upstream KStars C++ source, kept as the authoritative reference for the Ekos Live wire format. Never edit; grep heavily.
-- `scripts/` — Python tools for the catalogs in `junos-web/public/` and the offline tile cache. Only `prefetch_dso_tiles.py`, `feather_nebulae.py` and `gen_sky_tiles.py` are PEP-723 self-contained (`uv run scripts/x.py`); the others (`gen_dso_catalog.py`, `gen_catalog.py`, `download_nebulae.py`, `platesolve_nebulae.py`, `gen_dso_sprites.py`, `slew.py`) are plain `python3` with external deps. Prefer `uv run` where the script supports it. Several still point at the long-gone `stars-web/` tree and are effectively dead — `gen_dso_catalog.py` is the one reliable generator. The checked-in outputs are authoritative; don't regenerate them as part of unrelated code changes.
+- `scripts/` — two generators. `prefetch_dso_tiles.py` is PEP-723 self-contained (`uv run scripts/prefetch_dso_tiles.py`) and writes the offline tile cache; `gen_dso_catalog.py` is plain `python3` and writes `junos-web/public/dso.bin` from `openngc.csv`. There is **no generator for `junos.bin`** — the star catalog is checked in and authoritative. Don't regenerate outputs as part of unrelated code changes.
 - `packaging/` — Arch Linux package (`packaging/arch/`), portable tarball (`packaging/portable/`), and CI notes. `.github/workflows/` has `ci.yml` (mirrors `just check`) and `release.yml` (tag-triggered two-arch build).
 - `flake.nix` / `nix/` — Nix dev shell, packages, and the `services.junos-web` NixOS module. Already provided; don't propose adding one.
 
@@ -61,9 +61,9 @@ Workspace root `Cargo.toml` sets `default-members = ["junos-server"]`, so `cargo
 - **HTTP on `:8080`** — KStars-facing. KStars' Ekos Live client connects here.
 - **HTTPS on `:8443`** — browser-facing. iOS Safari requires TLS to expose WebGPU, so the browser must hit `https://<host>:8443`. A self-signed cert is auto-generated into `.certs/` on first run.
 
-Pass `--no-https` to skip TLS for headless/CI runs. `config.rs` (clap, env-aware) parses `--bind-addr`, `--dist-dir`, and the TLS flags.
+Pass `--no-https` to skip TLS for headless/CI runs. `config.rs` (clap, env-aware) parses `--http-addr`, `--https-addr`, `--dist-dir`, and the TLS flags.
 
-There are no unit tests — verification is manual: run KStars, enable Ekos Live, point it at `http://localhost:8080`, start an equipment profile (simulators are fine), open the browser to `https://localhost:8443` (accept the self-signed cert), click Start in Ekos, check the top status strip flips to `Ekos online` and the mount-anchored FOV reticle appears on the sky.
+`just test` runs the server-side unit tests (`cargo test -p junos-server`). `junos-web` is wasm-only — wgpu's webgpu backend does not build for the host — so its tests need a wasm runner and are not in that recipe. Everything else is verified manually: run KStars, enable Ekos Live, point it at `http://localhost:8080`, start an equipment profile (simulators are fine), open the browser to `https://localhost:8443` (accept the self-signed cert), click Start in Ekos, check the top status strip flips to `Ekos online` and the mount-anchored FOV reticle appears on the sky.
 
 ## Architecture
 
@@ -79,6 +79,7 @@ There are no unit tests — verification is manual: run KStars, enable Ekos Live
 - `files.rs` (+ `starfind.rs`) — the Files tab's backend: `/api/files/{list,meta,thumb,raw,download,rename,delete,resolve,tilt}`, FITS header parsing, thumbnailing, and a star detector used by the tilt/aberration analyzer. Sandboxed to the resolved captures dir by canonicalize checks.
 - `apps.rs` — `/api/apps/{launch,stop,state}`: spawn and monitor KStars or PHD2 on the server host.
 - `dso_tiles.rs` — serves the offline DSO tile cache at `/api/dso_tiles/*` (see "Offline DSO tiles" below).
+- `main.rs` — also serves `GET /api/config`, which reports the resolved captures dir. The frontend reads it once into `CaptureDirCtx` so the sequencer forms default to a folder the Files tab can browse.
 - `skysurvey.rs` — `/api/skysurvey`, a same-origin hips2fits proxy. Route still registered but no longer used by the framing path.
 
 There is **no protocol translation** in the server. Messages flow through opaque. All Ekos Live semantics live in the WASM client.
@@ -89,14 +90,15 @@ Leptos 0.7 CSR. Entry point `main.rs` → `App()` → tab wheel + active tab. Mo
 
 - `ws/` — the WebSocket spine (`mod.rs` owns `use_junos_ws()` and the cross-referencing Effects that derive `telescope_settings` from `scopes ∩ trains`; `store.rs` owns `DeviceStore` and `apply_ekos_event()`; `retry.rs` owns `spawn_retry_property()`, fired per device for `CCD_INFO` and `EQUATORIAL_EOD_COORD`; `types.rs` the payload structs). `ws_helpers.rs` sits alongside it.
 - `compat.rs` — flat snapshot types (`MountSnapshot`, `CameraSnapshot`, `SiteSnapshot`, `SolveSnapshot`) derived from `DeviceStore`. The sky module imports these, not `DeviceStore`.
-- `main.rs` — wires catalogs, site location, language, the Leptos contexts required by `sky/actions.rs` (`MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx`, `MosaicPlannerCtx`), and the tab shell. The top status strip (position `fixed`, `pointer-events:none`) shows WS state + mount RA/Dec + active FOV in arcmin.
+- `main.rs` — wires catalogs, site location, language, the Leptos contexts `sky/actions.rs` reads (`ServiceBusyCtx`, `SchedulerPrefillCtx`, `FramingCtx`, `MosaicPlannerCtx`), and the tab shell. Also defines `debug_log!`, a `leptos::logging::log!` that compiles out of release builds. The top status strip (position `fixed`, `pointer-events:none`) shows WS state + mount RA/Dec + active FOV in arcmin.
 - `components/tabs.rs` — the `TabContent` router (mount/dismount policy). `components/tab_wheel.rs` (mobile wheel, owns `TABS`) and `components/tab_bar.rs` (desktop strip) are the two switchers; `components/tab_wheel_icons.rs` has the per-tab icons.
 - `components/sky/` — planetarium. Dual-canvas renderer (WebGPU bottom + Canvas2D overlay, fallback to all-Canvas2D). See below.
 - `components/{mount,focus,polar_align,mosaic_tab,flat_cal,devices,profiles}.rs` and `components/{guide,imaging,files,scheduler}/` — the other tabs. Each takes only the signals it needs plus `SendCmd`; never `DeviceStore` whole.
+- `components/{branding,coord_input,dialog_modal,sequence_editor}.rs` — shared pieces, not tabs. `dialog_modal.rs` surfaces KStars' blocking `dialog_get_info` prompts.
 - `dso_tiles.rs` — offline tile index fetcher (`/api/dso_tiles/index.json`) and `DsoTileIndex::find_overlapping`, consumed by the Framing Assistant.
 - `astro.rs` / `coords.rs` / `ephemeris.rs` — equatorial↔horizontal math (Julian date, GMST/LST, precession to/from J2000, `fov_deg(focal, sensor_px, pixel_um)`), and ephemerides for solar-system bodies. Correct — reuse, do not reimplement.
-- `catalog.rs`, `dso_catalog.rs` — async fetchers for `public/junos.bin` and `public/dso.bin`. `nebulae.rs` is `#[allow(dead_code)]`: the sky map dropped the image-footprint quads, so `fetch_nebulae_index()` has no callers and `public/nebulae/` is shipped but unread.
-- `gpu.rs` + `shaders/` — WebGPU compute pipeline.
+- `catalog.rs`, `dso_catalog.rs` — async fetchers for `public/junos.bin` and `public/dso.bin`.
+- `dom.rs` — `event_target_value` / `event_target_checked`, the only two DOM-event readers; every tab uses these rather than rolling its own.
 - `i18n/` — module dir (`mod.rs` + `en.json` + `fr.json`, embedded via `include_str!`). EN default, FR selected via the `EN`/`FR` pill in the tab bar/wheel and persisted to localStorage `junos_lang`; there is no browser auto-detect. The `translations!` macro declares the schema — a key missing from one language **panics** on first use. Many unused strings; don't gratuitously prune.
 
 `SendCmd = Arc<dyn Fn(String) + Send + Sync>` — type-erased command sink. Components dispatch raw JSON strings via `send(serde_json::json!({"type":"…","payload":{…}}).to_string())`. Do not introduce a typed command enum.
@@ -105,11 +107,11 @@ Leptos 0.7 CSR. Entry point `main.rs` → `App()` → tab wheel + active tab. Mo
 
 The most fully-featured surface. Treat as stable — make targeted edits when adding overlays or interactions; don't rewrite. Structure:
 
-- `mod.rs` — `SkyTab` component, canvas/GPU setup, event loop, localStorage persistence (`sky_center_alt`, `sky_center_az`, `sky_fov_radius`, `sky_follow_mount`, `sky_focal_override`).
+- `mod.rs` — `SkyTab` component, canvas/GPU setup, event loop, localStorage persistence (`sky_center_alt`, `sky_center_az`, `sky_fov_radius`, `sky_follow_mount`, `sky_dso_mag_limit`, plus one key per render toggle).
 - `render/` — Canvas2D overlay (`mod.rs`, `layer.rs`, `params.rs`, `pipeline.rs` + one module per layer in `render/layers/`: stars, dso, grids, ground, zenith, constellation_names, center_crosshair, mount_crosshair, fov_reticle, solve_marker, slew_trail, solar_system, mosaic, scheduler_jobs, info_overlay). Draws grid, horizon, constellations (falls back from GPU), DSO labels, `render_center_fov()` and `render_mount_fov()` — the two FOV rectangles. Both call `astro::fov_deg` with `RenderParams.{fl, cam_pixel_size_um, cam_sensor_width, cam_sensor_height, rotation_deg, mount_ra_h, mount_dec_deg}`.
 - `controls.rs` — right-panel render toggles + focal length override input.
 - `search.rs` — catalog object search.
-- `actions.rs` — right-click (or 500 ms long-press) context menu with four actions: `mount_goto_rade`, goto-then-`align_solve`, Add to Scheduler (`SchedulerPrefillCtx`), and Framing assistant (`FramingCtx`). Imports `MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx` from the crate root — these newtypes live in `main.rs` and must be provided. `MosaicPlannerCtx` (also in `main.rs`) drives the Pick-on-Sky flow that hands a center off to the Mosaic tab.
+- `actions.rs` — right-click (or 500 ms long-press) context menu with four actions: `mount_goto_rade`, goto-then-`align_solve`, Add to Scheduler (`SchedulerPrefillCtx`), and Framing assistant (`FramingCtx`). Reads `ServiceBusyCtx` (to disable Goto / Goto & Align while a device is busy), `SchedulerPrefillCtx` and `FramingCtx` from the crate root — these newtypes live in `main.rs` and must be provided. `MosaicPlannerCtx` (also in `main.rs`) drives the Pick-on-Sky flow that hands a center off to the Mosaic tab.
 - `framing.rs` — the Framing Assistant modal (opened only from `actions.rs`, not a tab). See "Offline DSO tiles" below.
 - `hud.rs`, `picking.rs`, `info_popup.rs`, `object_search.rs`, `dso_index.rs`, `dso_render.rs`, `dso_shape.rs`, `solar_render.rs`, `utils.rs`, `gpu/`, `shaders/*.wgsl` — the remaining pieces.
 
@@ -197,12 +199,13 @@ left in place, unused).
 
 ## Static assets
 
-`junos-web/public/` contains binary catalogs — `junos.bin` (star catalog), `dso.bin` (deep-sky catalog), `nebulae.json` + `nebulae/` (thumbnails). Trunk copies these into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes. The Python regen tools live in `scripts/` (run with `uv run`).
+`junos-web/public/` contains two binary catalogs: `junos.bin` (stars) and `dso.bin` (deep-sky). Trunk copies both into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes.
 
 ## Code style observed in this codebase
 
 - French and English comments coexist; mirror the surrounding file.
 - Commands are dispatched as raw JSON strings; do not introduce a typed command enum.
 - Arc-clone `SendCmd` aggressively before moving it into closures.
-- IDE-reported `unused_variables`/`dead_code` warnings are long-standing background — don't gratuitously fix them while doing unrelated work. The `i18n` string table in particular has many unused entries that stay intentionally.
+- Both crates build warning-free; keep it that way. Where a struct mirrors a wire shape (`ws/types.rs`, `catalog.rs`, `files/types.rs`) or declares strings ahead of the UI (`i18n`), it carries one `#[allow(dead_code)]` and a comment saying why — annotate rather than prune those.
+- Debug traces go through `debug_log!`, not `leptos::logging::log!` directly, so they stay out of release builds.
 - Tab components should take only the specific signals they need plus `SendCmd`, never `DeviceStore` whole. Use Leptos context only for values that need to cross many components (see `*Ctx` newtypes in `main.rs`).

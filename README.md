@@ -19,55 +19,33 @@ Two crates make it up:
 The UI is a 12-tab shell (a wheel on phones, a side strip on desktop), in this
 order:
 
-- **Profiles** — full equipment-profile management: create, edit, start and
-  stop Ekos profiles, optical trains, scopes, per-module train assignment,
-  driver search, local/remote INDI mode, PHD2 and web-manager flags. Works
-  *before* Ekos is online, so this is where a session begins.
-- **Sky** — a WebGPU planetarium. Stars and deep-sky objects from local
-  catalogs, constellation figures and names, alt/az and equatorial grids,
-  meridian, ecliptic and zenith markers, solar-system bodies, a
-  mount-anchored FOV reticle, slew trail, plate-solve marker, and overlays
-  for scheduler jobs and mosaic tiles. Object search (English and French
-  names), a click-to-inspect popup, a time-shift panel, and render toggles
-  with a magnitude limit and per-type DSO filters. Drag to pan, scroll or
-  pinch to zoom. Right-click (or long-press) anywhere for **Goto**,
-  **Goto & Align**, **Add to Scheduler**, or the **Framing Assistant**.
-- **Mount** — RA/Dec in both JNow and J2000, Az/Alt, hour angle, LST, pier
-  side. Goto/sync by coordinates or target name, park/unpark/abort, tracking,
-  slew-rate selection, a meridian-flip section, and a plate-solve section
-  (capture & solve, load a FITS, solver parameters, solved position angle and
-  pixel scale).
-- **Focus** — start/abort/capture/loop, manual in/out stepping, live focus
-  frame with star overlay and crosshair, an **HFR v-curve chart**, the full
-  settings pane (algorithm, star detection, curve fit, tolerance, step size,
-  backlash, SEP profile), and an **Aberration Inspector** for tilt and field
-  curvature.
-- **Imaging** — camera and cooling status, all exposure settings
-  (exposure, gain, offset, binning, format, filter, target, directory), a
-  capture **sequence queue** with progress, and a live preview with
-  fullscreen pan and pinch-zoom.
-- **Files** — browse the captures folder from the browser: thumbnails,
-  breadcrumbs, sorting and filtering, a FITS header panel, rename and
-  delete, plate-solve-and-slew-to-this-framing, and a **LiveStacker** panel
-  (align + stack, sigma clipping, SNR, frame count).
-- **Polar Align** — the Ekos polar alignment assistant: start/stop, refresh,
-  direction and rotation angle, manual-slew mode, and azimuth/altitude error
-  readout with correction guidance.
-- **Guide** — start/stop/capture/loop, guider selection (Internal, PHD2,
-  LinGuider), the live guide frame, a **drift timeline** plot and a
-  **target scatter** plot with accuracy radius, full calibration and guiding
-  settings, and a log export.
-- **Scheduler** — the job queue with start/stop, plus a **visual job builder**
-  with an inline sequence editor that writes the `.esq` file for you. Accepts
-  targets handed over from the Sky tab.
-- **Mosaic** — mosaic planner: grid size, overlap, position angle, computed
-  tile and total FOV, per-tile capture steps, and **Send to Scheduler**, which
-  imports every tile as a job. Its center can be set by **Pick on Sky**.
-- **Flat Cal** — dust-cap park/unpark, flat-panel on/off and brightness, and
-  the ADU optimizer (target ADU, tolerance, exposure bounds).
-- **Devices** — a complete **INDI control panel in the browser**: every
-  property of every connected device, grouped by INDI group, with typed
-  editors for numbers, text, switches and lights, plus the INDI message log.
+- **Profiles** — create, edit, start and stop Ekos equipment profiles,
+  optical trains and scopes. Works before Ekos is online, so this is where a
+  session begins.
+- **Sky** — a WebGPU planetarium: stars, deep-sky objects, constellations,
+  grids, solar-system bodies, and a mount-anchored FOV reticle. Drag to pan,
+  scroll or pinch to zoom. Right-click anywhere for **Goto**,
+  **Goto & Align**, **Add to Scheduler** or the **Framing Assistant**.
+- **Mount** — coordinates in JNow and J2000, goto/sync, park, tracking,
+  slew rate, meridian flip, and plate solving.
+- **Focus** — autofocus with a live HFR v-curve, manual stepping, the full
+  settings pane, and an **Aberration Inspector** for tilt and field curvature.
+- **Imaging** — camera and cooling status, all exposure settings, a capture
+  **sequence queue**, and a live preview with pan and pinch-zoom.
+- **Files** — browse the captures folder: thumbnails, FITS headers, rename
+  and delete, solve-and-slew-to-this-framing, and a **LiveStacker**.
+- **Polar Align** — the Ekos polar alignment assistant, with azimuth and
+  altitude error readout and correction guidance.
+- **Guide** — start/stop guiding on any backend (Internal, PHD2, LinGuider),
+  with a drift timeline, a target scatter plot, and the full settings pane.
+- **Scheduler** — the job queue, plus a visual job builder that writes the
+  `.esq` sequence file for you.
+- **Mosaic** — plan a mosaic (grid, overlap, position angle) and **Send to
+  Scheduler** to import every tile as a job. Its center can be picked on the
+  sky map.
+- **Flat Cal** — dust cap, flat panel, and the ADU optimizer.
+- **Devices** — a full **INDI control panel in the browser**: every property
+  of every connected device, plus the INDI message log.
 
 The interface is available in **English and French** (toggle in the tab
 wheel/strip).
@@ -313,8 +291,8 @@ KStars or PHD2 on the host (`/api/apps/*`).
 - **`junos-server/`** — the Axum/Tokio relay and local HTTP APIs.
 - **`junos-web/`** — the Leptos + WebGPU browser app. Binary star and
   deep-sky catalogs live in `junos-web/public/`.
-- **`scripts/`** — Python tools that generate the catalogs and the offline
-  DSO tile cache.
+- **`scripts/`** — `gen_dso_catalog.py` builds the deep-sky catalog;
+  `prefetch_dso_tiles.py` downloads the offline DSO tile cache.
 - **`packaging/`** — Arch Linux package, portable tarball, and CI notes.
 - **`nix/`**, **`flake.nix`** — dev shell, packages, and the NixOS module.
 - **`justfile`**, **`Dockerfile`** — build entry points.
@@ -325,7 +303,8 @@ KStars or PHD2 on the host (`/api/apps/*`).
 ## Packaging & CI
 
 - [`.github/workflows/ci.yml`](.github/workflows/ci.yml) typechecks both
-  crates on every push and pull request (the same thing `just check` does).
+  crates and runs the server tests on every push and pull request
+  (`just check` plus `just test`).
 - [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the
   portable tarball and the Arch package for x86_64 and aarch64 — natively on
   both, no emulation — and attaches them to a GitHub Release. Trigger it by
@@ -360,14 +339,9 @@ projects. In particular:
   KStars itself; Junos is only a relay and a UI.
 
 - **[Stellarium](https://stellarium.org/)** (Stellarium team,
-  GPL-2.0-or-later) — the planetarium ships imagery and data sourced
-  from the Stellarium GitHub repository:
-  - **Nebulae textures** in `junos-web/public/nebulae/` are derived
-    from Stellarium's `nebulae/default/` texture set
-    (see `scripts/download_nebulae.py`).
-  - **Constellation stick figures** are built from Stellarium's
-    `skycultures/modern_st` sky culture
-    (see `scripts/gen_catalog.py`).
+  GPL-2.0-or-later) — the **constellation stick figures** baked into
+  `junos-web/public/junos.bin` are built from Stellarium's
+  `skycultures/modern_st` sky culture.
 
   Stellarium is licensed under the GNU General Public License v2 or
   later. The redistributed assets remain under that license; see

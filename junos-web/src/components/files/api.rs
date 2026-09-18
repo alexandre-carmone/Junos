@@ -1,3 +1,5 @@
+//! Files tab: typed wrappers around the server's `/api/files/*` endpoints.
+
 use serde_json::json;
 
 use super::types::{FileMeta, ListReply, ResolveReply};

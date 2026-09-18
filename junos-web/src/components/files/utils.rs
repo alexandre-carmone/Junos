@@ -1,6 +1,7 @@
+//! Files tab: shared class strings and small formatting helpers.
+
 use leptos::prelude::*;
 use serde_json::Value;
-use wasm_bindgen::JsCast;
 
 pub(super) const PANEL_CLS: &str = "panel overflow-hidden";
 pub(super) const SUMMARY_CLS: &str = "flex cursor-pointer list-none items-center justify-between gap-sp-3 border-b border-border px-sp-4 py-sp-3 text-sm font-semibold uppercase tracking-[0.06em] text-text-blue [&::-webkit-details-marker]:hidden";
@@ -47,27 +48,6 @@ pub(super) fn url_encode(s: &str) -> String {
     js_sys::encode_uri_component(s)
         .as_string()
         .unwrap_or_default()
-}
-
-pub(super) fn event_value(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|i| i.value())
-        .unwrap_or_default()
-}
-
-pub(super) fn event_select_value(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlSelectElement>().ok())
-        .map(|i| i.value())
-        .unwrap_or_default()
-}
-
-pub(super) fn event_checked(ev: &web_sys::Event) -> bool {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|i| i.checked())
-        .unwrap_or(false)
 }
 
 pub(super) fn parse_i64(v: &str, default: i64) -> i64 {

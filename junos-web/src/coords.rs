@@ -32,10 +32,6 @@ impl J2000 {
         Self { ra_deg, dec_deg }
     }
 
-    pub fn ra_hours(&self) -> f64 {
-        self.ra_deg / 15.0
-    }
-
     /// Precess from J2000 to epoch-of-date using the IAU 1976 Lieske precession model.
     pub fn to_jnow(&self, jd: f64) -> JNow {
         let (ra, dec) = precess_j2000_to_jnow(self.ra_deg, self.dec_deg, jd);
@@ -50,10 +46,6 @@ impl J2000 {
 impl JNow {
     pub fn new(ra_deg: f64, dec_deg: f64) -> Self {
         Self { ra_deg, dec_deg }
-    }
-
-    pub fn ra_hours(&self) -> f64 {
-        self.ra_deg / 15.0
     }
 
     /// Reverse-precess from epoch-of-date back to J2000.

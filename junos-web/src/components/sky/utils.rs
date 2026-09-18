@@ -1,3 +1,5 @@
+//! Small helpers shared by the sky renderers.
+
 /// Convert B-V color index to (R, G, B) in [0..1].
 pub fn bv_to_rgb(bv_raw: f32) -> (f32, f32, f32) {
     let bv = bv_raw.clamp(-0.4, 2.0);
@@ -29,29 +31,4 @@ pub fn bv_to_rgb(bv_raw: f32) -> (f32, f32, f32) {
     };
 
     (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
-}
-
-pub fn event_target_value(ev: &leptos::ev::Event) -> String {
-    use wasm_bindgen::JsCast;
-    ev.target()
-        .unwrap()
-        .unchecked_into::<web_sys::HtmlInputElement>()
-        .value()
-}
-
-pub fn event_target_checked(ev: &leptos::ev::Event) -> bool {
-    use wasm_bindgen::JsCast;
-    ev.target()
-        .unwrap()
-        .unchecked_into::<web_sys::HtmlInputElement>()
-        .checked()
-}
-
-/// Like [`event_target_value`] but for `<select>` elements.
-pub fn event_target_value_select(ev: &leptos::ev::Event) -> String {
-    use wasm_bindgen::JsCast;
-    ev.target()
-        .unwrap()
-        .unchecked_into::<web_sys::HtmlSelectElement>()
-        .value()
 }

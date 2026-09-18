@@ -28,7 +28,8 @@ use browser::{filter_button, render_dirs, render_files};
 use livestack::render_livestack_workspace;
 use preview::render_preview_modal;
 use types::{FileMenuState, FileMeta, FilterKind, ListReply, LiveStackTab, SortDir, SortKey};
-use utils::{event_select_value, event_value, parent_of, PANEL_BODY, PANEL_CLS, SELECT_CLS, SUMMARY_CLS, INPUT_CLS};
+use crate::dom::event_target_value;
+use utils::{parent_of, PANEL_BODY, PANEL_CLS, SELECT_CLS, SUMMARY_CLS, INPUT_CLS};
 
 #[component]
 pub fn FilesTab(
@@ -244,10 +245,10 @@ pub fn FilesTab(
                                     class=INPUT_CLS
                                     placeholder=move || tr().files_filter_placeholder
                                     prop:value=move || name_filter.get()
-                                    on:input=move |ev| name_filter.set(event_value(&ev))
+                                    on:input=move |ev| name_filter.set(event_target_value(&ev))
                                 />
                                 <select class=SELECT_CLS prop:value=move || sort_key.get().storage().to_string() on:change=move |ev| {
-                                    sort_key.set(match event_select_value(&ev).as_str() { "date" => SortKey::Date, "size" => SortKey::Size, _ => SortKey::Name });
+                                    sort_key.set(match event_target_value(&ev).as_str() { "date" => SortKey::Date, "size" => SortKey::Size, _ => SortKey::Name });
                                 }>
                                     <option value="name">{move || tr().files_sort_name}</option>
                                     <option value="date">{move || tr().files_sort_date}</option>

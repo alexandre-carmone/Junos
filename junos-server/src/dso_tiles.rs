@@ -3,12 +3,12 @@
 //! `GET /api/dso_tiles/index.json` lists the pre-downloaded survey cutouts;
 //! `GET /api/dso_tiles/<file>.jpg` serves one. The directory is populated
 //! ahead of time by `uv run scripts/prefetch_dso_tiles.py` and is *not* part
-//! of the repo — it holds ~1 GB of JPEGs.
+//! of the repo — it holds ~10 GB of JPEGs.
 //!
-//! This is what lets framing work with no internet: the client prefers a
-//! cached tile whenever one covers the mosaic it wants to draw, and only falls
-//! back to `skysurvey.rs`'s live hips2fits proxy otherwise. A missing cache
-//! directory is therefore not an error — the client just always falls back.
+//! This is what lets framing work with no internet: the client stamps every
+//! cached tile that overlaps the zone it wants to draw, and leaves the rest
+//! black. A missing cache directory is therefore not an error — it just
+//! serves an empty index.
 
 use axum::body::Bytes;
 use axum::extract::{Path, State};

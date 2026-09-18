@@ -13,7 +13,7 @@ use crate::i18n::{Lang, t};
 use crate::compat::SiteSnapshot;
 
 use super::object_search::{SearchHit, search_objects};
-use super::utils::event_target_value;
+use crate::dom::event_target_value;
 
 #[component]
 pub fn SkySearch(

@@ -1,23 +1,15 @@
-//! Canvas2D rendering logic for the sky map overlay.
+//! Canvas2D drawing helpers for the sky map overlay, plus the shared types
+//! (`HitItem`, `MosaicPlanRender`, `SchedulerJobRender`) the layers use.
 //!
-//! Note: this file is the legacy free-fn surface. New code lives under
-//! `params.rs` (and forthcoming `layer.rs` / `pipeline.rs`). During the
-//! pipeline refactor both coexist: layers consume the grouped param
-//! structs, while the legacy `render_overlay` keeps consuming
-//! `RenderParams`. Once every layer is migrated, this file shrinks to the
-//! shared types (`HitItem`, `MosaicPlanRender`, `SchedulerJobRender`).
+//! The per-layer draws live in `layers/`, driven by `pipeline.rs`.
 
 pub mod layer;
 pub mod layers;
 pub mod params;
 pub mod pipeline;
 
-#[allow(unused_imports)]
-pub use layer::{Catalogs, Frame, GpuPrepare, SkyLayer};
-#[allow(unused_imports)]
+pub use layer::Frame;
 pub use params::{LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
-#[allow(unused_imports)]
-pub use pipeline::RenderPipeline;
 
 use std::f64::consts::PI;
 use std::sync::Arc;
@@ -320,59 +312,6 @@ pub(super) fn render_star_names_gpu(
                     phase: None,
                 });
             }
-        }
-    }
-}
-
-/// Push hit items for named stars *without* drawing labels (GPU path when
-/// the user turned labels off but still expects stars to be clickable).
-pub(super) fn push_star_hit_items(
-    f: &mut Frame,
-    cat: &Option<Arc<CatalogData>>,
-    project: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
-) {
-    let Some(cat) = cat else { return };
-    let lst_rad = f.scene.lst.to_radians();
-    for star in cat.stars.iter() {
-        let Some(name) = star.name.as_deref() else {
-            continue;
-        };
-        if name == "Sol" {
-            continue;
-        }
-        if star.mag >= 3.0 {
-            continue;
-        }
-        let jnow = J2000::new(star.ra_deg as f64, star.dec_deg as f64).to_jnow(f.scene.jd);
-        let ha = lst_rad - jnow.ra_deg.to_radians();
-        let dec = jnow.dec_deg.to_radians();
-        let sin_dec = dec.sin();
-        let cos_dec = dec.cos();
-        let sin_alt = sin_dec * f.scene.sin_lat + cos_dec * f.scene.cos_lat * ha.cos();
-        let alt_rad = sin_alt.asin();
-        let alt = alt_rad.to_degrees();
-        if alt < -5.0 {
-            continue;
-        }
-        let cos_az =
-            (sin_dec - alt_rad.sin() * f.scene.sin_lat) / (alt_rad.cos() * f.scene.cos_lat);
-        let mut az = cos_az.clamp(-1.0, 1.0).acos().to_degrees();
-        if ha.sin() > 0.0 {
-            az = 360.0 - az;
-        }
-        if let Some((sx, sy)) = project(alt, az) {
-            f.hit_items.push(HitItem {
-                sx,
-                sy,
-                radius: 8.0,
-                kind: HitKind::Star,
-                name: name.to_string(),
-                mag: Some(star.mag),
-                ra_jnow_deg: jnow.ra_deg,
-                dec_jnow_deg: jnow.dec_deg,
-                size_arcmin: None,
-                phase: None,
-            });
         }
     }
 }

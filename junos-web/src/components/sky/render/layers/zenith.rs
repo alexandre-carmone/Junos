@@ -11,9 +11,6 @@ use crate::i18n::t;
 pub struct ZenithLayer;
 
 impl SkyLayer for ZenithLayer {
-    fn name(&self) -> &'static str {
-        "zenith"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.zenith_on
     }

@@ -1,3 +1,5 @@
+//! Scheduler tab: the job builder form.
+
 use std::sync::Arc;
 
 use leptos::prelude::*;

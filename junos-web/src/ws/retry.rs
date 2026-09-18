@@ -48,7 +48,7 @@ where
 {
     use gloo_timers::future::TimeoutFuture;
     spawn_local(async move {
-        leptos::logging::log!("[ws] retry_property start device={} prop={}", device, property);
+        debug_log!("[ws] retry_property start device={} prop={}", device, property);
         // First shot — subscribe (persistent push) + get (fast path).
         let sub = serde_json::json!({
             "type":"device_property_subscribe",
@@ -60,19 +60,19 @@ where
         }).to_string();
         send(sub.clone());
         send(get.clone());
-        leptos::logging::log!("[ws] retry_property sent subscribe+get for {}", property);
+        debug_log!("[ws] retry_property sent subscribe+get for {}", property);
 
         // Retry budget: 60 attempts × 1s = 1 minute.
         for i in 0..60 {
             TimeoutFuture::new(1_000).await;
             if done_pred(&signal.get_untracked()) {
-                leptos::logging::log!("[ws] retry_property done for {} after {}s", property, i + 1);
+                debug_log!("[ws] retry_property done for {} after {}s", property, i + 1);
                 return;
             }
             send(sub.clone());
             send(get.clone());
         }
-        leptos::logging::log!("[ws] retry_property giving up on {} after 60s", property);
+        debug_log!("[ws] retry_property giving up on {} after 60s", property);
     });
 }
 
@@ -99,19 +99,9 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             let focus_train = store.module_train_untracked("2");
 
             // ── Ekos module-level state ─────────────────────────────
-            send(r#"{"type":"get_devices","payload":{}}"#.to_string());
-            send(r#"{"type":"get_states","payload":{}}"#.to_string());
-            send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
-            send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
-            send(r#"{"type":"train_get_profiles","payload":{}}"#.to_string());
-            send(r#"{"type":"capture_get_all_settings","payload":{}}"#.to_string());
-            send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
-            send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
-            send(r#"{"type":"align_get_all_settings","payload":{}}"#.to_string());
-            send(r#"{"type":"guide_get_all_settings","payload":{}}"#.to_string());
-            send(r#"{"type":"scheduler_get_all_settings","payload":{}}"#.to_string());
-            send(r#"{"type":"scheduler_get_jobs","payload":{}}"#.to_string());
-            send(r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#.to_string());
+            for cmd in super::BOOTSTRAP_CMDS {
+                send(cmd.to_string());
+            }
 
             // ── Camera INDI properties (Capture train) ───────────────
             if let Some(cam) = cap_train.as_ref().map(|t| t.camera.as_str())

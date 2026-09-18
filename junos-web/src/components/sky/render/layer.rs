@@ -81,17 +81,11 @@ pub struct Frame<'a> {
     pub slew_trail: &'a [(f64, f64, f64)],
 }
 
-impl<'a> Frame<'a> {
-    /// Equirectangular projection: equatorial plate-carrée → screen px.
-    /// Centralises the math the legacy free fns inline as a closure.
-    pub fn project(&self, alt: f64, az: f64) -> Option<(f64, f64)> {
-        project_with(*self.view, alt, az)
-    }
-}
-
-/// Standalone project that doesn't borrow `Frame` — handy when a layer
-/// needs to also pass `&mut Frame` to a render fn while owning a project
-/// closure. Uses a copy of `ViewParams` (which is `Copy`).
+/// Equirectangular projection: equatorial plate-carrée → screen px.
+///
+/// Free fn rather than a `Frame` method so a layer can hold a project
+/// closure while still passing `&mut Frame` to a render fn. `ViewParams`
+/// is `Copy`.
 pub fn project_with(view: ViewParams, alt: f64, az: f64) -> Option<(f64, f64)> {
     crate::astro::project(alt, az, view.c_alt, view.c_az, view.fov)
         .map(|(x, y)| (view.cx + x * view.scale, view.cy - y * view.scale))
@@ -113,10 +107,9 @@ pub fn line_view(f: &Frame) -> LineView {
 /// One visual concern in the planetarium. Each impl owns both its GPU
 /// prepare (when applicable) and its Canvas2D draw, so adding/removing a
 /// layer is a single-file change.
+// Default method bodies ignore their params; overrides use them.
 #[allow(unused_variables)]
 pub trait SkyLayer {
-    fn name(&self) -> &'static str;
-
     /// Whether this layer should run this frame. Default: always on.
     /// Layers with user-facing toggles override to read `f.toggles`.
     fn enabled(&self, f: &Frame) -> bool {

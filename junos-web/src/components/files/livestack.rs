@@ -1,3 +1,5 @@
+//! Files tab: the LiveStacker panel (align + stack, with a live preview).
+
 use std::sync::Arc;
 
 use leptos::prelude::*;

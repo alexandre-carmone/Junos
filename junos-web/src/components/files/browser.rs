@@ -1,3 +1,5 @@
+//! Files tab: the directory and file listing, as cards or rows.
+
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 

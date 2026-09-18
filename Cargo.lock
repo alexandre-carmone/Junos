@@ -1564,10 +1564,8 @@ dependencies = [
  "fuzzy-matcher",
  "gloo-net 0.5.0",
  "gloo-timers",
- "gloo-utils",
  "js-sys",
  "leptos",
- "leptos_meta",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -1706,22 +1704,6 @@ dependencies = [
  "server_fn_macro",
  "syn",
  "uuid",
-]
-
-[[package]]
-name = "leptos_meta"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "448a6387e9e2cccbb756f474a54e36a39557127a3b8e46744b6ef6372b50f575"
-dependencies = [
- "futures",
- "indexmap",
- "leptos",
- "once_cell",
- "or_poisoned",
- "send_wrapper",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]

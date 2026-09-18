@@ -11,6 +11,9 @@
 
 use std::sync::Arc;
 
+/// One record of the `junos.bin` star table. Fields mirror the binary layout
+/// documented above, so some are parsed but not yet drawn.
+#[allow(dead_code)]
 pub struct CatalogStar {
     pub ra_deg: f32,
     pub dec_deg: f32,

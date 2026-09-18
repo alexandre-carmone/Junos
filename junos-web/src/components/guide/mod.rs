@@ -54,12 +54,12 @@ const GUIDE_SECTION: &str = "fieldset m-0";
 const GUIDE_DETAILS: &str = "fieldset !p-0";
 const GUIDE_LEGEND: &str = "fieldset__legend cursor-pointer";
 const GUIDE_DETAILS_BODY: &str = "py-sp-3 px-sp-4 flex flex-col gap-sp-2";
-const GUIDE_BTN_BASE: &str = "btn";
 
 mod target;
 mod timeline;
 use target::target_plot;
 use timeline::drift_plot;
+use crate::dom::{event_target_checked, event_target_value};
 
 // ---------------------------------------------------------------------------
 // Combo option lists (sourced from kstars/ekos/guide/*.ui)
@@ -102,27 +102,6 @@ fn settings_f64(settings: &serde_json::Value, key: &str) -> Option<f64> {
 
 fn settings_bool(settings: &serde_json::Value, key: &str) -> Option<bool> {
     settings.get(key).and_then(|v| v.as_bool())
-}
-
-fn event_target_value(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.value())
-        .unwrap_or_default()
-}
-
-fn event_target_select(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlSelectElement>().ok())
-        .map(|el| el.value())
-        .unwrap_or_default()
-}
-
-fn event_target_checked(ev: &web_sys::Event) -> bool {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.checked())
-        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -382,7 +361,7 @@ fn select_row(
 ) -> impl IntoView + use<> {
     let s = send.clone();
     let on_change = move |ev: web_sys::Event| {
-        dispatch_guide_setting(&s, key, serde_json::Value::String(event_target_select(&ev)));
+        dispatch_guide_setting(&s, key, serde_json::Value::String(event_target_value(&ev)));
     };
     view! {
         <div class="flex items-center gap-sp-2">

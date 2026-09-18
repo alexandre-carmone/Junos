@@ -29,6 +29,7 @@ use crate::ws::{
     DeviceInfo, IndiElement, IndiElementValue, IndiProperty, IndiRule, IndiState, SendCmd,
 };
 use crate::ws_helpers::send_device_property_set;
+use crate::dom::event_target_value;
 
 const SECTION_CLS: &str = "fieldset m-0";
 const LEGEND_CLS: &str = "fieldset__legend";
@@ -75,20 +76,6 @@ fn format_indi_number(format: &str, v: f64) -> String {
     s
 }
 
-fn event_target_value(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.value())
-        .unwrap_or_default()
-}
-
-fn event_target_select_value(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlSelectElement>().ok())
-        .map(|el| el.value())
-        .unwrap_or_default()
-}
-
 /// Subscribe (all properties) + enumerate one device, retrying until the
 /// property list lands. KStars silently drops device commands while the
 /// INDI driver isn't registered (message.cpp:1664) — same rationale as
@@ -123,7 +110,7 @@ fn spawn_device_fetch(
             send(sub.clone());
             send(get.clone());
         }
-        leptos::logging::log!("[devices] giving up enumerating {device} after 60s");
+        debug_log!("[devices] giving up enumerating {device} after 60s");
     });
 }
 
@@ -694,7 +681,7 @@ fn render_switch_property(
             }
         };
         let on_change = move |ev: web_sys::Event| {
-            let sel = event_target_select_value(&ev);
+            let sel = event_target_value(&ev);
             if !sel.is_empty() {
                 send_device_property_set(
                     &send,

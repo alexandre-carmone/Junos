@@ -92,9 +92,10 @@ sudo systemctl enable --now junos-web
 - Point KStars' Ekos Live "offline server" at `http://<host>:8090`
   (**8090**, not the upstream default 8080, which is already taken on this host).
 
-The service runs under `DynamicUser` with `WorkingDirectory=/var/lib/junos-web`;
-the self-signed TLS cert is generated into `/var/lib/junos-web/.certs/` on first
-start.
+The service runs as the `astronaut` user with
+`WorkingDirectory=/var/lib/junos-web`; the self-signed TLS cert is generated
+into `/var/lib/junos-web/.certs/` on first start. It is not a `DynamicUser` —
+a random UID cannot enter a `0700` home dir, and the Files tab needs to.
 
 ### LAN access / firewall
 
@@ -108,8 +109,8 @@ sudo firewall-cmd --reload
 
 ### Files tab root
 
-By default the Files tab is sandboxed to the working dir (`/var/lib/junos-web`).
-To expose a captures folder, add a drop-in:
+The shipped unit sandboxes the Files tab to `/home/astronaut/Pictures`. To
+point it somewhere else, add a drop-in:
 
 ```bash
 sudo systemctl edit junos-web

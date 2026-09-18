@@ -1,3 +1,5 @@
+//! Scheduler tab: the job queue table.
+
 use std::sync::Arc;
 
 use leptos::prelude::*;

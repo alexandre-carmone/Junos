@@ -22,6 +22,7 @@ use crate::compat::{CameraSnapshot, FocusSnapshot};
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{dispatch_setting, send_cmd, send_device_property_set};
+use crate::dom::event_target_value;
 
 use super::abmath::{
     calc_backfocus, calc_tilt, fit_tile_min, BackfocusMode, Sample, TiltGeometry, TiltResult,
@@ -611,13 +612,4 @@ fn summary_row(label: &'static str, value: String) -> impl IntoView {
             <span class="font-mono text-text text-right break-words min-w-0">{value}</span>
         </div>
     }
-}
-
-fn event_target_value(ev: &web_sys::Event) -> String {
-    use wasm_bindgen::JsCast;
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.value())
-        .or_else(|| ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlSelectElement>().ok()).map(|el| el.value()))
-        .unwrap_or_default()
 }

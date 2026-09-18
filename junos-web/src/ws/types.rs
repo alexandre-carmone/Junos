@@ -30,6 +30,8 @@ pub struct MountStatusData {
     pub meridian_flip_offset_deg: Option<f64>,
 }
 
+/// Mirrors the camera fields KStars sends; not all are shown by the UI.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct CameraStatusData {
     pub device: String,
@@ -178,6 +180,8 @@ pub struct FocusStatusData {
     pub plot_title: String,
 }
 
+/// One HFR reading. `t_ms` is kept so a future plot can use a time axis.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct HfrSample {
     pub t_ms: f64,
@@ -255,6 +259,7 @@ impl ScopeInfo {
 /// (message.cpp:1848). This is the authoritative site the planetarium must
 /// use so its horizontal-coordinate math matches KStars; the browser's
 /// hardcoded default (Paris) is only a fallback before this arrives.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct SiteInfo {
     pub name: String,
@@ -299,6 +304,7 @@ impl DeviceInfo {
 ///
 /// Wire shape: `kstars/indi/driverinfo.h::toJson` (~line 57). Profile slots
 /// reference drivers by `label`, not `name` — see `profileeditor.cpp:531`.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct DriverInfo {
     pub name:   String, // executable, e.g. indi_eqmod_telescope
@@ -457,6 +463,8 @@ pub struct DustCapStatusData {
 
 // Polar alignment state (PAA). See kstars/ekos/align/polaralignmentassistant.*
 // and the `new_polar_state` arms in message.cpp:1157-1263.
+/// Mirrors the `new_polar_state` vector payload; the UI reads the errors only.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct PolarVectorData {
     pub center_x:  f64,
@@ -516,28 +524,6 @@ pub struct GuideStatusData {
     pub ra_rms:    Option<f64>,
     pub de_rms:    Option<f64>,
     pub log:       String,
-}
-
-// ---------------------------------------------------------------------------
-// Stub types still referenced by sky/actions.rs via crate-level contexts.
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub enum SolveRadius {
-    #[default]
-    Large,
-    Medium,
-    Small,
-    Narrow,
-    VeryNarrow,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct AlignDefaultsData {
-    pub exposure_s: Option<f64>,
-    pub accuracy_arcsec: Option<f64>,
-    pub max_iterations: Option<u32>,
-    pub solve_radius: Option<SolveRadius>,
 }
 
 /// One entry in the plate-solve process timeline — a status transition

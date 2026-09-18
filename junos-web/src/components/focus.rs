@@ -23,6 +23,7 @@ use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
 mod abmath;
 mod aberration;
 use aberration::AberrationInspector;
+use crate::dom::{event_target_checked, event_target_value};
 
 /// A `js_sys::Array` of dash lengths for `CanvasRenderingContext2d::set_line_dash`.
 /// An empty slice resets to a solid stroke.
@@ -1061,22 +1062,3 @@ fn render_setting_row(
         </div>
     }.into_any()
 }
-
-fn event_target_checked(ev: &web_sys::Event) -> bool {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.checked())
-        .unwrap_or(false)
-}
-
-fn event_target_value(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.value())
-        .unwrap_or_default()
-}
-
-// Silence unused-import warnings if `Closure` ends up unused at a given rustc
-// incremental state — the file used to need it for raf-based renders.
-#[allow(dead_code)]
-fn _keep_closure_imported() { let _: Option<Closure<dyn FnMut()>> = None; }

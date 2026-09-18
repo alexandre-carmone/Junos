@@ -20,6 +20,9 @@ const DEG: f64 = PI / 180.0;
 const RAD: f64 = 180.0 / PI;
 
 /// Apparent position of a celestial body at a given Julian Date.
+///
+/// The full result of the ephemeris; the sky map does not read every field.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub struct BodyPos {
     pub jnow: JNow,
@@ -35,18 +38,6 @@ pub enum Planet {
 }
 
 impl Planet {
-    pub fn name(self) -> &'static str {
-        match self {
-            Planet::Mercury => "Mercury",
-            Planet::Venus   => "Venus",
-            Planet::Mars    => "Mars",
-            Planet::Jupiter => "Jupiter",
-            Planet::Saturn  => "Saturn",
-            Planet::Uranus  => "Uranus",
-            Planet::Neptune => "Neptune",
-        }
-    }
-
     pub fn name_i18n(self, lang: crate::i18n::Lang) -> &'static str {
         let s = crate::i18n::t(lang);
         match self {
@@ -60,11 +51,6 @@ impl Planet {
         }
     }
 }
-
-pub const ALL_PLANETS: [Planet; 7] = [
-    Planet::Mercury, Planet::Venus, Planet::Mars,
-    Planet::Jupiter, Planet::Saturn, Planet::Uranus, Planet::Neptune,
-];
 
 // ---------------------------------------------------------------------------
 // Helpers

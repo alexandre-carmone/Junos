@@ -1,3 +1,5 @@
+//! Mount tab: coordinates, goto/sync, parking, tracking and plate solving.
+
 use std::sync::Arc;
 
 use leptos::prelude::*;

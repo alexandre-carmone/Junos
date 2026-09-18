@@ -37,7 +37,8 @@ use fields::{
 use jobs::{job_detail_rows, job_status_color, marker_cls};
 use styles::{status_color, status_is_active, ACTION_BTN, GHOST_BTN, PANEL_BODY, PANEL_CLS, SUMMARY_CLS};
 use types::{SequenceRow, ONE_SHOT_GAIN_FIELDS};
-use util::{capture_reveal_path, default_capture_setting_value, event_target_value, initial_preview_visible};
+use crate::dom::event_target_value;
+use util::{capture_reveal_path, default_capture_setting_value, initial_preview_visible};
 
 #[component]
 pub fn ImagingTab(
@@ -350,7 +351,6 @@ pub fn ImagingTab(
                 let exp = job["Exp"].as_str().unwrap_or("—").to_string();
                 let ftype = job["Type"].as_str().unwrap_or("").to_string();
                 let filter = job["Filter"].as_str().unwrap_or("").to_string();
-                let bin = job["Bin"].as_str().unwrap_or("").to_string();
                 SequenceRow {
                     index: i,
                     completed,
@@ -358,7 +358,6 @@ pub fn ImagingTab(
                     exp,
                     ftype,
                     filter,
-                    bin,
                     status,
                 }
             })

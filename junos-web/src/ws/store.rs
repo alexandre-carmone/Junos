@@ -430,7 +430,7 @@ impl DeviceStore {
                     let trains: Vec<OpticalTrain> =
                         arr.iter().map(OpticalTrain::from_json).collect();
                     for t in &trains {
-                        leptos::logging::log!(
+                        debug_log!(
                             "[ws] train: name={:?} mount={:?} scope={:?} camera={:?}",
                             t.name,
                             t.mount,
@@ -460,7 +460,7 @@ impl DeviceStore {
             // and EQUATORIAL_EOD_COORD (mount RA/Dec fast path).
             "device_property_get" | "device_property_set" => {
                 let prop = payload["name"].as_str().unwrap_or("");
-                leptos::logging::log!(
+                debug_log!(
                     "[ws] recv {} device={} prop={}",
                     type_str,
                     payload["device"].as_str().unwrap_or("?"),
@@ -483,7 +483,7 @@ impl DeviceStore {
                     // Diagnostic: dump the raw sensor geometry so a real driver's
                     // (possibly wrong / binned) CCD_INFO can be compared against
                     // KStars' Align FOV readout.
-                    leptos::logging::log!(
+                    debug_log!(
                         "[ws] CCD_INFO device={} max_x={:?} max_y={:?} pix_x={:?} pix_y={:?} pix_any={:?}",
                         payload["device"].as_str().unwrap_or("?"),
                         max_x, max_y, pix_x, pix_y, pix_any
@@ -507,7 +507,7 @@ impl DeviceStore {
                     // per-binned-pixel scale into an effective focal length.
                     let bx = extract_indi_number(payload, "HOR_BIN").map(|v| v as u32);
                     let by = extract_indi_number(payload, "VER_BIN").map(|v| v as u32);
-                    leptos::logging::log!(
+                    debug_log!(
                         "[ws] CCD_BINNING device={} hor={:?} ver={:?}",
                         payload["device"].as_str().unwrap_or("?"),
                         bx, by
@@ -1051,7 +1051,7 @@ impl DeviceStore {
                     self.align_solution.update(|a| a.download_progress = Some(dp));
                 }
                 if let Some(sol) = payload.get("solution").and_then(|v| v.as_object()) {
-                    leptos::logging::log!(
+                    debug_log!(
                         "[ws] new_align_state solution: {}",
                         serde_json::to_string(sol).unwrap_or_default()
                     );
@@ -1088,7 +1088,7 @@ impl DeviceStore {
                     let (site_lat, site_lon) = self
                         .site
                         .with_untracked(|o| o.as_ref().map_or((None, None), |s| (Some(s.latitude), Some(s.longitude))));
-                    leptos::logging::log!(
+                    debug_log!(
                         "[ws] sync-diag solve(JNow) ra_h={:?} de={:?} | mount(EOD) ra_h={:?} de={:?} | site lat={:?} lon={:?}",
                         ra_h, de_d, m_ra_h, m_de, site_lat, site_lon
                     );

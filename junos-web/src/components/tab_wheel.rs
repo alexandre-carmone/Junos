@@ -53,11 +53,7 @@ const ARC_START_DEG: f32 = 90.0;          // top
 const ARC_END_DEG: f32 = 270.0;           // bottom (going through left = 180°)
 const RADIUS_PX: f32 = 115.0;
 const BOX_PX: f32 = 290.0;
-const KNOB_PX: f32 = 68.0;
 const COLLAPSE_MS: i32 = 1000;
-// Negative `right` offset so the wheel's center sits just inside the right
-// edge — the knob hugs the border and the arc fans into the screen.
-const RIGHT_OFFSET_PX: f32 = -(BOX_PX * 0.5) + KNOB_PX * 0.5 + 4.0;
 
 fn tab_index(t: Tab) -> usize {
     TABS.iter().position(|x| *x == t).unwrap_or(0)

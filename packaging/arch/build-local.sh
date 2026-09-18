@@ -14,7 +14,7 @@ arch="${1:-amd64}"                       # amd64 | arm64
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(git -C "$here" rev-parse --show-toplevel)"
 pkgver="$(bash -c "source '$here/PKGBUILD'; echo \$pkgver")"
-prefix="ekos-web-rust-${pkgver}"         # must match _srcdir in PKGBUILD
+prefix="Junos-${pkgver}"         # must match _srcdir in PKGBUILD
 tarball="$here/junos-web-${pkgver}.tar.gz"   # must match source=() filename
 
 case "$arch" in

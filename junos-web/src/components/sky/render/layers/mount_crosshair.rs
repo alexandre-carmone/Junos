@@ -12,9 +12,6 @@ use crate::components::sky::gpu::layers::lines as gpu_lines;
 pub struct MountCrosshairLayer;
 
 impl SkyLayer for MountCrosshairLayer {
-    fn name(&self) -> &'static str {
-        "mount_crosshair"
-    }
     fn prepare(&mut self, f: &mut Frame, gpu: Option<&mut GpuPrepare>) {
         if !f.mode.is_gpu() {
             return;

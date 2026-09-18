@@ -1,3 +1,5 @@
+//! One module per tab, plus the shared shell pieces (tab bar, wheel, modal).
+
 pub mod branding;
 pub mod coord_input;
 pub mod devices;

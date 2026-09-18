@@ -1,3 +1,5 @@
+//! Scheduler tab: the log section.
+
 use leptos::prelude::*;
 
 use crate::compat::SchedulerSnapshot;

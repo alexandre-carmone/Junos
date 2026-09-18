@@ -1,3 +1,5 @@
+//! Sexagesimal RA/Dec input widget, and the string conversions it uses.
+
 use leptos::html::Input;
 use leptos::prelude::*;
 

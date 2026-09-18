@@ -9,9 +9,6 @@ use crate::components::sky::gpu::layers::lines as gpu_lines;
 pub struct SlewTrailLayer;
 
 impl SkyLayer for SlewTrailLayer {
-    fn name(&self) -> &'static str {
-        "slew_trail"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.slew_trail_on
     }

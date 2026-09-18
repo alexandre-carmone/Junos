@@ -1,3 +1,5 @@
+//! Scheduler tab: the startup and shutdown script fields.
+
 use std::sync::Arc;
 
 use wasm_bindgen::JsCast;

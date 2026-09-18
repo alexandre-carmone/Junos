@@ -1,20 +1,27 @@
-//! Junos Web UI — milestone 1: fullscreen planetarium only.
+//! Junos Web UI — the browser app: a 12-tab shell over the Ekos Live
+//! wire format, with a WebGPU planetarium on the Sky tab.
+
+/// `leptos::logging::log!`, compiled out of release builds.
+///
+/// Declared before the `mod` list so every module below can use it.
+macro_rules! debug_log {
+    ($($t:tt)*) => {
+        if cfg!(debug_assertions) {
+            leptos::logging::log!($($t)*);
+        }
+    };
+}
 
 mod astro;
 mod catalog;
 mod compat;
 mod coords;
 mod components;
+mod dom;
 mod dso_catalog;
 mod dso_tiles;
 mod ephemeris;
 mod i18n;
-/// Unreferenced since the sky map dropped the image-footprint quads: DSO
-/// symbols now come from the catalog's own MajAx/MinAx/PosAng, and framing
-/// mode fetches its preview from hips2fits. Kept with `public/nebulae*` for
-/// whoever wants the thumbnails back.
-#[allow(dead_code)]
-mod nebulae;
 mod ws;
 mod ws_helpers;
 
@@ -31,7 +38,6 @@ use components::tab_bar::TabBar;
 use components::tab_wheel::TabWheel;
 use components::tabs::TabContent;
 use i18n::Lang;
-use ws::{AlignDefaultsData, SolveRadius};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab { Sky, Mount, Focus, Imaging, Files, PolarAlign, Guide, Scheduler, Mosaic, FlatCal, Devices, Profiles }
@@ -58,23 +64,6 @@ pub struct RevealInFilesCtx(pub RwSignal<Option<String>>);
 #[derive(Clone, Copy)]
 pub struct CaptureDirCtx(pub RwSignal<String>);
 
-// ---------------------------------------------------------------------------
-// Context newtypes kept for sky/actions.rs. They are optional at the call
-// site (use_context returns Option) so providing defaults is sufficient.
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Copy)]
-pub struct MountDeviceCtx(pub RwSignal<Option<String>>);
-
-#[derive(Clone, Copy)]
-pub struct CameraDeviceCtx(pub RwSignal<Option<String>>);
-
-#[derive(Clone, Copy)]
-pub struct AlignSolveRadiusCtx(pub RwSignal<SolveRadius>);
-
-#[derive(Clone, Copy)]
-pub struct AlignDefaultsCtx(pub RwSignal<AlignDefaultsData>);
-
 /// App-level context holding the shared mosaic planner signals.
 #[derive(Clone, Copy)]
 pub struct MosaicPlannerCtx(pub MosaicPlannerState);
@@ -95,13 +84,12 @@ pub struct DsoTilesCtx(pub RwSignal<Option<Arc<dso_tiles::DsoTileIndex>>>);
 #[derive(Clone, Copy)]
 pub struct SchedulerPrefillCtx(pub RwSignal<Option<(String, f64, f64)>>);
 
+/// Names the device a long-running operation is holding, so the sky
+/// right-click menu can disable Goto / Goto & Align while it runs.
 #[derive(Clone, Copy)]
 pub struct ServiceBusyCtx {
-    pub camera_busy:      Signal<Option<&'static str>>,
-    pub mount_busy:       Signal<Option<&'static str>>,
-    pub focuser_busy:     Signal<Option<&'static str>>,
-    pub dustcap_busy:     Signal<Option<&'static str>>,
-    pub light_panel_busy: Signal<Option<&'static str>>,
+    pub camera_busy: Signal<Option<&'static str>>,
+    pub mount_busy:  Signal<Option<&'static str>>,
 }
 
 #[component]
@@ -130,8 +118,9 @@ fn App() -> impl IntoView {
             }
         }
     });
-    // Offline survey tiles for the Framing Assistant. Optional: an absent or
-    // empty cache just means framing always uses the live hips2fits proxy.
+    // Offline survey tiles for the Framing Assistant. Optional: with an
+    // absent or empty cache, an uncovered zone previews as the grid over
+    // black. Framing never hits the network.
     let dso_tiles_sig = RwSignal::new(None::<Arc<dso_tiles::DsoTileIndex>>);
     wasm_bindgen_futures::spawn_local({
         let s = dso_tiles_sig;
@@ -254,33 +243,12 @@ fn App() -> impl IntoView {
     let prefill_ctx = RwSignal::new(None::<(String, f64, f64)>);
     provide_context(SchedulerPrefillCtx(prefill_ctx));
 
-    // ── Stub contexts for sky/actions.rs ──────────────────────────────────
-    provide_context(MountDeviceCtx(RwSignal::new(None::<String>)));
-    provide_context(CameraDeviceCtx(RwSignal::new(None::<String>)));
-    provide_context(AlignSolveRadiusCtx(RwSignal::new(SolveRadius::default())));
-    provide_context(AlignDefaultsCtx(RwSignal::new(AlignDefaultsData::default())));
+    // ── Busy guards for the sky right-click menu ──────────────────────────
+    // Nothing reports a busy device yet, so both stay None and the menu
+    // buttons are always enabled.
     let none_str: Signal<Option<&'static str>> = Signal::derive(|| None);
-    provide_context(ServiceBusyCtx {
-        camera_busy:      none_str,
-        mount_busy:       none_str,
-        focuser_busy:     none_str,
-        dustcap_busy:     none_str,
-        light_panel_busy: none_str,
-    });
+    provide_context(ServiceBusyCtx { camera_busy: none_str, mount_busy: none_str });
 
-    // Mirror mount device name into MountDeviceCtx (for goto dispatch).
-    let mount_device_ctx = RwSignal::new(None::<String>);
-    provide_context(MountDeviceCtx(mount_device_ctx));
-    let ms_sig = store.mount_status;
-    Effect::new(move |_| {
-        if let Some(ms) = ms_sig.get() {
-            if !ms.device.is_empty() { mount_device_ctx.set(Some(ms.device)); }
-        }
-    });
-
-    // ── Active tab ────────────────────────────────────────────────────────
-    // Provided via context so the in-planetarium gear bar (rendered inside
-    // SkyTab) can read/write it without SkyTab carrying a prop for it.
     // ── Mosaic planner shared state ───────────────────────────────────────
     let mosaic_planner = MosaicPlannerState {
         planning:       RwSignal::new(false),

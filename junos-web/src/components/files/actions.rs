@@ -1,3 +1,5 @@
+//! Files tab: the actions a file menu can trigger (download, rename, delete, slew).
+
 use leptos::prelude::*;
 use serde_json::Value;
 use wasm_bindgen::JsCast;

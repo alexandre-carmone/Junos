@@ -10,9 +10,6 @@ use super::super::render_info_overlay;
 pub struct InfoOverlayLayer;
 
 impl SkyLayer for InfoOverlayLayer {
-    fn name(&self) -> &'static str {
-        "info_overlay"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         !f.mode.is_gpu()
     }

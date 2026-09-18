@@ -1,7 +1,5 @@
-//! Minimal WebSocket + DeviceStore for milestone 1.
-//!
-//! Scope: attach to the junos-server `/ws` endpoint and decode just the
-//! Ekos Live messages the planetarium needs for the FOV reticle.
+//! The WebSocket spine: attaches to junos-server's `/ws` and feeds the
+//! `DeviceStore` (in `store.rs`) that every tab reads from.
 //!
 //! # Where FOV inputs actually come from
 //!
@@ -46,6 +44,29 @@ use retry::{spawn_mount_coord_loop, spawn_refresh_loop, spawn_retry_property, sp
 /// Type-erased command sink. Components dispatch raw Ekos Live JSON strings.
 pub type SendCmd = Arc<dyn Fn(String) + Send + Sync>;
 
+/// Everything the browser asks for once Ekos reports online, and again on
+/// each `retry.rs` sweep. One list so the two paths cannot drift.
+pub(crate) const BOOTSTRAP_CMDS: &[&str] = &[
+    r#"{"type":"file_default_path","payload":{"type":8}}"#,
+    r#"{"type":"get_devices","payload":{}}"#,
+    r#"{"type":"get_states","payload":{}}"#,
+    r#"{"type":"get_scopes","payload":{}}"#,
+    r#"{"type":"train_get_all","payload":{}}"#,
+    r#"{"type":"train_get_profiles","payload":{}}"#,
+    r#"{"type":"focus_get_all_settings","payload":{}}"#,
+    r#"{"type":"capture_get_all_settings","payload":{}}"#,
+    r#"{"type":"capture_get_sequences","payload":{}}"#,
+    r#"{"type":"align_get_all_settings","payload":{}}"#,
+    r#"{"type":"guide_get_all_settings","payload":{}}"#,
+    r#"{"type":"mount_get_all_settings","payload":{}}"#,
+    r#"{"type":"scheduler_get_all_settings","payload":{}}"#,
+    r#"{"type":"scheduler_get_jobs","payload":{}}"#,
+    r#"{"type":"livestacker_get_all_settings","payload":{}}"#,
+    // Guider-backend settings live in global KStars Options::, not in
+    // guide_get_all_settings. See message.cpp:1418.
+    r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#,
+];
+
 pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
     let store = DeviceStore::new();
 
@@ -64,31 +85,16 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
         let _ = cmd_tx.unbounded_send(json);
     });
 
-    // Prime: once Ekos is online, fetch scope DB, active train list, and the
-    // debounced focus settings snapshot. All bypass the Ekos::Success gate.
+    // Prime: once Ekos is online, fetch every module's settings snapshot.
+    // All of these bypass the Ekos::Success gate.
     let online_sig = store.online;
     {
         let prime_send = send_fn.clone();
         Effect::new(move |_| {
             if online_sig.get() {
-                prime_send(r#"{"type":"file_default_path","payload":{"type":8}}"#.to_string());
-                prime_send(r#"{"type":"get_devices","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"get_states","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"get_scopes","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"train_get_all","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"train_get_profiles","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"focus_get_all_settings","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"capture_get_all_settings","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"capture_get_sequences","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"align_get_all_settings","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"guide_get_all_settings","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"mount_get_all_settings","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"scheduler_get_all_settings","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"scheduler_get_jobs","payload":{}}"#.to_string());
-                prime_send(r#"{"type":"livestacker_get_all_settings","payload":{}}"#.to_string());
-                // Guider-backend settings live in global KStars Options::,
-                // not in guide_get_all_settings. See message.cpp:1418.
-                prime_send(r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#.to_string());
+                for cmd in BOOTSTRAP_CMDS {
+                    prime_send(cmd.to_string());
+                }
             }
         });
     }
@@ -504,7 +510,7 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
                             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
                                 let type_str = val["type"].as_str().unwrap_or("").to_string();
                                 let payload  = val["payload"].clone();
-                                leptos::logging::log!("[ws] recv type={}", type_str);
+                                debug_log!("[ws] recv type={}", type_str);
                                 store_reader.apply_ekos_event(&type_str, &payload);
                             }
                         }

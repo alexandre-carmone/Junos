@@ -38,6 +38,8 @@ impl Lang {
 
 macro_rules! translations {
     ($($name:ident),* $(,)?) => {
+        // Many entries are declared ahead of the UI that will use them.
+        #[allow(dead_code)]
         pub struct Translations {
             $(pub $name: &'static str,)*
         }

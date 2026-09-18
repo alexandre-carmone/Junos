@@ -1,3 +1,5 @@
+//! Scheduler tab: turns KStars' numeric state and stage codes into labels.
+
 use crate::i18n::Translations;
 
 pub fn scheduler_status_label(

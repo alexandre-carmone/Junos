@@ -11,93 +11,11 @@ use crate::ws_helpers::send_device_property_set;
 
 use super::styles::{frame_type_visual, FIELD_INPUT, FIELD_LABEL, FRAME_TYPE_FALLBACK};
 use super::types::{Field, Kind, EXPOSURE_PRESETS};
-use super::util::event_target_value;
+use crate::dom::event_target_value;
 
-#[allow(dead_code)]
-pub(super) fn render_group(
-    fields: &'static [Field],
-    lang: RwSignal<Lang>,
-    camera: Signal<CameraSnapshot>,
-    filter_wheel: Signal<FilterWheelSnapshot>,
-    get_value: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
-    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
-) -> AnyView {
-    view! {
-        <div class="flex flex-col gap-[6px]">
-            {fields.iter().map(|f| {
-                let d = dispatch.clone();
-                render_field(*f, lang, camera, filter_wheel, get_value, d)
-            }).collect::<Vec<_>>()}
-        </div>
-    }
-    .into_any()
-}
-
-pub(super) fn render_field(
-    field: Field,
-    lang: RwSignal<Lang>,
-    camera: Signal<CameraSnapshot>,
-    filter_wheel: Signal<FilterWheelSnapshot>,
-    get_value: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
-    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
-) -> AnyView {
-    // Use a reactive reader so the field updates as settings land.
-    let current = move || get_value(field.key);
-
-    let editor = match field.kind {
-        Kind::Number => {
-            let d = dispatch.clone();
-            let is_int = matches!(field.key, "captureGainN" | "captureOffsetN");
-            let min_attr = if is_int { Some("0") } else { None };
-            let step_attr = if is_int { Some("1") } else { None };
-            view! {
-                <input
-                    type="number"
-                    min=min_attr
-                    step=step_attr
-                    prop:value=move || value_to_display(&current())
-                    on:change=move |ev| {
-                        let s = event_target_value(&ev);
-                        if is_int {
-                            if let Ok(n) = s.parse::<i64>() {
-                                d(field.key, serde_json::Value::Number(n.into()));
-                            }
-                        } else if let Ok(n) = s.parse::<f64>() {
-                            if let Some(num) = serde_json::Number::from_f64(n) {
-                                d(field.key, serde_json::Value::Number(num));
-                            }
-                        }
-                    }
-                    class=FIELD_INPUT
-                />
-            }
-            .into_any()
-        }
-        Kind::ComboDynamic(get_opts) => {
-            // Reactive option list: re-derived when camera/filter_wheel change.
-            let opts_fn = move || get_opts(&camera.get(), &filter_wheel.get());
-            render_select_dynamic(field.key, opts_fn, current, dispatch.clone())
-        }
-        Kind::ComboFilter(get_opts) => {
-            let opts_fn = move || get_opts(&camera.get(), &filter_wheel.get());
-            let placeholder = move || t(lang.get()).field_filter_none;
-            render_select_filter(field.key, opts_fn, current, dispatch.clone(), placeholder)
-        }
-    };
-
-    let label_fn = field.label;
-    view! {
-        <div class="flex items-center gap-sp-2 text-sm max-[479px]:flex-col max-[479px]:items-stretch max-[479px]:gap-[2px]">
-            <span class=FIELD_LABEL>{move || label_fn(t(lang.get()))}</span>
-            {editor}
-        </div>
-    }.into_any()
-}
-
-/// Like `render_field`, but with the label stacked above the editor so the
-/// editor gets the full column width. Used for the Filter / Gain / ISO trio
-/// in the redesigned one-shot panel where each grid column is too narrow
-/// for the default `120px label + flex-1 input` row to be usable.
+/// Label stacked above the editor so the editor gets the full column width.
+/// Used for the Filter / Gain / ISO trio in the one-shot panel, where each
+/// grid column is too narrow for a side-by-side label.
 pub(super) fn render_stacked_field(
     field: Field,
     lang: RwSignal<Lang>,
@@ -139,11 +57,6 @@ pub(super) fn render_stacked_field(
         Kind::ComboDynamic(get_opts) => {
             let opts_fn = move || get_opts(&camera.get(), &filter_wheel.get());
             render_select_dynamic(field.key, opts_fn, current, dispatch.clone())
-        }
-        Kind::ComboFilter(get_opts) => {
-            let opts_fn = move || get_opts(&camera.get(), &filter_wheel.get());
-            let placeholder = move || t(lang.get()).field_filter_none;
-            render_select_filter(field.key, opts_fn, current, dispatch.clone(), placeholder)
         }
     };
 
@@ -529,34 +442,6 @@ fn render_select_dynamic(
                         }
                         class=FIELD_INPUT
                     />
-                }.into_any()
-            } else {
-                render_select(key, opts, current, d_select.clone())
-            }
-        }}
-    }
-    .into_any()
-}
-
-/// Filter-specific dropdown: always a `<select>`. When the option list is
-/// empty, render a disabled select with a localized placeholder option —
-/// no free-text fallback (filter values are never typed by hand).
-fn render_select_filter(
-    key: &'static str,
-    opts_fn: impl Fn() -> Vec<String> + Copy + Send + Sync + 'static,
-    current: impl Fn() -> serde_json::Value + Copy + Send + Sync + 'static,
-    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
-    placeholder: impl Fn() -> &'static str + Copy + Send + Sync + 'static,
-) -> AnyView {
-    let d_select = dispatch.clone();
-    view! {
-        {move || {
-            let opts = opts_fn();
-            if opts.is_empty() {
-                view! {
-                    <select class=FIELD_INPUT disabled=true>
-                        <option selected=true>{placeholder()}</option>
-                    </select>
                 }.into_any()
             } else {
                 render_select(key, opts, current, d_select.clone())

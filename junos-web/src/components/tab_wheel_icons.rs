@@ -1,3 +1,5 @@
+//! SVG path data for the per-tab icons.
+
 use crate::Tab;
 
 // Inline SVG icons — `currentColor` so they inherit the button's text color.

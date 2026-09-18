@@ -15,9 +15,6 @@ use super::super::{render_fallback_stars, render_star_names_gpu};
 pub struct StarsLayer;
 
 impl SkyLayer for StarsLayer {
-    fn name(&self) -> &'static str {
-        "stars"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.stars_on || f.toggles.const_on
     }

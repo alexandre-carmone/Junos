@@ -15,9 +15,6 @@ use super::super::render_constellation_names_gpu;
 pub struct ConstellationNamesLayer;
 
 impl SkyLayer for ConstellationNamesLayer {
-    fn name(&self) -> &'static str {
-        "constellation_names"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.const_on && f.toggles.con_names_on
     }

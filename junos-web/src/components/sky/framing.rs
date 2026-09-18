@@ -41,7 +41,7 @@ use crate::i18n::{t, Lang};
 use crate::{ActiveTabCtx, MosaicPlannerCtx, Tab};
 
 use super::object_search::search_objects;
-use super::utils::event_target_value;
+use crate::dom::event_target_value;
 
 /// Signals for the Framing Assistant overlay (shared via App-level context).
 /// `params.center` is epoch-of-date (JNow) — see module docs.

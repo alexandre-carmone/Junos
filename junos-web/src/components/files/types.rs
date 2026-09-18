@@ -1,6 +1,11 @@
+//! Files tab: the JSON shapes returned by `/api/files/*`.
+
 use serde::Deserialize;
 use serde_json::Value;
 
+/// One entry of `GET /api/files/list`. Mirrors the server's JSON, so some
+/// fields are decoded but unused by the current UI.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct DirEntry {
     pub(super) name: String,
@@ -13,6 +18,8 @@ pub(super) struct DirEntry {
     pub(super) ext: String,
 }
 
+/// Reply of `GET /api/files/list`. Mirrors the server's JSON.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct ListReply {
     pub(super) path: String,
@@ -20,6 +27,8 @@ pub(super) struct ListReply {
     pub(super) entries: Vec<DirEntry>,
 }
 
+/// Reply of `GET /api/files/meta`. Mirrors the server's JSON.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct FileMeta {
     pub(super) name: String,

@@ -1,3 +1,5 @@
+//! Scheduler tab: maps a job's startup/completion conditions to form fields.
+
 pub fn resolve_completion_condition(
     condition: &str,
     completion_count: String,

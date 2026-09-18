@@ -17,9 +17,6 @@ use crate::components::sky::gpu::{FontAtlas, TextInstance};
 pub struct DsoLayer;
 
 impl SkyLayer for DsoLayer {
-    fn name(&self) -> &'static str {
-        "dso"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.dso_on
     }

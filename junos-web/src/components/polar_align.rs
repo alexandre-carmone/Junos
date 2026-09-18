@@ -27,13 +27,13 @@
 //! never emitted).
 
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 
 use crate::components::branding::{POLAR_LOGO_SVG, junos_header, section_card};
 use crate::compat::{MountSnapshot, PolarAlignSnapshot};
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::{PolarVectorData, SendCmd};
 use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
+use crate::dom::{event_target_checked, event_target_value};
 
 // Section header glyphs. 24×24 viewBox, `currentColor` so each inherits the
 // accent color of its card header. Style matches `tab_wheel_icons.rs`.
@@ -191,27 +191,6 @@ fn settings_bool(settings: &serde_json::Value, key: &str) -> Option<bool> {
     settings.get(key).and_then(|v| v.as_bool())
 }
 
-fn event_target_value(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.value())
-        .unwrap_or_default()
-}
-
-fn event_target_select(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlSelectElement>().ok())
-        .map(|el| el.value())
-        .unwrap_or_default()
-}
-
-fn event_target_checked(ev: &web_sys::Event) -> bool {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.checked())
-        .unwrap_or(false)
-}
-
 /// Mirrors `PolarAlignmentAssistant::checkPAHForMeridianCrossing()`
 /// (kstars/ekos/align/polaralignmentassistant.cpp:694-727). Returns true when
 /// the selected direction+rotation combined with the current mount HA and
@@ -334,7 +313,7 @@ pub fn PolarAlignTab(
 
     let s_dir = send.clone();
     let on_direction_change = move |ev: web_sys::Event| {
-        let v = event_target_select(&ev);
+        let v = event_target_value(&ev);
         direction_local.set(v.clone());
         mark_dirty();
         dispatch_align_setting(&s_dir, "pAHDirection", serde_json::Value::String(v));
@@ -351,7 +330,7 @@ pub fn PolarAlignTab(
 
     let s_speed = send.clone();
     let on_speed_change = move |ev: web_sys::Event| {
-        let v = event_target_select(&ev);
+        let v = event_target_value(&ev);
         speed_local.set(v.clone());
         mark_dirty();
         dispatch_align_setting(&s_speed, "pAHMountSpeed", serde_json::Value::String(v));
@@ -367,7 +346,7 @@ pub fn PolarAlignTab(
 
     let s_algo = send.clone();
     let on_algo_change = move |ev: web_sys::Event| {
-        let v = event_target_select(&ev);
+        let v = event_target_value(&ev);
         algo_local.set(v.clone());
         mark_dirty();
         dispatch_align_setting(&s_algo, "pAHRefreshAlgorithm", serde_json::Value::String(v));

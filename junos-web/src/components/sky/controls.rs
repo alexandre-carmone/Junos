@@ -10,7 +10,7 @@ use crate::compat::SiteSnapshot;
 use crate::i18n::{Lang, t};
 
 use super::SkyToggles;
-use super::utils::{event_target_checked, event_target_value};
+use crate::dom::{event_target_checked, event_target_value};
 
 const CHECKBOX_ROW: &str = "flex items-center gap-[6px] cursor-pointer [&>svg]:shrink-0";
 const CONTROLS_INPUT: &str = "input input--sm font-mono";
@@ -337,7 +337,6 @@ pub fn SkyControls(
                             </div>
                         </div>
                     })}
-
 
                 </div>
             })}

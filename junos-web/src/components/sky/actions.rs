@@ -6,9 +6,8 @@ use leptos::prelude::*;
 
 use crate::i18n::{Lang, t};
 
-use crate::CameraDeviceCtx;
 use crate::ws::SendCmd;
-use crate::{ActiveTabCtx, AlignDefaultsCtx, AlignSolveRadiusCtx, MountDeviceCtx, SchedulerPrefillCtx, Tab};
+use crate::{ActiveTabCtx, SchedulerPrefillCtx, Tab};
 
 /// Build a `mount_goto_rade` message.
 ///
@@ -51,10 +50,6 @@ pub fn SkyContextMenu(
     let tr = move || t(lang.get());
 
     // Resolve all contexts at component creation time (not inside event handlers)
-    let mount_ctx = use_context::<MountDeviceCtx>();
-    let camera_ctx = use_context::<CameraDeviceCtx>();
-    let solve_radius_ctx = use_context::<AlignSolveRadiusCtx>();
-    let align_defaults_ctx = use_context::<AlignDefaultsCtx>();
     let prefill_ctx = use_context::<SchedulerPrefillCtx>();
     let active_tab_ctx = use_context::<ActiveTabCtx>();
     let framing_ctx = use_context::<crate::FramingCtx>();
@@ -86,7 +81,6 @@ pub fn SkyContextMenu(
             set_ctx_menu.set(None);
         }
     };
-    let _ = (mount_ctx, camera_ctx, solve_radius_ctx, align_defaults_ctx);
     let on_add_scheduler = move |_| {
         if let Some((_sx, _sy, ra_deg, dec_deg)) = ctx_menu.get_untracked() {
             if let Some(pctx) = prefill_ctx {
@@ -180,4 +174,3 @@ pub fn SkyContextMenu(
         }}
     }
 }
-

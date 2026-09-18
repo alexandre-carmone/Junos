@@ -18,12 +18,12 @@
 //! `ws/store.rs`.
 
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 
 use crate::compat::DustCapSnapshot;
 use crate::i18n::{Lang, t};
 use crate::ws::{DustCapParkState, SendCmd};
 use crate::ws_helpers::send_device_property_set;
+use crate::dom::event_target_value;
 
 const SECTION_CLS: &str = "fieldset m-0";
 const LEGEND_CLS:  &str = "fieldset__legend";
@@ -47,13 +47,6 @@ fn park_state_label(s: DustCapParkState, tr: &crate::i18n::Translations) -> &'st
         DustCapParkState::Moving   => tr.fc_status_moving,
         DustCapParkState::Unknown  => tr.fc_status_unknown,
     }
-}
-
-fn event_target_value(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|el| el.value())
-        .unwrap_or_default()
 }
 
 fn set_cap_park(send: &SendCmd, device: &str, park: bool) {

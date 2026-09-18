@@ -8,9 +8,6 @@ use super::super::render_scheduler_jobs;
 pub struct SchedulerJobsLayer;
 
 impl SkyLayer for SchedulerJobsLayer {
-    fn name(&self) -> &'static str {
-        "scheduler_jobs"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.scheduler_jobs_on
     }

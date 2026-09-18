@@ -4,7 +4,7 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="Local KStars/Ekos Live LAN relay + WebGPU planetarium web client"
 arch=('x86_64' 'aarch64')
-url="https://github.com/alexandre-carmone/ekos-web-rust"
+url="https://github.com/alexandre-carmone/Junos"
 license=('GPL3')
 # Disable makepkg's default LTO. Arch mainline's makepkg.conf enables `lto`,
 # which injects `-flto` into CFLAGS/LDFLAGS. `ring`'s build.rs compiles its C
@@ -24,7 +24,7 @@ depends=('glibc')
 # cargo crates + trunk's wasm-bindgen/wasm-opt).
 makedepends=('rustup' 'trunk')
 _twver=3.4.17
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz"
         "junos-web.service")
 source_x86_64=("tailwindcss-$pkgver-x86_64::https://github.com/tailwindlabs/tailwindcss/releases/download/v$_twver/tailwindcss-linux-x64")
 source_aarch64=("tailwindcss-$pkgver-aarch64::https://github.com/tailwindlabs/tailwindcss/releases/download/v$_twver/tailwindcss-linux-arm64")
@@ -33,8 +33,9 @@ sha256sums=('SKIP'
 sha256sums_x86_64=('7d24f7fa191d2193b78cd5f5a42a6093e14409521908529f42d80b11fde1f1d4')
 sha256sums_aarch64=('69b1378b8133192d7d2feb12a116fa12d035594f58db3eff215879e4ad8cf39b')
 
-# GitHub tarball top-level dir: <repo>-<tag-without-v>. Adjust if the tag differs.
-_srcdir="ekos-web-rust-$pkgver"
+# GitHub tarball top-level dir: <repo>-<tag>. Tags are unprefixed (0.1.2,
+# not v0.1.2) — see packaging/README.cicd.md.
+_srcdir="Junos-$pkgver"
 
 prepare() {
   cd "$srcdir/$_srcdir"

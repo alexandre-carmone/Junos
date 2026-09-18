@@ -1,3 +1,5 @@
+//! Command-line and environment configuration (clap).
+
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -48,8 +50,8 @@ pub struct Config {
     /// Directory holding the offline DSO survey tiles served at
     /// `/api/dso_tiles/*`, as written by `scripts/prefetch_dso_tiles.py`.
     /// Defaults to `.cache/dso_tiles` next to the working directory. The
-    /// directory is optional — without it the Framing Assistant simply always
-    /// uses the live hips2fits proxy.
+    /// directory is optional — without it the Framing Assistant previews
+    /// uncovered sky as black.
     #[arg(long, env = "DSO_TILE_DIR")]
     pub dso_tile_dir: Option<PathBuf>,
 }

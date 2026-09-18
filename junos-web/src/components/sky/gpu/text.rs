@@ -55,6 +55,8 @@ pub struct GlyphInfo {
 }
 
 pub struct FontAtlas {
+    /// Held only to keep the GPU allocation alive; drawing uses `view`.
+    #[allow(dead_code)]
     pub texture: wgpu::Texture,
     pub view:    wgpu::TextureView,
     pub sampler: wgpu::Sampler,

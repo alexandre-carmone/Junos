@@ -12,9 +12,6 @@ use crate::i18n::t;
 pub struct GroundLayer;
 
 impl SkyLayer for GroundLayer {
-    fn name(&self) -> &'static str {
-        "ground"
-    }
     fn prepare(&mut self, f: &mut Frame, gpu: Option<&mut GpuPrepare>) {
         let Some(gpu) = gpu else { return };
         let view = line_view(f);

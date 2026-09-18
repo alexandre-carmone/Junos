@@ -16,11 +16,6 @@ pub(super) enum Kind {
     /// it returns empty, the field renders as a free text input so the user
     /// can still type a value before the device pushes its property.
     ComboDynamic(fn(&CameraSnapshot, &FilterWheelSnapshot) -> Vec<String>),
-    /// Filter dropdown — always rendered as `<select>`. When the option
-    /// list is empty (no filter wheel attached / not yet reporting) it
-    /// shows a single disabled placeholder option from i18n; never falls
-    /// back to a free-text input.
-    ComboFilter(fn(&CameraSnapshot, &FilterWheelSnapshot) -> Vec<String>),
 }
 
 #[derive(Clone, Copy)]
@@ -48,12 +43,6 @@ pub(super) const ONE_SHOT_GAIN_FIELDS: &[Field] = &[
     },
 ];
 
-pub(super) const FILTER_FIELDS: &[Field] = &[Field {
-    key: "FilterPosCombo",
-    label: |t| t.field_filter,
-    kind: Kind::ComboFilter(|_, fw| fw.filter_names.clone()),
-}];
-
 #[derive(Clone)]
 pub(super) struct SequenceRow {
     pub(super) index: usize,
@@ -62,7 +51,5 @@ pub(super) struct SequenceRow {
     pub(super) exp: String,
     pub(super) ftype: String,
     pub(super) filter: String,
-    #[allow(dead_code)]
-    pub(super) bin: String,
     pub(super) status: String,
 }

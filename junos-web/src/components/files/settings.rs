@@ -1,3 +1,5 @@
+//! Files tab: the LiveStacker settings form.
+
 use std::sync::Arc;
 
 use leptos::prelude::*;
@@ -6,9 +8,10 @@ use serde_json::{json, Value};
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
+use crate::dom::{event_target_checked, event_target_value};
 
 use super::utils::{
-    event_checked, event_select_value, event_value, parse_f64, parse_i64, FIELD_CLS, INPUT_CLS,
+    parse_f64, parse_i64, FIELD_CLS, INPUT_CLS,
     PANEL_CLS, SMALL_BTN, SUMMARY_CLS,
 };
 
@@ -215,7 +218,7 @@ fn text_field(
     view! {
         <label class="flex flex-col gap-sp-1 text-sm text-text-muted">
             <span>{label()}</span>
-            <input type="text" class=INPUT_CLS prop:value=move || sig.get() on:input=move |ev| sig.set(event_value(&ev)) />
+            <input type="text" class=INPUT_CLS prop:value=move || sig.get() on:input=move |ev| sig.set(event_target_value(&ev)) />
         </label>
     }
 }
@@ -228,7 +231,7 @@ fn number_field(
     view! {
         <label class=FIELD_CLS>
             <span>{label()}</span>
-            <input type="number" step=step class="input input--sm w-[120px] num" prop:value=move || sig.get() on:input=move |ev| sig.set(event_value(&ev)) />
+            <input type="number" step=step class="input input--sm w-[120px] num" prop:value=move || sig.get() on:input=move |ev| sig.set(event_target_value(&ev)) />
         </label>
     }
 }
@@ -240,7 +243,7 @@ fn check_field(
     view! {
         <label class="flex items-center justify-between gap-sp-3 text-sm text-text-muted">
             <span>{label()}</span>
-            <input type="checkbox" prop:checked=move || sig.get() on:change=move |ev| sig.set(event_checked(&ev)) />
+            <input type="checkbox" prop:checked=move || sig.get() on:change=move |ev| sig.set(event_target_checked(&ev)) />
         </label>
     }
 }
@@ -253,7 +256,7 @@ fn select_field(
     view! {
         <label class=FIELD_CLS>
             <span>{label()}</span>
-            <select class="input input--sm min-w-[150px]" prop:value=move || sig.get() on:change=move |ev| sig.set(event_select_value(&ev))>
+            <select class="input input--sm min-w-[150px]" prop:value=move || sig.get() on:change=move |ev| sig.set(event_target_value(&ev))>
                 {options.into_iter().map(|(value, label)| view! { <option value=value>{label}</option> }).collect_view()}
             </select>
         </label>

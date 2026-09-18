@@ -1,3 +1,5 @@
+//! Scheduler tab: the settings section.
+
 use std::sync::Arc;
 
 use leptos::prelude::*;

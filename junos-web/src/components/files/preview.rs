@@ -1,3 +1,5 @@
+//! Files tab: the full-screen image preview and its FITS header panel.
+
 use leptos::prelude::*;
 use serde_json::Value;
 

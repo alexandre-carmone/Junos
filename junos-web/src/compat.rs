@@ -26,7 +26,6 @@ pub struct MountSnapshot {
     pub ra0_h: Option<f64>,
     pub dec0_deg: Option<f64>,
     pub slew_rate: Option<i32>,
-    pub target: String,
     pub status_str: String,
     pub meridian_flip_status: String,
     pub auto_park_countdown: String,
@@ -41,7 +40,6 @@ pub struct CameraSnapshot {
     pub sensor_width: Option<u32>,
     pub sensor_height: Option<u32>,
     pub bin_x: Option<u32>,
-    pub bin_y: Option<u32>,
     pub temperature: Option<f64>,
     pub cooler_on: Option<bool>,
     pub capture_format_options:  Vec<String>,
@@ -54,13 +52,11 @@ pub struct CameraSnapshot {
 pub struct FilterWheelSnapshot {
     pub device:       String,
     pub filter_names: Vec<String>,
-    pub current_slot: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct CaptureSnapshot {
     pub status: String,
-    pub target: String,
     pub seq_total: Option<i64>,
     pub seq_current: Option<i64>,
     pub progress: Option<f64>,
@@ -123,12 +119,10 @@ pub fn derive_solve(store: &DeviceStore) -> Signal<SolveSnapshot> {
 #[derive(Debug, Clone, Default)]
 pub struct FocusSnapshot {
     pub device: String,
-    pub connected: bool,
     pub status: String,
     pub hfr: Option<f64>,
     pub position: Option<i64>,
     pub temperature: Option<f64>,
-    pub log: String,
     pub preview_url: Option<String>,
     pub stars: Option<FocusStars>,
     pub history: Vec<HfrSample>,
@@ -157,7 +151,6 @@ pub fn derive_mount(store: &DeviceStore) -> Signal<MountSnapshot> {
                 ra0_h: ms.ra0_h,
                 dec0_deg: ms.dec0_deg,
                 slew_rate: ms.slew_rate,
-                target: ms.target,
                 status_str: ms.status_str,
                 meridian_flip_status: ms.meridian_flip_status,
                 auto_park_countdown: ms.auto_park_countdown,
@@ -176,19 +169,17 @@ pub fn derive_focus(store: &DeviceStore) -> Signal<FocusSnapshot> {
     let focus_stars       = store.focus_stars;
     let focus_hfr_history = store.focus_hfr_history;
     Signal::derive(move || {
-        let (device, connected, status, hfr, position, temperature, log, plot_title) =
+        let (device, status, hfr, position, temperature, plot_title) =
             match focus_status.get() {
-                Some(fs) => (fs.device, fs.connected, fs.status, fs.hfr, fs.position, fs.temperature, fs.log, fs.plot_title),
-                None => (String::new(), false, String::new(), None, None, None, String::new(), String::new()),
+                Some(fs) => (fs.device, fs.status, fs.hfr, fs.position, fs.temperature, fs.plot_title),
+                None => (String::new(), String::new(), None, None, None, String::new()),
             };
         FocusSnapshot {
             device,
-            connected,
             status,
             hfr,
             position,
             temperature,
-            log,
             plot_title,
             preview_url: focus_preview_url.get(),
             stars: focus_stars.get(),
@@ -208,7 +199,6 @@ pub fn derive_camera(store: &DeviceStore) -> Signal<CameraSnapshot> {
                 sensor_width: cs.sensor_width,
                 sensor_height: cs.sensor_height,
                 bin_x: cs.bin_x,
-                bin_y: cs.bin_y,
                 temperature: cs.temperature,
                 cooler_on: cs.cooler_on,
                 capture_format_options:  cs.capture_format_options,
@@ -228,7 +218,6 @@ pub fn derive_filter_wheel(store: &DeviceStore) -> Signal<FilterWheelSnapshot> {
             Some(s) => FilterWheelSnapshot {
                 device: s.device,
                 filter_names: s.filter_names,
-                current_slot: s.current_slot,
             },
             None => FilterWheelSnapshot::default(),
         }
@@ -244,7 +233,6 @@ pub fn derive_capture(store: &DeviceStore) -> Signal<CaptureSnapshot> {
         let s = status_sig.get();
         CaptureSnapshot {
             status: s.status,
-            target: s.target,
             seq_total: s.seq_total,
             seq_current: s.seq_current,
             progress: s.progress,
@@ -338,17 +326,12 @@ pub fn derive_scheduler(store: &DeviceStore) -> Signal<SchedulerSnapshot> {
 pub struct MosaicTileData {
     pub ra_deg:   f64,
     pub dec_deg:  f64,
-    pub index:    u32,
     pub rotation: f64,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct MosaicSnapshot {
     pub target_name:     Option<String>,
-    pub center_ra_deg:   Option<f64>,
-    pub center_dec_deg:  Option<f64>,
-    pub grid_w:          Option<u32>,
-    pub grid_h:          Option<u32>,
     pub overlap:         Option<f64>,
     pub camera_fov_w_deg: Option<f64>,
     pub camera_fov_h_deg: Option<f64>,
@@ -367,17 +350,12 @@ pub fn derive_mosaic(store: &DeviceStore) -> Signal<MosaicSnapshot> {
                 let sc = &t["skyCenter"];
                 let ra_deg  = sc["ra0"].as_f64()?;
                 let dec_deg = sc["dec0"].as_f64()?;
-                let index    = t["index"].as_u64().unwrap_or(0) as u32;
                 let rotation = t["rotation"].as_f64().unwrap_or(0.0);
-                Some(MosaicTileData { ra_deg, dec_deg, index, rotation })
+                Some(MosaicTileData { ra_deg, dec_deg, rotation })
             }).collect()
         }).unwrap_or_default();
         MosaicSnapshot {
             target_name:     v["targetName"].as_str().map(|s| s.to_string()),
-            center_ra_deg:   v["ra0"].as_f64(),
-            center_dec_deg:  v["dec0"].as_f64(),
-            grid_w:          v["gridSize"]["width"].as_u64().map(|x| x as u32),
-            grid_h:          v["gridSize"]["height"].as_u64().map(|x| x as u32),
             overlap:         v["overlap"].as_f64(),
             // cameraFOV is in arcmin → convert to degrees
             camera_fov_w_deg: v["cameraFOV"]["width"].as_f64().map(|x| x / 60.0),
@@ -391,7 +369,6 @@ pub fn derive_mosaic(store: &DeviceStore) -> Signal<MosaicSnapshot> {
 #[derive(Debug, Clone, Default)]
 pub struct DustCapSnapshot {
     pub device:           String,
-    pub connected:        bool,
     pub has_light_panel:  bool,
     pub park_state:       DustCapParkState,
     pub light_on:         Option<bool>,
@@ -405,7 +382,6 @@ pub fn derive_dustcap(store: &DeviceStore) -> Signal<DustCapSnapshot> {
     Signal::derive(move || match dc.get() {
         Some(d) => DustCapSnapshot {
             device:          d.device,
-            connected:       d.connected,
             has_light_panel: d.has_light_panel,
             park_state:      d.park_state,
             light_on:        d.light_on,

@@ -71,24 +71,6 @@ fn captures_root(state: &AppState) -> Result<PathBuf, ApiErr> {
 
 // ── Helpers for write operations ─────────────────────────────────────────────
 
-/// Resolve a relative path for a write-operation target that may not exist
-/// yet (e.g. the new name for a rename). Validates the *parent* is inside
-/// the sandbox, and the joined target would also be inside.
-fn resolve_new(state: &AppState, rel: &str) -> Result<(PathBuf, PathBuf), StatusCode> {
-    let root = captures_root(state).map_err(|e| e.status)?;
-    let trimmed = rel.trim_start_matches(['/', '\\']);
-    if trimmed.is_empty() { return Err(StatusCode::BAD_REQUEST); }
-    let joined = root.join(trimmed);
-    // Canonicalize the parent (must exist) and ensure it's inside root.
-    let parent = joined.parent().ok_or(StatusCode::BAD_REQUEST)?;
-    let parent_canon = parent.canonicalize().map_err(|_| StatusCode::NOT_FOUND)?;
-    if !parent_canon.starts_with(&root) {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    let file_name = joined.file_name().ok_or(StatusCode::BAD_REQUEST)?;
-    Ok((root, parent_canon.join(file_name)))
-}
-
 // ── Query types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -1069,12 +1051,6 @@ pub async fn resolve_abs(
         }
         _ => Json(json!({ "in_sandbox": false })),
     }
-}
-
-// Keep clippy quiet about the unused helper during development.
-#[allow(dead_code)]
-fn _ensure_resolve_new_used(state: &AppState, rel: &str) -> Result<(PathBuf, PathBuf), StatusCode> {
-    resolve_new(state, rel)
 }
 
 #[cfg(test)]

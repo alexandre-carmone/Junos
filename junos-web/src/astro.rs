@@ -138,28 +138,6 @@ pub fn project(
     Some((x, y))
 }
 
-/// Like [`project`] but without the angular-distance cutoff.
-///
-/// Returns normalised screen coordinates even for points far from the view
-/// centre; the browser canvas will clip anything outside its bounds.
-pub fn project_unclamped(
-    alt: f64,
-    az: f64,
-    center_alt: f64,
-    center_az: f64,
-    fov_radius: f64,
-) -> (f64, f64) {
-    let (a, b) = (alt * DEG, az * DEG);
-    let (ca, cb) = (center_alt * DEG, center_az * DEG);
-    let cos_c = a.sin() * ca.sin() + a.cos() * ca.cos() * (b - cb).cos();
-    let c = cos_c.clamp(-1.0, 1.0).acos();
-    let r = c / (fov_radius * DEG);
-    let sin_pa = a.cos() * (b - cb).sin();
-    let cos_pa = a.sin() * ca.cos() - a.cos() * ca.sin() * (b - cb).cos();
-    let pa = sin_pa.atan2(cos_pa);
-    (r * pa.sin(), r * pa.cos())
-}
-
 /// Inverse azimuthal equidistant: screen (x, y) → (alt, az) degrees.
 ///
 /// Input is normalised so that ±1 corresponds to `fov_radius` degrees.

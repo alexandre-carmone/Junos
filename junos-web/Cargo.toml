@@ -5,8 +5,8 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 # Trunk WASM build — excluded from native `cargo build` via workspace default-members.
-# Build with: cd junos-web && trunk build --release
-# Dev:        cd junos-web && trunk serve --proxy-ws /ws=ws://localhost:8080/ws
+# Build with: cd junos-web && trunk build --release   (or `just build-wasm`)
+# Dev loop:   `just dev-wasm` in one terminal, `just dev-server` in another.
 
 [[bin]]
 name = "junos-web"
@@ -14,23 +14,19 @@ path = "src/main.rs"
 
 [dependencies]
 leptos                   = { version = "0.7", features = ["csr"] }
-leptos_meta              = { version = "0.7" }
 serde                    = { version = "1", features = ["derive"] }
 serde_json               = "1"
 wasm-bindgen             = "0.2"
 console_error_panic_hook = "0.1"
 web-sys = { version = "0.3", features = [
     "WebSocket",
-    "MessageEvent",
-    "ErrorEvent",
-    "CloseEvent",
     "Event",
     "console",
     "Window",
     "Location",
     "HtmlCanvasElement",
     "CanvasRenderingContext2d",
-    "CanvasGradient",
+    "ImageData",
     "MouseEvent",
     "WheelEvent",
     "Touch",
@@ -38,6 +34,8 @@ web-sys = { version = "0.3", features = [
     "TouchList",
     "DomRect",
     "HtmlInputElement",
+    "HtmlSelectElement",
+    "HtmlTextAreaElement",
     "HtmlImageElement",
     "Element",
     "Storage",
@@ -53,13 +51,11 @@ web-sys = { version = "0.3", features = [
     "FileList",
     "File",
     "TextMetrics",
-    "ImageData",
 ] }
 js-sys               = "0.3"
 wasm-bindgen-futures = "0.4"
 gloo-net             = { version = "0.5", features = ["websocket"] }
 gloo-timers          = { version = "0.3", features = ["futures"] }
-gloo-utils           = "0.2"
 futures              = "0.3"
 wgpu                 = { version = "24", default-features = false, features = ["webgpu", "wgsl"] }
 bytemuck             = { version = "1", features = ["derive"] }

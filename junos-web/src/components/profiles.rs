@@ -6,8 +6,6 @@
 //! Outbound: `get_profiles`, `profile_add`, `profile_update`,
 //!           `profile_delete`, `profile_start`, `profile_stop`
 
-use std::sync::Arc;
-
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -1534,8 +1532,3 @@ fn train_summary(t: &OpticalTrain) -> String {
         parts.join(" · ")
     }
 }
-
-// Silence unused-import warnings if SendCmd is dropped from a closure path.
-const _: fn() = || {
-    let _ = std::mem::size_of::<Arc<dyn Fn(String) + Send + Sync>>();
-};

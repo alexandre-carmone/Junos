@@ -33,3 +33,7 @@ jobs:
 
       - name: cargo check (web / wasm)
         run: cargo check -p junos-web --target wasm32-unknown-unknown
+
+      # junos-web is wasm-only, so only the server tests run here.
+      - name: cargo test (server)
+        run: cargo test -p junos-server

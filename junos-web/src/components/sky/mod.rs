@@ -595,7 +595,7 @@ pub fn SkyTab(
         {
             let fov_w = crate::astro::fov_deg(fl, sw as f64, pum);
             let fov_h = crate::astro::fov_deg(fl, sh as f64, pum);
-            leptos::logging::log!(
+            debug_log!(
                 "[sky] FOV inputs: fl={:.1}mm (nominal={:?} eff_from_solve={:?}) sensor={}x{}px pixel={:.2}um bin={:?} pixscale={:?}\"/px -> {:.1}'x{:.1}'",
                 fl, nominal_fl, eff_fl, sw, sh, pum, cam.bin_x, sv.pixscale_arcsec,
                 fov_w * 60.0, fov_h * 60.0

@@ -14,7 +14,7 @@ use crate::astro;
 use crate::components::branding::{JUNOS_LOGO_SVG, junos_header, section_card};
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
 use crate::components::sequence_editor::{SeqFrame, SequenceEditor, build_esq_xml};
-use crate::components::sky::utils::{event_target_checked, event_target_value, event_target_value_select};
+use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{Lang, t};
 use crate::ws::SendCmd;
 use crate::{ActiveTabCtx, MosaicPlannerCtx, Tab};
@@ -77,9 +77,10 @@ fn sanitize_name(name: &str) -> String {
         .collect()
 }
 
-/// RA degrees → "HH MM SS.SS" (space-separated, for KStars dmsBox)
-fn fmt_hms(ra_deg: f64) -> String {
-    let ra_h = ((ra_deg % 360.0) + 360.0) % 360.0 / 15.0;
+/// RA degrees → "HH MM SS.SS" (space-separated, for KStars dmsBox).
+/// Takes degrees, unlike `mount.rs::fmt_hms`, which takes hours.
+fn fmt_ra_hms_from_deg(ra_deg: f64) -> String {
+    let ra_h = ra_deg.rem_euclid(360.0) / 15.0;
     let h = ra_h.floor() as u32;
     let rem = (ra_h - h as f64) * 60.0;
     let m = rem.floor() as u32;
@@ -201,7 +202,7 @@ pub fn MosaicTab(
         // instead of a doubly-precessed one (~0.4° off in 2026).
         let jd = astro::now_jd();
         let j2000 = crate::coords::JNow::new(center_ra_deg, center_dec_deg).to_j2000(jd);
-        let center_ra_hms  = fmt_hms(j2000.ra_deg);
+        let center_ra_hms  = fmt_ra_hms_from_deg(j2000.ra_deg);
         let center_dec_dms = fmt_dms(j2000.dec_deg);
         let overlap_str = format!("{:.0}%", overlap);
 
@@ -506,7 +507,7 @@ pub fn MosaicTab(
                         {move || tr().sched_start_when}
                         <select class=format!("{INPUT_BASE} w-[140px]")
                                 prop:value=move || startup_cond.get()
-                                on:change=move |ev| startup_cond.set(event_target_value_select(&ev))>
+                                on:change=move |ev| startup_cond.set(event_target_value(&ev))>
                             <option value="asap" selected=move || startup_cond.get() == "asap">
                                 {move || tr().sched_cond_asap}
                             </option>
@@ -529,7 +530,7 @@ pub fn MosaicTab(
                         {move || tr().sched_complete_when}
                         <select class=format!("{INPUT_BASE} w-[160px]")
                                 prop:value=move || completion_cond.get()
-                                on:change=move |ev| completion_cond.set(event_target_value_select(&ev))>
+                                on:change=move |ev| completion_cond.set(event_target_value(&ev))>
                             <option value="sequence" selected=move || completion_cond.get() == "sequence">
                                 {move || tr().sched_cond_seq}
                             </option>

@@ -1,14 +1,7 @@
 //! Ordered pipeline of `SkyLayer`s.
 //!
-//! Replaces the implicit ordering today scattered across:
-//!   * the if-tree of `render::render_overlay` (Canvas2D layer order), and
-//!   * the hard-coded sequence inside `SkyRenderer::render_frame`
-//!     (GPU compositing: lines → dso → const → stars → text).
-//!
-//! During migration the pipeline starts empty: layers are added one at a
-//! time as they are extracted from `render_overlay` / `mod.rs`. Until a
-//! layer is migrated, its draw still happens in the legacy code path. Once
-//! the pipeline owns every layer, the legacy `render_overlay` is deleted.
+//! Layers run in registration order. Each one owns both its GPU prepare and
+//! its Canvas2D draw, so the order of the overlay is the order of this list.
 
 use web_sys::CanvasRenderingContext2d;
 
@@ -91,16 +84,11 @@ impl RenderPipeline {
     pub fn gpu_prepare(&self) -> &GpuPrepare {
         &self.gpu_prepare
     }
-    pub fn gpu_prepare_mut(&mut self) -> &mut GpuPrepare {
-        &mut self.gpu_prepare
-    }
 
     /// Run prepare → draw on every enabled layer.
     ///
-    /// The caller is still responsible for calling `SkyRenderer::submit_frame`
-    /// (or the legacy `render_frame`) afterwards with `self.gpu_prepare()`.
-    /// That coupling moves into `run` once `mod.rs` no longer assembles GPU
-    /// instances inline.
+    /// The caller then passes `self.gpu_prepare()` to
+    /// `SkyRenderer::submit_frame`.
     pub fn run(
         &mut self,
         frame: &mut Frame,

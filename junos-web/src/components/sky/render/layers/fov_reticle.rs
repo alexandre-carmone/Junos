@@ -14,9 +14,6 @@ use crate::components::sky::gpu::{FontAtlas, TextInstance};
 pub struct FovReticleLayer;
 
 impl SkyLayer for FovReticleLayer {
-    fn name(&self) -> &'static str {
-        "fov_reticle"
-    }
     fn enabled(&self, f: &Frame) -> bool {
         f.toggles.fov_on
     }

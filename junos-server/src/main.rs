@@ -1,3 +1,5 @@
+//! Server entry point: builds the shared state and mounts every route.
+
 mod apps;
 mod auth;
 mod config;
