@@ -24,6 +24,27 @@ mod abmath;
 mod aberration;
 use aberration::AberrationInspector;
 
+/// A `js_sys::Array` of dash lengths for `CanvasRenderingContext2d::set_line_dash`.
+/// An empty slice resets to a solid stroke.
+fn dash_array(segments: &[f64]) -> wasm_bindgen::JsValue {
+    let arr = web_sys::js_sys::Array::new();
+    for v in segments {
+        arr.push(&wasm_bindgen::JsValue::from_f64(*v));
+    }
+    arr.into()
+}
+
+/// Draw text with a dark outline behind it so it stays readable over a bright
+/// starfield or a gridline. Uses the context's current font/alignment.
+fn halo_text(ctx: &CanvasRenderingContext2d, text: &str, x: f64, y: f64, fill: &str) {
+    ctx.set_line_width(2.5);
+    ctx.set_line_join("round");
+    ctx.set_stroke_style_str("rgba(0,0,0,0.85)");
+    let _ = ctx.stroke_text(text, x, y);
+    ctx.set_fill_style_str(fill);
+    let _ = ctx.fill_text(text, x, y);
+}
+
 fn status_color(status: &str) -> &'static str {
     let s = status.to_lowercase();
     if s.contains("fail") || s.contains("abort") { "var(--state-err)" }
@@ -104,8 +125,11 @@ pub fn FocusTab(
     // Settings overlay open/closed (mirrors guide tab pattern).
     let settings_open = RwSignal::new(false);
 
-    // Detected-stars overlay: on by default. `resize_tick` is bumped by a
-    // ResizeObserver so the draw Effect re-runs when the preview box changes size.
+    // Detected-stars overlay: on by default. `resize_tick` is bumped whenever
+    // the preview box can change size, so both canvas draw Effects re-run:
+    // the window `resize` listener below, `<img on:load>`, and the settings
+    // overlay opening/closing. (There is no ResizeObserver — `web-sys` isn't
+    // built with that feature here.)
     let show_stars = RwSignal::new(true);
     let resize_tick = RwSignal::new(0u32);
 
@@ -164,11 +188,16 @@ pub fn FocusTab(
         send_cmd(&send_xh, "focus_set_crosshair", serde_json::json!({ "x": x, "y": y }));
     };
 
-    // ── HFR history mini-plot ─────────────────────────────────────────────
+    // ── HFR chart ─────────────────────────────────────────────────────────
+    // A V-curve when the focuser reports absolute positions, otherwise a
+    // scatter against sample order. Both modes get labelled, unit-carrying
+    // axes — without them a wiggle could be 0.02 px or 2 px and the reader
+    // has no way to tell.
     let canvas_ref = NodeRef::<html::Canvas>::new();
     Effect::new(move |_| {
         // Redraw on layout changes as well as data changes.
         resize_tick.track();
+        let tr = tr();
         let history = focus.with(|f| f.history.clone());
         let Some(canvas) = canvas_ref.get() else { return };
         let canvas: HtmlCanvasElement = canvas.unchecked_into();
@@ -201,100 +230,255 @@ pub fn FocusTab(
         const BRIGHT: &str = "#c1d2ff";      // --text-blue-bright
         const MUTED: &str = "#9aa3b8";       // --text-muted
         const BORDER: &str = "#1c1e2c";      // --border
+        const OK: &str = "#3ee08a";          // --state-ok
 
-        // Plot box — tight insets; no Y-tick column, minimal chrome.
-        let pad_l = 6.0;
-        let pad_r = 8.0;
-        let pad_t = 14.0; // room for the top-left "HFR" label
-        let pad_b = 12.0; // room for the baseline + "#n"
+        // Plot box — a left gutter for the Y tick labels and a bottom gutter
+        // for the X ticks plus the axis title.
+        let pad_l = 44.0;
+        let pad_r = 12.0;
+        let pad_t = 12.0;
+        let pad_b = 30.0;
         let px0 = pad_l;
         let py0 = pad_t;
         let pw = (cw - pad_l - pad_r).max(1.0);
         let ph = (ch - pad_t - pad_b).max(1.0);
         let py1 = py0 + ph;
 
-        let baseline = || {
+        let frame = || {
             ctx.set_stroke_style_str(BORDER);
             ctx.set_line_width(1.0);
             ctx.begin_path();
-            ctx.move_to(px0, py1 + 0.5);
+            ctx.move_to(px0 + 0.5, py0);
+            ctx.line_to(px0 + 0.5, py1 + 0.5);
             ctx.line_to(px0 + pw, py1 + 0.5);
             let _ = ctx.stroke();
         };
-        let unit_label = || {
+        let y_axis_title = || {
             let _ = ctx.set_font("10px monospace");
             ctx.set_fill_style_str(MUTED);
             ctx.set_text_align("left");
             ctx.set_text_baseline("top");
-            let _ = ctx.fill_text("HFR", px0, 1.0);
+            let _ = ctx.fill_text(tr.focus_axis_hfr_px, 2.0, 1.0);
         };
 
-        // Empty / single-sample: just the label + baseline (never blank/garbled).
+        // Empty / single-sample: axis chrome only, never blank or garbled.
         if history.len() < 2 {
-            baseline();
-            unit_label();
+            frame();
+            y_axis_title();
+            let _ = ctx.set_font("10px monospace");
+            ctx.set_fill_style_str(MUTED);
+            ctx.set_text_align("center");
+            ctx.set_text_baseline("middle");
+            let _ = ctx.fill_text(tr.focus_chart_waiting, px0 + pw / 2.0, py0 + ph / 2.0);
             return;
         }
 
-        // Y range with headroom so the curve never touches the edges; span floor
-        // keeps a flat-HFR run from collapsing to a line.
+        let n = history.len();
+
+        // ── Y scale ────────────────────────────────────────────────────────
+        // Tick count follows the available height (~32 px apart), so the axis
+        // degrades to 2 gridlines on a short mobile chart instead of crowding.
+        let y_target = ((ph / 32.0).round() as usize).clamp(2, 5);
         let raw_min = history.iter().map(|s| s.hfr).fold(f64::INFINITY, f64::min);
         let raw_max = history.iter().map(|s| s.hfr).fold(f64::NEG_INFINITY, f64::max);
-        let span = (raw_max - raw_min).max(0.1);
-        let pad = span * 0.16;
-        let y_min = raw_min - pad;
-        let y_max = raw_max + pad;
-        let y_span = (y_max - y_min).max(0.1);
+        let (mut lo, mut hi) = (raw_min, raw_max);
+        // Floor on a flat run, or a stable HFR would be plotted against a
+        // meaningless 0.001-wide ladder.
+        if hi - lo < 0.2 {
+            let c = (lo + hi) * 0.5;
+            lo = c - 0.1;
+            hi = c + 0.1;
+        }
+        let m = (hi - lo) * 0.04; // nice-rounding below adds the rest
+        let (y_min, y_max, y_step) = abmath::nice_axis(lo - m, hi + m, y_target);
+        let y_min = y_min.max(0.0); // HFR is never negative
+        let y_span = (y_max - y_min).max(1e-6);
         let y_of = |hfr: f64| py1 - (hfr - y_min) / y_span * ph;
+        // Decimals follow the step, so a 0.05 ladder isn't labelled 3.1/3.1/3.2.
+        let y_decimals = ((-y_step.log10().floor()).max(0.0) as usize).min(2);
 
-        let n = history.len();
-        let x_of = |i: usize| px0 + (i as f64) * pw / ((n - 1) as f64);
+        // ── X mode: a true V-curve against focuser position when every sample
+        // carries one and they are not all identical; otherwise sample order.
+        // `pos` is already normalised in ws/store.rs (KStars sends -1 for
+        // relative focusers), so `Some` here always means a real position. ───
+        let positions: Vec<f64> =
+            history.iter().filter_map(|s| s.position).map(|p| p as f64).collect();
+        let p_min = positions.iter().copied().fold(f64::INFINITY, f64::min);
+        let p_max = positions.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let pos_mode = positions.len() == n && p_max > p_min;
+
+        let x_of_pos = |p: f64| px0 + (p - p_min) / (p_max - p_min) * pw;
+        let x_of_idx = |i: usize| px0 + (i as f64) * pw / ((n - 1) as f64);
+        let x_of = |i: usize| {
+            if pos_mode { x_of_pos(positions[i]) } else { x_of_idx(i) }
+        };
+
+        // ── Gridlines + Y tick labels ──────────────────────────────────────
+        ctx.set_line_width(1.0);
+        let _ = ctx.set_font("10px monospace");
+        ctx.set_text_baseline("middle");
+        let y_ticks = ((y_span / y_step).round() as i32).clamp(1, 12);
+        for k in 0..=y_ticks {
+            let v = y_min + y_step * k as f64;
+            let y = y_of(v).round() + 0.5;
+            ctx.set_stroke_style_str(BORDER);
+            ctx.begin_path();
+            ctx.move_to(px0, y);
+            ctx.line_to(px0 + pw, y);
+            let _ = ctx.stroke();
+            ctx.set_fill_style_str(MUTED);
+            ctx.set_text_align("right");
+            let _ = ctx.fill_text(&format!("{:.*}", y_decimals, v), px0 - 5.0, y);
+        }
+
+        // ── X tick labels ──────────────────────────────────────────────────
+        ctx.set_text_baseline("top");
+        ctx.set_fill_style_str(MUTED);
+        let label_x = |x: f64, s: &str, first: bool, last: bool| {
+            ctx.set_text_align(if first { "left" } else if last { "right" } else { "center" });
+            let _ = ctx.fill_text(s, x, py1 + 5.0);
+        };
+        if pos_mode {
+            // Ticks on round position values inside the sampled span.
+            let x_step = abmath::nice_step((p_max - p_min) / 4.0);
+            let first_tick = (p_min / x_step).ceil() * x_step;
+            let mut v = first_tick;
+            let mut guard = 0;
+            while v <= p_max + 1e-6 && guard < 24 {
+                let x = x_of_pos(v);
+                ctx.set_stroke_style_str(BORDER);
+                ctx.begin_path();
+                ctx.move_to(x.round() + 0.5, py1);
+                ctx.line_to(x.round() + 0.5, py1 + 3.0);
+                let _ = ctx.stroke();
+                label_x(x, &format!("{}", v.round() as i64),
+                        x < px0 + 14.0, x > px0 + pw - 14.0);
+                v += x_step;
+                guard += 1;
+            }
+        } else {
+            // 5 evenly spaced sample indices, 1-based to match KStars' plot.
+            let ticks = 4.min(n - 1);
+            for k in 0..=ticks {
+                let i = (k * (n - 1)) / ticks.max(1);
+                let x = x_of_idx(i);
+                ctx.set_stroke_style_str(BORDER);
+                ctx.begin_path();
+                ctx.move_to(x.round() + 0.5, py1);
+                ctx.line_to(x.round() + 0.5, py1 + 3.0);
+                let _ = ctx.stroke();
+                label_x(x, &format!("#{}", i + 1), k == 0, k == ticks);
+            }
+        }
+
+        // X axis title, centred under the ticks.
+        ctx.set_fill_style_str(MUTED);
+        ctx.set_text_align("center");
+        ctx.set_text_baseline("bottom");
+        let x_title = if pos_mode { tr.focus_axis_position } else { tr.focus_axis_sample };
+        let _ = ctx.fill_text(x_title, px0 + pw / 2.0, ch - 1.0);
+
+        frame();
+        y_axis_title();
+
+        // ── Fitted V-curve (position mode only) ────────────────────────────
+        // Same parabola the aberration inspector fits, sampled at 20 points
+        // across the range like KStars' focushfrvplot.cpp::drawPolynomial.
+        // `a > 0` means it opens upward, i.e. it actually has a minimum.
+        let mut vertex: Option<f64> = None;
+        if pos_mode {
+            let samples: Vec<abmath::Sample> = history
+                .iter()
+                .filter_map(|s| s.position.map(|p| abmath::Sample { pos: p as f64, hfr: s.hfr }))
+                .collect();
+            let distinct = {
+                let mut v: Vec<i64> = samples.iter().map(|s| s.pos as i64).collect();
+                v.sort_unstable();
+                v.dedup();
+                v.len()
+            };
+            if distinct >= 3 {
+                if let Some((a, b, c)) =
+                    abmath::fit_parabola(&samples).filter(|&(a, _, _)| a > 0.0)
+                {
+                    ctx.set_stroke_style_str(MUTED);
+                    ctx.set_line_width(1.0);
+                    let _ = ctx.set_line_dash(&dash_array(&[2.0, 3.0]));
+                    ctx.begin_path();
+                    for k in 0..=20 {
+                        let p = p_min + (p_max - p_min) * (k as f64 / 20.0);
+                        let y = y_of((a * p + b) * p + c).clamp(py0, py1);
+                        let x = x_of_pos(p);
+                        if k == 0 { ctx.move_to(x, y); } else { ctx.line_to(x, y); }
+                    }
+                    let _ = ctx.stroke();
+                    let _ = ctx.set_line_dash(&dash_array(&[]));
+                    let v = -b / (2.0 * a);
+                    if v >= p_min && v <= p_max { vertex = Some(v); }
+                }
+            }
+        }
 
         // ── HFR scatter points ─────────────────────────────────────────────
         // One dot per sample; no connecting line (point chart, not line chart).
         ctx.set_fill_style_str(CYAN);
         for (i, s) in history.iter().enumerate() {
             ctx.begin_path();
-            let _ = ctx.arc(x_of(i), y_of(s.hfr), 2.2, 0.0, std::f64::consts::TAU);
+            let _ = ctx.arc(x_of(i), y_of(s.hfr).clamp(py0, py1), 2.2, 0.0, std::f64::consts::TAU);
             ctx.fill();
         }
 
-        baseline();
-        unit_label();
-
-        // ── Best (min) marker — a small upward caret + muted label ─────────
-        let min_idx = history
-            .iter()
-            .enumerate()
-            .min_by(|a, b| a.1.hfr.partial_cmp(&b.1.hfr).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(i, _)| i)
-            .unwrap_or(n - 1);
-        if min_idx != n - 1 {
-            let mx = x_of(min_idx);
-            let my = y_of(history[min_idx].hfr);
-            ctx.set_fill_style_str(MUTED);
+        // ── Best-focus marker ──────────────────────────────────────────────
+        // In position mode that is the fitted vertex (a real focuser position);
+        // in index mode, fall back to the lowest sample seen so far.
+        if let Some(v) = vertex {
+            let vx = x_of_pos(v);
+            ctx.set_stroke_style_str(OK);
+            ctx.set_line_width(1.0);
             ctx.begin_path();
-            ctx.move_to(mx, my + 5.0);
-            ctx.line_to(mx - 3.0, my + 10.0);
-            ctx.line_to(mx + 3.0, my + 10.0);
-            ctx.close_path();
-            ctx.fill();
+            ctx.move_to(vx.round() + 0.5, py0);
+            ctx.line_to(vx.round() + 0.5, py1);
+            let _ = ctx.stroke();
             let _ = ctx.set_font("10px monospace");
             ctx.set_text_baseline("top");
-            // Keep the label inside the box: right-align if near the right edge.
-            let lbl = format!("best {:.2}", history[min_idx].hfr);
-            if mx > px0 + pw * 0.6 {
-                ctx.set_text_align("right");
-                let _ = ctx.fill_text(&lbl, (mx - 5.0).min(px0 + pw), my + 11.0);
-            } else {
-                ctx.set_text_align("left");
-                let _ = ctx.fill_text(&lbl, (mx + 5.0).max(px0), my + 11.0);
+            let lbl = format!("{} {}", tr.focus_chart_best, v.round() as i64);
+            let right = vx > px0 + pw * 0.6;
+            ctx.set_text_align(if right { "right" } else { "left" });
+            let lx = if right { vx - 4.0 } else { vx + 4.0 };
+            halo_text(&ctx, &lbl, lx, py0 + 2.0, OK);
+        } else if !pos_mode {
+            let min_idx = history
+                .iter()
+                .enumerate()
+                .min_by(|a, b| a.1.hfr.partial_cmp(&b.1.hfr).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(i, _)| i)
+                .unwrap_or(n - 1);
+            if min_idx != n - 1 {
+                let mx = x_of(min_idx);
+                let my = y_of(history[min_idx].hfr);
+                ctx.set_fill_style_str(MUTED);
+                ctx.begin_path();
+                ctx.move_to(mx, my + 5.0);
+                ctx.line_to(mx - 3.0, my + 10.0);
+                ctx.line_to(mx + 3.0, my + 10.0);
+                ctx.close_path();
+                ctx.fill();
+                let _ = ctx.set_font("10px monospace");
+                ctx.set_text_baseline("top");
+                // "min", not "best": this labels an HFR value, whereas the
+                // position-mode marker labels a focuser position. Same word
+                // for two different quantities is what we're fixing here.
+                let lbl = format!("{} {:.2}", tr.focus_chart_min, history[min_idx].hfr);
+                let right = mx > px0 + pw * 0.6;
+                ctx.set_text_align(if right { "right" } else { "left" });
+                let lx = if right { (mx - 5.0).min(px0 + pw) } else { (mx + 5.0).max(px0) };
+                halo_text(&ctx, &lbl, lx, my + 11.0, MUTED);
             }
         }
 
         // ── Current point + value callout ─────────────────────────────────
         let last = &history[n - 1];
-        let (lx, ly) = (x_of(n - 1), y_of(last.hfr));
+        let (lx, ly) = (x_of(n - 1), y_of(last.hfr).clamp(py0, py1));
         ctx.set_fill_style_str(CYAN);
         ctx.begin_path();
         let _ = ctx.arc(lx, ly, 3.4, 0.0, std::f64::consts::TAU);
@@ -305,24 +489,21 @@ pub fn FocusTab(
         ctx.fill();
 
         let _ = ctx.set_font("11px monospace");
-        ctx.set_fill_style_str(BRIGHT);
         ctx.set_text_baseline("middle");
         let val = format!("{:.2}", last.hfr);
         // Place the label left of the dot when it's near the right edge.
-        if lx > px0 + pw * 0.72 {
-            ctx.set_text_align("right");
-            let _ = ctx.fill_text(&val, lx - 6.0, ly.clamp(py0 + 6.0, py1 - 6.0));
-        } else {
-            ctx.set_text_align("left");
-            let _ = ctx.fill_text(&val, lx + 6.0, ly.clamp(py0 + 6.0, py1 - 6.0));
-        }
+        let right = lx > px0 + pw * 0.72;
+        ctx.set_text_align(if right { "right" } else { "left" });
+        let tx = if right { lx - 6.0 } else { lx + 6.0 };
+        halo_text(&ctx, &val, tx, ly.clamp(py0 + 6.0, py1 - 6.0), BRIGHT);
 
-        // Sample count, bottom-right.
+        // Which mode the X axis is in, so it never has to be guessed.
         let _ = ctx.set_font("10px monospace");
         ctx.set_fill_style_str(MUTED);
         ctx.set_text_align("right");
-        ctx.set_text_baseline("bottom");
-        let _ = ctx.fill_text(&format!("#{n}"), px0 + pw, ch - 1.0);
+        ctx.set_text_baseline("top");
+        let mode = if pos_mode { tr.focus_chart_mode_position } else { tr.focus_chart_mode_index };
+        let _ = ctx.fill_text(&format!("{mode} · #{n}"), px0 + pw, 1.0);
     });
 
     // ── Detected-stars overlay ────────────────────────────────────────────
@@ -346,8 +527,16 @@ pub fn FocusTab(
         cb.forget();
     }
 
+    // Opening or closing the settings overlay reflows the page without firing
+    // a window `resize`, which would otherwise leave the overlay misaligned.
+    Effect::new(move |_| {
+        settings_open.track();
+        resize_tick.update(|n| *n = n.wrapping_add(1));
+    });
+
     Effect::new(move |_| {
         resize_tick.track();
+        let tr = tr();
         let on = show_stars.get();
         let stars = focus.with(|f| f.stars.clone());
         let (Some(container), Some(canvas)) =
@@ -359,15 +548,32 @@ pub fn FocusTab(
         let cw = container.client_width().max(0) as f64;
         let ch = container.client_height().max(0) as f64;
         if cw <= 0.0 || ch <= 0.0 { return; }
-        canvas.set_width(cw as u32);
-        canvas.set_height(ch as u32);
+
+        // HiDPI-aware sizing, same treatment as the chart canvas below: back
+        // the canvas at device resolution and draw in CSS-pixel space, or the
+        // labels come out soft on a retina display.
+        let dpr = web_sys::window()
+            .map(|w| w.device_pixel_ratio())
+            .unwrap_or(1.0)
+            .clamp(1.0, 2.0);
+        let bw = (cw * dpr).round() as u32;
+        let bh = (ch * dpr).round() as u32;
+        if canvas.width() != bw { canvas.set_width(bw); }
+        if canvas.height() != bh { canvas.set_height(bh); }
 
         let Ok(Some(ctx)) = canvas.get_context("2d") else { return };
         let ctx: CanvasRenderingContext2d = ctx.unchecked_into();
-        ctx.clear_rect(0.0, 0.0, cw, ch);
+        let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+        ctx.clear_rect(0.0, 0.0, bw as f64, bh as f64);
+        let _ = ctx.scale(dpr, dpr);
 
         let Some(fs) = stars else { return };
         if !on || fs.img_w <= 0.0 || fs.img_h <= 0.0 || fs.stars.is_empty() { return; }
+
+        // JPEG px → sensor px for *display only*. Star coordinates must stay in
+        // JPEG space for the letterbox mapping below, so `FocusStar` keeps one
+        // unit throughout and the conversion happens here, at the boundary.
+        let hfr_k = fs.sensor_scale.unwrap_or(1.0);
 
         // Map JPEG pixel space onto the *actually rendered* image rectangle.
         // The <img> uses `max-w-full max-h-full object-contain`, so a frame
@@ -393,31 +599,130 @@ pub fn FocusTab(
             }
         };
 
-        // Per-star size (HFR) as a numeric label at the star's position.
-        ctx.set_font("10px monospace");
-        ctx.set_text_align("center");
-        ctx.set_text_baseline("middle");
-        ctx.set_fill_style_str("rgba(80, 220, 255, 0.9)");
-        let mut hfr_sum = 0.0;
-        for s in &fs.stars {
-            let sx = ox + s.x * scale;
-            let sy = oy + s.y * scale;
-            let _ = ctx.fill_text(&format!("{:.1}", s.hfr), sx, sy);
-            hfr_sum += s.hfr;
+        // KStars already burns its OWN red HFR text into this JPEG before
+        // sending it: Focus::initView sets setStarsHFREnabled(true)
+        // (focus.cpp:7782), and drawStarCentroid then draws the number — *not*
+        // a ring — at (xc + w + 5, yc + w/2), i.e. right of the star at its
+        // vertical centre (fitsview.cpp:1653-1657). That text is rendered at
+        // full frame scale and then downscaled with the pixmap, so on a large
+        // sensor it arrives as an illegible red smear we cannot remove.
+        //
+        // So: anchor our label UP-and-right at 45°, which clears KStars' text
+        // vertically while still pointing back at the star, and keep the label
+        // count low — a second dense layer on top of theirs is exactly what
+        // made this unreadable.
+        const MAX_LABELS: usize = 60;
+        const ADV: f64 = 6.6;  // 11px monospace advance ≈ 0.6em
+        const ASC: f64 = 9.0;  // ascent above the alphabetic baseline
+        const DESC: f64 = 3.0; // descent below it
+
+        ctx.set_font("11px monospace");
+        ctx.set_text_baseline("alphabetic");
+
+        // Rank softest-first: when labels must be dropped, the bloated stars
+        // are the ones that matter for judging focus.
+        let mut order: Vec<usize> = (0..fs.stars.len()).collect();
+        order.sort_by(|&a, &b| {
+            fs.stars[b].hfr
+                .partial_cmp(&fs.stars[a].hfr)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Greedy AABB reject against already-placed labels. Linear scan is
+        // fine: at most MAX_LABELS boxes × the detector's star cap.
+        let mut placed: Vec<(f64, f64, f64, f64)> = Vec::with_capacity(MAX_LABELS);
+        for &i in &order {
+            if placed.len() >= MAX_LABELS { break; }
+            let st = &fs.stars[i];
+            let sx = ox + st.x * scale;
+            let sy = oy + st.y * scale;
+            // Geometry uses the JPEG-space HFR and the screen scale; the
+            // sensor-converted value is for the text only.
+            let off = (st.hfr * scale * 1.6).clamp(7.0, 16.0);
+            let txt = format!("{:.1}", st.hfr * hfr_k);
+            let tw = txt.len() as f64 * ADV;
+
+            let (mut lx, mut ly) = (sx + off, sy - off);
+            let mut right_aligned = false;
+            if lx + tw > cw - 4.0 { lx = sx - off; right_aligned = true; }
+            if ly - ASC < 2.0 { ly = sy + off + ASC; }
+
+            let (x0, x1) = if right_aligned { (lx - tw, lx) } else { (lx, lx + tw) };
+            let (y0, y1) = (ly - ASC, ly + DESC);
+            if x1 < 0.0 || y1 < 0.0 || x0 > cw || y0 > ch { continue; }
+            // Inflate by 2 px so neighbouring labels keep a visible gap.
+            let (bx0, by0, bx1, by1) = (x0 - 2.0, y0 - 2.0, x1 + 2.0, y1 + 2.0);
+            if placed.iter().any(|b| bx0 < b.2 && bx1 > b.0 && by0 < b.3 && by1 > b.1) {
+                continue;
+            }
+            placed.push((bx0, by0, bx1, by1));
+
+            ctx.set_text_align(if right_aligned { "right" } else { "left" });
+            // Near-white, not cyan: it has to out-contrast both the cyan-ish
+            // auto-stretch and KStars' red text underneath.
+            halo_text(&ctx, &txt, lx, ly, "#eaf6ff");
         }
 
-        // Count + mean-HFR readout (top-left).
+        // ── Readout ───────────────────────────────────────────────────────
+        // Median, not mean: one saturated blob drags the mean away from what
+        // the labels show, and KStars' own aggregate is robust.
+        //
+        // Both aggregates are shown but labelled separately — they are not the
+        // same estimator (ours is the flux-weighted mean radius, KStars/SEP the
+        // half-flux radius, ~6% apart on a Gaussian), so presenting them as one
+        // number would just move the confusion rather than remove it.
         let n = fs.stars.len();
-        let mean = hfr_sum / n as f64;
-        ctx.set_font("11px monospace");
+        let median = {
+            let mut v: Vec<f64> = fs.stars.iter().map(|s| s.hfr * hfr_k).collect();
+            v.sort_by(f64::total_cmp);
+            if v.len() % 2 == 1 {
+                v[v.len() / 2]
+            } else {
+                (v[v.len() / 2 - 1] + v[v.len() / 2]) / 2.0
+            }
+        };
+        let unit = if fs.sensor_scale.is_some() { tr.focus_unit_px } else { tr.focus_unit_preview_px };
+        let mut lines: Vec<(String, &str, &str)> = Vec::new();
+        let head = match fs.kstars_hfr.filter(|_| fs.sensor_scale.is_some()) {
+            Some(k) => format!(
+                "{n} {} · {} {:.2} · {} {:.2} {unit}",
+                tr.focus_overlay_stars, tr.focus_overlay_kstars_hfr, k,
+                tr.focus_overlay_median, median
+            ),
+            None => format!(
+                "{n} {} · {} {:.2} {unit}",
+                tr.focus_overlay_stars, tr.focus_overlay_median, median
+            ),
+        };
+        lines.push((head, "11px monospace", "rgba(120, 235, 255, 0.95)"));
+        // The single line that explains why these numbers never used to match
+        // the header: the preview is a rescale of the frame.
+        if let Some(k) = fs.sensor_scale.filter(|k| (k - 1.0).abs() > 0.02) {
+            lines.push((
+                format!("×{:.2} {}", k, tr.focus_overlay_scale_note),
+                "9px monospace",
+                "#9aa3b8",
+            ));
+        }
+
         ctx.set_text_align("left");
         ctx.set_text_baseline("top");
-        let label = format!("{} stars · HFR {:.2}", n, mean);
-        ctx.set_fill_style_str("rgba(0,0,0,0.55)");
-        let tw = ctx.measure_text(&label).map(|m| m.width()).unwrap_or(120.0);
-        ctx.fill_rect(6.0, 6.0, tw + 10.0, 16.0);
-        ctx.set_fill_style_str("rgba(80, 220, 255, 0.95)");
-        let _ = ctx.fill_text(&label, 11.0, 9.0);
+        let box_w = lines
+            .iter()
+            .map(|(l, f, _)| {
+                ctx.set_font(f);
+                ctx.measure_text(l).map(|m| m.width()).unwrap_or(150.0)
+            })
+            .fold(0.0, f64::max);
+        ctx.set_fill_style_str("rgba(0,0,0,0.6)");
+        ctx.fill_rect(6.0, 6.0, box_w + 12.0, 6.0 + 14.0 * lines.len() as f64);
+        let mut ty = 9.0;
+        for (l, f, color) in &lines {
+            ctx.set_font(f);
+            ctx.set_fill_style_str(color);
+            let _ = ctx.fill_text(l, 12.0, ty);
+            ty += 14.0;
+        }
     });
 
     // ── Settings grid ─────────────────────────────────────────────────────
@@ -498,7 +803,7 @@ pub fn FocusTab(
             // Body — 1fr | 320 px on desktop, narrower right column on tablet, stacked on mobile
             <div class="grid grid-cols-[1fr_320px] max-[1199px]:grid-cols-[minmax(0,1fr)_280px] max-[759px]:flex max-[759px]:flex-col min-h-0">
                 // Left — preview + HFR plot
-                <div class="grid grid-rows-[1fr_110px] min-h-0 border-r border-border-base max-[759px]:shrink-0 max-[759px]:min-h-[180px] max-[759px]:max-h-[38vh] max-[759px]:border-r-0 max-[759px]:border-b max-[759px]:border-border-base">
+                <div class="grid grid-rows-[minmax(0,1fr)_182px] max-[759px]:grid-rows-[minmax(0,1fr)_140px] min-h-0 border-r border-border-base max-[759px]:shrink-0 max-[759px]:min-h-[300px] max-[759px]:max-h-[52vh] max-[759px]:border-r-0 max-[759px]:border-b max-[759px]:border-border-base">
                     <div
                         node_ref=preview_box_ref
                         class="relative min-h-0 overflow-hidden flex items-center justify-center bg-bg-input-deep"
@@ -538,11 +843,17 @@ pub fn FocusTab(
                             </button>
                         </Show>
                     </div>
-                    <div class="border-t border-border-base p-sp-2 bg-bg-input-deep">
+                    <div class="border-t border-border-base p-sp-2 bg-bg-input-deep grid grid-rows-[1fr_auto] min-h-0 gap-1">
                         <canvas
                             node_ref=canvas_ref
-                            class="block w-full h-full"
+                            class="block w-full h-full min-h-0"
                         ></canvas>
+                        <div class="text-xs text-text-muted leading-tight line-clamp-2">
+                            {move || {
+                                let title = focus.with(|f| f.plot_title.clone());
+                                if title.is_empty() { tr().focus_chart_caption.to_string() } else { title }
+                            }}
+                        </div>
                     </div>
                 </div>
 

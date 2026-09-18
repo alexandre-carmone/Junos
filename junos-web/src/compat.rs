@@ -133,6 +133,9 @@ pub struct FocusSnapshot {
     pub stars: Option<FocusStars>,
     pub history: Vec<HfrSample>,
     pub settings: serde_json::Value,
+    /// KStars' own summary line for the current focus run, shown as the chart
+    /// caption when non-empty.
+    pub plot_title: String,
 }
 
 pub fn derive_mount(store: &DeviceStore) -> Signal<MountSnapshot> {
@@ -173,10 +176,10 @@ pub fn derive_focus(store: &DeviceStore) -> Signal<FocusSnapshot> {
     let focus_stars       = store.focus_stars;
     let focus_hfr_history = store.focus_hfr_history;
     Signal::derive(move || {
-        let (device, connected, status, hfr, position, temperature, log) =
+        let (device, connected, status, hfr, position, temperature, log, plot_title) =
             match focus_status.get() {
-                Some(fs) => (fs.device, fs.connected, fs.status, fs.hfr, fs.position, fs.temperature, fs.log),
-                None => (String::new(), false, String::new(), None, None, None, String::new()),
+                Some(fs) => (fs.device, fs.connected, fs.status, fs.hfr, fs.position, fs.temperature, fs.log, fs.plot_title),
+                None => (String::new(), false, String::new(), None, None, None, String::new(), String::new()),
             };
         FocusSnapshot {
             device,
@@ -186,6 +189,7 @@ pub fn derive_focus(store: &DeviceStore) -> Signal<FocusSnapshot> {
             position,
             temperature,
             log,
+            plot_title,
             preview_url: focus_preview_url.get(),
             stars: focus_stars.get(),
             history: focus_hfr_history.get(),

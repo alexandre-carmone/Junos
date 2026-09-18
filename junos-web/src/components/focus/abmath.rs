@@ -28,9 +28,42 @@ pub enum BackfocusMode {
     All,
 }
 
+/// Round `raw` up to the next "nice" axis step on the 1 / 2 / 2.5 / 5 × 10^k
+/// ladder, so tick labels read as round numbers rather than whatever the data
+/// range happened to be. Non-finite or non-positive input yields `1.0`.
+pub fn nice_step(raw: f64) -> f64 {
+    if !(raw > 0.0) || !raw.is_finite() {
+        return 1.0;
+    }
+    let pow = 10f64.powf(raw.log10().floor());
+    let f = raw / pow; // 1.0 ..< 10.0
+    let m = if f <= 1.0 {
+        1.0
+    } else if f <= 2.0 {
+        2.0
+    } else if f <= 2.5 {
+        2.5
+    } else if f <= 5.0 {
+        5.0
+    } else {
+        10.0
+    };
+    m * pow
+}
+
+/// Nice axis bounds covering `[lo, hi]` in roughly `target` intervals.
+/// Returns `(axis_min, axis_max, step)`, both bounds snapped outward to a
+/// multiple of the step so the end gridlines land on labelled values.
+pub fn nice_axis(lo: f64, hi: f64, target: usize) -> (f64, f64, f64) {
+    let step = nice_step((hi - lo).max(1e-9) / target.max(1) as f64);
+    ((lo / step).floor() * step, (hi / step).ceil() * step, step)
+}
+
 /// Least-squares parabola `y = a·x² + b·x + c` through `samples`.
 /// Returns `(a, b, c)`; needs ≥3 points spanning ≥2 distinct x.
-fn fit_parabola(samples: &[Sample]) -> Option<(f64, f64, f64)> {
+/// Public within the crate so the focus HFR chart can draw the fitted curve,
+/// not just its vertex.
+pub(crate) fn fit_parabola(samples: &[Sample]) -> Option<(f64, f64, f64)> {
     let n = samples.len();
     if n < 3 { return None; }
     let (mut s0, mut s1, mut s2, mut s3, mut s4) = (0.0, 0.0, 0.0, 0.0, 0.0);
@@ -191,6 +224,47 @@ pub fn calc_backfocus(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nice_step_climbs_the_1_2_2p5_5_ladder() {
+        assert_eq!(nice_step(0.8), 1.0);
+        assert_eq!(nice_step(1.0), 1.0);
+        assert_eq!(nice_step(1.3), 2.0);
+        assert_eq!(nice_step(2.4), 2.5);
+        assert_eq!(nice_step(4.0), 5.0);
+        assert_eq!(nice_step(7.0), 10.0);
+        // Scale-invariant across decades.
+        assert!((nice_step(0.013) - 0.02).abs() < 1e-12);
+        assert!((nice_step(130.0) - 200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn nice_step_rejects_degenerate_input() {
+        assert_eq!(nice_step(0.0), 1.0);
+        assert_eq!(nice_step(-5.0), 1.0);
+        assert_eq!(nice_step(f64::NAN), 1.0);
+        assert_eq!(nice_step(f64::INFINITY), 1.0);
+    }
+
+    #[test]
+    fn nice_axis_snaps_both_bounds_outward() {
+        let (lo, hi, step) = nice_axis(2.3, 5.9, 4);
+        assert_eq!(step, 1.0);
+        assert_eq!(lo, 2.0);
+        assert_eq!(hi, 6.0);
+        // Every bound is an exact multiple of the step.
+        assert!((lo / step).fract().abs() < 1e-9);
+        assert!((hi / step).fract().abs() < 1e-9);
+        // And the original range is covered.
+        assert!(lo <= 2.3 && hi >= 5.9);
+    }
+
+    #[test]
+    fn nice_axis_survives_a_flat_range() {
+        let (lo, hi, step) = nice_axis(3.0, 3.0, 4);
+        assert!(step > 0.0 && step.is_finite());
+        assert!(lo <= 3.0 && hi >= 3.0);
+    }
 
     fn parabola_samples(vertex: f64, curvature: f64, base_hfr: f64) -> Vec<Sample> {
         // Symmetric sweep of 7 points around `vertex`.

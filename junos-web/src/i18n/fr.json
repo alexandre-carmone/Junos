@@ -1063,5 +1063,20 @@
   "framing_total_fov": "Total :",
   "framing_send_mosaic": "Envoyer vers Mosaïque",
   "framing_reload": "Recharger",
-  "framing_no_fov": "Connectez un télescope et une caméra pour calculer le champ."
+  "framing_no_fov": "Connectez un télescope et une caméra pour calculer le champ.",
+  "focus_axis_hfr_px": "HFR (px)",
+  "focus_axis_position": "Position du focuser (pas)",
+  "focus_axis_sample": "Échantillon n°",
+  "focus_chart_mode_position": "par position",
+  "focus_chart_mode_index": "par échantillon",
+  "focus_chart_caption": "HFR par échantillon. L'axe X est la position du focuser lorsqu'elle est disponible, sinon l'ordre des échantillons.",
+  "focus_chart_best": "meilleur",
+  "focus_chart_min": "min",
+  "focus_chart_waiting": "en attente de mesures HFR…",
+  "focus_overlay_stars": "étoiles",
+  "focus_overlay_median": "médiane",
+  "focus_overlay_kstars_hfr": "HFR KStars",
+  "focus_overlay_scale_note": "px capteur par px image",
+  "focus_unit_px": "px",
+  "focus_unit_preview_px": "px aperçu"
 }

@@ -267,9 +267,9 @@ fn decode_media_frame(data: &[u8]) -> Option<String> {
     });
 
     // Focus frames (uuid "+F", kstars media.cpp:752) get a server-side star
-    // detection pass so the browser can overlay detected stars with a per-star
-    // HFR size ring. We detect on the exact JPEG that gets displayed, so the
-    // star coordinates map straight onto the preview image with no rescaling.
+    // detection pass so the browser can overlay each detected star with its HFR.
+    // We detect on the exact JPEG that gets displayed, so the star coordinates
+    // map straight onto the preview image with no rescaling.
     let uuid = metadata.get("uuid").and_then(Value::as_str).unwrap_or("");
     let ext = metadata.get("ext").and_then(Value::as_str).unwrap_or("");
     if uuid.starts_with("+F") && ext == "jpg" {
@@ -281,6 +281,18 @@ fn decode_media_frame(data: &[u8]) -> Option<String> {
             out_payload["stars"] = Value::Array(arr);
             out_payload["star_w"] = json!(w);
             out_payload["star_h"] = json!(h);
+            // KStars renders the focus view at a zoom-dependent scale and
+            // then caps it at HB_IMAGE_WIDTH/2 (media.cpp:454), so the HFR we
+            // measure above is in preview pixels. This ratio converts it to the
+            // frame's own (binned sensor) pixels — the unit KStars publishes its
+            // own HFR in. It is an arbitrary positive real, not 1 or 2, and can
+            // be < 1; the client decides whether to trust it.
+            if let Some(scale) = frame_width(&metadata)
+                .filter(|fw| *fw > 0.0 && w > 0)
+                .map(|fw| fw / w as f64)
+            {
+                out_payload["star_scale"] = json!(scale);
+            }
         }
     }
 
@@ -290,6 +302,16 @@ fn decode_media_frame(data: &[u8]) -> Option<String> {
     });
 
     Some(msg.to_string())
+}
+
+/// Width of the real (unscaled) frame, parsed from KStars' `resolution` metadata
+/// field (`"WxH"`, media.cpp:403). `None` when the field is absent or malformed.
+fn frame_width(metadata: &Value) -> Option<f64> {
+    metadata
+        .get("resolution")
+        .and_then(Value::as_str)
+        .and_then(|r| r.split_once('x'))
+        .and_then(|(w, _)| w.trim().parse::<f64>().ok())
 }
 
 /// Decode a focus JPEG and detect its stars. Returns `(stars, width, height)`

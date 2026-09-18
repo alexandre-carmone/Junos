@@ -173,6 +173,9 @@ pub struct FocusStatusData {
     pub position: Option<i64>,
     pub temperature: Option<f64>,
     pub log: String,
+    /// Human-readable summary KStars draws above its own V-curve
+    /// (`new_focus_state {title}`, manager.cpp:2597). Empty when unset.
+    pub plot_title: String,
 }
 
 #[derive(Debug, Clone)]
@@ -182,8 +185,10 @@ pub struct HfrSample {
     pub position: Option<i64>,
 }
 
-/// A single star detected server-side in a focus frame (coordinates in the
-/// focus JPEG's pixel space — the same image shown in the preview).
+/// A single star detected server-side in a focus frame (coordinates *and* HFR
+/// in the focus JPEG's pixel space — the same image shown in the preview).
+/// Multiply `hfr` by [`FocusStars::sensor_scale`] to compare it with the HFR
+/// KStars reports, which is in sensor pixels.
 #[derive(Debug, Clone)]
 pub struct FocusStar {
     pub x: f64,
@@ -198,6 +203,22 @@ pub struct FocusStars {
     pub img_w: f64,
     pub img_h: f64,
     pub stars: Vec<FocusStar>,
+    /// Sensor pixels per JPEG pixel — `metadata.resolution.w / img_w`. KStars
+    /// renders the focus view at a zoom-dependent scale and then caps it at
+    /// 960 px wide (media.cpp:454), so this is an arbitrary positive real, not
+    /// 1 or 2, and can be < 1. `None` when the frame geometry can't be trusted:
+    /// missing metadata, or the Aberration Inspector's 3×3 mosaic view where
+    /// `displayPixmap` is a tile montage rather than the frame
+    /// (fitsview.cpp:1105) — there the star *coordinates* are wrong too.
+    pub sensor_scale: Option<f64>,
+    /// KStars' own aggregate HFR for this exact frame (`metadata.hfr`,
+    /// media.cpp:443), in sensor pixels. `None` when unmeasured.
+    ///
+    /// Note this is not the same estimator as ours: `starfind.rs` computes the
+    /// flux-weighted *mean* radius, KStars/SEP the *half-flux* radius. For a
+    /// Gaussian those differ by ~6% (1.253σ vs 1.177σ), so the two values stay
+    /// close but never identical — the UI labels them separately.
+    pub kstars_hfr: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default)]

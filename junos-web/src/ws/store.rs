@@ -825,9 +825,16 @@ impl DeviceStore {
             // emission sites.
             "new_focus_state" => {
                 let hfr = payload["hfr"].as_f64();
+                // KStars sends `pos: -1` for relative focusers, which have no
+                // absolute position (focus.cpp:2881). Normalise the sentinel
+                // away here, at the wire boundary, so no consumer has to know
+                // about it: the chart then falls back to sample index instead
+                // of plotting a column at -1, and the header shows "—" rather
+                // than "Position: -1". Note `>= 0` — position 0 is legal.
                 let pos = payload["pos"]
                     .as_i64()
-                    .or_else(|| payload["pos"].as_f64().map(|v| v as i64));
+                    .or_else(|| payload["pos"].as_f64().map(|v| v as i64))
+                    .filter(|p| *p >= 0);
 
                 // Detect the start of a new autofocus run: a transition from a
                 // non-running status into a running one ("In Progress" /
@@ -848,6 +855,12 @@ impl DeviceStore {
                         self.focus_hfr_history.set(Vec::new());
                     }
                 }
+                // KStars' own "clear the plot" signal (manager.cpp:2582). It
+                // only fires for autofocus runs, so the status heuristic above
+                // stays as the fallback for manual Loop captures.
+                if payload["focusinitHFRPlot"].as_bool() == Some(true) {
+                    self.focus_hfr_history.set(Vec::new());
+                }
 
                 self.focus_status.update(|opt| {
                     let fs = opt.get_or_insert_with(FocusStatusData::default);
@@ -865,6 +878,11 @@ impl DeviceStore {
                         if !l.is_empty() {
                             fs.log = l.to_string();
                         }
+                    }
+                    // Human-readable run summary KStars shows above its own
+                    // V-curve (manager.cpp:2597); reused as the chart caption.
+                    if let Some(t) = payload["title"].as_str() {
+                        fs.plot_title = t.to_string();
                     }
                 });
                 if let Some(h) = hfr {
@@ -1213,10 +1231,40 @@ impl DeviceStore {
                                     .collect();
                                 let img_w = payload["star_w"].as_f64().unwrap_or(0.0);
                                 let img_h = payload["star_h"].as_f64().unwrap_or(0.0);
+                                // `star_scale` (kstars_ws.rs, from KStars'
+                                // `metadata.resolution`) converts our
+                                // preview-pixel HFR to the frame's own binned
+                                // sensor pixels — the unit KStars publishes HFR
+                                // in. Reject it when the JPEG isn't a plain
+                                // rescale of the frame: with an ImageMosaicMask
+                                // active the pixmap is a 3×3 tile montage
+                                // (fitsview.cpp:1105), so the aspect ratios
+                                // diverge and the star coordinates are wrong
+                                // too. The overlay then says "preview px".
+                                let sensor_scale = payload["star_scale"]
+                                    .as_f64()
+                                    .filter(|v| *v > 0.0 && v.is_finite())
+                                    .filter(|sx| {
+                                        match payload["metadata"]["resolution"]
+                                            .as_str()
+                                            .and_then(|r| r.split_once('x'))
+                                            .and_then(|(_, h)| h.trim().parse::<f64>().ok())
+                                        {
+                                            Some(res_h) if img_h > 0.0 && res_h > 0.0 => {
+                                                let sy = res_h / img_h;
+                                                (sx - sy).abs() <= 0.02 * sx.max(sy)
+                                            }
+                                            _ => false,
+                                        }
+                                    });
                                 self.focus_stars.set(Some(FocusStars {
                                     img_w,
                                     img_h,
                                     stars,
+                                    sensor_scale,
+                                    kstars_hfr: payload["metadata"]["hfr"]
+                                        .as_f64()
+                                        .filter(|v| *v > 0.0 && v.is_finite()),
                                 }));
                             }
                             None => self.focus_stars.set(None),

@@ -973,5 +973,20 @@
   "framing_total_fov": "Total:",
   "framing_send_mosaic": "Send to Mosaic planner",
   "framing_reload": "Reload preview",
-  "framing_no_fov": "Connect a scope and camera to compute the field of view."
+  "framing_no_fov": "Connect a scope and camera to compute the field of view.",
+  "focus_axis_hfr_px": "HFR (px)",
+  "focus_axis_position": "Focuser position (steps)",
+  "focus_axis_sample": "Sample #",
+  "focus_chart_mode_position": "by position",
+  "focus_chart_mode_index": "by sample",
+  "focus_chart_caption": "HFR per sample. X axis is the focuser position when the focuser reports one, otherwise the sample order.",
+  "focus_chart_best": "best",
+  "focus_chart_min": "min",
+  "focus_chart_waiting": "waiting for HFR samples…",
+  "focus_overlay_stars": "stars",
+  "focus_overlay_median": "median",
+  "focus_overlay_kstars_hfr": "KStars HFR",
+  "focus_overlay_scale_note": "sensor px per image px",
+  "focus_unit_px": "px",
+  "focus_unit_preview_px": "preview px"
 }
