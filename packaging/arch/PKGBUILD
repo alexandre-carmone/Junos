@@ -5,8 +5,7 @@ pkgrel=1
 pkgdesc="Local KStars/Ekos Live LAN relay + WebGPU planetarium web client"
 arch=('x86_64' 'aarch64')
 url="https://github.com/alexandre-carmone/ekos-web-rust"
-# No LICENSE file in the repo yet; update once one is added.
-license=('custom:unknown')
+license=('GPL3')
 # Disable makepkg's default LTO. Arch mainline's makepkg.conf enables `lto`,
 # which injects `-flto` into CFLAGS/LDFLAGS. `ring`'s build.rs compiles its C
 # limb functions through the `cc` crate (which honours CFLAGS), turning them

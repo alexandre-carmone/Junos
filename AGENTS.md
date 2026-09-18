@@ -4,8 +4,8 @@
 
 - `junos-web` is a LAN-only KStars/Ekos Live relay plus browser UI, not an Ekos Live cloud client.
 - Workspace crates are `junos-server` and `junos-web`; root `Cargo.toml` has `default-members = ["junos-server"]`, so plain `cargo build`/`cargo run` only targets the server.
-- `deprecated-junos/` is the old prototype crate, kept for reference only — outside this workspace, do not edit.
 - `kstars/` is read-only upstream C++ reference for the Ekos Live wire format; grep it, never edit it.
+- Licensed GPL-3.0-or-later (`LICENSE`, and the `license` field in both crate manifests); bundled Stellarium-derived assets are GPL-2.0-or-later.
 
 ## Commands
 
@@ -23,7 +23,9 @@
 - iOS Safari needs `https://<host>:8443` for WebGPU; `--no-https` is only for headless/CI-style runs.
 - TLS certs are auto-generated into `.certs/`, or overridden with `--tls-cert`/`--tls-key` and env vars.
 - `--dist-dir`/`DIST_DIR` defaults to `junos-web/dist`.
-- `--captures-dir`/`CAPTURES_DIR` backs the Files tab and sandboxes `/api/files/*`; fallback is `$HOME/Pictures`, then cwd.
+- `--captures-dir`/`CAPTURES_DIR` backs the Files tab and sandboxes `/api/files/*`; fallback is `$HOME/Pictures` (only if it already exists), then cwd.
+- `--dso-tile-dir`/`DSO_TILE_DIR` defaults to `.cache/dso_tiles` and backs `/api/dso_tiles/*`; a missing dir is not an error (empty index).
+- Packaged installs differ: `packaging/arch/junos-web.service` runs KStars-facing HTTP on **8090**, not 8080.
 
 ## Architecture
 
@@ -34,7 +36,8 @@
 - WASM entrypoint is `junos-web/src/main.rs`; WebSocket state and event dispatch are under `junos-web/src/ws/`.
 - `DeviceStore` lives in `ws/store.rs`; add inbound Ekos handling in `apply_ekos_event` and expose sky-facing derived data through `compat.rs`.
 - Components dispatch raw JSON strings via `SendCmd = Arc<dyn Fn(String) + Send + Sync>`; do not introduce a typed command enum.
-- Tab routing is `components/tabs.rs`; `SkyTab` stays mounted and hidden on tab switch to preserve WebGPU/catalog state, while other tabs mount lazily.
+- The `Tab` enum is in `junos-web/src/main.rs`; render order is `TABS` in `components/tab_wheel.rs` (shared with the desktop `components/tab_bar.rs`). Twelve tabs: `Profiles`, `Sky`, `Mount`, `Focus`, `Imaging`, `Files`, `PolarAlign`, `Guide`, `Scheduler`, `Mosaic`, `FlatCal`, `Devices`.
+- Tab routing (mount/dismount) is `components/tabs.rs`; `SkyTab` stays mounted and hidden on tab switch to preserve WebGPU/catalog state, while other tabs mount lazily.
 - Tab components should receive only needed signals plus `SendCmd`, not the whole `DeviceStore`, except the central `TabContent` wiring layer.
 
 ## Ekos Wire-Format Pitfalls
@@ -53,7 +56,7 @@
 - Tailwind scans `junos-web/src/**/*.rs`; shared design tokens are in `junos-web/styles/tokens.css` and mapped in `tailwind.config.js`.
 - `junos-web/index.html` links only `tokens.css`, `base.css`, generated `tailwind.css`, and `responsive.css`; keep Trunk copy directives for checked-in catalogs.
 - Static catalogs in `junos-web/public/` are checked in; do not regenerate or re-encode them for unrelated changes.
-- Python catalog scripts under `scripts/` should be run with `uv run`, not bare `python3`, when regeneration is explicitly needed.
+- Of the `scripts/`, only `prefetch_dso_tiles.py`, `feather_nebulae.py` and `gen_sky_tiles.py` are PEP-723 self-contained — run those with `uv run`, never bare `python3`. The rest need their own deps, and several still target the removed `stars-web/` tree; treat the checked-in outputs as authoritative.
 - `astro.rs`, `coords.rs`, and `ephemeris.rs` contain the shared sky math; reuse them instead of reimplementing coordinate/FOV logic.
 
 ## Leptos/Rust Conventions
@@ -66,5 +69,5 @@
 
 ## Manual Verification
 
-- Start KStars, point Ekos Live offline server to `http://localhost:8080`, start an equipment profile, then open `https://localhost:8443`.
+- Start KStars, point Ekos Live offline server to `http://localhost:8080` (8090 for a packaged install), start an equipment profile, then open `https://localhost:8443`.
 - Expected smoke test: top status becomes `Ekos online`, browser `/ws` connects, and the sky view shows the mount-anchored FOV reticle when mount/camera data is available.

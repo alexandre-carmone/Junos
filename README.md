@@ -1,140 +1,351 @@
-# junos-web
+# Junos
 
-A local, browser-based KStars/Ekos web client.
-It runs **alongside KStars on your LAN** and acts as a transparent relay
-between KStars and your browser — nothing is sent to the cloud.
+A local, browser-based client for [KStars/Ekos](https://kstars.kde.org/).
+
+Junos runs **alongside KStars on your own network** and acts as a transparent
+relay between KStars and your browser. KStars thinks it is talking to
+`ekoslive.com`; in reality the traffic never leaves your LAN. Nothing is sent
+to the cloud, and no account is required.
+
+Two crates make it up:
+
+- **`junos-server`** — the relay. KStars connects *into* it; browsers connect
+  to it; it also serves the compiled frontend.
+- **`junos-web`** — the browser app. A Leptos + WebGPU UI that speaks the
+  Ekos Live wire format directly.
+
+## Features
+
+The UI is a 12-tab shell (a wheel on phones, a side strip on desktop), in this
+order:
+
+- **Profiles** — full equipment-profile management: create, edit, start and
+  stop Ekos profiles, optical trains, scopes, per-module train assignment,
+  driver search, local/remote INDI mode, PHD2 and web-manager flags. Works
+  *before* Ekos is online, so this is where a session begins.
+- **Sky** — a WebGPU planetarium. Stars and deep-sky objects from local
+  catalogs, constellation figures and names, alt/az and equatorial grids,
+  meridian, ecliptic and zenith markers, solar-system bodies, a
+  mount-anchored FOV reticle, slew trail, plate-solve marker, and overlays
+  for scheduler jobs and mosaic tiles. Object search (English and French
+  names), a click-to-inspect popup, a time-shift panel, and render toggles
+  with a magnitude limit and per-type DSO filters. Drag to pan, scroll or
+  pinch to zoom. Right-click (or long-press) anywhere for **Goto**,
+  **Goto & Align**, **Add to Scheduler**, or the **Framing Assistant**.
+- **Mount** — RA/Dec in both JNow and J2000, Az/Alt, hour angle, LST, pier
+  side. Goto/sync by coordinates or target name, park/unpark/abort, tracking,
+  slew-rate selection, a meridian-flip section, and a plate-solve section
+  (capture & solve, load a FITS, solver parameters, solved position angle and
+  pixel scale).
+- **Focus** — start/abort/capture/loop, manual in/out stepping, live focus
+  frame with star overlay and crosshair, an **HFR v-curve chart**, the full
+  settings pane (algorithm, star detection, curve fit, tolerance, step size,
+  backlash, SEP profile), and an **Aberration Inspector** for tilt and field
+  curvature.
+- **Imaging** — camera and cooling status, all exposure settings
+  (exposure, gain, offset, binning, format, filter, target, directory), a
+  capture **sequence queue** with progress, and a live preview with
+  fullscreen pan and pinch-zoom.
+- **Files** — browse the captures folder from the browser: thumbnails,
+  breadcrumbs, sorting and filtering, a FITS header panel, rename and
+  delete, plate-solve-and-slew-to-this-framing, and a **LiveStacker** panel
+  (align + stack, sigma clipping, SNR, frame count).
+- **Polar Align** — the Ekos polar alignment assistant: start/stop, refresh,
+  direction and rotation angle, manual-slew mode, and azimuth/altitude error
+  readout with correction guidance.
+- **Guide** — start/stop/capture/loop, guider selection (Internal, PHD2,
+  LinGuider), the live guide frame, a **drift timeline** plot and a
+  **target scatter** plot with accuracy radius, full calibration and guiding
+  settings, and a log export.
+- **Scheduler** — the job queue with start/stop, plus a **visual job builder**
+  with an inline sequence editor that writes the `.esq` file for you. Accepts
+  targets handed over from the Sky tab.
+- **Mosaic** — mosaic planner: grid size, overlap, position angle, computed
+  tile and total FOV, per-tile capture steps, and **Send to Scheduler**, which
+  imports every tile as a job. Its center can be set by **Pick on Sky**.
+- **Flat Cal** — dust-cap park/unpark, flat-panel on/off and brightness, and
+  the ADU optimizer (target ADU, tolerance, exposure bounds).
+- **Devices** — a complete **INDI control panel in the browser**: every
+  property of every connected device, grouped by INDI group, with typed
+  editors for numbers, text, switches and lights, plus the INDI message log.
+
+The interface is available in **English and French** (toggle in the tab
+wheel/strip).
+
+## Install
+
+Junos is Linux-only and builds natively for **x86_64** and **aarch64**
+(Raspberry Pi). Prebuilt packages are attached to each
+[GitHub Release](https://github.com/alexandre-carmone/Junos/releases).
+
+### Arch Linux (including Arch Linux ARM)
+
+The updater script fetches the right package for your architecture from the
+Releases page and installs it — no local build:
+
+```bash
+./packaging/arch/update.sh          # install / update
+sudo systemctl enable --now junos-web
+```
+
+Install it as a system command if you want to re-run it later:
+
+```bash
+sudo install -Dm755 packaging/arch/update.sh /usr/local/bin/junos-web-update
+```
+
+See [`packaging/arch/README.md`](packaging/arch/README.md) for building the
+package locally with `makepkg`, and for a nightly auto-update timer.
+
+### Portable tarball
+
+Download `junos-web-<version>-<arch>-linux.tar.gz` from the Releases page,
+unpack it, and run:
+
+```bash
+./junos-server --http-addr 0.0.0.0:8090 \
+               --https-addr 0.0.0.0:8443 \
+               --dist-dir ./dist
+```
+
+The tarball also ships a sample systemd unit. See
+[`packaging/portable/README.txt`](packaging/portable/README.txt).
+
+### Docker
+
+```bash
+docker build -t junos .
+docker run -p 8080:8080 -p 8443:8443 junos
+```
+
+Note this image is meant for a machine on your own LAN, not for publishing:
+it is single-stage (so it carries the whole Rust toolchain) and it bakes a
+self-signed certificate in at build time, which means every container built
+from it shares the same key.
+
+### NixOS
+
+The flake exposes a module:
+
+```nix
+{
+  inputs.junos.url = "github:alexandre-carmone/Junos";
+  # ...
+  imports = [ junos.nixosModules.default ];
+  services.junos-web.enable = true;
+}
+```
+
+The module's `httpAddr` and `httpsAddr` default to **`127.0.0.1`** (unlike the
+bare binary, which binds `0.0.0.0`), so for LAN access set both explicitly in
+addition to `openFirewall = true`. `nix run github:alexandre-carmone/Junos`
+starts the server without installing anything.
+
+### From source
+
+Requires `rustup` and `cargo` on your PATH.
+
+```bash
+just install     # adds the wasm32-unknown-unknown target, installs trunk,
+                 # and downloads the Tailwind CLI into junos-web/bin/
+just             # release build (frontend + server), then run
+```
+
+Or with Nix: `nix develop` gives you a shell with the whole toolchain pinned.
+
+Other recipes:
+
+```bash
+just build        # release build only, no run
+just check        # fast typecheck of both crates
+just dev-wasm     # `trunk watch` for the frontend
+just dev-server   # `cargo run -p junos-server`
+just gen-cert     # regenerate the self-signed TLS cert in .certs/
+just arch-pkg     # build the Arch package locally (amd64 | arm64)
+just clean        # cargo clean + rm junos-web/dist
+```
+
+## Using it with KStars
+
+1. Start KStars and open **Ekos**.
+2. In the Ekos Live settings, point the **offline server** at your Junos host:
+   - built from source (or `nix run`): `http://<host>:8080`
+   - installed from the Arch package or run with the tarball command above:
+     **`http://<host>:8090`**
+
+   The packaged service uses 8090 because port 8080 is commonly already taken.
+   If the browser UI loads but never reports `Ekos online`, this is almost
+   always the wrong port.
+3. Start your equipment profile — the built-in simulators are fine for
+   testing.
+4. Open `https://<host>:8443` in a browser and accept the self-signed
+   certificate.
+5. Click **Start** in Ekos. The top status strip should flip to
+   **Ekos online**, and the mount-anchored FOV reticle should appear on the
+   sky view.
+
+## Browser access & TLS
+
+The server listens on two ports: plain HTTP for KStars, and HTTPS for
+browsers. The browser side needs TLS because **WebGPU is only exposed in
+secure contexts** — over plain HTTP the UI loads but the sky view stays
+blank.
+
+A self-signed certificate is generated into `.certs/cert.pem` and
+`.certs/key.pem` (relative to the working directory) on first run, covering
+`localhost`, `127.0.0.1`, and every non-loopback IPv4 address of the host.
+Later runs reuse it, so trust established on a phone survives restarts.
+Supply your own with `--tls-cert` and `--tls-key` (both together), or disable
+TLS entirely with `--no-https` for a headless run.
+
+> ### iPhone / iPad — read this first
+>
+> WebGPU on iOS Safari is gated behind three things, and skipping any of them
+> silently breaks the planetarium:
+>
+> 1. **Connect over HTTPS** — `https://<lan-ip>:8443`. Safari exposes
+>    `navigator.gpu` only in secure contexts.
+> 2. **Enable the WebGPU feature flag** (iOS 18+): Settings → Apps → Safari
+>    → Advanced → **Feature Flags → WebGPU**.
+> 3. **Trust the certificate** — without trust, Safari refuses the WebSocket
+>    upgrade and the UI never connects to the relay.
+>
+> To trust it:
+>
+> 1. Visit `https://<lan-ip>:8443` in Safari and accept the warning.
+> 2. Get `.certs/cert.pem` onto the device (AirDrop is easiest) and let iOS
+>    prompt you — Settings → **Profile Downloaded → Install**.
+> 3. Settings → General → About → **Certificate Trust Settings** → enable the
+>    Junos certificate. It appears as `junos-dev` when the server generated
+>    it, or `junos-web` if it came from `just gen-cert`, Docker, or the NixOS
+>    module.
+>
+> Desktop Chrome, Firefox and Safari on the LAN can use either port; only iOS
+> strictly requires the HTTPS one.
+
+## Configuration
+
+Every option is a long flag with a matching environment variable.
+
+| Flag | Env | Default | Purpose |
+| --- | --- | --- | --- |
+| `--http-addr` | `HTTP_ADDR` | `0.0.0.0:8080` | KStars-facing listener |
+| `--https-addr` | `HTTPS_ADDR` | `0.0.0.0:8443` | Browser-facing TLS listener |
+| `--no-https` | `NO_HTTPS` | off | Disable TLS entirely |
+| `--tls-cert` | `TLS_CERT` | auto-generated | Your own certificate |
+| `--tls-key` | `TLS_KEY` | auto-generated | Your own private key |
+| `--dist-dir` | `DIST_DIR` | `junos-web/dist` | Where the compiled frontend lives |
+| `--captures-dir` | `CAPTURES_DIR` | see below | Root of the Files tab |
+| `--dso-tile-dir` | `DSO_TILE_DIR` | `.cache/dso_tiles` | Offline DSO tile cache |
+
+Notes:
+
+- `--tls-cert` and `--tls-key` must be given **together**; supplying only one
+  is a fatal error.
+- `--captures-dir` sandboxes the `/api/files/*` browser. If unset, Junos uses
+  `$HOME/Pictures` when that directory already exists, and otherwise the
+  current working directory. The resolved directory is created on startup if
+  it is missing.
+- Both listeners serve the same routes. The HTTP/HTTPS split is a convention
+  for who connects where, not a restriction.
+
+## Framing Assistant & offline DSO tiles
+
+The **Framing Assistant** plans a mosaic against a real image of the sky. It
+is not a tab: open it from the Sky tab by right-clicking (or long-pressing)
+a point and choosing **Framing assistant**. It shows your camera's tile grid
+over a survey preview of that region, lets you adjust the center, grid size,
+overlap and position angle, and then hands the plan to the Mosaic planner
+with **Send to Mosaic planner**.
+
+The preview is served **entirely from a local tile cache** — it never touches
+the network at runtime. The cache is **optional**: without it the Framing
+Assistant still works, and an uncovered region simply previews as the tile
+grid over black.
+
+To build it:
+
+```bash
+uv run scripts/prefetch_dso_tiles.py --limit 50   # smoke test first
+uv run scripts/prefetch_dso_tiles.py              # ~7960 objects, takes hours
+uv run scripts/prefetch_dso_tiles.py --status     # coverage report, no downloads
+```
+
+Tiles are downloaded from the CDS `hips2fits` service, one cutout per catalog
+object, into `.cache/dso_tiles/` (gitignored — this one is **not** checked in,
+unlike the star and DSO catalogs). Expect around **10 GB** at the current tile
+resolution. The download is resumable, so you can interrupt and re-run it;
+use `--out` (or the `DSO_TILE_DIR` environment variable) to put the cache
+somewhere else, and `--force` to refetch existing tiles.
+
+Point the server at it with `--dso-tile-dir` if you moved it.
 
 ## How it works
 
 ```
    KStars (Ekos Live "offline server")
-         │  ws://localhost:8080/message/ekos
-         │  ws://localhost:8080/media/ekos
+         │  ws://<host>:8080/message/ekos
+         │  ws://<host>:8080/media/ekos
          ▼
    ┌─────────────────────┐
    │     junos-server    │   Axum + Tokio relay
-   │  (Rust, native)     │   serves the WASM frontend at /
+   │  (Rust, native)     │   also serves the frontend at /
    └─────────────────────┘
          ▲
-         │  ws://localhost:8080/ws
+         │  wss://<host>:8443/ws
          │
-   Browser ── junos-web (Leptos + WebGPU planetarium)
+   Browser ── junos-web (Leptos + WebGPU)
 ```
 
-- **`junos-server`** — a tiny Axum relay. KStars connects *into* it as if it
-  were `ekoslive.com`. Browsers connect to `/ws` and exchange raw Ekos Live
-  JSON messages with KStars. The server also serves the compiled WASM
-  frontend from `junos-web/dist/`.
-- **`junos-web`** — the browser app. Leptos 0.7 CSR with a WebGPU sky view.
-  Speaks the Ekos Live wire format directly (`{type, payload}` JSON).
+KStars connects *inbound* to the relay as if it were `ekoslive.com`. A
+broadcast channel fans every KStars event out to all connected browsers, and
+browser commands are forwarded back to the attached KStars session.
 
 The server does **no protocol translation** — messages flow through opaque.
-All Ekos Live semantics live in the WASM client.
+All Ekos Live semantics live in the WASM client. Beyond the relay, the server
+adds a handful of local HTTP APIs the browser cannot do on its own: the
+captures-folder browser (`/api/files/*`), FITS thumbnailing and star/tilt
+analysis, the offline DSO tile cache (`/api/dso_tiles/*`), and launching
+KStars or PHD2 on the host (`/api/apps/*`).
 
 ## Repository layout
 
-- **`junos-server/`** — Axum/Tokio relay (Rust, native).
-- **`junos-web/`** — Leptos 0.7 CSR + WebGPU browser app.
-- **`deprecated-junos/`** — old prototype Leptos crate kept for
-  reference only; not part of the Cargo workspace.
-- **`kstars/`** — read-only checkout of the upstream KStars C++ source,
-  kept as the authoritative reference for the Ekos Live wire format.
+- **`junos-server/`** — the Axum/Tokio relay and local HTTP APIs.
+- **`junos-web/`** — the Leptos + WebGPU browser app. Binary star and
+  deep-sky catalogs live in `junos-web/public/`.
+- **`scripts/`** — Python tools that generate the catalogs and the offline
+  DSO tile cache.
+- **`packaging/`** — Arch Linux package, portable tarball, and CI notes.
+- **`nix/`**, **`flake.nix`** — dev shell, packages, and the NixOS module.
+- **`justfile`**, **`Dockerfile`** — build entry points.
+- **`kstars/`** — a read-only checkout of the upstream KStars C++ source,
+  kept as the authoritative reference for the Ekos Live wire format. Not
+  part of the build.
 
-## Install
+## Packaging & CI
 
-One-time setup (requires `rustup` and `cargo` already on PATH):
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) typechecks both
+  crates on every push and pull request (the same thing `just check` does).
+- [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the
+  portable tarball and the Arch package for x86_64 and aarch64 — natively on
+  both, no emulation — and attaches them to a GitHub Release. Trigger it by
+  pushing a version tag:
 
-```bash
-just install
-```
+  ```bash
+  git tag 0.1.2 && git push origin 0.1.2
+  ```
 
-This adds the `wasm32-unknown-unknown` Rust target and installs `trunk`.
+See [`packaging/README.cicd.md`](packaging/README.cicd.md) for details.
 
-Or, with Nix: `nix develop` (the repo ships a `flake.nix` dev shell with
-the toolchain pre-pinned).
+## License
 
-## Build & run
+Junos is licensed under the **GNU General Public License v3.0 or later**. See
+[`LICENSE`](LICENSE).
 
-```bash
-just              # release build (wasm + server) then run
-just build        # release build only, no run
-just check        # fast typecheck of both crates
-just dev-wasm     # `trunk watch` for the frontend
-just dev-server   # `cargo run -p junos-server`
-just clean        # cargo clean + rm junos-web/dist
-```
-
-> ⚠️ **iPhone / iPad users — read this first.**
-> WebGPU on iOS Safari is gated behind two requirements that will silently
-> break the planetarium if you skip them:
->
-> 1. **You must connect over HTTPS** (`https://<lan-ip>:8443`). Safari only
->    exposes `navigator.gpu` in secure contexts — plain `http://…:8080`
->    will load the UI but the sky view stays blank.
-> 2. **The WebGPU feature flag must be enabled** on iOS 18+:
->    Settings → Apps → Safari → Advanced → **Feature Flags → WebGPU**.
-> 3. **The self-signed dev cert must be trusted** (see the iPhone steps
->    below) — without trust, Safari refuses the WebSocket upgrade and the
->    UI never connects to the relay.
->
-> Desktop Chrome/Firefox/Safari on the LAN can use either port; only
-> iOS strictly needs the HTTPS one.
-
-## Transports
-
-The server binds two ports by default, configured via two separate flags:
-
-- `--http-addr` (default `0.0.0.0:8080`) — for KStars's Ekos Live
-  connection. Plain HTTP keeps KStars's Qt websocket simple; the link
-  stays on your LAN.
-- `--https-addr` (default `0.0.0.0:8443`) — for the browser UI. iOS
-  Safari (and most modern browsers in the long run) only expose
-  `navigator.gpu` in secure contexts, so the WebGPU planetarium needs
-  HTTPS even on a LAN.
-
-A self-signed cert is generated on first run into `.certs/cert.pem` +
-`.certs/key.pem`, covering `localhost`, `127.0.0.1`, and the host's
-non-loopback IPv4 addresses. Subsequent runs reuse the same cert so trust
-on the iPhone survives restarts. Drop your own cert in via `--tls-cert` /
-`--tls-key` (or env vars). Pass `--no-https` to disable TLS entirely.
-
-The `Files` tab is backed by `--captures-dir` (env `CAPTURES_DIR`),
-which sandboxes the `/api/files/*` browser. If unset, the server falls
-back to `$HOME/Pictures`, then to the current working directory.
-
-To trust the dev cert on iPhone/iPad:
-
-1. Visit `https://<lan-ip>:8443` from Safari, accept the warning.
-2. Open `.certs/cert.pem` on the device (AirDrop is easiest) and let
-   iOS prompt — Settings → **Profile Downloaded → Install**.
-3. Settings → General → About → **Certificate Trust Settings** → enable
-   the `junos-dev` certificate.
-4. Safari → Settings → Apps → Safari → Advanced → **Feature Flags → WebGPU**
-   (iOS 18+).
-
-## Using it with KStars
-
-1. Start KStars and open **Ekos**.
-2. In Ekos Live settings, point the **offline server** at
-   `http://localhost:8080`.
-3. Start your equipment profile (simulators are fine for testing).
-4. Open `https://localhost:8443` in your browser.
-5. The top status strip should flip to **Ekos online** and the
-   mount-anchored FOV reticle should appear on the sky view.
-
-## Frontend tabs
-
-`junos-web` is more than a planetarium. The tab wheel exposes:
-
-- **Sky** — WebGPU planetarium with stars, DSOs, nebulae thumbnails,
-  constellation lines, mount-anchored FOV reticle, search, and a
-  right-click *Goto / Plate-solve* menu.
-- **Mount**, **Focus**, **Guide**, **Imaging**, **Mosaic**,
-  **PolarAlign**, **Scheduler** — Ekos module surfaces, progressively
-  reintroduced from the deprecated upstream web client.
-- **Files** — browser for captured frames under `--captures-dir`
-  (defaults to `$HOME/Pictures`).
-- **Profiles** — Ekos equipment profile selector / launcher.
+The project also redistributes third-party data under **GPL-2.0-or-later**:
+the Stellarium-derived nebula textures and constellation figures described in
+Credits below. Upstream KStars/Ekos, whose protocol Junos speaks, is likewise
+GPL-2.0-or-later.
 
 ## Credits
 
@@ -142,16 +353,16 @@ This project would not exist without the work of several upstream
 projects. In particular:
 
 - **[KStars / Ekos](https://kstars.kde.org/)** (KDE, GPL-2.0-or-later) —
-  junos-web speaks the Ekos Live wire format directly. The `kstars/`
+  Junos speaks the Ekos Live wire format directly. The `kstars/`
   directory in this repo is a read-only checkout of the upstream KStars
   source kept as the authoritative protocol reference. All Ekos session
   logic, INDI device management, and plate-solving is performed by
-  KStars itself; junos-web is only a relay and a UI.
+  KStars itself; Junos is only a relay and a UI.
 
 - **[Stellarium](https://stellarium.org/)** (Stellarium team,
   GPL-2.0-or-later) — the planetarium ships imagery and data sourced
   from the Stellarium GitHub repository:
-  - **Nebulae thumbnails** in `junos-web/public/nebulae/` are derived
+  - **Nebulae textures** in `junos-web/public/nebulae/` are derived
     from Stellarium's `nebulae/default/` texture set
     (see `scripts/download_nebulae.py`).
   - **Constellation stick figures** are built from Stellarium's
@@ -163,6 +374,6 @@ projects. In particular:
   <https://github.com/Stellarium/stellarium> for the upstream source
   and full license text.
 
-- **Hipparcos / Tycho** catalogs and the OpenNGC deep-sky catalog feed
-  the binary catalogs in `junos-web/public/`. Regeneration scripts
-  live in `scripts/` (run with `uv run`).
+- **Hipparcos / Tycho / AT-HYG** star catalogs and the **OpenNGC** deep-sky
+  catalog feed the binary catalogs in `junos-web/public/`. Deep-sky preview
+  tiles are cutouts from the **CDS hips2fits** service.

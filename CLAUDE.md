@@ -16,14 +16,18 @@ Two crates:
 ## Repo layout
 
 - `junos-server/`, `junos-web/` — the two workspace crates (see Architecture below).
-- `deprecated-junos/` — old prototype Trunk/Leptos crate, kept for reference only. Not part of this workspace; do not edit.
 - `kstars/` — read-only upstream KStars C++ source, kept as the authoritative reference for the Ekos Live wire format. Never edit; grep heavily.
-- `scripts/` — Python tools that regenerate the binary catalogs in `junos-web/public/` (`gen_catalog.py`, `gen_dso_catalog.py`, `gen_dso_sprites.py`, `download_nebulae.py`, `platesolve_nebulae.py`, …). Per user preference, run with `uv run script.py` — never bare `python3`. The generated outputs are checked in; don't regenerate them as part of unrelated code changes.
-- `flake.nix` / `nix/` — Nix dev shell. Already provided; don't propose adding one.
+- `scripts/` — Python tools for the catalogs in `junos-web/public/` and the offline tile cache. Only `prefetch_dso_tiles.py`, `feather_nebulae.py` and `gen_sky_tiles.py` are PEP-723 self-contained (`uv run scripts/x.py`); the others (`gen_dso_catalog.py`, `gen_catalog.py`, `download_nebulae.py`, `platesolve_nebulae.py`, `gen_dso_sprites.py`, `slew.py`) are plain `python3` with external deps. Prefer `uv run` where the script supports it. Several still point at the long-gone `stars-web/` tree and are effectively dead — `gen_dso_catalog.py` is the one reliable generator. The checked-in outputs are authoritative; don't regenerate them as part of unrelated code changes.
+- `packaging/` — Arch Linux package (`packaging/arch/`), portable tarball (`packaging/portable/`), and CI notes. `.github/workflows/` has `ci.yml` (mirrors `just check`) and `release.yml` (tag-triggered two-arch build).
+- `flake.nix` / `nix/` — Nix dev shell, packages, and the `services.junos-web` NixOS module. Already provided; don't propose adding one.
 
 ## Frontend tabs
 
-`junos-web` is no longer planetarium-only. `components/tabs.rs` defines a `Tab` enum and `components/tab_wheel.rs` renders the tab switcher. Current tabs: `Sky` (planetarium, fullscreen behind the wheel), `Mount`, `Focus`, `Guide`, `Imaging`, `Files`, `Mosaic`, `PolarAlign`, `Scheduler`, `Profiles`. Each tab module lives directly under `components/`. `SkyTab` is kept mounted (`display:none` when inactive) so its WebGPU context and catalog state survive tab switches; the other tabs render only when active. The planetarium remains the most fully-featured surface; the other tabs are progressively being reintroduced — when adding to them, grow `DeviceStore` (`ws.rs`) and the `apply_ekos_event` match arm only as needed.
+`junos-web` is no longer planetarium-only. The `Tab` enum lives in `main.rs` (**not** `components/tabs.rs`, which only holds the `TabContent` router). Render order is `TABS` in `components/tab_wheel.rs`, used by both the mobile wheel and the desktop strip (`components/tab_bar.rs`):
+
+`Profiles`, `Sky`, `Mount`, `Focus`, `Imaging`, `Files`, `PolarAlign`, `Guide`, `Scheduler`, `Mosaic`, `FlatCal`, `Devices` — 12 tabs. Displayed labels come from `i18n` (`tab_*` keys); `PolarAlign` renders as "Polar Align" and `FlatCal` as "Flat Cal".
+
+Each tab module lives directly under `components/` (some as directories: `guide/`, `imaging/`, `files/`, `scheduler/`, `sky/`). `SkyTab` is kept mounted (`display:none` when inactive) so its WebGPU context and catalog state survive tab switches; the other tabs are lazy via `<Show>`. All 12 are substantial — none is a stub any more. When extending one, grow `DeviceStore` (`ws/store.rs`) and the `apply_ekos_event` match arm only as needed.
 
 ## Build & run
 
@@ -48,7 +52,7 @@ cargo check -p junos-web --target wasm32-unknown-unknown
 cargo check -p junos-server
 ```
 
-Workspace root `Cargo.toml` sets `default-members = ["junos-server"]`, so `cargo build`/`cargo run` from the root operate on the server only. `junos-web` is only buildable through Trunk (or `cargo check --target wasm32-unknown-unknown -p junos-web`). `deprecated-junos/` is the old prototype crate and is not in the workspace.
+Workspace root `Cargo.toml` sets `default-members = ["junos-server"]`, so `cargo build`/`cargo run` from the root operate on the server only. `junos-web` is only buildable through Trunk (or `cargo check --target wasm32-unknown-unknown -p junos-web`).
 
 ### Server ports
 
@@ -70,7 +74,12 @@ There are no unit tests — verification is manual: run KStars, enable Ekos Live
 - `kstars_ws.rs` handles `GET /message/ekos` and `GET /media/ekos` (KStars connects to these as an Ekos Live "offline server"). On connect it sends KStars the `set_client_state` handshake (required — KStars drops every outbound event until it receives that) and publishes a synthetic `new_connection_state {connected:true}` to the hub. Inbound text is broadcast to browsers verbatim; binary media frames are decoded from the 512-byte metadata header plus JPEG/FITS payload and re-emitted as `new_preview_image`.
 - `proxy.rs` handles `GET /ws` (browser side). On connect it tells the new browser the current KStars-attached state, then loops: KStars events → browser, browser commands → KStars via the hub.
 - `auth.rs` is a stub for `POST /api/authenticate` (no real auth — local relay only).
-- `config.rs` parses `--bind-addr`, `--dist-dir`, and the HTTPS/TLS flags (see "Server ports" above).
+- `config.rs` parses the clap `Config` (all long-only flags, each with an env var): `--http-addr`/`HTTP_ADDR`, `--https-addr`/`HTTPS_ADDR`, `--dist-dir`/`DIST_DIR`, `--captures-dir`/`CAPTURES_DIR`, `--dso-tile-dir`/`DSO_TILE_DIR`, `--tls-cert`, `--tls-key`, `--no-https`. Also `resolved_captures_dir()` / `resolved_dso_tile_dir()`.
+- `tls.rs` — cert/key resolution and self-signed generation into `.certs/` (`CN=junos-dev`, SANs = localhost + 127.0.0.1 + every non-loopback IPv4). Supplying only one of `--tls-cert`/`--tls-key` is a fatal error.
+- `files.rs` (+ `starfind.rs`) — the Files tab's backend: `/api/files/{list,meta,thumb,raw,download,rename,delete,resolve,tilt}`, FITS header parsing, thumbnailing, and a star detector used by the tilt/aberration analyzer. Sandboxed to the resolved captures dir by canonicalize checks.
+- `apps.rs` — `/api/apps/{launch,stop,state}`: spawn and monitor KStars or PHD2 on the server host.
+- `dso_tiles.rs` — serves the offline DSO tile cache at `/api/dso_tiles/*` (see "Offline DSO tiles" below).
+- `skysurvey.rs` — `/api/skysurvey`, a same-origin hips2fits proxy. Route still registered but no longer used by the framing path.
 
 There is **no protocol translation** in the server. Messages flow through opaque. All Ekos Live semantics live in the WASM client.
 
@@ -78,16 +87,17 @@ There is **no protocol translation** in the server. Messages flow through opaque
 
 Leptos 0.7 CSR. Entry point `main.rs` → `App()` → tab wheel + active tab. Module layout:
 
-- `ws.rs` — the WebSocket spine. Owns `DeviceStore`, `apply_ekos_event()`, `use_junos_ws()`, and the cross-referencing Effects that derive `telescope_settings` from `scopes ∩ trains`. Also fires per-device retry loops via `spawn_retry_property()` for `CCD_INFO` and `EQUATORIAL_EOD_COORD`.
+- `ws/` — the WebSocket spine (`mod.rs` owns `use_junos_ws()` and the cross-referencing Effects that derive `telescope_settings` from `scopes ∩ trains`; `store.rs` owns `DeviceStore` and `apply_ekos_event()`; `retry.rs` owns `spawn_retry_property()`, fired per device for `CCD_INFO` and `EQUATORIAL_EOD_COORD`; `types.rs` the payload structs). `ws_helpers.rs` sits alongside it.
 - `compat.rs` — flat snapshot types (`MountSnapshot`, `CameraSnapshot`, `SiteSnapshot`, `SolveSnapshot`) derived from `DeviceStore`. The sky module imports these, not `DeviceStore`.
 - `main.rs` — wires catalogs, site location, language, the Leptos contexts required by `sky/actions.rs` (`MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx`, `MosaicPlannerCtx`), and the tab shell. The top status strip (position `fixed`, `pointer-events:none`) shows WS state + mount RA/Dec + active FOV in arcmin.
-- `components/tabs.rs`, `components/tab_wheel.rs` — tab enum and wheel switcher.
+- `components/tabs.rs` — the `TabContent` router (mount/dismount policy). `components/tab_wheel.rs` (mobile wheel, owns `TABS`) and `components/tab_bar.rs` (desktop strip) are the two switchers; `components/tab_wheel_icons.rs` has the per-tab icons.
 - `components/sky/` — planetarium. Dual-canvas renderer (WebGPU bottom + Canvas2D overlay, fallback to all-Canvas2D). See below.
-- `components/{mount,focus,imaging,polar_align,scheduler,mosaic_tab}.rs`, `components/guide/` — other tabs. Each takes only the signals it needs plus `SendCmd`; never `DeviceStore` whole.
+- `components/{mount,focus,polar_align,mosaic_tab,flat_cal,devices,profiles}.rs` and `components/{guide,imaging,files,scheduler}/` — the other tabs. Each takes only the signals it needs plus `SendCmd`; never `DeviceStore` whole.
+- `dso_tiles.rs` — offline tile index fetcher (`/api/dso_tiles/index.json`) and `DsoTileIndex::find_overlapping`, consumed by the Framing Assistant.
 - `astro.rs` / `coords.rs` / `ephemeris.rs` — equatorial↔horizontal math (Julian date, GMST/LST, precession to/from J2000, `fov_deg(focal, sensor_px, pixel_um)`), and ephemerides for solar-system bodies. Correct — reuse, do not reimplement.
-- `catalog.rs`, `dso_catalog.rs`, `nebulae.rs` — async fetchers for the binary blobs in `public/`.
+- `catalog.rs`, `dso_catalog.rs` — async fetchers for `public/junos.bin` and `public/dso.bin`. `nebulae.rs` is `#[allow(dead_code)]`: the sky map dropped the image-footprint quads, so `fetch_nebulae_index()` has no callers and `public/nebulae/` is shipped but unread.
 - `gpu.rs` + `shaders/` — WebGPU compute pipeline.
-- `i18n.rs` — string table (EN/FR). Has many unused strings; don't gratuitously prune.
+- `i18n/` — module dir (`mod.rs` + `en.json` + `fr.json`, embedded via `include_str!`). EN default, FR selected via the `EN`/`FR` pill in the tab bar/wheel and persisted to localStorage `junos_lang`; there is no browser auto-detect. The `translations!` macro declares the schema — a key missing from one language **panics** on first use. Many unused strings; don't gratuitously prune.
 
 `SendCmd = Arc<dyn Fn(String) + Send + Sync>` — type-erased command sink. Components dispatch raw JSON strings via `send(serde_json::json!({"type":"…","payload":{…}}).to_string())`. Do not introduce a typed command enum.
 
@@ -96,10 +106,12 @@ Leptos 0.7 CSR. Entry point `main.rs` → `App()` → tab wheel + active tab. Mo
 The most fully-featured surface. Treat as stable — make targeted edits when adding overlays or interactions; don't rewrite. Structure:
 
 - `mod.rs` — `SkyTab` component, canvas/GPU setup, event loop, localStorage persistence (`sky_center_alt`, `sky_center_az`, `sky_fov_radius`, `sky_follow_mount`, `sky_focal_override`).
-- `render.rs` — Canvas2D overlay: grid, horizon, constellations (falls back from GPU), DSO labels, nebulae thumbnails, `render_center_fov()` and `render_mount_fov()` — the two FOV rectangles. Both call `astro::fov_deg` with `RenderParams.{fl, cam_pixel_size_um, cam_sensor_width, cam_sensor_height, rotation_deg, mount_ra_h, mount_dec_deg}`.
+- `render/` — Canvas2D overlay (`mod.rs`, `layer.rs`, `params.rs`, `pipeline.rs` + one module per layer in `render/layers/`: stars, dso, grids, ground, zenith, constellation_names, center_crosshair, mount_crosshair, fov_reticle, solve_marker, slew_trail, solar_system, mosaic, scheduler_jobs, info_overlay). Draws grid, horizon, constellations (falls back from GPU), DSO labels, `render_center_fov()` and `render_mount_fov()` — the two FOV rectangles. Both call `astro::fov_deg` with `RenderParams.{fl, cam_pixel_size_um, cam_sensor_width, cam_sensor_height, rotation_deg, mount_ra_h, mount_dec_deg}`.
 - `controls.rs` — right-panel render toggles + focal length override input.
 - `search.rs` — catalog object search.
-- `actions.rs` — right-click context menu + confirm popup that dispatches `mount_goto_rade` and `align_solve`. Imports `MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx` from the crate root — these newtypes live in `main.rs` and must be provided. `MosaicPlannerCtx` (also in `main.rs`) drives the Pick-on-Sky flow that hands a center off to the Mosaic tab.
+- `actions.rs` — right-click (or 500 ms long-press) context menu with four actions: `mount_goto_rade`, goto-then-`align_solve`, Add to Scheduler (`SchedulerPrefillCtx`), and Framing assistant (`FramingCtx`). Imports `MountDeviceCtx`, `CameraDeviceCtx`, `AlignDefaultsCtx`, `AlignSolveRadiusCtx`, `ServiceBusyCtx` from the crate root — these newtypes live in `main.rs` and must be provided. `MosaicPlannerCtx` (also in `main.rs`) drives the Pick-on-Sky flow that hands a center off to the Mosaic tab.
+- `framing.rs` — the Framing Assistant modal (opened only from `actions.rs`, not a tab). See "Offline DSO tiles" below.
+- `hud.rs`, `picking.rs`, `info_popup.rs`, `object_search.rs`, `dso_index.rs`, `dso_render.rs`, `dso_shape.rs`, `solar_render.rs`, `utils.rs`, `gpu/`, `shaders/*.wgsl` — the remaining pieces.
 
 ## Ekos Live wire format
 
@@ -111,11 +123,11 @@ JSON `{"type": "...", "payload": {...}}` over WebSocket. Authoritative reference
 
 ### Critical pitfalls — *read these before adding features*
 
-1. **Two gates, not one.** `new_connection_state` carries `{connected, online}`. `junos-server`'s synthetic event only sets `connected`. KStars' real event after profile start sets `online: true`. Many endpoints (`get_devices`, `get_states`, `get_scopes` in most call sites, `process*Commands`) gate on `getEkosStartingStatus() == Success` and are silently dropped before that — see `message.cpp:264, 291`. `ws.rs` prime requests fire on `online=true`, not `connected=true`, for this reason.
+1. **Two gates, not one.** `new_connection_state` carries `{connected, online}`. `junos-server`'s synthetic event only sets `connected`. KStars' real event after profile start sets `online: true`. Many endpoints (`get_devices`, `get_states`, `get_scopes` in most call sites, `process*Commands`) gate on `getEkosStartingStatus() == Success` and are silently dropped before that — see `message.cpp:264, 291`. `ws/` prime requests fire on `online=true`, not `connected=true`, for this reason.
 
 2. **`m_ClientState`.** KStars' `Node::sendResponse` (`node.cpp:156`) drops every outbound event if the remote peer hasn't sent `{"type":"set_client_state","payload":{"state":true}}`. `junos-server/src/kstars_ws.rs` sends this on connect; don't remove it.
 
-3. **`processDeviceCommands` silent drop.** `message.cpp:1664` — `if (!INDIListener::findDevice(device, …)) return;`. If the INDI driver for a device isn't registered yet when you send `device_property_get` / `device_property_set` / `device_property_subscribe`, the command is dropped with no reply and the subscription is not recorded. This is why `ws.rs::spawn_retry_property` exists: it keeps firing subscribe+get for up to 60 s until the expected data actually lands in the store.
+3. **`processDeviceCommands` silent drop.** `message.cpp:1664` — `if (!INDIListener::findDevice(device, …)) return;`. If the INDI driver for a device isn't registered yet when you send `device_property_get` / `device_property_set` / `device_property_subscribe`, the command is dropped with no reply and the subscription is not recorded. This is why `ws/retry.rs::spawn_retry_property` exists: it keeps firing subscribe+get for up to 60 s until the expected data actually lands in the store.
 
 4. **Mount coordinates come from a timer, not a signal.** `kstars/indi/indimount.cpp:244` — `updateCoordinatesTimer.start()` is only called after the first `processNumber(EQUATORIAL_EOD_COORD)` arrives from INDI. For idle drivers that don't push until something changes (e.g. Telescope Simulator at rest), `new_mount_state` carries `{status, target, …}` but **no RA/Dec** until the user triggers movement. The retry fetches `EQUATORIAL_EOD_COORD` directly via `device_property_get` to short-circuit this.
 
@@ -131,21 +143,24 @@ JSON `{"type": "...", "payload": {...}}` over WebSocket. Authoritative reference
 ### Adding a new device control
 
 1. Find the message in `commands.h` and read its handler in `message.cpp` to learn the payload schema. If it's an INDI property, read `indistd.cpp::{numberToJson, switchToJson, textToJson}` for the exact wire shape (compact vs non-compact).
-2. If KStars *sends* it, add a match arm in `ws.rs::apply_ekos_event` and add fields to the relevant `*StatusData` struct.
+2. If KStars *sends* it, add a match arm in `ws/store.rs::apply_ekos_event` and add fields to the relevant `*StatusData` struct.
 3. If the browser *sends* it, dispatch via `send(serde_json::json!({…}).to_string())`. For INDI properties that may arrive before the driver is registered, use the `spawn_retry_property` pattern.
 4. To expose new state to the planetarium, plumb it through `compat.rs` (the `*Snapshot` types consumed by `SkyTab`).
 
 ## Styling
 
-Styles live in `junos-web/styles/`, bundled by Trunk via `<link data-trunk rel="css" …>` in `index.html` (load order: `tokens` → `base` → `shell` → `components/*` → `responsive`):
+**Component styling is inline Tailwind utility classes in the `.rs` sources.** Per-component CSS files (`styles/components/*.css`, `shell.css`) have all been migrated away and no longer exist — do not add new ones.
 
-- `tokens.css` defines design tokens (`--bg`, `--text-blue`, `--accent-cyan`, `--sp-*`, `--r-*`, `--fs-*`, `--font-mono`). Reference these via `var(--name)` in CSS rather than restating hex/px literals.
-- `components/sky.css` and `components/tab_wheel.css` hold the class definitions for the migrated components. Use semantic class names: `<component>-<part>` (e.g. `sky-controls-toggle`, `tab-wheel-button`), with state modifiers as `--<state>` suffixes (e.g. `tab-wheel-button--active`).
-- `responsive.css` is the single home for `@media` rules so the cascade is auditable.
+`junos-web/index.html` links exactly four stylesheets via `<link data-trunk rel="css" …>`, in this order:
 
-In Leptos `view! {}`, prefer `class="…"` over inline `style="…"`. Use `class:foo=move || cond` for state toggles. Inline `style=` is reserved for values that genuinely change per render — and even then prefer setting CSS custom properties consumed by a class (see how `tab_wheel.rs` passes `--tw-rot`, `--tw-bx`, `--tw-cr`) rather than restating full property strings. Canvas2D paint strings (`ctx.fillStyle = …` in `sky/render.rs`) are *not* DOM CSS — leave them inline.
+`styles/tokens.css` → `styles/base.css` → `styles/tailwind.css` → `styles/responsive.css`
 
-When migrating a previously-untouched tab, add a new `components/<tab>.css`, replace its inline styles with class names, and link the new file from `index.html`. Sky and the tab wheel are migrated; the other tabs (mount, focus, imaging, scheduler, polar_align, mosaic, guide, files) still use inline styles and `const CSS: &str` blocks — convert opportunistically when next editing them.
+- `tokens.css` — design tokens (`--bg`, `--text-blue`, `--accent-cyan`, `--sp-*`, `--r-*`, `--fs-*`, `--font-mono`). Reference via `var(--name)` rather than restating hex/px literals; Tailwind's config maps utilities onto these.
+- `base.css` — element defaults and the handful of genuinely global rules.
+- `tailwind.css` — **generated, do not edit**. A Trunk `pre_build` hook runs `junos-web/bin/tailwindcss` (v3.4.17 standalone, fetched by `just setup-tailwind`) over `styles/tailwind.input.css` with `tailwind.config.js`. `Trunk.toml` ignores it in watch mode.
+- `responsive.css` — the single home for hand-written `@media` rules, for the cases Tailwind's breakpoint prefixes don't cover.
+
+In Leptos `view! {}`, style with Tailwind utilities in `class="…"`, and use `class:foo=move || cond` for state toggles. Inline `style=` is reserved for values that genuinely change per render — and even then prefer setting a CSS custom property consumed by a utility or token (see how `tab_wheel.rs` passes `--tw-rot`, `--tw-bx`, `--tw-cr`) rather than restating full property strings. Canvas2D paint strings (`ctx.fillStyle = …` in `sky/render/`) are *not* DOM CSS — leave them inline.
 
 ## Offline DSO tiles (Framing Assistant)
 
@@ -161,8 +176,9 @@ uv run scripts/prefetch_dso_tiles.py --index-only  # rebuild index.json from dis
 ```
 
 Output goes to `.cache/dso_tiles/` (gitignored — **not** `junos-web/public/`,
-unlike the other catalogs; ~1 GB+, size scales with `TILE_PX`). Override the dir
-with `--dso-tile-dir` / `DSO_TILE_DIR`. Resumable: existing tiles are skipped
+unlike the other catalogs; ~10 GB at the current `TILE_PX`). Override the dir with
+the script's `--out` flag or `DSO_TILE_DIR` — note `--dso-tile-dir` is the
+*server's* flag, the script has no such option. Resumable: existing tiles are skipped
 regardless of size, so changing `TILE_PX` leaves a resolution mix — `--status`
 shows it, `--force` refetches.
 

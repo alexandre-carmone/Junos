@@ -2,6 +2,7 @@
 name = "junos-web"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 # Trunk WASM build — excluded from native `cargo build` via workspace default-members.
 # Build with: cd junos-web && trunk build --release
