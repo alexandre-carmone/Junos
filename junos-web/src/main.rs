@@ -197,8 +197,8 @@ fn App() -> impl IntoView {
     // Connected mount device name, or None. Used as the GEOGRAPHIC_COORD write
     // target and to gate (grey out) the location controls: KStars only accepts a
     // location pushed through a connected device that is its `locationSource`.
+    let mount_snap = compat::derive_mount(&store);
     let mount_device: Signal<Option<String>> = {
-        let mount_snap = compat::derive_mount(&store);
         Signal::derive(move || {
             let m = mount_snap.get();
             if m.connected {
@@ -244,10 +244,14 @@ fn App() -> impl IntoView {
     provide_context(SchedulerPrefillCtx(prefill_ctx));
 
     // ── Busy guards for the sky right-click menu ──────────────────────────
-    // Nothing reports a busy device yet, so both stay None and the menu
-    // buttons are always enabled.
-    let none_str: Signal<Option<&'static str>> = Signal::derive(|| None);
-    provide_context(ServiceBusyCtx { camera_busy: none_str, mount_busy: none_str });
+    // Goto is refused while the mount is physically moving; Goto & Align also
+    // needs the camera idle. Both are derived from the store in `compat.rs`,
+    // so the interlock reflects the same state the tabs display. Previously
+    // both were a constant `None`, which left the guard permanently open even
+    // though `sky/actions.rs` reads and renders it — a long-press on the sky
+    // mid-slew fired `mount_goto_rade` and aborted the running slew.
+    let (mount_busy, camera_busy) = compat::derive_service_busy(&store);
+    provide_context(ServiceBusyCtx { camera_busy, mount_busy });
 
     // ── Mosaic planner shared state ───────────────────────────────────────
     let mosaic_planner = MosaicPlannerState {

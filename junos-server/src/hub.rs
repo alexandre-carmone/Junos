@@ -46,6 +46,12 @@ const STICKY_TYPES: &[&str] = &[
 /// INDI properties whose last `device_property_{set,get}` reply is kept per
 /// device so a reconnecting browser recovers the FOV inputs (sensor geometry
 /// and mount coordinates) immediately, short-circuiting the client retry loop.
+///
+/// Matched against the payload's `name` field — that is the key KStars uses for
+/// number/switch/text properties (`indistd.cpp::{numberToJson, switchToJson,
+/// textToJson}` all build `{device, name, state, …}`), and the key the client
+/// reads in `ws/store.rs::apply_ekos_event`. Only BLOB payloads carry a
+/// `property` key (`indistd.cpp:1058`), and no BLOB is listed here.
 const STICKY_PROPS: &[&str] = &["CCD_INFO", "EQUATORIAL_EOD_COORD"];
 
 /// Server-side snapshot of the most recent KStars state, replayed to every
@@ -106,7 +112,7 @@ impl ReplayCache {
                 self.last_mount_state = Some(text.to_string());
             }
             "device_property_set" | "device_property_get" => {
-                let prop = payload.and_then(|p| p.get("property")).and_then(Value::as_str);
+                let prop = payload.and_then(|p| p.get("name")).and_then(Value::as_str);
                 let device = payload.and_then(|p| p.get("device")).and_then(Value::as_str);
                 if let (Some(prop), Some(device)) = (prop, device) {
                     if STICKY_PROPS.contains(&prop) {
@@ -212,12 +218,20 @@ impl Hub {
 
     /// Send a command string to KStars. Returns `false` if no KStars session
     /// is currently connected or the queue is closed.
+    ///
+    /// The sender is cloned out and the registry lock released *before* the
+    /// bounded send is awaited. Holding it across that await wedges the whole
+    /// relay: if KStars stops reading its socket, the session loop blocks in
+    /// `sink.send(...)`, stops draining `cmd_rx`, and the 256-slot queue fills
+    /// — at which point every browser task piles up on this mutex and stops
+    /// being polled, so no browser receives events either, and `detach` cannot
+    /// take the lock to recover. With the lock released the stall is contained
+    /// to the one browser whose command is queued; the rest keep flowing.
     pub async fn send_to_kstars(&self, cmd: String) -> bool {
-        let guard = self.kstars_msg_tx.lock().await;
-        if let Some(tx) = guard.as_ref() {
-            tx.send(cmd).await.is_ok()
-        } else {
-            false
+        let tx = self.kstars_msg_tx.lock().await.clone();
+        match tx {
+            Some(tx) => tx.send(cmd).await.is_ok(),
+            None => false,
         }
     }
 }
@@ -243,9 +257,12 @@ mod tests {
         let mut c = ReplayCache::default();
         c.capture(r#"{"type":"get_scopes","payload":[]}"#);
         c.capture(r#"{"type":"new_focus_state","payload":{"status":"Idle"}}"#);
-        c.capture(r#"{"type":"device_property_set","payload":{"device":"CCD Simulator","property":"CCD_INFO"}}"#);
+        // Property payloads key the property name as `name`, exactly as KStars
+        // emits them (indistd.cpp::numberToJson). Using `property` here is what
+        // previously let a wrong-key lookup pass its own test.
+        c.capture(r#"{"type":"device_property_set","payload":{"device":"CCD Simulator","name":"CCD_INFO","state":0,"numbers":[]}}"#);
         // Not on the allowlist — must be dropped.
-        c.capture(r#"{"type":"device_property_set","payload":{"device":"CCD Simulator","property":"CCD_TEMPERATURE"}}"#);
+        c.capture(r#"{"type":"device_property_set","payload":{"device":"CCD Simulator","name":"CCD_TEMPERATURE","state":0,"numbers":[]}}"#);
         c.capture(r#"{"type":"new_align_state","payload":{"status":"Complete"}}"#);
 
         let snap = types(&c.snapshot());
@@ -257,6 +274,33 @@ mod tests {
         assert_eq!(
             snap.iter().filter(|t| *t == "device_property_set").count(),
             1
+        );
+    }
+
+    /// Regression guard for the wire key. KStars serializes number/switch/text
+    /// properties as `{device, name, state, …}` (indistd.cpp:1708,1736,1759) —
+    /// `property` appears only on BLOBs (:1058). Reading the wrong key made
+    /// `latest_props` silently always-empty, so a reconnecting browser never
+    /// recovered CCD_INFO / EQUATORIAL_EOD_COORD and had to wait out the
+    /// client-side retry loop.
+    #[test]
+    fn sticky_props_key_off_the_name_field_not_property() {
+        let mut c = ReplayCache::default();
+        c.capture(r#"{"type":"device_property_get","payload":{"device":"Telescope Simulator","name":"EQUATORIAL_EOD_COORD","state":0,"numbers":[{"name":"RA","value":5.5}]}}"#);
+        let snap = c.snapshot();
+        assert_eq!(
+            snap.iter().filter(|m| m.contains("EQUATORIAL_EOD_COORD")).count(),
+            1,
+            "a `name`-keyed property reply must be retained"
+        );
+
+        // A `property`-keyed payload is a BLOB descriptor, not a property
+        // value; it must not populate the replay cache.
+        let mut c = ReplayCache::default();
+        c.capture(r#"{"type":"device_property_get","payload":{"device":"CCD Simulator","property":"CCD_INFO"}}"#);
+        assert!(
+            c.snapshot().is_empty(),
+            "`property` is the BLOB key and must not be treated as a property name"
         );
     }
 

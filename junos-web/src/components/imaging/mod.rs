@@ -12,7 +12,7 @@
 
 mod fields;
 mod jobs;
-mod styles;
+pub(crate) mod styles;
 mod types;
 mod util;
 

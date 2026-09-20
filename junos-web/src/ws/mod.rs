@@ -475,8 +475,10 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
     // a page reload. `cmd_rx` is *borrowed* by the writer future — never moved into
     // a detached task — so it survives across reconnects; the UI-facing `send_fn`
     // (which only feeds `cmd_tx`) needs no changes. Commands sent while offline
-    // buffer in the unbounded channel and flush on reconnect, and the prime Effects
-    // above re-fire on the `connected`/`online` rising edges the server replays.
+    // are *discarded* on reconnect (see the drain below) rather than flushed, so
+    // a stale mount command can never move hardware minutes after the fact; the
+    // prime Effects above re-fire on the `connected`/`online` rising edges the
+    // server replays, which is what actually restores state.
     let store_for_ws = store.clone();
     spawn_local(async move {
         use gloo_timers::future::TimeoutFuture;
@@ -499,6 +501,26 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
                 }
             };
             backoff_ms = BACKOFF_MIN_MS;
+
+            // Drop whatever the UI queued while there was no live socket.
+            // `cmd_tx` is unbounded, so without this a command composed
+            // minutes ago flushes verbatim the instant we reconnect: after a
+            // Wi-Fi blip the operator taps "Goto here", sees nothing happen,
+            // gives up — and the mount slews to that stale target unprompted
+            // once the link returns, possibly mid-sequence. Nothing needed is
+            // lost: the prime Effects re-issue every idempotent bootstrap
+            // request on the `connected`/`online` rising edges the server
+            // replays on connect.
+            {
+                let mut discarded = 0usize;
+                while cmd_rx.try_recv().is_ok() {
+                    discarded += 1;
+                }
+                if discarded > 0 {
+                    debug_log!("[ws] discarded {} stale command(s) queued while offline", discarded);
+                }
+            }
+
             let (mut writer, mut reader) = ws.split();
 
             // Reader: process inbound frames until the socket errors or closes.

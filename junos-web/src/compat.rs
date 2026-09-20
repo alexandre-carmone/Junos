@@ -422,3 +422,42 @@ pub fn derive_guide(store: &DeviceStore) -> Signal<GuideSnapshot> {
         }
     })
 }
+
+/// The two "a device is busy" guards behind `ServiceBusyCtx` (`main.rs`), read
+/// by the sky right-click menu to disable Goto and Goto & Align. Each yields
+/// the name of the device holding the operation, or `None` when it is free —
+/// `sky/actions.rs` shows that name in the disabled button's label, and ORs the
+/// two for Goto & Align.
+///
+/// Mount status arrives as KStars' *untranslated* canonical string
+/// (`message.cpp:2641` calls `statusString(false)`), one of Idle / Moving /
+/// Slewing / Tracking / Parking / Parked (`indimount.cpp:30-31`). Only the
+/// three that mean the mount is physically in motion block a Goto; `Parked` is
+/// at rest, and `MountStatusData::parked` cannot be used here because
+/// `store.rs` sets it from `contains("park")`, which is also true of `Parking`.
+pub fn derive_service_busy(
+    store: &DeviceStore,
+) -> (Signal<Option<&'static str>>, Signal<Option<&'static str>>) {
+    let mount = derive_mount(store);
+    let capture = derive_capture(store);
+
+    let mount_busy = Signal::derive(move || {
+        let m = mount.get();
+        let moving = m.slewing
+            || matches!(
+                m.status_str.to_lowercase().as_str(),
+                "slewing" | "moving" | "parking"
+            );
+        moving.then_some("mount")
+    });
+
+    // `status_is_active` is the same predicate the Imaging tab uses to pulse
+    // its status pill, so the interlock and the visible "camera is working"
+    // indicator cannot drift apart.
+    let camera_busy = Signal::derive(move || {
+        crate::components::imaging::styles::status_is_active(&capture.get().status)
+            .then_some("camera")
+    });
+
+    (mount_busy, camera_busy)
+}

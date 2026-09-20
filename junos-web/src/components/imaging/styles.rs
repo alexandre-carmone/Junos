@@ -42,7 +42,7 @@ pub(super) fn status_color(status: &str) -> &'static str {
 
 /// True while the camera/capture pipeline is actively working — used to pulse
 /// the status pill and the live exposure bar. Idle/complete/aborted are static.
-pub(super) fn status_is_active(status: &str) -> bool {
+pub(crate) fn status_is_active(status: &str) -> bool {
     let s = status.to_lowercase();
     s.contains("capturing")
         || s.contains("progress")

@@ -15,6 +15,7 @@ mod tls;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use anyhow::Context;
 use axum::{
     extract::State,
     response::Json,
@@ -39,7 +40,7 @@ pub struct AppState {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "junos_server=info".into()))
         .with(tracing_subscriber::fmt::layer())
@@ -108,42 +109,63 @@ async fn main() {
         .fallback_service(ServeDir::new(&dist_dir).append_index_html_on_directories(true))
         .with_state(state);
 
+    // ── Bind before spawning ────────────────────────────────────────────
+    //
+    // Both listeners are bound here, in `main`, so that a failure to bind is a
+    // startup error that propagates out of `main` with a non-zero exit status.
+    // Binding inside the spawned tasks made a bind failure a `JoinError` that
+    // `log_exit` only logged, after which `main` returned normally and the
+    // process exited 0 — which `Restart=on-failure` in both packaged service
+    // units (nix/module.nix, packaging/arch/junos-web.service) reads as a clean
+    // shutdown and refuses to restart. A port still in TIME_WAIT after a reboot,
+    // or a stray `cargo run`, then silently left the observatory unreachable.
     let http_addr: SocketAddr = config
         .http_addr
         .parse()
-        .expect("--http-addr must parse as host:port");
+        .with_context(|| format!("--http-addr {:?} must parse as host:port", config.http_addr))?;
+    let http_listener = tokio::net::TcpListener::bind(http_addr)
+        .await
+        .with_context(|| format!("failed to bind HTTP address {http_addr}"))?;
     info!("HTTP  (KStars)  → http://{}", http_addr);
 
-    let http_app = app.clone();
-    let http_task = tokio::spawn(async move {
-        let listener = tokio::net::TcpListener::bind(http_addr)
-            .await
-            .expect("Failed to bind HTTP address");
-        axum::serve(listener, http_app)
-            .await
-            .map_err(|e| anyhow::anyhow!("HTTP serve error: {e}"))
-    });
-
-    let https_task = if config.no_https {
+    // TLS material and the HTTPS socket are also resolved up front, so a bad
+    // cert path or an occupied :8443 fails the unit instead of leaving the
+    // browser-facing listener quietly absent while HTTP keeps serving.
+    let https_bound = if config.no_https {
         info!("HTTPS disabled (--no-https). Browsers will lose WebGPU support.");
         None
     } else {
         let tls_cfg = tls::ensure_cert(config.tls_cert.as_deref(), config.tls_key.as_deref())
             .await
-            .expect("Failed to prepare TLS material");
+            .context("failed to prepare TLS material")?;
         let https_addr: SocketAddr = config
             .https_addr
             .parse()
-            .expect("--https-addr must parse as host:port");
+            .with_context(|| format!("--https-addr {:?} must parse as host:port", config.https_addr))?;
+        // `std` listener: axum-server takes ownership and switches it to
+        // non-blocking itself (`Listener::Std` in its `bind_incoming`).
+        let https_listener = std::net::TcpListener::bind(https_addr)
+            .with_context(|| format!("failed to bind HTTPS address {https_addr}"))?;
         info!("HTTPS (browser) → https://{}", https_addr);
+        Some((https_listener, tls_cfg))
+    };
+
+    let http_app = app.clone();
+    let http_task = tokio::spawn(async move {
+        axum::serve(http_listener, http_app)
+            .await
+            .map_err(|e| anyhow::anyhow!("HTTP serve error: {e}"))
+    });
+
+    let https_task = https_bound.map(|(listener, tls_cfg)| {
         let https_app = app;
-        Some(tokio::spawn(async move {
-            axum_server::bind_rustls(https_addr, tls_cfg)
+        tokio::spawn(async move {
+            axum_server::from_tcp_rustls(listener, tls_cfg)
                 .serve(https_app.into_make_service())
                 .await
                 .map_err(|e| anyhow::anyhow!("HTTPS serve error: {e}"))
-        }))
-    };
+        })
+    });
 
     // If either listener exits (cleanly or otherwise), tear down the process.
     // We don't try to recover — both are critical.
@@ -154,19 +176,31 @@ async fn main() {
         },
         None => {
             let r = http_task.await;
-            log_exit("HTTP", r);
+            log_exit("HTTP", r)
         }
     }
 }
 
+/// Turn a listener task's outcome into the process exit status. A listener that
+/// errors or panics must leave `main` with `Err` so the exit code is non-zero;
+/// only a clean exit returns `Ok`.
 fn log_exit(
     name: &str,
     r: Result<Result<(), anyhow::Error>, tokio::task::JoinError>,
-) {
+) -> anyhow::Result<()> {
     match r {
-        Ok(Ok(())) => info!("{name} listener exited cleanly"),
-        Ok(Err(e)) => error!("{name} listener error: {e}"),
-        Err(e)     => error!("{name} task panicked: {e}"),
+        Ok(Ok(())) => {
+            info!("{name} listener exited cleanly");
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            error!("{name} listener error: {e}");
+            Err(e.context(format!("{name} listener failed")))
+        }
+        Err(e) => {
+            error!("{name} task panicked: {e}");
+            Err(anyhow::Error::new(e).context(format!("{name} listener task panicked")))
+        }
     }
 }
 
