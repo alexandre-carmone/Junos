@@ -293,12 +293,24 @@ pub fn SchedulerTab(
             return;
         }
 
+        // ADU flats: KStars skips the calibration for a target ≤ 0 and aborts
+        // the capture on non-FITS/XISF encodings (cameraprocess.cpp) — catch
+        // both here rather than mid-run.
+        if frames.iter().any(|f| f.is_adu_flat() && f.flat_adu_target().is_none()) {
+            form_error.set(Some(t(lang.get_untracked()).sched_err_flat_adu.to_string()));
+            return;
+        }
+        if frames.iter().any(|f| f.is_adu_flat() && !matches!(f.encoding.as_str(), "" | "FITS" | "XISF")) {
+            form_error.set(Some(t(lang.get_untracked()).sched_err_flat_encoding.to_string()));
+            return;
+        }
+
         form_error.set(None);
 
         let safe_name = sanitize_name(if name.is_empty() { "sequence" } else { &name });
 
         // Bake the sanitized name straight into the capture folder path rather
-        // than deriving the subfolder from the object name (%T) at runtime.
+        // than deriving the subfolder from the object name (%t) at runtime.
         // KStars would otherwise build the subfolder from the job's target name;
         // joining it into the path keeps all frames under one predictable
         // directory. (Mirrors the mosaic import path in `mosaic_tab.rs`.)

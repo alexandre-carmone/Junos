@@ -44,6 +44,12 @@ pub struct SeqFrame {
     pub iso:        String,
     pub format:     String,
     pub encoding:   String,
+    /// Flat rows only — KStars' calibration "Flat duration". `true` = ADU:
+    /// KStars adapts the exposure until the frame mean reaches `flat_adu`
+    /// ± `flat_tolerance`. `false` = Manual: the exposure is used as-is.
+    pub flat_adu_mode:  bool,
+    pub flat_adu:       String,
+    pub flat_tolerance: String,
 }
 
 impl Default for SeqFrame {
@@ -61,7 +67,30 @@ impl Default for SeqFrame {
             iso:        String::new(),
             format:     "FITS".into(),
             encoding:   "FITS".into(),
+            flat_adu_mode:  false,
+            flat_adu:       "20000".into(),
+            // KStars' own default (kcfg `CalibrationADUValueTolerance`).
+            flat_tolerance: "1000".into(),
         }
+    }
+}
+
+impl SeqFrame {
+    /// Flat row with the ADU flat duration selected.
+    pub fn is_adu_flat(&self) -> bool {
+        self.frame_type == "Flat" && self.flat_adu_mode
+    }
+
+    /// `(target ADU, tolerance)` for an ADU flat whose values are usable, else
+    /// `None`. KStars only runs the ADU calibration for a target > 0
+    /// (`cameraprocess.cpp`), so a zero/unparsable target doesn't count.
+    pub fn flat_adu_target(&self) -> Option<(f64, f64)> {
+        if !self.is_adu_flat() { return None; }
+        let adu = self.flat_adu.trim().parse::<f64>().ok()
+            .filter(|v| *v > 0.0 && *v <= 65535.0)?;
+        let tol = self.flat_tolerance.trim().parse::<f64>().ok()
+            .filter(|v| *v >= 0.0)?;
+        Some((adu, tol))
     }
 }
 
@@ -71,9 +100,9 @@ impl Default for SeqFrame {
 /// into `SJ_LocalDirectory`, then combines it with the placeholder path). When
 /// empty, the element is left empty so KStars keeps its own default location.
 /// `target_folder` controls whether the capture path derives its per-target
-/// subfolder from the `%T` (target name) placeholder. The mosaic flow bakes the
-/// sanitized name straight into `fits_dir` instead, so it passes `false` to drop
-/// the `%T` folder and avoid a doubled-up subfolder.
+/// subfolder from the `%t` (target name) placeholder. The scheduler flow bakes
+/// the sanitized name straight into `fits_dir` instead, so it passes `false` to
+/// drop the `%t` folder and avoid a doubled-up subfolder.
 pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame], target_folder: bool) -> String {
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<SequenceQueue version='2.1'>\n");
@@ -113,10 +142,15 @@ pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame], target
         // The target folder must use %t, NOT %T — %T expands to the frame type
         // (e.g. "Light"), so it never carries the target/mosaic name. Filename
         // pattern: target_filter_type_exposure_date.
+        // Without a target folder: Type/Filter/type_filter_exposure, KStars'
+        // own ordering — flats land in `Flat/<filter>/`, darks/bias (no filter,
+        // so `%F` collapses) in `Dark/` / `Bias/`. Don't add `_secs` (%e
+        // already does) nor printf-style `%04d` (not a KStars tag, kept
+        // literally); the frame counter comes from <PlaceholderSuffix>.
         let placeholder = if target_folder {
             "/%t/%t_%F_%T_%e_%D"
         } else {
-            "/%F/Light/%F_%e_secs_%04d"
+            "/%T/%F/%T_%F_%e"
         };
         xml.push_str(&format!("<PlaceholderFormat>{}</PlaceholderFormat>\n", placeholder));
         // KStars auto-appends a `_%s<suffix>` frame counter to every filename;
@@ -144,9 +178,16 @@ pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame], target
         } else {
             xml.push_str("<Properties/>\n");
         }
-        xml.push_str("<Calibration><FlatSource><Type>Manual</Type></FlatSource>\
-<FlatDuration><Type>ADU</Type><Value>0</Value><Tolerance>0</Tolerance></FlatDuration>\
-<PreMountPark>false</PreMountPark><PreDomePark>false</PreDomePark></Calibration>\n");
+        // KStars switches a job to ADU flat duration as soon as a <Value>
+        // element is present (sequencejob.cpp), so only ADU flats carry one;
+        // every other row stays Manual.
+        let flat_duration = match f.flat_adu_target() {
+            Some((adu, tol)) => format!(
+                "<FlatDuration><Type>ADU</Type><Value>{adu}</Value><Tolerance>{tol}</Tolerance></FlatDuration>"),
+            None => "<FlatDuration><Type>Manual</Type></FlatDuration>".to_string(),
+        };
+        xml.push_str(&format!("<Calibration><FlatSource><Type>Manual</Type></FlatSource>\
+{flat_duration}<PreMountPark>false</PreMountPark><PreDomePark>false</PreDomePark></Calibration>\n"));
         xml.push_str("</Job>\n");
     }
     xml.push_str("</SequenceQueue>\n");
@@ -236,6 +277,10 @@ pub fn SequenceEditor(
                     let is = frame.iso.clone();
                     let fmt_v = frame.format.clone();
                     let enc_v = frame.encoding.clone();
+                    let is_flat = frame.frame_type == "Flat";
+                    let adu_mode = frame.flat_adu_mode;
+                    let adu_v = frame.flat_adu.clone();
+                    let tol_v = frame.flat_tolerance.clone();
 
                     // Inline dropdown helper: <select> with device-supplied
                     // options, falling back to a free-text input when none
@@ -385,6 +430,58 @@ pub fn SequenceEditor(
                                   {"\u{00d7}"}
                               </button>
                           </div>
+
+                          // Flat calibration — always visible on Flat rows (not
+                          // hidden behind the advanced toggle).
+                          {is_flat.then(|| view! {
+                              <div class="flex flex-wrap items-center gap-2 px-2 py-1 text-sm">
+                                  <label class="flex items-center gap-1">
+                                      <span class="text-text-blue">{move || tr().seq_flat_duration}</span>
+                                      <select
+                                          class=format!("{INPUT_BASE} w-[96px]")
+                                          prop:value=if adu_mode { "adu" } else { "manual" }
+                                          on:change=move |ev| {
+                                              let adu = ev.target().unwrap()
+                                                  .unchecked_into::<web_sys::HtmlSelectElement>().value() == "adu";
+                                              frames.update(|fs| {
+                                                  if let Some(f) = fs.get_mut(idx) { f.flat_adu_mode = adu; }
+                                              });
+                                          }
+                                      >
+                                          <option value="manual" selected=!adu_mode>{move || tr().seq_flat_manual}</option>
+                                          <option value="adu" selected=adu_mode>"ADU"</option>
+                                      </select>
+                                  </label>
+                                  {adu_mode.then(|| view! {
+                                      <label class="flex items-center gap-1">
+                                          <span class="text-text-blue">{move || tr().seq_target_adu}</span>
+                                          <input type="number" min="1" max="65535" step="1000"
+                                                 class=format!("{INPUT_BASE} w-[80px]")
+                                                 prop:value=adu_v
+                                                 on:input=move |ev| {
+                                                     let v = ev.target().unwrap()
+                                                         .unchecked_into::<web_sys::HtmlInputElement>().value();
+                                                     frames.update(|fs| {
+                                                         if let Some(f) = fs.get_mut(idx) { f.flat_adu = v; }
+                                                     });
+                                                 } />
+                                      </label>
+                                      <label class="flex items-center gap-1">
+                                          <span class="text-text-blue">{move || tr().seq_adu_tolerance}</span>
+                                          <input type="number" min="0" max="50000" step="100"
+                                                 class=format!("{INPUT_BASE} w-[72px]")
+                                                 prop:value=tol_v
+                                                 on:input=move |ev| {
+                                                     let v = ev.target().unwrap()
+                                                         .unchecked_into::<web_sys::HtmlInputElement>().value();
+                                                     frames.update(|fs| {
+                                                         if let Some(f) = fs.get_mut(idx) { f.flat_tolerance = v; }
+                                                     });
+                                                 } />
+                                      </label>
+                                  })}
+                              </div>
+                          })}
 
                           // Expanded advanced panel
                           {

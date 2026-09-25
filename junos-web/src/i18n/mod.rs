@@ -79,7 +79,7 @@ translations! {
     cooler_off, target, set_btn, preview, sequence, path, object, no_sequence_items,
     type_col, progress, dur_s, add_btn, frame_light, frame_dark, frame_bias, frame_flat,
     seq_start, seq_pause, seq_resume, seq_abort, seq_clear, seq_flat_panel_on, seq_flat_intensity, seq_close_dust_cap,
-    seq_target_adu, solver_settings, index_dir_label, scale_low_label, scale_high_label, timeout_label, downsample_label, solve_radius_label,
+    seq_target_adu, seq_flat_duration, seq_flat_manual, seq_adu_tolerance, solver_settings, index_dir_label, scale_low_label, scale_high_label, timeout_label, downsample_label, solve_radius_label,
     save_btn, mount_label, camera_label, host_label, port_label, indiserver_label, tab_mount, mount_park,
     mount_unpark, mount_abort, mount_sync_to_pole, mount_slew_rate, mount_motion_hold, mount_hour_angle, mount_time_to_meridian, mount_pier_side,
     mount_time_to_flip, mount_flip_due, mount_auto_flip, mount_flip_delay, mount_flip_autofocus, mount_past_meridian, meridian, tab_focus,
@@ -148,7 +148,7 @@ translations! {
     sched_steps_legend, sched_step_track, sched_step_focus, sched_step_align, sched_step_guide, sched_start_when, sched_cond_asap, sched_cond_at_time,
     sched_complete_when, sched_cond_seq, sched_cond_repeat, sched_cond_loop, sched_cond_finish_at, sched_times_unit, sched_seq_label, sched_seq_col_type,
     sched_seq_col_filter, sched_seq_col_exp, sched_seq_col_count, sched_add_frame, sched_clear_btn, sched_add_job_btn, sched_settings_btn, sched_err_ra, sched_err_dec,
-    sched_err_frames, sky_add_scheduler, sky_create_mosaic, sky_scheduler_jobs,
+    sched_err_frames, sched_err_flat_adu, sched_err_flat_encoding, sky_add_scheduler, sky_create_mosaic, sky_scheduler_jobs,
     apps_section, apps_kstars, apps_phd2, apps_launch, apps_stop, apps_running, apps_stopped,
     // Files tab v2 — browser controls, file actions, livestacker extras.
     files_sort_name, files_sort_date, files_sort_size, files_sort_asc, files_sort_desc, files_filter_all,
