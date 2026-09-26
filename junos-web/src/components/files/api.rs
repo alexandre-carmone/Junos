@@ -54,6 +54,19 @@ pub(super) async fn resolve_abs(abs: &str) -> Result<ResolveReply, String> {
     resp.json::<ResolveReply>().await.map_err(|e| e.to_string())
 }
 
+/// Absolute server-side path of a sandbox-relative `rel`. `/api/config`
+/// reports the canonical captures root — the same root `/api/files/*`
+/// resolves `rel` against — so joining the two names the file on the host
+/// KStars runs on.
+pub(super) async fn abs_path_of(rel: &str) -> Result<String, String> {
+    let resp = gloo_net::http::Request::get("/api/config").send().await.map_err(|e| e.to_string())?;
+    if !resp.ok() { return Err(format!("HTTP {}", resp.status())); }
+    let v = resp.json::<serde_json::Value>().await.map_err(|e| e.to_string())?;
+    let root = v.get("captures_dir").and_then(|d| d.as_str()).filter(|d| !d.is_empty())
+        .ok_or_else(|| "captures_dir missing from /api/config".to_string())?;
+    Ok(format!("{}/{}", root.trim_end_matches('/'), rel.trim_start_matches('/')))
+}
+
 pub(super) async fn newest_image_in_abs_dir(abs: &str) -> Result<Option<String>, String> {
     let resolved = resolve_abs(abs).await?;
     if !resolved.in_sandbox {
