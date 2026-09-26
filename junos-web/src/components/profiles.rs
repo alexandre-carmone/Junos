@@ -254,6 +254,10 @@ fn AppRow(
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
 
+    // Last launch/stop failure reported by the server (e.g. the binary is not
+    // on its PATH). Cleared on the next click.
+    let error = RwSignal::new(None::<String>);
+
     let on_action = move |_| {
         let currently_running = running.get_untracked();
         let endpoint = if currently_running {
@@ -261,45 +265,55 @@ fn AppRow(
         } else {
             "/api/apps/launch"
         };
-        let body = serde_json::json!({ "app": app_name }).to_string();
-        // Fire-and-forget fetch; status comes back via ws push.
-        let _ = web_sys::window().map(|w| {
-            use wasm_bindgen::JsValue;
-            let opts = web_sys::RequestInit::new();
-            opts.set_method("POST");
-            opts.set_body(&JsValue::from_str(&body));
-            let headers = web_sys::Headers::new().unwrap();
-            let _ = headers.set("content-type", "application/json");
-            opts.set_headers(&headers);
-            let req = web_sys::Request::new_with_str_and_init(endpoint, &opts).unwrap();
-            w.fetch_with_request(&req)
+        error.set(None);
+        // Status comes back via ws push; only the error needs the reply.
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = async {
+                let resp = gloo_net::http::Request::post(endpoint)
+                    .json(&serde_json::json!({ "app": app_name })).map_err(|e| e.to_string())?
+                    .send().await.map_err(|e| e.to_string())?;
+                if !resp.ok() { return Err(format!("HTTP {}", resp.status())); }
+                let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+                match body["ok"].as_bool() {
+                    Some(true) => Ok(()),
+                    _ => Err(body["error"].as_str().unwrap_or("unknown error").to_string()),
+                }
+            }.await;
+            if let Err(e) = result {
+                error.set(Some(e));
+            }
         });
     };
 
     view! {
-        <div class="flex items-center gap-sp-3">
-            <span class="text-sm text-text-dim font-semibold w-[72px] shrink-0">{label}</span>
-            {move || if running.get() {
-                view! {
-                    <span class="badge badge--ok">{tr().apps_running}</span>
-                }.into_any()
-            } else {
-                view! {
-                    <span class="badge">{tr().apps_stopped}</span>
-                }.into_any()
-            }}
-            <button
-                class=move || {
-                    if running.get() {
-                        format!("{BTN_BASE} {BTN_STOP}")
-                    } else {
-                        format!("{BTN_BASE} {BTN_LAUNCH}")
+        <div class="flex flex-col gap-sp-1">
+            <div class="flex items-center gap-sp-3">
+                <span class="text-sm text-text-dim font-semibold w-[72px] shrink-0">{label}</span>
+                {move || if running.get() {
+                    view! {
+                        <span class="badge badge--ok">{tr().apps_running}</span>
+                    }.into_any()
+                } else {
+                    view! {
+                        <span class="badge">{tr().apps_stopped}</span>
+                    }.into_any()
+                }}
+                <button
+                    class=move || {
+                        if running.get() {
+                            format!("{BTN_BASE} {BTN_STOP}")
+                        } else {
+                            format!("{BTN_BASE} {BTN_LAUNCH}")
+                        }
                     }
-                }
-                on:click=on_action
-            >
-                {move || if running.get() { tr().apps_stop } else { tr().apps_launch }}
-            </button>
+                    on:click=on_action
+                >
+                    {move || if running.get() { tr().apps_stop } else { tr().apps_launch }}
+                </button>
+            </div>
+            {move || error.get().map(|e| view! {
+                <div class="text-xs text-state-err break-words">{e}</div>
+            })}
         </div>
     }
 }

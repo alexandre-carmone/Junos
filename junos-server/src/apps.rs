@@ -150,7 +150,9 @@ impl AppManager {
             let Ok(pid) = name_str.parse::<u32>() else { continue };
             let comm_path = format!("/proc/{pid}/comm");
             let Ok(comm) = std::fs::read_to_string(&comm_path) else { continue };
-            let comm = comm.trim().to_lowercase();
+            // Nix wrappers exec the real binary as `.kstars-wrapped` /
+            // `.phd2-wrapped.bin`, so drop the leading dot before matching.
+            let comm = comm.trim().trim_start_matches('.').to_lowercase();
             for app in [APP_KSTARS, APP_PHD2] {
                 if comm == app || comm.starts_with(app) {
                     found.entry(app.to_string()).or_insert(pid);
