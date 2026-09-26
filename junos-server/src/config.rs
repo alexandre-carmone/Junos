@@ -54,6 +54,15 @@ pub struct Config {
     /// uncovered sky as black.
     #[arg(long, env = "DSO_TILE_DIR")]
     pub dso_tile_dir: Option<PathBuf>,
+
+    /// KStars task-queue root written by the Scheduler's startup/shutdown
+    /// queue editor (`/api/taskqueue/*`): collections go in `collections/`,
+    /// their shell scripts in `scripts/`. Defaults to KStars' own
+    /// `$XDG_DATA_HOME/kstars/taskqueue` (else `~/.local/share/kstars/taskqueue`),
+    /// so KStars' Collections dialog lists the same files. Point it at
+    /// `~/.var/app/org.kde.kstars/data/kstars/taskqueue` for Flatpak KStars.
+    #[arg(long, env = "TASKQUEUE_DIR")]
+    pub taskqueue_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -76,5 +85,26 @@ impl Config {
         self.dso_tile_dir
             .clone()
             .unwrap_or_else(|| PathBuf::from(".cache").join("dso_tiles"))
+    }
+
+    /// Resolve the KStars task-queue root:
+    /// flag → `$XDG_DATA_HOME/kstars/taskqueue` → `$HOME/.local/share/kstars/taskqueue`
+    /// → cwd. Always absolute — KStars loads the collection paths we hand it
+    /// through `QUrl::fromUserInput`, which turns a relative path into a URL.
+    pub fn resolved_taskqueue_dir(&self) -> PathBuf {
+        let dir = if let Some(p) = &self.taskqueue_dir {
+            p.clone()
+        } else if let Some(xdg) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+            PathBuf::from(xdg).join("kstars").join("taskqueue")
+        } else if let Ok(home) = std::env::var("HOME") {
+            PathBuf::from(home).join(".local/share/kstars/taskqueue")
+        } else {
+            PathBuf::from(".local/share/kstars/taskqueue")
+        };
+        if dir.is_absolute() {
+            dir
+        } else {
+            std::env::current_dir().map(|cwd| cwd.join(&dir)).unwrap_or(dir)
+        }
     }
 }

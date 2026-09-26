@@ -215,6 +215,7 @@ Every option is a long flag with a matching environment variable.
 | `--dist-dir` | `DIST_DIR` | `junos-web/dist` | Where the compiled frontend lives |
 | `--captures-dir` | `CAPTURES_DIR` | see below | Root of the Files tab |
 | `--dso-tile-dir` | `DSO_TILE_DIR` | `.cache/dso_tiles` | Offline DSO tile cache |
+| `--taskqueue-dir` | `TASKQUEUE_DIR` | `~/.local/share/kstars/taskqueue` | Scheduler startup/shutdown queues and scripts |
 
 Notes:
 
@@ -224,6 +225,16 @@ Notes:
   `$HOME/Pictures` when that directory already exists, and otherwise the
   current working directory. The resolved directory is created on startup if
   it is missing.
+- `--taskqueue-dir` is where the Scheduler's queue editor writes KStars task
+  queues (`collections/<name>.json`) and their shell scripts
+  (`scripts/<name>.sh`, mode 0755). It defaults to KStars' own
+  `$XDG_DATA_HOME/kstars/taskqueue`, so KStars' Collections dialog lists the
+  same files. Point it at `~/.var/app/org.kde.kstars/data/kstars/taskqueue`
+  for Flatpak KStars. **Any browser that can reach Junos can write scripts
+  there that KStars will run** at the next scheduler startup or shutdown —
+  the same trust level as the rest of this unauthenticated LAN relay (Ekos
+  Live's `scheduler_save_sequence_file` already writes into `$HOME`), but keep
+  the ports off untrusted networks.
 - Both listeners serve the same routes. The HTTP/HTTPS split is a convention
   for who connects where, not a restriction.
 

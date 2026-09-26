@@ -10,6 +10,7 @@ mod kstars_ws;
 mod proxy;
 mod skysurvey;
 mod starfind;
+mod taskqueue;
 mod tls;
 
 use std::net::SocketAddr;
@@ -71,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => error!("Files tab captures dir {} unusable: {e}", captures.display()),
         }
     }
+    info!("Scheduler task-queue dir: {}", config.resolved_taskqueue_dir().display());
 
     let hub = Hub::new();
     let app_manager = AppManager::new(hub.browser_tx.clone());
@@ -106,6 +108,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/files/delete",   delete(files::delete))
         .route("/api/files/resolve",  get(files::resolve_abs))
         .route("/api/files/tilt",     get(files::tilt))
+        .route("/api/taskqueue/list",         get(taskqueue::list))
+        .route("/api/taskqueue/queue/:name",
+               get(taskqueue::get_queue).put(taskqueue::put_queue).delete(taskqueue::delete_queue))
+        .route("/api/taskqueue/script/:name",
+               get(taskqueue::get_script).put(taskqueue::put_script))
         .fallback_service(ServeDir::new(&dist_dir).append_index_html_on_directories(true))
         .with_state(state);
 

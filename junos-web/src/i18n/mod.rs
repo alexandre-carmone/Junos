@@ -218,6 +218,22 @@ translations! {
     framing_center, framing_ra, framing_dec, framing_tile_fov, framing_total_fov,
     framing_send_mosaic, framing_reload, framing_no_fov,
     framing_src_cache, framing_src_live, framing_src_none,
+    // Scheduler startup/shutdown queue editor
+    sched_q_edit, sched_q_custom_path, sched_q_slot_pre_startup, sched_q_slot_post_startup, sched_q_slot_pre_shutdown,
+    sched_q_slot_post_shutdown, sched_q_name, sched_q_title, sched_q_start_from, sched_q_preset_empty,
+    sched_q_preset_startup, sched_q_preset_shutdown, sched_q_add_step, sched_q_move_up, sched_q_move_down,
+    sched_q_remove_step, sched_q_no_steps, sched_q_if_no_device, sched_q_fail_skip, sched_q_fail_continue,
+    sched_q_fail_abort, sched_q_devices_note, sched_q_device_warning, sched_q_foreign_note, sched_q_script_name,
+    sched_q_script_body, sched_q_script_path, sched_q_script_loading, sched_q_step_dome_unpark, sched_q_step_dome_park,
+    sched_q_step_mount_unpark, sched_q_step_mount_park, sched_q_step_dustcap_unpark, sched_q_step_dustcap_park,
+    sched_q_step_camera_cool, sched_q_step_camera_warm, sched_q_step_camera_warm_passive, sched_q_step_delay,
+    sched_q_step_script, sched_q_step_script_ext, sched_q_step_unknown, sched_q_p_wait_timeout, sched_q_p_target_temperature,
+    sched_q_p_tolerance, sched_q_p_ramp_slope, sched_q_p_ramp_threshold, sched_q_p_max_wait_time,
+    sched_q_p_delay_seconds, sched_q_p_timeout, sched_q_save_assign, sched_q_saving, sched_q_delete,
+    sched_q_confirm_overwrite, sched_q_confirm_delete, sched_q_err_name, sched_q_err_reserved, sched_q_err_no_steps,
+    sched_q_err_device_slot, sched_q_err_range, sched_q_err_script_name, sched_q_err_script_dup,
+    sched_q_err_shebang, sched_q_err_script_path, sched_q_err_loading, sched_q_err_no_server,
+    sched_q_confirm_overwrite_script,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

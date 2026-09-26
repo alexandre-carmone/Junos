@@ -49,6 +49,9 @@ let
   dsoTilePath = if cfg.dsoTileDir != null then toString cfg.dsoTileDir else null;
   dsoTileArgs = optionals (dsoTilePath != null) [ "--dso-tile-dir" dsoTilePath ];
 
+  taskqueuePath = if cfg.taskqueueDir != null then toString cfg.taskqueueDir else null;
+  taskqueueArgs = optionals (taskqueuePath != null) [ "--taskqueue-dir" taskqueuePath ];
+
   execStart = concatStringsSep " " (
     [ "${cfg.package}/bin/junos-server"
       "--http-addr" cfg.httpAddr
@@ -58,6 +61,7 @@ let
     ++ tlsArgs
     ++ capturesArgs
     ++ dsoTileArgs
+    ++ taskqueueArgs
     ++ map escapeShellArg cfg.extraArgs
   );
 
@@ -245,6 +249,24 @@ in
       '';
     };
 
+    taskqueueDir = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = "/home/astronaut/.local/share/kstars/taskqueue";
+      description = ''
+        KStars task-queue directory written by the Scheduler's startup/
+        shutdown queue editor (`/api/taskqueue/*`): collections go in
+        `collections/`, their shell scripts in `scripts/`. When null the
+        server uses $XDG_DATA_HOME/kstars/taskqueue, falling back to
+        ~/.local/share/kstars/taskqueue — right for the apps.enable user
+        unit, which runs as the KStars user. The system unit has no usable
+        $HOME, so set this to the KStars user's directory there. The path is
+        added to ReadWritePaths (or bind-mounted when under /home) with a
+        `-` prefix, so a directory KStars hasn't created yet doesn't stop the
+        unit — the editor then reports the write error instead.
+      '';
+    };
+
     extraArgs = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -286,17 +308,22 @@ in
             # mask it. Switch ProtectHome to "tmpfs" (still hides every other
             # home) and bind-mount those paths so the service can reach them.
             # Non-home paths are already reachable read-only under
-            # ProtectSystem=strict, so only captures (which needs write) has to
-            # be listed there — the DSO cache is read-only.
+            # ProtectSystem=strict, so only captures and the task-queue dir
+            # (which need write) are listed there — the DSO cache is read-only.
+            # The task-queue dir is `-`-prefixed: KStars may not have created
+            # it yet, and a missing path would otherwise fail the unit.
             underHome = p: p != null && hasPrefix "/home/" p;
             homePaths = filter underHome [ capturesPath dsoTilePath ];
-            anyUnderHome = homePaths != [ ];
+            taskqueueUnderHome = underHome taskqueuePath;
+            anyUnderHome = homePaths != [ ] || taskqueueUnderHome;
           in
           {
             ExecStart = execStart;
 
-            ReadWritePaths = optional (capturesPath != null && !(underHome capturesPath)) capturesPath;
-            BindPaths      = homePaths;
+            ReadWritePaths =
+              optional (capturesPath != null && !(underHome capturesPath)) capturesPath
+              ++ optional (taskqueuePath != null && !taskqueueUnderHome) "-${taskqueuePath}";
+            BindPaths = homePaths ++ optional taskqueueUnderHome "-${taskqueuePath}";
 
             ExecStartPre = mkIf generateCert [ "${generateCertScript} ${certDir}" ];
 

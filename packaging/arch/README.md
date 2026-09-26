@@ -122,3 +122,12 @@ ExecStart=
 ExecStart=/usr/bin/junos-server --http-addr 0.0.0.0:8090 --https-addr 0.0.0.0:8443 --dist-dir /usr/share/junos-web/dist --captures-dir /srv/astro/captures
 ReadWritePaths=/srv/astro/captures
 ```
+
+### Scheduler startup/shutdown queues
+
+The Scheduler tab's queue editor writes KStars task queues and their scripts to
+`/home/astronaut/.local/share/kstars/taskqueue` — KStars' own data dir for the
+`astronaut` user the unit runs as — which the shipped unit whitelists with
+`ReadWritePaths=-/home/astronaut/.local/share/kstars`. If KStars runs as another
+user or from Flatpak, add `--taskqueue-dir <that KStars' …/kstars/taskqueue>`
+to `ExecStart` and a matching `ReadWritePaths=` in a drop-in as above.

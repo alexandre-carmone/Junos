@@ -18,9 +18,14 @@ Restart=on-failure
 RestartSec=5s
 # Hardening (mirrors nix/module.nix). ProtectHome is relaxed to read-write so
 # the captures dir under /home is reachable; the captures path is whitelisted.
+# So is KStars' data dir, where the Scheduler queue editor writes its task
+# queues and scripts (the default --taskqueue-dir,
+# ~/.local/share/kstars/taskqueue). The '-' prefix tolerates it not existing
+# yet — KStars creates it on first run.
 ProtectSystem=strict
 ProtectHome=false
 ReadWritePaths=/home/astronaut/Pictures
+ReadWritePaths=-/home/astronaut/.local/share/kstars
 PrivateTmp=true
 NoNewPrivileges=true
 RestrictAddressFamilies=AF_INET AF_INET6

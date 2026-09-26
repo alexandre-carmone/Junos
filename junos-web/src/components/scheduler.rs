@@ -6,6 +6,7 @@
 //! Outbound: `scheduler_start_job`, `scheduler_remove_jobs`,
 //!           `scheduler_set_all_settings` + `scheduler_add_jobs`,
 //!           `scheduler_save_sequence_file`
+//! HTTP:     `/api/taskqueue/*` (startup/shutdown queue editor)
 
 use std::sync::Arc;
 
@@ -16,9 +17,12 @@ use web_sys::MouseEvent;
 
 mod labels;
 mod mapping;
+mod queue_api;
+mod queue_model;
 mod view_add_job;
 mod view_jobs;
 mod view_log;
+mod view_queue_editor;
 mod view_scripts;
 mod view_settings;
 
@@ -31,9 +35,12 @@ use crate::ws_helpers::send_cmd;
 use crate::SchedulerPrefillCtx;
 use labels::{dec_to_dms, ra_to_hms, sanitize_name};
 use mapping::{resolve_completion_condition, resolve_startup_condition};
+use queue_api::QueueList;
+use queue_model::QueueSlot;
 use view_add_job::SchedulerAddJobSection;
 use view_jobs::{SchedulerJobsSection, SchedulerToolbar};
 use view_log::SchedulerLogSection;
+use view_queue_editor::SchedulerQueueEditor;
 use view_scripts::SchedulerScriptsSection;
 use view_settings::SchedulerSettingsSection;
 
@@ -50,12 +57,19 @@ pub fn SchedulerTab(
     // ── Overlay state ───────────────────────────────────────────────────────
     let add_open      = RwSignal::new(false);
     let settings_open = RwSignal::new(false);
+    // Startup/shutdown queue editor, stacked over the settings overlay.
+    let queue_editor  = RwSignal::new(Option::<QueueSlot>::None);
 
-    // Escape closes whichever overlay is open.
+    // Escape closes whichever overlay is open — the queue editor first, so it
+    // doesn't also dismiss the settings overlay underneath.
     {
         let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
             move |e: web_sys::KeyboardEvent| {
                 if e.key() == "Escape" {
+                    if queue_editor.get_untracked().is_some() {
+                        queue_editor.set(None);
+                        return;
+                    }
                     if add_open.get_untracked()      { add_open.set(false); }
                     if settings_open.get_untracked() { settings_open.set(false); }
                 }
@@ -84,6 +98,22 @@ pub fn SchedulerTab(
     let shutdown_enabled = RwSignal::new(false);
     let pre_shutdown     = RwSignal::new(String::new());
     let post_shutdown    = RwSignal::new(String::new());
+
+    // Collections junos-server manages (`/api/taskqueue/list`), refreshed each
+    // time the settings overlay opens; the editor re-lists on its own too.
+    let queue_list = RwSignal::new(Option::<QueueList>::None);
+    Effect::new(move |_| {
+        if !settings_open.get() { return; }
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(list) = queue_api::fetch_list().await {
+                queue_list.set(Some(list));
+            }
+        });
+    });
+    let on_edit_queue: Arc<dyn Fn(QueueSlot) + Send + Sync> =
+        Arc::new(move |slot| queue_editor.set(Some(slot)));
+    let on_close_queue: Arc<dyn Fn() + Send + Sync> =
+        Arc::new(move || queue_editor.set(None));
 
     // ── Global scheduler settings ───────────────────────────────────────────
     let greedy         = RwSignal::new(false);
@@ -388,6 +418,8 @@ pub fn SchedulerTab(
     };
     let on_add_job: Arc<dyn Fn() + Send + Sync> = Arc::new(on_add_job);
 
+    let send_for_queue = Arc::clone(&send);
+
     view! {
         <div class="sched-root">
             <SchedulerToolbar
@@ -499,12 +531,38 @@ pub fn SchedulerTab(
                                 shutdown_enabled=shutdown_enabled
                                 pre_shutdown=pre_shutdown
                                 post_shutdown=post_shutdown
+                                queue_list=queue_list
                                 on_apply_scripts=Arc::clone(&on_apply_scripts)
+                                on_edit_queue=Arc::clone(&on_edit_queue)
                             />
                         </div>
                     </div>
                 </div>
             </Show>
+
+            // ── Startup/shutdown queue editor (over the settings overlay) ───
+            {
+                let send = send_for_queue;
+                move || queue_editor.get().map(|slot| {
+                    let (path, enabled) = match slot {
+                        QueueSlot::PreStartup   => (pre_startup, startup_enabled),
+                        QueueSlot::PostStartup  => (post_startup, startup_enabled),
+                        QueueSlot::PreShutdown  => (pre_shutdown, shutdown_enabled),
+                        QueueSlot::PostShutdown => (post_shutdown, shutdown_enabled),
+                    };
+                    view! {
+                        <SchedulerQueueEditor
+                            lang=lang
+                            send=Arc::clone(&send)
+                            queue_slot=slot
+                            list=queue_list
+                            path=path
+                            enabled=enabled
+                            on_close=Arc::clone(&on_close_queue)
+                        />
+                    }
+                })
+            }
         </div>
     }
 }
