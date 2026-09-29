@@ -385,8 +385,9 @@ pub fn build_mount_crosshair(
 }
 
 /// FOV reticle: rotated rectangle around (ra_deg, dec_deg) with FOV size in
-/// degrees. Returns the label anchor (centred above the projected top edge)
-/// so the caller can push a TextInstance with the same colour.
+/// degrees, `pa_deg` east of north (width along RA at PA 0). Returns the
+/// label anchor (centred above the projected top edge) so the caller can
+/// push a TextInstance with the same colour.
 pub fn build_fov_reticle(
     out: &mut Vec<LineSegment>,
     v: &LineView,
@@ -394,7 +395,7 @@ pub fn build_fov_reticle(
     dec_deg: f64,
     fov_w_deg: f64,
     fov_h_deg: f64,
-    rot_deg: f64,
+    pa_deg: f64,
     rgba: [f32; 4],
     width: f32,
 ) -> Option<(f64, f64)> {
@@ -411,7 +412,8 @@ pub fn build_fov_reticle(
         let (alt, az) = astro::eq_to_altaz(ra_deg, dec_deg, v.lst, v.latitude);
         v.project(alt, az).unwrap_or((v.cx(), v.cy()))
     };
-    let rot = rot_deg.to_radians();
+    // East of north is counter-clockwise on this east-left screen.
+    let rot = -pa_deg.to_radians();
     let sin_r = rot.sin();
     let cos_r = rot.cos();
     let mut pts: [Option<(f64, f64)>; 4] = [None; 4];
@@ -458,7 +460,7 @@ pub fn build_solve_marker(
     pixscale_arcsec: Option<f64>,
     sensor_w: Option<u32>,
     sensor_h: Option<u32>,
-    rotation_deg: Option<f64>,
+    pa_deg: f64,
 ) {
     let (alt, az) = astro::eq_to_altaz(ra_jnow_deg, dec_jnow_deg, v.lst, v.latitude);
     let Some((sx, sy)) = v.project(alt, az) else { return };
@@ -494,7 +496,8 @@ pub fn build_solve_marker(
             (ra_jnow_deg + half_w / cos_dec, dec_jnow_deg + half_h),
             (ra_jnow_deg - half_w / cos_dec, dec_jnow_deg + half_h),
         ];
-        let rot = rotation_deg.unwrap_or(0.0).to_radians();
+        // East of north is counter-clockwise on this east-left screen.
+        let rot = -pa_deg.to_radians();
         let sin_r = rot.sin();
         let cos_r = rot.cos();
         let mut pts: [Option<(f64, f64)>; 4] = [None; 4];

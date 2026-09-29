@@ -605,7 +605,7 @@ fn draw_fov_box(
     dec_deg: f64,
     fov_w: f64,
     fov_h: f64,
-    rot_deg: f64,
+    pa_deg: f64,
     stroke_color: &str,
     fill_color: &str,
     line_width: f64,
@@ -624,7 +624,8 @@ fn draw_fov_box(
         let (alt, az) = astro::eq_to_altaz(ra_deg, dec_deg, f.scene.lst, f.scene.latitude);
         project(alt, az).unwrap_or((f.view.wf / 2.0, f.view.hf / 2.0))
     };
-    let rot_rad = rot_deg.to_radians();
+    // PA east of north → counter-clockwise on this east-left screen.
+    let rot_rad = -pa_deg.to_radians();
     let sin_r = rot_rad.sin();
     let cos_r = rot_rad.cos();
 
@@ -720,7 +721,7 @@ pub(super) fn render_scheduler_jobs(
             job.dec_deg,
             fov_w,
             fov_h,
-            f.state.rotation_deg.unwrap_or(0.0),
+            f.state.camera_pa_deg(),
             stroke,
             fill,
             1.0,
@@ -761,7 +762,10 @@ pub(super) fn render_mosaic_plan(
     };
 
     for tile in &plan.tiles {
-        let total_rot = tile.rotation + plan.pa_deg;
+        // Tile centres were rotated by -PA (KStars rotatePoint), so each box
+        // turns by PA east of north to keep the grid rigid; `tile.rotation`
+        // keeps its clockwise screen sense.
+        let total_rot = plan.pa_deg - tile.rotation;
         draw_fov_box(
             ctx,
             f,

@@ -118,3 +118,16 @@ pub struct OverlayState {
     pub dso_gal: bool,
     pub dso_mag: f64,
 }
+
+/// Camera PA (° east of north) assumed until a plate solve reports one.
+/// Without a rotator the camera is fixed to the OTA, so on an equatorial
+/// mount its frame stays locked to RA/Dec; by default the sensor's long (X)
+/// side lies along the meridian, i.e. PA 90°.
+pub const DEFAULT_CAMERA_PA_DEG: f64 = 90.0;
+
+impl OverlayState {
+    /// Solved camera PA, or `DEFAULT_CAMERA_PA_DEG` before any solve.
+    pub fn camera_pa_deg(&self) -> f64 {
+        self.rotation_deg.unwrap_or(DEFAULT_CAMERA_PA_DEG)
+    }
+}

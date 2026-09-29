@@ -39,7 +39,7 @@ impl SkyLayer for SolveMarkerLayer {
             f.state.solve_pixscale_arcsec,
             f.state.cam_sensor_width,
             f.state.cam_sensor_height,
-            f.state.rotation_deg,
+            f.state.camera_pa_deg(),
         );
     }
 
@@ -129,7 +129,8 @@ impl SkyLayer for SolveMarkerLayer {
                 (ra + half_w / cos_dec, dec + half_h),
                 (ra - half_w / cos_dec, dec + half_h),
             ];
-            let rot_rad = f.state.rotation_deg.unwrap_or(0.0).to_radians();
+            // PA east of north → counter-clockwise on this east-left screen.
+            let rot_rad = -f.state.camera_pa_deg().to_radians();
             let sin_r = rot_rad.sin();
             let cos_r = rot_rad.cos();
             ctx.set_line_width(1.0);

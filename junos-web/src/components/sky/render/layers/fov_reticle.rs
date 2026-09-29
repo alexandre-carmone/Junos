@@ -33,7 +33,7 @@ impl SkyLayer for FovReticleLayer {
         let view = line_view(f);
         let fov_w_deg = crate::astro::fov_deg(fl_mm, sw as f64, px_um);
         let fov_h_deg = crate::astro::fov_deg(fl_mm, sh as f64, px_um);
-        let rot_deg = f.state.rotation_deg.unwrap_or(0.0);
+        let pa_deg = f.state.camera_pa_deg();
 
         let (center_ra_deg, center_dec_deg) =
             crate::astro::altaz_to_eq(f.view.c_alt, f.view.c_az, f.scene.lst, f.scene.latitude);
@@ -45,7 +45,7 @@ impl SkyLayer for FovReticleLayer {
             center_dec_deg,
             fov_w_deg,
             fov_h_deg,
-            rot_deg,
+            pa_deg,
             center_color,
             1.0,
         );
@@ -60,7 +60,7 @@ impl SkyLayer for FovReticleLayer {
                     dec_deg,
                     fov_w_deg,
                     fov_h_deg,
-                    rot_deg,
+                    pa_deg,
                     mount_color,
                     1.0,
                 );
@@ -83,7 +83,7 @@ impl SkyLayer for FovReticleLayer {
         let view = line_view(f);
         let fov_w_deg = crate::astro::fov_deg(fl_mm, sw as f64, px_um);
         let fov_h_deg = crate::astro::fov_deg(fl_mm, sh as f64, px_um);
-        let rot_deg = f.state.rotation_deg.unwrap_or(0.0);
+        let pa_deg = f.state.camera_pa_deg();
         let label = format!("{:.0}x{:.0}'", fov_w_deg * 60.0, fov_h_deg * 60.0);
 
         let mut scratch = Vec::new();
@@ -97,7 +97,7 @@ impl SkyLayer for FovReticleLayer {
             center_dec_deg,
             fov_w_deg,
             fov_h_deg,
-            rot_deg,
+            pa_deg,
             center_color,
             1.0,
         ) {
@@ -123,7 +123,7 @@ impl SkyLayer for FovReticleLayer {
                     dec_deg,
                     fov_w_deg,
                     fov_h_deg,
-                    rot_deg,
+                    pa_deg,
                     mount_color,
                     1.0,
                 ) {
@@ -159,7 +159,8 @@ impl SkyLayer for FovReticleLayer {
         let fov_h = crate::astro::fov_deg(fl_mm, sh as f64, px_um);
         let half_w = fov_w / 2.0;
         let half_h = fov_h / 2.0;
-        let rot_rad = f.state.rotation_deg.unwrap_or(0.0).to_radians();
+        // PA east of north → counter-clockwise on this east-left screen.
+        let rot_rad = -f.state.camera_pa_deg().to_radians();
         let sin_r = rot_rad.sin();
         let cos_r = rot_rad.cos();
 
