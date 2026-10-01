@@ -1,11 +1,17 @@
-//! Polar Alignment module UI — fullscreen tab.
+//! Polar Alignment module UI — full-screen tab.
+//!
+//! Layout (phone-first, same as Focus): a header (stage · settings), the align
+//! frame, then a step strip, KStars' message, the live error readout and one
+//! primary button that follows the stage. On phones the frame stays pinned and
+//! the rest scrolls beneath it; from `md` up the controls get the right-hand
+//! column. Settings open as a bottom sheet on phones, a floating panel on md+.
 //!
 //! Wire protocol: see kstars/ekos/align/polaralignmentassistant.{h,cpp} and
-//! the inbound handlers at kstars/ekos/ekoslive/message.cpp:1079-1263.
+//! the inbound handlers at kstars/ekos/ekoslive/message.cpp:1310-1383.
 //!
 //! Outbound (browser → KStars):
 //!   - polar_start, polar_stop, polar_refresh {value: exposure},
-//!     polar_refreshing_done, polar_slew_done
+//!     polar_slew_done, polar_reset_view
 //!   - align_set_all_settings {pAHDirection, pAHRotation, pAHMountSpeed,
 //!     pAHManualSlew, pAHExposure, pAHRefreshAlgorithm} — keys live at the top
 //!     level of the payload (kstars/ekos/ekoslive/message.cpp:871-874 calls
@@ -16,37 +22,34 @@
 //! Inbound (KStars → browser): `new_polar_state` (partial: stage, message,
 //! enabled, vector, updatedError*) and `align_get_all_settings` (settings map).
 //!
-//! `polar_reset_view` (commands.h:419) is wired: KStars' align module
+//! `polar_reset_view` (commands.h:477) is wired: KStars' align module
 //! reacts to it even without us hosting a frame view (it emits the
 //! `resetPolarView()` signal which the desktop Align widget consumes).
 //!
-//! Deliberately NOT wired: `polar_set_algorithm` (widget-name bug upstream,
-//! message.cpp:1102 — use align_set_all_settings instead),
-//! `polar_set_crosshair` / `polar_set_zoom` (require a live frame canvas in
-//! this tab; deferred), `NEW_ALIGN_FRAME` (declared in commands.h:35 but
-//! never emitted).
+//! Deliberately NOT wired: `polar_refreshing_done` (just `stopPAHProcess()`,
+//! message.cpp:1369 — the same as `polar_stop`), `polar_set_algorithm`
+//! (widget-name bug upstream, message.cpp:1331 — use align_set_all_settings
+//! instead), `polar_set_crosshair` / `polar_set_zoom` (require a live frame
+//! canvas in this tab; deferred), `NEW_ALIGN_FRAME` (declared in commands.h:35
+//! but never emitted).
 
 use leptos::prelude::*;
+use wasm_bindgen::{closure::Closure, JsCast};
+use web_sys::MouseEvent;
 
-use crate::components::branding::{POLAR_LOGO_SVG, junos_header, section_card};
 use crate::compat::{MountSnapshot, PolarAlignSnapshot};
-use crate::i18n::{Lang, Translations, t};
-use crate::ws::{PolarVectorData, SendCmd};
-use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
+use crate::components::tab_wheel_icons::tab_icon;
 use crate::dom::{event_target_checked, event_target_value};
+use crate::i18n::{Lang, Translations, t};
+use crate::ws::SendCmd;
+use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
+use crate::Tab;
 
-// Section header glyphs. 24×24 viewBox, `currentColor` so each inherits the
-// accent color of its card header. Style matches `tab_wheel_icons.rs`.
-/// Sliders — pre-start setup parameters.
-const ICON_SETUP: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 8 L20 8 M4 16 L20 16"/><circle cx="9" cy="8" r="2.6"/><circle cx="15" cy="16" r="2.6"/></svg>"##;
-/// Camera — capture & solve in progress.
-const ICON_CAPTURE: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8 L8 8 L9.5 5.5 L14.5 5.5 L16 8 L20 8 A1 1 0 0 1 21 9 L21 18 A1 1 0 0 1 20 19 L4 19 A1 1 0 0 1 3 18 L3 9 A1 1 0 0 1 4 8 Z"/><circle cx="12" cy="13" r="4"/></svg>"##;
-/// Circular arrow — manual mount rotation step.
-const ICON_ROTATE: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 L20 11 L15 11"/><path d="M20 11 A8 8 0 1 0 18.5 15"/></svg>"##;
-/// Crosshair — refresh & correct to center.
-const ICON_ADJUST: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></svg>"##;
+const CARD: &str = "panel p-3 flex flex-col gap-3";
+const CHIP: &str = "chip h-9 md:h-7 px-4 justify-center cursor-pointer";
+const INPUT: &str = "input input--sm font-mono w-[150px] shrink-0 max-md:h-9";
 
-/// Wire values for the direction dropdown (sent to KStars as-is).
+/// Wire values for the direction pills (sent to KStars as-is).
 const DIRECTION_WIRE: &[&str] = &["West", "East"];
 fn direction_label(wire: &str, tr: &Translations) -> &'static str {
     match wire {
@@ -86,42 +89,53 @@ fn dispatch_align_setting(send: &SendCmd, key: &str, value: serde_json::Value) {
     ws_dispatch_setting(send, "align_set_all_settings", None, key, value);
 }
 
-fn stage_color(stage: &str) -> &'static str {
+// KStars sends the stage untranslated (`PAHStages`,
+// polaralignmentassistant.cpp:26-43).
+
+fn stage_badge(stage: &str) -> &'static str {
     match stage {
-        "" | "Idle" => "var(--text-muted)",
         "First Capture" | "First Solve"
         | "Second Capture" | "Second Solve"
-        | "Third Capture" | "Third Solve" => "var(--state-info)",
+        | "Third Capture" | "Third Solve" => "badge badge--info",
         "First Rotation" | "Second Rotation"
         | "First Settle" | "Second Settle"
-        | "Finding CP" | "Select Star" => "var(--state-warn)",
-        "Refreshing" | "Refresh Complete" => "var(--state-ok)",
-        _ => "var(--text)",
+        | "Finding CP" | "Select Star" => "badge badge--warn",
+        "Refreshing" | "Refresh Complete" => "badge badge--ok",
+        _ => "badge",
     }
 }
 
-// `enabled` from PAHEnabled means "PAA is available (FOV wide enough)", not
-// "PAA is running". Stage alone decides whether we show the intro panel.
-fn is_intro_stage(stage: &str) -> bool {
-    stage.is_empty() || stage == "Idle"
-}
-
-fn is_progress_stage(stage: &str) -> bool {
-    matches!(
-        stage,
-        "First Capture" | "First Solve" | "First Settle"
-        | "Finding CP"
-        | "Second Capture" | "Second Solve" | "Second Settle"
-        | "Third Capture" | "Third Solve"
-    )
+/// Where the run is: 0 idle, 1–3 the three captures (each including the
+/// rotation that follows it), 4 adjusting the mount. `enabled` (PAHEnabled)
+/// means "PAA is available (FOV wide enough)", not "running" — the stage alone
+/// decides.
+fn step_of(stage: &str) -> u8 {
+    match stage {
+        "First Capture" | "First Solve" | "Finding CP"
+        | "First Rotation" | "First Settle" => 1,
+        "Second Capture" | "Second Solve"
+        | "Second Rotation" | "Second Settle" => 2,
+        "Third Capture" | "Third Solve" => 3,
+        "Select Star" | "Refreshing" | "Refresh Complete" => 4,
+        _ => 0,
+    }
 }
 
 fn is_rotation_stage(stage: &str) -> bool {
     stage == "First Rotation" || stage == "Second Rotation"
 }
 
-fn is_refresh_stage(stage: &str) -> bool {
-    matches!(stage, "Select Star" | "Refreshing" | "Refresh Complete")
+/// What the big button does at a given stage.
+#[derive(Clone, Copy, PartialEq)]
+enum Primary { Start, RotationDone, Refresh, Stop }
+
+fn primary_for(stage: &str, manual_slew: bool) -> Primary {
+    match step_of(stage) {
+        0 => Primary::Start,
+        _ if manual_slew && is_rotation_stage(stage) => Primary::RotationDone,
+        4 if stage != "Refreshing" => Primary::Refresh,
+        _ => Primary::Stop,
+    }
 }
 
 /// Format a degrees value as DMS-ish. PAA errors are typically small
@@ -155,8 +169,7 @@ const PA_MIN_ERR_DEG: f64 = 20.0 / 3600.0; // 20 arcsec
 /// the mount to null it. Sign convention follows KStars' `drawArrows`:
 /// for azimuth pass `("←", "→")` (err > 0 → move left), for altitude pass
 /// `("↓", "↑")` (err > 0 → move down). Returns None when the error is within
-/// tolerance or not a finite solve (the `-1` solver-failure sentinel is not
-/// finite-positive here so callers gate on the total error too).
+/// tolerance or not finite.
 fn axis_arrow(
     err: f64,
     positive_glyph: &'static str,
@@ -166,6 +179,20 @@ fn axis_arrow(
         return None;
     }
     Some(if err > 0.0 { positive_glyph } else { negative_glyph })
+}
+
+/// Colour for a total error. A rule of thumb, not a KStars threshold: under 1′
+/// is excellent, under 5′ is fine for guided imaging.
+fn quality_cls(deg: f64) -> &'static str {
+    if !deg.is_finite() || deg < 0.0 {
+        "text-text-muted"
+    } else if deg * 60.0 <= 1.0 {
+        "text-state-ok"
+    } else if deg * 60.0 <= 5.0 {
+        "text-state-warn"
+    } else {
+        "text-state-err"
+    }
 }
 
 fn settings_str(settings: &serde_json::Value, key: &str) -> Option<String> {
@@ -279,44 +306,59 @@ pub fn PolarAlignTab(
         form_seeded.set(true);
     });
 
-    // ── Dispatchers (one Arc clone each) ─────────────────────────────────
-    let s_start = send.clone();
-    let on_start = move |_| send_cmd(&s_start, "polar_start", serde_json::json!({}));
+    let settings_open = RwSignal::new(false);
+    let stage = Memo::new(move |_| polar.with(|p| p.stage.clone()));
+    let step = Memo::new(move |_| step_of(&stage.get()));
+    let primary = Memo::new(move |_| primary_for(&stage.get(), manual_local.get()));
+    let has_frame = move || polar.with(|p| p.preview_url.is_some());
 
-    let s_stop_a = send.clone();
-    let on_stop_abort = move |_| send_cmd(&s_stop_a, "polar_stop", serde_json::json!({}));
-
-    let s_stop_b = send.clone();
-    let on_stop_footer = move |_| send_cmd(&s_stop_b, "polar_stop", serde_json::json!({}));
-
-    let s_slew_done = send.clone();
-    let on_slew_done = move |_| send_cmd(&s_slew_done, "polar_slew_done", serde_json::json!({}));
-
-    let s_refresh = send.clone();
-    let on_start_refresh = move |_| {
-        send_cmd(
-            &s_refresh,
-            "polar_refresh",
-            serde_json::json!({ "value": exposure.get() }),
+    // Escape closes the settings sheet. forget() the closure (one persistent
+    // listener per mount); calls into a disposed RwSignal are a no-op in
+    // leptos 0.7, so leftover listeners after a tab switch are harmless.
+    {
+        let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+            move |e: web_sys::KeyboardEvent| {
+                if e.key() == "Escape" && settings_open.get_untracked() {
+                    settings_open.set(false);
+                }
+            },
         );
+        if let Some(win) = web_sys::window() {
+            let _ = win
+                .add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
+        }
+        cb.forget();
+    }
+
+    // ── Actions ──────────────────────────────────────────────────────────
+    let s_primary = send.clone();
+    let on_primary = move |_: MouseEvent| {
+        let (ty, payload) = match primary.get_untracked() {
+            Primary::Start => ("polar_start", serde_json::json!({})),
+            Primary::RotationDone => ("polar_slew_done", serde_json::json!({})),
+            Primary::Refresh => (
+                "polar_refresh",
+                serde_json::json!({ "value": exposure.get_untracked() }),
+            ),
+            Primary::Stop => ("polar_stop", serde_json::json!({})),
+        };
+        send_cmd(&s_primary, ty, payload);
     };
 
-    let s_refresh_done = send.clone();
-    let on_stop_refresh = move |_| {
-        send_cmd(&s_refresh_done, "polar_refreshing_done", serde_json::json!({}));
-    };
+    let s_stop = send.clone();
+    let on_stop = move |_: MouseEvent| send_cmd(&s_stop, "polar_stop", serde_json::json!({}));
 
     let s_reset_view = send.clone();
-    let on_reset_view = move |_| {
+    let on_reset_view = move |_: MouseEvent| {
         send_cmd(&s_reset_view, "polar_reset_view", serde_json::json!({}));
     };
 
+    // ── Settings dispatchers ─────────────────────────────────────────────
     let s_dir = send.clone();
-    let on_direction_change = move |ev: web_sys::Event| {
-        let v = event_target_value(&ev);
-        direction_local.set(v.clone());
+    let set_direction = move |wire: &'static str| {
+        direction_local.set(wire.to_string());
         mark_dirty();
-        dispatch_align_setting(&s_dir, "pAHDirection", serde_json::Value::String(v));
+        dispatch_align_setting(&s_dir, "pAHDirection", serde_json::Value::String(wire.into()));
     };
 
     let s_rot = send.clone();
@@ -363,430 +405,372 @@ pub fn PolarAlignTab(
         }
     };
 
-    // ── Meridian-crossing warning (intro only) ───────────────────────────
+    // ── Idle: settings summary + meridian-crossing warning ───────────────
+    let summary = move || {
+        let tr = tr();
+        let mut parts = vec![
+            direction_label(&direction_local.get(), tr).to_string(),
+            format!("{}°", rotation_local.get()),
+        ];
+        let speed = speed_local.get();
+        if !speed.is_empty() {
+            parts.push(speed_label(&speed, tr));
+        }
+        if manual_local.get() {
+            parts.push(tr.pa_manual_slew_label.to_string());
+        }
+        parts.join(" · ")
+    };
+
     let meridian_warning = move || -> Option<String> {
         let ms = mount.get();
         let (Some(ha), Some(dec)) = (ms.ha_deg, ms.dec_deg) else { return None };
         let going_west = direction_local.with(|s| s == "West");
-        let rotation = rotation_local.get();
-        if !would_cross_meridian(ha, dec, ms.pier_side, rotation, going_west) {
+        if !would_cross_meridian(ha, dec, ms.pier_side, rotation_local.get(), going_west) {
             return None;
         }
+        let tr = tr();
         let side = match ms.pier_side {
-            Some(0) => "west",
-            Some(1) => "east",
-            _ => "unknown",
+            Some(0) => tr.mount_pier_west,
+            Some(1) => tr.mount_pier_east,
+            _ => tr.mount_pier_unknown,
         };
         Some(format!(
-            "⚠ Meridian crossing likely: mount HA {ha:+.1}° on pier {side}, \
-             slewing {dir} by {rotation}°. Consider reversing direction, \
-             reducing rotation, or pointing further from the meridian.",
-            dir = if going_west { "west" } else { "east" },
+            "\u{26A0} {} (HA {ha:+.1}° · {} {side})",
+            tr.pa_meridian_warn, tr.mount_pier_side,
         ))
     };
 
-    // ── Section visibility closures ──────────────────────────────────────
-    let intro_visible = move || polar.with(|p| is_intro_stage(&p.stage));
-    let progress_visible = move || polar.with(|p| is_progress_stage(&p.stage));
-    let rotation_visible = move || {
-        polar.with(|p| is_rotation_stage(&p.stage)) && manual_local.get()
+    // ── Adjust: live errors ──────────────────────────────────────────────
+    // The refresh errors once a valid one has come in, else the original
+    // three-point solve. KStars sends only the scalars; the ↑↓←→ mapping lives
+    // in its desktop widget (polaralignmentassistant.cpp:307-351).
+    let readout = move || {
+        let tr = tr();
+        let (total, az, alt, original) = polar.with(|p| {
+            let v = p.vector.as_ref();
+            match p.updated_error.filter(|e| e.is_finite() && *e >= 0.0) {
+                Some(e) => (Some(e), p.updated_az_error, p.updated_alt_error, v.map(|v| v.error)),
+                None => (v.map(|v| v.error), v.map(|v| v.az_error), v.map(|v| v.alt_error), None),
+            }
+        });
+        let total = total.filter(|t| t.is_finite() && *t >= 0.0);
+        let (az, alt) = match total {
+            Some(_) => (az.unwrap_or(f64::NAN), alt.unwrap_or(f64::NAN)),
+            None => (f64::NAN, f64::NAN),
+        };
+        let axis = |err: f64, pos, neg| -> (String, &'static str) {
+            if !err.is_finite() {
+                return ("—".into(), "text-text-muted");
+            }
+            let v = format_deg_as_dms_small(err.abs());
+            match axis_arrow(err, pos, neg) {
+                Some(g) => (format!("{g} {v}"), "text-accent-cyan"),
+                None => (format!("\u{2713} {v}"), "text-state-ok"),
+            }
+        };
+        let (az_txt, az_cls) = axis(az, "←", "→");
+        let (alt_txt, alt_cls) = axis(alt, "↓", "↑");
+        let total_cls = quality_cls(total.unwrap_or(f64::NAN));
+        let total_txt = total.map(format_deg_as_dms_small).unwrap_or_else(|| "—".into());
+        view! {
+            <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
+                <div class="flex flex-col gap-2 min-w-0">
+                    {tile(tr.pa_total, total_txt, total_cls)}
+                    {tile(tr.pa_az_error, az_txt, az_cls)}
+                    {tile(tr.pa_alt_error, alt_txt, alt_cls)}
+                </div>
+                {bullseye(az, alt, total_cls)}
+            </div>
+            {original.map(|o| view! {
+                <div class="text-xs text-text-muted font-mono">
+                    {format!("{} {}", tr.pa_original, format_deg_as_dms_small(o))}
+                </div>
+            })}
+        }
     };
-    let refresh_visible = move || polar.with(|p| is_refresh_stage(&p.stage));
-
-    const POLAR_INPUT: &str = "input input--sm flex-1 min-w-0 font-mono";
-    const FIELD_LABEL: &str = "basis-[clamp(80px,22%,120px)] grow-0 shrink-0 text-text-blue text-sm max-[759px]:basis-[110px] max-[420px]:basis-auto";
-    const BTN_START: &str = "btn btn-primary";
-    const BTN_STOP: &str = "btn btn-danger";
-    const BTN_ROTATION: &str = "btn btn-ghost text-accent-amber !border-accent-amber";
-    const HEADER_LABEL: &str = "text-text-blue";
 
     view! {
-        // `grid-cols-[minmax(0,1fr)]` caps the implicit column at the container
-        // width — without it an `auto` column sizes to the widest content (the
-        // align-frame preview at its natural width) and overflows off-screen.
-        <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] grid-cols-[minmax(0,1fr)] overflow-hidden">
-
-            // ── Header ────────────────────────────────────────────────
-            <div class="flex items-center gap-x-sp-4 gap-y-sp-2 flex-wrap min-h-[48px] py-sp-2 pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:gap-x-3 max-[759px]:text-sm max-[374px]:pl-12">
-                <div class="shrink-0">
-                    {junos_header(POLAR_LOGO_SVG, move || tr().tab_polar_align.to_string())}
-                </div>
-                <span class="w-px self-stretch bg-border-strong my-1 max-[759px]:hidden"></span>
-
-                // Status cluster — flows and truncates independently of the brand.
-                <div class="flex items-center gap-x-sp-4 gap-y-[6px] flex-wrap flex-1 min-w-0 max-[759px]:gap-x-3 max-[759px]:basis-full">
-                    <span class="inline-block py-1 px-sp-3 rounded-[14px] text-sm border border-current min-w-0 max-w-full max-[374px]:text-[10px] max-[374px]:py-[3px] max-[374px]:px-2"
-                          style=move || format!(
-                        "color:{};",
-                        stage_color(&polar.with(|p| p.stage.clone()))
-                    )>
-                        {move || {
-                            let s = polar.with(|p| p.stage.clone());
-                            if s.is_empty() { tr().pa_idle.to_string() } else { s }
-                        }}
-                    </span>
-                    <span class=format!("{HEADER_LABEL} shrink-0")>{move || tr().pa_enabled_label}</span>
-                    <span class="shrink-0">{move || if polar.with(|p| p.enabled) { tr().yes } else { tr().no }}</span>
-                    <span class="flex-1 min-w-0 basis-[120px] text-text overflow-hidden whitespace-nowrap text-ellipsis"
-                          title=move || polar.with(|p| p.message.clone())>
-                        {move || polar.with(|p| p.message.clone())}
-                    </span>
-                </div>
+        <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
+            // Header
+            <div class="shrink-0 flex items-center gap-2 min-h-[48px] px-3 md:pl-4 md:pr-6 pb-1.5 \
+                        pt-[max(0.375rem,env(safe-area-inset-top))] border-b border-border-base bg-bg-elev-1">
+                <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::PolarAlign)></span>
+                <span class="shrink-0 font-semibold text-text-blue-bright">{move || tr().tab_polar_align}</span>
+                <span class=move || format!("{} ml-auto min-w-0 truncate", stage_badge(&stage.get()))>
+                    {move || {
+                        let s = stage.get();
+                        if s.is_empty() { tr().idle.to_string() } else { s }
+                    }}
+                </span>
+                <button class="btn-icon shrink-0 text-text-muted"
+                        title=move || tr().pa_settings
+                        on:click=move |_| settings_open.set(true)>
+                    <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
+                </button>
             </div>
 
-            // ── Body ──────────────────────────────────────────────────
-            // `min-h-0` is required: this is the `1fr` grid track, whose default
-            // `min-height:auto` would otherwise let it grow to its content's
-            // height and overflow the fixed-height root (clipped by the root's
-            // `overflow-hidden`) instead of scrolling here.
-            <div class="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden py-4 px-5 flex flex-col gap-sp-4 max-[759px]:p-sp-3">
+            // Body — a column on phones, frame | controls on md+.
+            <div class="flex-1 min-h-0 flex flex-col \
+                        md:grid md:grid-cols-[minmax(0,1fr)_300px] lg:grid-cols-[minmax(0,1fr)_340px] \
+                        md:grid-rows-[minmax(0,1fr)] md:gap-3 md:p-3 md:pr-6">
+                // Live frame from KStars' align module (uuid "+A" — every
+                // capture, solve and refresh iteration streams a JPEG). Pinned
+                // on phones; just a strip until the first frame arrives.
+                <div class=move || format!(
+                    "relative shrink-0 overflow-hidden flex items-center justify-center \
+                     bg-bg-input-deep border-b border-border-base \
+                     md:h-auto md:min-h-0 md:border md:rounded-lg {}",
+                    if has_frame() { "h-[40dvh] min-h-[200px]" } else { "h-24" })>
+                    {move || match polar.with(|p| p.preview_url.clone()) {
+                        Some(url) => view! {
+                            <img src=url alt="align frame"
+                                 class="max-w-full max-h-full object-contain [image-rendering:pixelated]" />
+                        }.into_any(),
+                        None => view! {
+                            <div class="text-text-faint text-sm text-center px-6">{move || tr().pa_no_frame}</div>
+                        }.into_any(),
+                    }}
+                </div>
 
-                // Live frame from KStars align module (uuid "+A" — every
-                // capture, solve, and refresh iteration streams a JPEG).
-                <Show when=move || polar.with(|p| p.preview_url.is_some())>
-                    <div class="shrink-0 min-w-0 flex justify-center items-center bg-bg-input-deep border border-border-base p-sp-2 min-h-[220px] max-h-[440px]">
-                        <img
-                            src=move || polar.with(|p|
-                                p.preview_url.clone().unwrap_or_default())
-                            alt="align frame"
-                            class="max-w-full max-h-[424px] object-contain block [image-rendering:pixelated]"
-                        />
-                    </div>
-                </Show>
-
-                // Intro section
-                <Show when=intro_visible>
-                    {section_card("text-accent-cyan", "bg-accent-cyan", ICON_SETUP,
-                        move || tr().pa_pre_start, view! {
-                        <div class="flex flex-col gap-sp-2">
-
-                            // Direction
-                            <div class="flex items-center gap-sp-2 min-w-0 max-[420px]:flex-col max-[420px]:items-stretch">
-                                <span class=FIELD_LABEL>{move || tr().pa_direction}</span>
-                                <select
-                                    on:change=on_direction_change.clone()
-                                    class=POLAR_INPUT
-                                >
-                                    {move || {
-                                        let tr_ = tr();
-                                        let cur = direction_local.get();
-                                        DIRECTION_WIRE.iter().map(|wire| {
-                                            let label = direction_label(wire, tr_);
-                                            let sel = *wire == cur;
-                                            view! { <option value=*wire selected=sel>{label}</option> }
-                                        }).collect::<Vec<_>>()
-                                    }}
-                                </select>
-                            </div>
-
-                            // Rotation
-                            <div class="flex items-center gap-sp-2 min-w-0 max-[420px]:flex-col max-[420px]:items-stretch">
-                                <span class=FIELD_LABEL>{move || tr().pa_rotation_deg_label}</span>
-                                <input
-                                    type="number"
-                                    min="15"
-                                    max="60"
-                                    step="1"
-                                    on:change=on_rotation_change.clone()
-                                    prop:value=move || rotation_local.get().to_string()
-                                    class=POLAR_INPUT
-                                />
-                            </div>
-
-                            // Mount speed
-                            <div class="flex items-center gap-sp-2 min-w-0 max-[420px]:flex-col max-[420px]:items-stretch">
-                                <span class=FIELD_LABEL>{move || tr().pa_mount_speed_label}</span>
-                                <select
-                                    on:change=on_speed_change.clone()
-                                    class=POLAR_INPUT
-                                >
-                                    {move || {
-                                        let tr_ = tr();
-                                        let current = speed_local.get();
-                                        let mut opts: Vec<String> = DEFAULT_SPEED_OPTIONS
-                                            .iter().map(|s| s.to_string()).collect();
-                                        if !current.is_empty()
-                                            && !opts.iter().any(|s| s == &current)
-                                        {
-                                            opts.insert(0, current.clone());
-                                        }
-                                        opts.into_iter().map(|wire| {
-                                            let label = speed_label(&wire, tr_);
-                                            let sel = wire == current;
-                                            view! { <option value=wire selected=sel>{label}</option> }
-                                        }).collect::<Vec<_>>()
-                                    }}
-                                </select>
-                            </div>
-
-                            // Manual slew
-                            <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
-                                <span class=FIELD_LABEL>{move || tr().pa_manual_slew_label}</span>
-                                <input
-                                    type="checkbox"
-                                    on:change=on_manual_change.clone()
-                                    prop:checked=move || manual_local.get()
-                                />
-                            </div>
-
-                            // Meridian-crossing warning — mirrors
-                            // PolarAlignmentAssistant::checkPAHForMeridianCrossing().
-                            <Show when=move || meridian_warning().is_some()>
-                                <div class="mt-sp-1 py-sp-2 px-sp-3 border border-state-warn/60 bg-state-warn/10 text-state-warn text-sm leading-[1.4]">
-                                    {move || meridian_warning().unwrap_or_default()}
+                // Controls — scroll under the frame on phones.
+                <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] flex flex-col gap-3 \
+                            p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:p-0">
+                    <div class=CARD>
+                        // Step strip: three captures, then adjust.
+                        <div class="grid grid-cols-4 gap-1.5">
+                            {(1..=4u8).map(|n| view! {
+                                <div class="flex flex-col gap-1 min-w-0">
+                                    <div class=move || {
+                                        let s = step.get();
+                                        if s > n { "h-1 rounded-full bg-accent-cyan" }
+                                        else if s == n { "h-1 rounded-full bg-accent-cyan animate-pulse" }
+                                        else { "h-1 rounded-full bg-border-strong" }
+                                    }></div>
+                                    <span class=move || {
+                                        if step.get() >= n { "text-xs truncate text-text-dim" }
+                                        else { "text-xs truncate text-text-faint" }
+                                    }>
+                                        {move || if n == 4 {
+                                            tr().pa_step_adjust.to_string()
+                                        } else {
+                                            format!("{} {n}", tr().pa_step)
+                                        }}
+                                    </span>
                                 </div>
-                            </Show>
-
-                            <div class="mt-[6px]">
-                                <button on:click=on_start.clone() class=BTN_START>
-                                    {move || tr().pa_start_btn_long}
-                                </button>
-                            </div>
+                            }).collect::<Vec<_>>()}
                         </div>
-                    })}
-                </Show>
 
-                // Progress section
-                <Show when=progress_visible>
-                    {section_card("text-accent-violet", "bg-accent-violet", ICON_CAPTURE,
-                        move || tr().pa_capture_solve, view! {
-                        <div class="text-text-dim py-2">
+                        // KStars' own instruction for the current stage.
+                        <div class="text-sm text-text-dim leading-snug line-clamp-3"
+                             title=move || polar.with(|p| p.message.clone())>
                             {move || {
                                 let m = polar.with(|p| p.message.clone());
-                                if m.is_empty() { tr().pa_running.to_string() } else { m }
+                                match (m.is_empty(), step.get()) {
+                                    (false, _) => m,
+                                    (true, 0) => tr().pa_idle.to_string(),
+                                    (true, _) => tr().pa_running.to_string(),
+                                }
                             }}
                         </div>
-                        <div>
-                            <button on:click=on_stop_abort.clone() class=BTN_STOP>
-                                {move || tr().pa_abort_short}
+
+                        <Show when=move || step.get() == 0>
+                            <button class="btn btn-ghost w-full justify-between h-auto min-h-[44px] py-2"
+                                    on:click=move |_| settings_open.set(true)>
+                                <span class="min-w-0 truncate font-mono text-sm">{summary}</span>
+                                <span class="inline-block w-4 h-4 shrink-0 text-text-muted"
+                                      inner_html=tab_icon(Tab::Profiles)></span>
                             </button>
+                            {move || meridian_warning().map(|w| view! {
+                                <div class="py-2 px-3 rounded-md border border-state-warn/60 bg-state-warn/10 \
+                                            text-state-warn text-sm leading-snug">{w}</div>
+                            })}
+                        </Show>
+
+                        <Show when=move || step.get() == 4>{readout}</Show>
+
+                        <button
+                            class=move || match primary.get() {
+                                Primary::Stop => "btn btn-danger w-full h-12 text-base",
+                                Primary::RotationDone =>
+                                    "btn btn-ghost w-full h-12 text-base text-accent-amber !border-accent-amber",
+                                _ => "btn btn-primary w-full h-12 text-base",
+                            }
+                            on:click=on_primary
+                        >
+                            {move || {
+                                let tr = tr();
+                                match primary.get() {
+                                    Primary::Start => format!("\u{25B6}\u{FE0E} {}", tr.pa_start_btn_long),
+                                    Primary::RotationDone => format!("\u{2713} {}", tr.pa_rotation_done),
+                                    Primary::Refresh => format!("\u{25B6}\u{FE0E} {}", tr.pa_start_refresh),
+                                    Primary::Stop => format!("\u{25A0} {}", tr.stop),
+                                }
+                            }}
+                        </button>
+
+                        // Stop stays reachable when the big button does
+                        // something else; Reset view only while adjusting.
+                        <div class="flex gap-2"
+                             class:hidden=move || { step.get() == 0 || (primary.get() == Primary::Stop && step.get() != 4) }>
+                            <Show when=move || primary.get() != Primary::Stop>
+                                <button class="btn btn-danger flex-1" on:click=on_stop.clone()>
+                                    {move || format!("\u{25A0} {}", tr().stop)}
+                                </button>
+                            </Show>
+                            <Show when=move || step.get() == 4>
+                                <button class="btn btn-ghost flex-1" on:click=on_reset_view.clone()>
+                                    {move || tr().pa_reset_view}
+                                </button>
+                            </Show>
                         </div>
-                    })}
-                </Show>
-
-                // Manual rotation section
-                <Show when=rotation_visible>
-                    {section_card("text-accent-amber", "bg-accent-amber", ICON_ROTATE,
-                        move || tr().pa_manual_rotation_section, view! {
-                        <div class="text-text-dim pt-1 pb-[10px]">
-                            {move || tr().pa_manual_rotate_instr}
-                        </div>
-                        <div>
-                            <button on:click=on_slew_done.clone() class=BTN_ROTATION>
-                                {move || tr().pa_rotation_done}
-                            </button>
-                        </div>
-                    })}
-                </Show>
-
-                // Refresh section
-                <Show when=refresh_visible>
-                    {section_card("text-accent-green", "bg-accent-green", ICON_ADJUST,
-                        move || tr().pa_refresh_correct, view! {
-                        <div class="flex flex-wrap gap-sp-4 items-start">
-                            <div class="flex flex-col gap-sp-2 flex-[1_1_260px] min-w-0">
-
-                                // Exposure
-                                <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
-                                    <span class=FIELD_LABEL>{move || tr().pa_exposure_s_label}</span>
-                                    <input
-                                        type="number"
-                                        min="0.1"
-                                        max="60"
-                                        step="0.1"
-                                        on:change=on_exposure_change.clone()
-                                        prop:value=move || exposure.get().to_string()
-                                        class=POLAR_INPUT
-                                    />
-                                </div>
-
-                                // Algorithm
-                                <div class="flex items-center gap-sp-2 max-[420px]:flex-col max-[420px]:items-stretch">
-                                    <span class=FIELD_LABEL>{move || tr().pa_algorithm_label}</span>
-                                    <select
-                                        on:change=on_algo_change.clone()
-                                        class=POLAR_INPUT
-                                    >
-                                        {move || {
-                                            let tr_ = tr();
-                                            let cur = algo_local.get();
-                                            ALGORITHM_WIRE.iter().map(|wire| {
-                                                let label = algorithm_label(wire, tr_);
-                                                let sel = *wire == cur;
-                                                view! { <option value=*wire selected=sel>{label}</option> }
-                                            }).collect::<Vec<_>>()
-                                        }}
-                                    </select>
-                                </div>
-
-                                // Error readouts
-                                <div class="grid grid-cols-2 gap-sp-2 mt-[6px] max-[479px]:grid-cols-1">
-                                    <div class="border border-border-base py-[6px] px-sp-2">
-                                        <div class="text-sm text-text-blue">{move || tr().pa_original}</div>
-                                        {move || {
-                                            let tr_ = tr();
-                                            let v = polar.with(|p| p.vector.clone());
-                                            let (err, az, alt) = match v {
-                                                Some(v) => (v.error, v.az_error, v.alt_error),
-                                                None => (f64::NAN, f64::NAN, f64::NAN),
-                                            };
-                                            view! {
-                                                <div class="text-sm">
-                                                    {tr_.pa_total_label} {format_deg_as_dms_small(err)}
-                                                </div>
-                                                <div class="text-sm">
-                                                    {tr_.pa_az_label_long} {format_deg_as_dms_small(az)}
-                                                </div>
-                                                <div class="text-sm">
-                                                    {tr_.pa_alt_label_long} {format_deg_as_dms_small(alt)}
-                                                </div>
-                                            }
-                                        }}
-                                    </div>
-                                    <div class="border border-border-base py-[6px] px-sp-2">
-                                        <div class="text-sm text-accent-green">{move || tr().pa_updated}</div>
-                                        {move || {
-                                            let tr_ = tr();
-                                            let (e, az, al) = polar.with(|p| (
-                                                p.updated_error,
-                                                p.updated_az_error,
-                                                p.updated_alt_error,
-                                            ));
-                                            let fmt = |o: Option<f64>| match o {
-                                                Some(v) => format_deg_as_dms_small(v),
-                                                None => "—".to_string(),
-                                            };
-                                            view! {
-                                                <div class="text-sm">{tr_.pa_total_label} {fmt(e)}</div>
-                                                <div class="text-sm">{tr_.pa_az_label_long} {fmt(az)}</div>
-                                                <div class="text-sm">{tr_.pa_alt_label_long} {fmt(al)}</div>
-                                            }
-                                        }}
-                                    </div>
-                                </div>
-
-                                // Adjust-mount direction arrows. Derived
-                                // client-side from the signed az/alt errors —
-                                // KStars sends only the scalars, the ↑↓←→
-                                // mapping lives in its desktop widget
-                                // (polaralignmentassistant.cpp:307-351).
-                                <div class="mt-sp-2 border border-border-base py-[6px] px-sp-2">
-                                    <div class="text-sm text-text-blue">{move || tr().pa_adjust_mount}</div>
-                                    {move || {
-                                        let tr_ = tr();
-                                        // Prefer the live refresh errors; fall
-                                        // back to the original solve vector.
-                                        let (total, az, alt) = polar.with(|p| {
-                                            let v = p.vector.as_ref();
-                                            (
-                                                p.updated_error.filter(|x| x.is_finite() && *x >= 0.0)
-                                                    .or_else(|| v.map(|v| v.error)),
-                                                p.updated_az_error.filter(|x| x.is_finite())
-                                                    .or_else(|| v.map(|v| v.az_error)),
-                                                p.updated_alt_error.filter(|x| x.is_finite())
-                                                    .or_else(|| v.map(|v| v.alt_error)),
-                                            )
-                                        });
-                                        // Only guide when we have a valid solve.
-                                        let solved = total.map(|t| t.is_finite() && t >= 0.0).unwrap_or(false);
-                                        let az = az.unwrap_or(f64::NAN);
-                                        let alt = alt.unwrap_or(f64::NAN);
-                                        let az_arrow = if solved { axis_arrow(az, "←", "→") } else { None };
-                                        let alt_arrow = if solved { axis_arrow(alt, "↓", "↑") } else { None };
-                                        let axis_view = |label: &'static str, arrow: Option<&'static str>, err: f64| {
-                                            match arrow {
-                                                Some(g) => view! {
-                                                    <div class="flex items-center gap-sp-2 text-sm">
-                                                        <span class="basis-[40px] grow-0 shrink-0 text-text-blue">{label}</span>
-                                                        <span class="text-lg text-accent-green leading-none">{g}</span>
-                                                        <span class="font-mono text-accent-green">{format_deg_as_dms_small(err)}</span>
-                                                    </div>
-                                                }.into_any(),
-                                                None => view! {
-                                                    <div class="flex items-center gap-sp-2 text-sm">
-                                                        <span class="basis-[40px] grow-0 shrink-0 text-text-blue">{label}</span>
-                                                        <span class="text-text-muted">{if solved { "✓" } else { "—" }}</span>
-                                                    </div>
-                                                }.into_any(),
-                                            }
-                                        };
-                                        view! {
-                                            <div class="flex flex-col gap-[2px] mt-[4px]">
-                                                {axis_view(tr_.pa_az_label_long, az_arrow, az)}
-                                                {axis_view(tr_.pa_alt_label_long, alt_arrow, alt)}
-                                            </div>
-                                        }
-                                    }}
-                                </div>
-
-                                // Refresh controls
-                                <div class="flex gap-sp-2 mt-sp-2 flex-wrap">
-                                    <button on:click=on_start_refresh.clone() class=BTN_START>
-                                        {move || tr().pa_start_refresh}
-                                    </button>
-                                    <button on:click=on_stop_refresh.clone() class=BTN_ROTATION>
-                                        {move || tr().pa_stop_refresh}
-                                    </button>
-                                    <button on:click=on_reset_view.clone() class="btn btn-ghost">
-                                        {move || tr().pa_reset_view}
-                                    </button>
-                                </div>
-                            </div>
-
-                            // Correction vector preview
-                            <div class="flex-[0_0_140px] max-[420px]:flex-[1_1_100%] max-[420px]:flex max-[420px]:justify-center">
-                                {move || correction_svg(polar.with(|p| p.vector.clone()))}
-                            </div>
-                        </div>
-                    })}
-                </Show>
-
-                // Footer — always-visible global Stop
-                <div class="shrink-0 flex gap-sp-2">
-                    <button on:click=on_stop_footer class=BTN_STOP>
-                        {move || tr().pa_stop_btn_long}
-                    </button>
+                    </div>
                 </div>
             </div>
+
+            // Settings — bottom sheet on phones, floating panel on md+.
+            <Show when=move || settings_open.get()>
+                <div class="absolute inset-0 z-[70] bg-[rgba(2,4,10,0.6)]"
+                     on:click=move |_| settings_open.set(false)></div>
+                <div class="panel absolute z-[80] inset-x-0 bottom-0 max-h-[80dvh] rounded-b-none \
+                            pb-[max(0.75rem,env(safe-area-inset-bottom))] \
+                            md:inset-x-auto md:bottom-auto md:top-14 md:right-6 md:w-[380px] \
+                            md:max-h-[calc(100%-4.5rem)] md:rounded-lg md:pb-3 \
+                            overflow-y-auto [overscroll-behavior:contain] px-3 pt-2 flex flex-col gap-1 text-sm">
+                    <div class="flex items-center justify-between">
+                        <span class="font-semibold text-text-blue">{move || tr().pa_settings}</span>
+                        <button class="btn-icon" title=move || tr().info_close
+                                on:click=move |_| settings_open.set(false)>"\u{2716}"</button>
+                    </div>
+
+                    {setting_row(move || tr().pa_direction, view! {
+                        <div class="flex gap-1.5">
+                            {DIRECTION_WIRE.iter().map(|&wire| {
+                                let set = set_direction.clone();
+                                view! {
+                                    <button
+                                        class=move || if direction_local.with(|d| d == wire) {
+                                            format!("{CHIP} btn--active")
+                                        } else {
+                                            CHIP.to_string()
+                                        }
+                                        on:click=move |_| set(wire)
+                                    >
+                                        {move || direction_label(wire, tr())}
+                                    </button>
+                                }
+                            }).collect::<Vec<_>>()}
+                        </div>
+                    })}
+
+                    {setting_row(move || tr().pa_rotation_deg_label, view! {
+                        <input type="number" min="15" max="60" step="1" inputmode="numeric" class=INPUT
+                               prop:value=move || rotation_local.get().to_string()
+                               on:change=on_rotation_change.clone() />
+                    })}
+
+                    {setting_row(move || tr().pa_mount_speed_label, view! {
+                        <select class=INPUT on:change=on_speed_change.clone()>
+                            {move || {
+                                let tr_ = tr();
+                                let current = speed_local.get();
+                                let mut opts: Vec<String> = DEFAULT_SPEED_OPTIONS
+                                    .iter().map(|s| s.to_string()).collect();
+                                // Keep an unexpected current value selectable.
+                                if !current.is_empty() && !opts.contains(&current) {
+                                    opts.insert(0, current.clone());
+                                }
+                                opts.into_iter().map(|wire| {
+                                    let label = speed_label(&wire, tr_);
+                                    let sel = wire == current;
+                                    view! { <option value=wire selected=sel>{label}</option> }
+                                }).collect::<Vec<_>>()
+                            }}
+                        </select>
+                    })}
+
+                    {setting_row(move || tr().pa_manual_slew_label, view! {
+                        <input type="checkbox" class="w-5 h-5 min-h-0 shrink-0 accent-accent-cyan"
+                               prop:checked=move || manual_local.get()
+                               on:change=on_manual_change.clone() />
+                    })}
+
+                    {setting_row(move || tr().pa_exposure_s_label, view! {
+                        <input type="number" min="0.1" max="60" step="0.1" inputmode="decimal" class=INPUT
+                               prop:value=move || exposure.get().to_string()
+                               on:change=on_exposure_change.clone() />
+                    })}
+
+                    {setting_row(move || tr().pa_algorithm_label, view! {
+                        <select class=INPUT on:change=on_algo_change.clone()>
+                            {move || {
+                                let tr_ = tr();
+                                let cur = algo_local.get();
+                                ALGORITHM_WIRE.iter().map(|wire| {
+                                    let label = algorithm_label(wire, tr_);
+                                    let sel = *wire == cur;
+                                    view! { <option value=*wire selected=sel>{label}</option> }
+                                }).collect::<Vec<_>>()
+                            }}
+                        </select>
+                    })}
+                </div>
+            </Show>
         </div>
     }
 }
 
-fn correction_svg(vector: Option<PolarVectorData>) -> impl IntoView {
-    let (mag, pa) = match vector.as_ref() {
-        Some(v) => (v.mag, v.pa),
-        None => (0.0, 0.0),
-    };
-    let arrow_len = (mag * 500.0).clamp(0.0, 55.0);
-    let arrow_tail = (arrow_len - 6.0).max(0.0);
-    let (err, az, alt) = match vector.as_ref() {
-        Some(v) => (v.error, v.az_error, v.alt_error),
-        None => (f64::NAN, f64::NAN, f64::NAN),
-    };
+/// One settings row: label left, control right. A `<div>`, not a `<label>`:
+/// the direction row holds two buttons, and a label would forward clicks on
+/// its text to the first one.
+fn setting_row(
+    label: impl Fn() -> &'static str + Send + 'static,
+    control: impl IntoView,
+) -> impl IntoView {
     view! {
-        <div class="flex flex-col items-center gap-[6px]">
-            <svg width="120" height="120" viewBox="-60 -60 120 120"
-                 class="bg-bg-input-deep border border-border-base">
-                <circle cx="0" cy="0" r="55" fill="none" stroke="#333" stroke-width="0.5"/>
-                <circle cx="0" cy="0" r="28" fill="none" stroke="#222" stroke-width="0.5"/>
-                <line x1="-55" y1="0" x2="55" y2="0" stroke="#222" stroke-width="0.5"/>
-                <line x1="0" y1="-55" x2="0" y2="55" stroke="#222" stroke-width="0.5"/>
-                <g transform=format!("rotate({:.2})", -pa)>
-                    <line x1="0" y1="0"
-                          x2=format!("{:.2}", arrow_len) y2="0"
-                          stroke="#88aaff" stroke-width="2"/>
-                    <polygon
-                        points=format!("{:.2},0 {:.2},-3 {:.2},3",
-                            arrow_len, arrow_tail, arrow_tail)
-                        fill="#88aaff"/>
-                </g>
-                <circle cx="0" cy="0" r="2" fill="#cfe0ff"/>
-            </svg>
-            <div class="text-xs text-text text-center leading-[1.4]">
-                <div>"Err "  {format_deg_as_dms_small(err)}</div>
-                <div>"Az "   {format_deg_as_dms_small(az)}</div>
-                <div>"Alt "  {format_deg_as_dms_small(alt)}</div>
-            </div>
+        <div class="flex items-center justify-between gap-3 min-h-[44px]">
+            <span class="min-w-0 truncate text-text-blue">{move || label()}</span>
+            {control}
         </div>
+    }
+}
+
+/// One error readout: a small uppercase label left, the mono value right.
+fn tile(label: &'static str, value: String, value_cls: &'static str) -> impl IntoView {
+    view! {
+        <div class="min-w-0 rounded-lg bg-bg-elev-1 border border-border-base px-2 py-1.5 \
+                    flex items-baseline justify-between gap-2">
+            <span class="text-xs uppercase tracking-[0.06em] text-text-muted truncate">{label}</span>
+            <span class=format!("font-mono text-lg leading-tight whitespace-nowrap {value_cls}")>{value}</span>
+        </div>
+    }
+}
+
+/// Error bullseye. The dot sits at (az, −alt), so following the arrows walks
+/// it to the center. Square-root radius so both 1′ and 15′ stay readable:
+/// rings at 1′, 5′ and 15′, the rim is 30′ (larger errors pin to it).
+fn bullseye(az_deg: f64, alt_deg: f64, dot_cls: &'static str) -> impl IntoView {
+    const R: f64 = 54.0;
+    let radius = |arcmin: f64| R * (arcmin / 30.0).sqrt();
+    let e = az_deg.hypot(alt_deg) * 60.0; // arcmin
+    let dot = e.is_finite().then(|| {
+        if e <= 0.0 { return (0.0, 0.0); }
+        let r = radius(e.min(30.0)) / e;
+        (r * az_deg * 60.0, -r * alt_deg * 60.0)
+    });
+    view! {
+        <svg viewBox="-60 -60 120 120" class="w-[120px] h-[120px] shrink-0">
+            {[1.0, 5.0, 15.0, 30.0].map(|m| view! {
+                <circle r=format!("{:.1}", radius(m)) fill="none"
+                        stroke="var(--border-strong)" stroke-width="1"/>
+            })}
+            <line x1="-58" y1="0" x2="58" y2="0" stroke="var(--border-strong)" stroke-width="0.6"/>
+            <line x1="0" y1="-58" x2="0" y2="58" stroke="var(--border-strong)" stroke-width="0.6"/>
+            <circle r="1.6" fill="var(--text-muted)"/>
+            {dot.map(|(x, y)| view! {
+                <circle cx=format!("{x:.1}") cy=format!("{y:.1}") r="4.5"
+                        fill="currentColor" class=dot_cls/>
+            })}
+        </svg>
     }
 }

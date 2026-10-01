@@ -250,7 +250,6 @@ pub fn derive_capture(store: &DeviceStore) -> Signal<CaptureSnapshot> {
 
 #[derive(Debug, Clone, Default)]
 pub struct PolarAlignSnapshot {
-    pub enabled:           bool,
     pub stage:             String,
     pub message:           String,
     pub vector:            Option<PolarVectorData>,
@@ -268,7 +267,6 @@ pub fn derive_polar_align(store: &DeviceStore) -> Signal<PolarAlignSnapshot> {
     Signal::derive(move || {
         let p = state.get();
         PolarAlignSnapshot {
-            enabled:           p.enabled,
             stage:             p.stage,
             message:           p.message,
             vector:            p.vector,
