@@ -666,7 +666,7 @@ pub fn ImagingTab(
                             {render_exposure_field(lang, get_setting, dispatch_setting.clone())}
 
                             // Frame type: segmented control instead of <select>.
-                            {render_frame_type_segmented(lang, camera, get_setting, dispatch_setting.clone())}
+                            {render_frame_type_segmented(camera, get_setting, dispatch_setting.clone())}
 
                             // Filter / Gain / ISO row — three equal columns
                             // with the label stacked above the editor. Filter
@@ -865,7 +865,9 @@ pub fn ImagingTab(
                             </div>
                             <div class="flex justify-end gap-sp-2 py-sp-3 px-sp-4 border-t border-border-base bg-[rgba(10,12,20,0.8)]">
                                 <button class=GHOST_BTN on:click=move |_| editor_open.set(false)>{move || tr().imaging_close}</button>
-                                <button class=ACTION_BTN style="--btn-color:var(--state-info);" on:click=move |ev| {
+                                <button class=ACTION_BTN style="--btn-color:var(--state-info);"
+                                    disabled=move || !seq_frames.with(|fs| fs.iter().all(SeqFrame::is_valid))
+                                    on:click=move |ev| {
                                     on_send_seq(ev);
                                     editor_open.set(false);
                                 }>{move || tr().imaging_send_sequence}</button>

@@ -731,13 +731,6 @@ textarea:focus-visible,
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
-.sched-seq-total {
-    font-size: var(--fs-xs);
-    color: color-mix(in srgb, var(--text-muted) 55%, var(--text-faint));
-    padding: var(--sp-1) 6px;
-    border-top: 1px solid color-mix(in srgb, var(--border) 85%, black);
-    text-align: right;
-}
 
 .sched-form-error { color: var(--state-err); font-size: var(--fs-sm); }
 .sched-form-btns { display: flex; gap: var(--sp-3); align-items: center; }

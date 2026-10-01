@@ -1,6 +1,6 @@
 //! Shared field-rendering helpers for the Imaging tab — the row layouts,
-//! exposure widget, filter dropdown, frame-type segmented control, and the
-//! generic `<select>` machinery used by them.
+//! exposure widget, filter dropdown, frame-type segmented control (built on
+//! `components::frame_type`), and the generic `<select>` machinery used by them.
 
 use leptos::prelude::*;
 
@@ -9,7 +9,8 @@ use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_device_property_set;
 
-use super::styles::{frame_type_visual, FIELD_INPUT, FIELD_LABEL, FRAME_TYPE_FALLBACK};
+use super::styles::{FIELD_INPUT, FIELD_LABEL};
+use crate::components::frame_type::{frame_type_options, frame_type_pills};
 use super::types::{Field, Kind, EXPOSURE_PRESETS};
 use crate::dom::event_target_value;
 
@@ -277,83 +278,18 @@ pub(super) fn render_filter_field(
 /// Frame-type segmented control. Source list still comes from the camera
 /// snapshot (with `FRAME_TYPE_FALLBACK` until the device reports), and
 /// click dispatches `captureTypeS` exactly like the previous combo did.
+/// The "Frame Type" label is dropped: the icons + colors + their position in
+/// the one-shot panel make the role of the control obvious.
 pub(super) fn render_frame_type_segmented(
-    _lang: RwSignal<Lang>,
     camera: Signal<CameraSnapshot>,
     get_setting: impl Fn(&'static str) -> serde_json::Value + Copy + Send + Sync + 'static,
-    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + Send + Sync + 'static,
+    dispatch: impl Fn(&'static str, serde_json::Value) + Send + Sync + 'static,
 ) -> AnyView {
-    let current = move || value_to_display(&get_setting("captureTypeS"));
-    let dispatch = std::sync::Arc::new(dispatch);
-
-    view! {
-        // Row of color-coded icon pills. The "Frame Type" label is dropped:
-        // the icons + colors + their position in the one-shot panel make
-        // the role of the control obvious, and reclaiming the 120px label
-        // column lets the pills breathe. On phones we switch to a 2×2 grid
-        // (instead of stacking 4 deep) to keep the panel compact.
-        <div class="grid grid-cols-4 gap-sp-2 max-[479px]:grid-cols-2">
-            {move || {
-                let opts = camera.with(|c| if c.frame_type_options.is_empty() {
-                    FRAME_TYPE_FALLBACK.iter().map(|s| s.to_string()).collect()
-                } else {
-                    c.frame_type_options.clone()
-                });
-                opts.into_iter().map(|opt| {
-                    let (icon, color) = frame_type_visual(&opt);
-                    let opt_for_active_a = opt.clone();
-                    let opt_for_active_b = opt.clone();
-                    let active_pill = move || current() == opt_for_active_a;
-                    let active_icon = move || current() == opt_for_active_b;
-                    let opt_for_dispatch = opt.clone();
-                    let d = dispatch.clone();
-                    // Active pill: filled tint of its own color + ring;
-                    // inactive: muted border, dim icon, blue label.
-                    let pill_style = move || if active_pill() {
-                        format!(
-                            "background:color-mix(in srgb, {c} 22%, transparent);\
-                             border-color:{c};color:{c};\
-                             box-shadow:inset 0 0 0 1px {c};",
-                            c = color,
-                        )
-                    } else {
-                        format!(
-                            "background:transparent;\
-                             border-color:var(--border-base);\
-                             color:var(--text-blue);",
-                        )
-                    };
-                    let icon_style = move || if active_icon() {
-                        format!("color:{color};opacity:1;")
-                    } else {
-                        format!("color:{color};opacity:0.6;")
-                    };
-                    view! {
-                        <button
-                            type="button"
-                            class="flex items-center justify-center gap-[6px] min-w-0 h-[32px] px-sp-2 \
-                                   rounded-[6px] border text-xs uppercase tracking-[0.06em] \
-                                   font-medium transition-colors \
-                                   hover:bg-[rgba(255,255,255,0.04)] \
-                                   focus:outline-none focus:ring-1 focus:ring-offset-0"
-                            style=pill_style
-                            on:click=move |_| {
-                                d("captureTypeS",
-                                  serde_json::Value::String(opt_for_dispatch.clone()));
-                            }
-                        >
-                            <span
-                                class="inline-flex shrink-0 transition-opacity"
-                                style=icon_style
-                                inner_html=icon
-                            />
-                            <span class="truncate">{opt}</span>
-                        </button>
-                    }.into_any()
-                }).collect::<Vec<_>>()
-            }}
-        </div>
-    }.into_any()
+    frame_type_pills(
+        move || frame_type_options(camera.with(|c| c.frame_type_options.clone())),
+        move || value_to_display(&get_setting("captureTypeS")),
+        move |picked| dispatch("captureTypeS", serde_json::Value::String(picked)),
+    )
 }
 
 /// Render a `<select>` whose options are a fixed `Vec<String>`. If the

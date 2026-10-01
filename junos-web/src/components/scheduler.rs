@@ -195,26 +195,6 @@ pub fn SchedulerTab(
     // Destination folder for captured .fits; defaults from CaptureDirCtx.
     let seq_fits_dir: RwSignal<String> = RwSignal::new(String::new());
 
-    // Derived: total exposure summary
-    let seq_total_hint = Signal::derive(move || {
-        let frames = seq_frames.get();
-        let total_secs: f64 = frames.iter()
-            .filter_map(|f| {
-                let exp  = f.exposure.parse::<f64>().ok()?;
-                let cnt  = f.count.parse::<f64>().ok()?;
-                Some(exp * cnt)
-            })
-            .sum();
-        if total_secs <= 0.0 { return String::new(); }
-        if total_secs < 60.0 {
-            format!("Total: {:.0} s", total_secs)
-        } else if total_secs < 3600.0 {
-            format!("Total: {:.1} min", total_secs / 60.0)
-        } else {
-            format!("Total: {:.2} h", total_secs / 3600.0)
-        }
-    });
-
     // ── Catalog lookup ──────────────────────────────────────────────────────
     let on_catalog_search = {
         let f_target_name2 = f_target_name;
@@ -314,9 +294,9 @@ pub fn SchedulerTab(
             }
         };
 
-        let frames: Vec<SeqFrame> = frames_raw.iter().filter(|f| {
-            f.exposure.parse::<f64>().is_ok() && f.count.parse::<u32>().is_ok()
-        }).cloned().collect();
+        let frames: Vec<SeqFrame> = frames_raw.iter()
+            .filter(|f| f.duration_secs().is_some())
+            .cloned().collect();
 
         if frames.is_empty() {
             form_error.set(Some(t(lang.get_untracked()).sched_err_frames.to_string()));
@@ -486,7 +466,6 @@ pub fn SchedulerTab(
                                 seq_frames=seq_frames
                                 seq_fits_dir=seq_fits_dir
                                 coords_hint=coords_hint
-                                seq_total_hint=seq_total_hint
                                 on_catalog_search=Arc::clone(&on_catalog_search)
                                 on_add_job=Arc::clone(&on_add_job)
                                 on_clear_form=Arc::clone(&on_clear_form)

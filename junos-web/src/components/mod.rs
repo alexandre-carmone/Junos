@@ -6,6 +6,7 @@ pub mod devices;
 pub mod dialog_modal;
 pub mod files;
 pub mod flat_cal;
+pub mod frame_type;
 pub mod focus;
 pub mod guide;
 pub mod imaging;

@@ -44,7 +44,6 @@ pub fn SchedulerAddJobSection(
     seq_frames: RwSignal<Vec<SeqFrame>>,
     seq_fits_dir: RwSignal<String>,
     #[prop(into)] coords_hint: Signal<Option<String>>,
-    #[prop(into)] seq_total_hint: Signal<String>,
     on_catalog_search: Arc<dyn Fn() + Send + Sync>,
     on_add_job: Arc<dyn Fn() + Send + Sync>,
     on_clear_form: Arc<dyn Fn() + Send + Sync>,
@@ -469,12 +468,6 @@ pub fn SchedulerAddJobSection(
                     <div class="sched-seq-section">
                         <span class="sched-seq-label">{move || tr().sched_seq_label}</span>
                         <SequenceEditor frames=seq_frames fits_dir=seq_fits_dir camera=camera filter_wheel=filter_wheel />
-                        {move || {
-                            let hint = seq_total_hint.get();
-                            (!hint.is_empty()).then(|| view! {
-                                <div class="sched-seq-total">{hint}</div>
-                            })
-                        }}
                     </div>
 
                     {move || form_error.get().map(|e| view! {

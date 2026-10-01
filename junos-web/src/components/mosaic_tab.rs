@@ -173,7 +173,7 @@ pub fn MosaicTab(
 
         let frames_raw = seq_frames.get_untracked();
         let valid_frames: Vec<SeqFrame> = frames_raw.iter()
-            .filter(|f| f.exposure.parse::<f64>().is_ok() && f.count.parse::<u32>().is_ok())
+            .filter(|f| f.duration_secs().is_some())
             .cloned()
             .collect();
         if valid_frames.is_empty() {
