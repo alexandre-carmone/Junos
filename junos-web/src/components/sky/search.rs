@@ -12,6 +12,7 @@ use crate::i18n::{Lang, t};
 
 use crate::compat::SiteSnapshot;
 
+use super::clock::SkyClock;
 use super::object_search::{SearchHit, search_objects};
 use crate::dom::event_target_value;
 
@@ -22,7 +23,7 @@ pub fn SkySearch(
     catalog_sig: RwSignal<Option<Arc<CatalogData>>>,
     dso_catalog_sig: RwSignal<Option<Arc<DsoCatalogData>>>,
     #[prop(into)] site: Signal<SiteSnapshot>,
-    time_offset_s: ReadSignal<f64>,
+    clock: RwSignal<SkyClock>,
     set_center_alt: WriteSignal<f64>,
     set_center_az: WriteSignal<f64>,
     set_follow_mount: WriteSignal<bool>,
@@ -34,11 +35,11 @@ pub fn SkySearch(
 
     view! {
         <div
-            class="absolute top-2 left-2 z-50 w-[min(230px,calc(100vw-120px))] max-md:w-[calc(100vw-72px)] max-md:!top-[34px]"
+            class="relative flex-1 min-w-0 md:max-w-[280px] pointer-events-auto"
             on:click=move |ev| ev.stop_propagation()
         >
             <input type="text"
-                class="bg-bg-panel-glass text-text border border-border-accent py-1 px-sp-2 w-full font-mono text-[12px] box-border rounded-[2px]"
+                class="bg-bg-panel-glass text-text border border-border-accent h-9 px-sp-2 w-full font-mono text-[12px] box-border rounded-md"
                 placeholder=move || tr().search_placeholder
                 prop:value=move || sky_search.get()
                 on:input=move |e| set_sky_search.set(event_target_value(&e))
@@ -60,17 +61,7 @@ pub fn SkySearch(
                     view! {
                         <div
                             on:click=move |_| {
-                                let now = js_sys::Date::new_0();
-                                let jd = astro::julian_date(
-                                    now.get_utc_full_year() as i32,
-                                    now.get_utc_month() + 1,
-                                    now.get_utc_date(),
-                                    now.get_utc_hours(),
-                                    now.get_utc_minutes(),
-                                    now.get_utc_seconds() as f64
-                                        + now.get_utc_milliseconds() as f64 / 1000.0
-                                        + time_offset_s.get_untracked(),
-                                );
+                                let jd = clock.get_untracked().jd();
                                 let gmst = astro::gmst_deg(jd);
                                 let s = site.get_untracked();
                                 let lst = astro::lst_deg(gmst, s.longitude);
@@ -92,7 +83,7 @@ pub fn SkySearch(
 
                                 set_sky_search.set(String::new());
                             }
-                            class="py-[3px] px-sp-2 cursor-pointer text-text border-b border-[#1a1a2a] text-[12px]"
+                            class="py-2 md:py-[3px] px-sp-2 cursor-pointer text-text border-b border-[#1a1a2a] text-[12px]"
                         >
                             {label}
                         </div>
@@ -100,7 +91,7 @@ pub fn SkySearch(
                 }).collect_view();
 
                 view! {
-                    <div class="bg-bg-panel-solid border border-border-accent border-t-0 max-h-[220px] overflow-y-auto rounded-b-[2px]">
+                    <div class="absolute inset-x-0 top-full bg-bg-panel-solid border border-border-accent border-t-0 max-h-[min(220px,50dvh)] overflow-y-auto rounded-b-md">
                         {rows}
                     </div>
                 }.into_any()

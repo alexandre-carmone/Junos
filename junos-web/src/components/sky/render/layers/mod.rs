@@ -8,7 +8,6 @@ pub mod dso;
 pub mod fov_reticle;
 pub mod grids;
 pub mod ground;
-pub mod info_overlay;
 pub mod mosaic;
 pub mod mount_crosshair;
 pub mod scheduler_jobs;

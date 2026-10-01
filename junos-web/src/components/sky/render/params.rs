@@ -55,7 +55,6 @@ pub struct SceneParams {
     pub latitude: f64,
     pub sin_lat: f64,
     pub cos_lat: f64,
-    pub t_off: f64,
     pub mag_limit: f32,
     pub cur_lang: Lang,
     pub is_mobile: bool,
@@ -83,7 +82,7 @@ pub struct LayerToggles {
 }
 
 /// Borrowed/cloned subsystem state read by overlay layers (mount, camera,
-/// solve, mosaic, scheduler, cursor). Cloned today during migration; will
+/// solve, mosaic, scheduler). Cloned today during migration; will
 /// switch to borrows once the pipeline owns the lifetime story.
 #[derive(Clone)]
 pub struct OverlayState {
@@ -101,9 +100,6 @@ pub struct OverlayState {
     pub solve_dec_jnow_deg: Option<f64>,
     pub solve_pixscale_arcsec: Option<f64>,
     pub solve_age_ms: Option<f64>,
-
-    pub cursor_altaz: Option<(f64, f64)>,
-    pub cursor_radec: Option<(f64, f64)>,
 
     pub scheduler_jobs: Vec<SchedulerJobRender>,
     pub mosaic_kstars: Option<MosaicPlanRender>,

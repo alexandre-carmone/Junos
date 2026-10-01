@@ -184,14 +184,6 @@ textarea:focus-visible,
 .btn--sm { height: 28px; min-height: 28px; padding: 0 var(--sp-3); font-size: var(--fs-sm); }
 .btn--block { width: 100%; }
 
-/* Toggle / segmented selected state. Cyan accent border + tinted bg.
-   Add `.btn--active` alongside any `.btn` / `.btn-ghost` / `.btn-icon`. */
-.btn--active {
-    background: color-mix(in srgb, var(--accent-cyan) 14%, var(--bg-elev-2));
-    border-color: var(--accent-cyan);
-    color: var(--text-dim);
-}
-
 /* Icon-only buttons. Square-by-default; --circle pills it. */
 .btn-icon {
     display: inline-flex;
@@ -310,6 +302,15 @@ textarea:focus-visible,
     color: var(--text);
     font-family: var(--font-ui);
     font-size: var(--fs-sm);
+}
+
+/* Toggle / segmented selected state. Cyan accent border + tinted bg.
+   Add `.btn--active` alongside any `.btn` / `.btn-ghost` / `.btn-icon` /
+   `.chip`. Declared after all of them so it wins at equal specificity. */
+.btn--active {
+    background: color-mix(in srgb, var(--accent-cyan) 14%, var(--bg-elev-2));
+    border-color: var(--accent-cyan);
+    color: var(--text-dim);
 }
 
 /* Numeric readouts inside otherwise-sans surfaces. Class hook so

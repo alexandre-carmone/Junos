@@ -234,6 +234,7 @@ translations! {
     sched_q_err_device_slot, sched_q_err_range, sched_q_err_script_name, sched_q_err_script_dup,
     sched_q_err_shebang, sched_q_err_script_path, sched_q_err_loading, sched_q_err_no_server,
     sched_q_confirm_overwrite_script,
+    layers, layer_sky, layer_grids, layer_dso, layer_gear, layer_star_names, layer_con_names, time_live, time_back, time_forward, time_play, time_pause, time_dusk, time_dawn, time_no_night, time_date, time_hour, target_point, center_here,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

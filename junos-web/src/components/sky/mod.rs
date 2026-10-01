@@ -7,6 +7,7 @@
 //! Falls back to all-Canvas2D rendering when WebGPU is unavailable.
 
 mod actions;
+mod clock;
 mod controls;
 pub(crate) mod dso_index;
 mod dso_render;
@@ -15,11 +16,11 @@ pub(crate) mod gpu;
 mod hud;
 mod picking;
 mod solar_render;
-mod info_popup;
 mod framing;
 mod object_search;
 pub(crate) mod render;
 mod search;
+mod time_bar;
 pub(crate) mod utils;
 
 use std::cell::RefCell;
@@ -43,10 +44,10 @@ use crate::dso_catalog::DsoCatalogData;
 use self::gpu::{LineView, SkyRenderer, Uniforms};
 use crate::i18n::{Lang, t};
 
-use actions::SkyContextMenu;
+use actions::{SkyTarget, SkyTargetCard};
+use clock::SkyClock;
 use controls::SkyControls;
 use framing::FramingOverlay;
-use info_popup::SkyInfoPopup;
 
 pub use framing::FramingState;
 use render::{HitItem, MosaicPlanRender, MosaicTileRender, SchedulerJobRender};
@@ -54,6 +55,7 @@ use render::layer::{Catalogs, Frame};
 use render::params::{LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
 use render::pipeline::RenderPipeline;
 use search::SkySearch;
+use time_bar::TimeBar;
 
 // ---------------------------------------------------------------------------
 // Toggles bundle — passed as a single prop to SkyControls / consumed by the
@@ -85,6 +87,81 @@ pub struct SkyToggles {
     pub dso_galaxy_cluster: RwSignal<bool>,
     pub dso_mag_limit:      RwSignal<f64>,
     pub scheduler_jobs:     RwSignal<bool>,
+}
+
+impl SkyToggles {
+    /// Tracked read of the on/off layer toggles (subscribes the caller).
+    fn layer_toggles(&self) -> LayerToggles {
+        LayerToggles {
+            stars_on: self.stars.get(),
+            names_on: self.names.get(),
+            const_on: self.constellations.get(),
+            con_names_on: self.con_names.get(),
+            grid_on: self.grid.get(),
+            eq_grid_on: self.eq_grid.get(),
+            meridian_on: self.meridian.get(),
+            ecliptic_on: self.ecliptic.get(),
+            zenith_on: self.zenith.get(),
+            solar_system_on: self.solar_system.get(),
+            solve_marker_on: self.solve_marker.get(),
+            slew_trail_on: self.slew_trail.get(),
+            fov_on: self.fov.get(),
+            dso_on: self.dso.get(),
+            scheduler_jobs_on: self.scheduler_jobs.get(),
+        }
+    }
+
+    /// Tracked read of the per-type DSO filters.
+    fn dso_filter(&self) -> dso_render::KindFilter {
+        dso_render::KindFilter {
+            gx: self.dso_galaxy.get(),
+            oc: self.dso_open_cluster.get(),
+            gc: self.dso_globular.get(),
+            nb: self.dso_nebula.get(),
+            pn: self.dso_planetary.get(),
+            snr: self.dso_snr.get(),
+            gal: self.dso_galaxy_cluster.get(),
+        }
+    }
+}
+
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+/// Signal initialised from localStorage `key` and written back on change.
+fn persisted<T>(key: &'static str, default: T) -> RwSignal<T>
+where
+    T: std::str::FromStr + ToString + Send + Sync + 'static,
+{
+    let init = local_storage()
+        .and_then(|s| s.get_item(key).ok().flatten())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default);
+    let sig = RwSignal::new(init);
+    Effect::new(move || {
+        let v = sig.with(|v| v.to_string());
+        if let Some(s) = local_storage() {
+            let _ = s.set_item(key, &v);
+        }
+    });
+    sig
+}
+
+/// Hit radius floor (CSS px) for a mouse click and for a finger tap.
+const MOUSE_HIT_R: f64 = 12.0;
+const TOUCH_HIT_R: f64 = 22.0;
+/// Pointer travel (CSS px) below which a press is a tap, not a pan.
+const TAP_SLOP: f64 = 8.0;
+
+/// Nearest hit item whose radius (at least `min_r`) contains (x, y).
+fn hit_test(items: &[HitItem], x: f64, y: f64, min_r: f64) -> Option<HitItem> {
+    items
+        .iter()
+        .map(|it| ((x - it.sx).powi(2) + (y - it.sy).powi(2), it))
+        .filter(|(d2, it)| *d2 <= it.radius.max(min_r).powi(2))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, it)| it.clone())
 }
 
 /// The mosaic geometry shared verbatim by the Framing Assistant and the Mosaic
@@ -388,137 +465,52 @@ pub fn SkyTab(
         }
     });
 
-    let (time_offset_s, set_time_offset_s) = signal(0.0_f64);
-    // Read persisted checkbox state from localStorage
-    let ls_init = web_sys::window().and_then(|w| w.local_storage().ok().flatten());
-    let ls_bool = |key: &str, default: bool| -> bool {
-        ls_init.as_ref()
-            .and_then(|s| s.get_item(key).ok().flatten())
-            .map(|v| v == "true")
-            .unwrap_or(default)
-    };
-    let ls_f64_init = |key: &str, default: f64| -> f64 {
-        ls_init.as_ref()
-            .and_then(|s| s.get_item(key).ok().flatten())
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(default)
-    };
-
-    let show_stars            = RwSignal::new(ls_bool("sky_show_stars", true));
-    let show_names            = RwSignal::new(ls_bool("sky_show_names", true));
-    let show_constellations   = RwSignal::new(ls_bool("sky_show_constellations", true));
-    let show_con_names        = RwSignal::new(ls_bool("sky_show_con_names", true));
-    let show_grid             = RwSignal::new(ls_bool("sky_show_grid", true));
-    let show_eq_grid          = RwSignal::new(ls_bool("sky_show_eq_grid", false));
-    let show_meridian         = RwSignal::new(ls_bool("sky_show_meridian", true));
-    let show_fov              = RwSignal::new(ls_bool("sky_show_fov", true));
-    let show_dso              = RwSignal::new(ls_bool("sky_show_dso", true));
-    let show_ecliptic         = RwSignal::new(ls_bool("sky_show_ecliptic", true));
-    let show_zenith           = RwSignal::new(ls_bool("sky_show_zenith", false));
-    let show_solar_system     = RwSignal::new(ls_bool("sky_show_solar_system", true));
-    let show_solve_marker     = RwSignal::new(ls_bool("sky_show_solve_marker", true));
-    let show_slew_trail       = RwSignal::new(ls_bool("sky_show_slew_trail", true));
-
-    let dso_filter_galaxy         = RwSignal::new(ls_bool("sky_dso_galaxy", true));
-    let dso_filter_open_cluster   = RwSignal::new(ls_bool("sky_dso_open_cluster", true));
-    let dso_filter_globular       = RwSignal::new(ls_bool("sky_dso_globular", true));
-    let dso_filter_nebula         = RwSignal::new(ls_bool("sky_dso_nebula", true));
-    let dso_filter_planetary      = RwSignal::new(ls_bool("sky_dso_planetary", true));
-    let dso_filter_snr            = RwSignal::new(ls_bool("sky_dso_snr", true));
-    let dso_filter_galaxy_cluster = RwSignal::new(ls_bool("sky_dso_galaxy_cluster", true));
-    let dso_mag_limit             = RwSignal::new(ls_f64_init("sky_dso_mag_limit", 11.0));
-    let show_scheduler_jobs       = RwSignal::new(ls_bool("sky_show_scheduler_jobs", true));
+    // Simulated time — always starts live; see `clock.rs`.
+    let clock = RwSignal::new(SkyClock::live());
 
     let toggles = SkyToggles {
-        stars:               show_stars,
-        names:               show_names,
-        constellations:      show_constellations,
-        con_names:           show_con_names,
-        grid:                show_grid,
-        eq_grid:             show_eq_grid,
-        meridian:            show_meridian,
-        fov:                 show_fov,
-        dso:                 show_dso,
-        ecliptic:            show_ecliptic,
-        zenith:              show_zenith,
-        solar_system:        show_solar_system,
-        solve_marker:        show_solve_marker,
-        slew_trail:          show_slew_trail,
-        dso_galaxy:          dso_filter_galaxy,
-        dso_open_cluster:    dso_filter_open_cluster,
-        dso_globular:        dso_filter_globular,
-        dso_nebula:          dso_filter_nebula,
-        dso_planetary:       dso_filter_planetary,
-        dso_snr:             dso_filter_snr,
-        dso_galaxy_cluster:  dso_filter_galaxy_cluster,
-        dso_mag_limit,
-        scheduler_jobs:      show_scheduler_jobs,
+        stars:              persisted("sky_show_stars", true),
+        names:              persisted("sky_show_names", true),
+        constellations:     persisted("sky_show_constellations", true),
+        con_names:          persisted("sky_show_con_names", true),
+        grid:               persisted("sky_show_grid", true),
+        eq_grid:            persisted("sky_show_eq_grid", false),
+        meridian:           persisted("sky_show_meridian", true),
+        fov:                persisted("sky_show_fov", true),
+        dso:                persisted("sky_show_dso", true),
+        ecliptic:           persisted("sky_show_ecliptic", true),
+        zenith:             persisted("sky_show_zenith", false),
+        solar_system:       persisted("sky_show_solar_system", true),
+        solve_marker:       persisted("sky_show_solve_marker", true),
+        slew_trail:         persisted("sky_show_slew_trail", true),
+        dso_galaxy:         persisted("sky_dso_galaxy", true),
+        dso_open_cluster:   persisted("sky_dso_open_cluster", true),
+        dso_globular:       persisted("sky_dso_globular", true),
+        dso_nebula:         persisted("sky_dso_nebula", true),
+        dso_planetary:      persisted("sky_dso_planetary", true),
+        dso_snr:            persisted("sky_dso_snr", true),
+        dso_galaxy_cluster: persisted("sky_dso_galaxy_cluster", true),
+        dso_mag_limit:      persisted("sky_dso_mag_limit", 11.0),
+        scheduler_jobs:     persisted("sky_show_scheduler_jobs", true),
     };
+    let dso_mag_limit = toggles.dso_mag_limit;
 
     // Mosaic planner state lives at App level; shared with MosaicTab via context.
     let planner = use_context::<crate::MosaicPlannerCtx>()
         .expect("MosaicPlannerCtx not provided")
         .0;
 
-    // Persist checkbox state to localStorage on change
-    Effect::new(move || {
-        let bools: &[(&str, bool)] = &[
-            ("sky_show_stars",          toggles.stars.get()),
-            ("sky_show_names",          toggles.names.get()),
-            ("sky_show_constellations", toggles.constellations.get()),
-            ("sky_show_con_names",      toggles.con_names.get()),
-            ("sky_show_grid",           toggles.grid.get()),
-            ("sky_show_eq_grid",        toggles.eq_grid.get()),
-            ("sky_show_meridian",       toggles.meridian.get()),
-            ("sky_show_fov",            toggles.fov.get()),
-            ("sky_show_dso",            toggles.dso.get()),
-            ("sky_show_ecliptic",       toggles.ecliptic.get()),
-            ("sky_show_zenith",         toggles.zenith.get()),
-            ("sky_show_solar_system",   toggles.solar_system.get()),
-            ("sky_show_solve_marker",   toggles.solve_marker.get()),
-            ("sky_show_slew_trail",     toggles.slew_trail.get()),
-            ("sky_dso_galaxy",          toggles.dso_galaxy.get()),
-            ("sky_dso_open_cluster",    toggles.dso_open_cluster.get()),
-            ("sky_dso_globular",        toggles.dso_globular.get()),
-            ("sky_dso_nebula",          toggles.dso_nebula.get()),
-            ("sky_dso_planetary",       toggles.dso_planetary.get()),
-            ("sky_dso_snr",             toggles.dso_snr.get()),
-            ("sky_dso_galaxy_cluster",  toggles.dso_galaxy_cluster.get()),
-            ("sky_show_scheduler_jobs", toggles.scheduler_jobs.get()),
-        ];
-        let mag = toggles.dso_mag_limit.get();
-        if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-            for (k, v) in bools {
-                let _ = ls.set_item(k, if *v { "true" } else { "false" });
-            }
-            let _ = ls.set_item("sky_dso_mag_limit", &mag.to_string());
-        }
-    });
-
     // Object search state
     let (sky_search, set_sky_search) = signal(String::new());
 
-    // Controls panel section visibility
-    let (show_sky_section,      set_show_sky_section)      = signal(false);
-    let (show_objects_section,  set_show_objects_section)  = signal(false);
-    let (show_settings_section, set_show_settings_section) = signal(false);
-    let (time_shift_open,       set_time_shift_open)       = signal(false);
-
-    // Controls panel visibility (collapsed by default on narrow screens)
-    let (show_controls, set_show_controls) = signal({
-        web_sys::window()
-            .and_then(|w| w.inner_width().ok())
-            .and_then(|v| v.as_f64())
-            .map(|w| w >= 768.0)
-            .unwrap_or(true)
-    });
+    // Layers panel (bottom sheet on phones, floating panel on md+).
+    let layers_open = RwSignal::new(false);
 
     // Drag state. `drag_dist` tracks total movement so a short drag still
     // fires a click (hit-test) on mouseup, while a real pan suppresses it.
     let dragging = StoredValue::new(false);
     let drag_last = StoredValue::new((0.0_f64, 0.0_f64));
     let drag_dist = StoredValue::new(0.0_f64);
-    let mousedown_pos = StoredValue::new((0.0_f64, 0.0_f64));
 
     // Current pointer position (CSS px relative to overlay canvas), for the
     // hover Alt/Az/RA/Dec readout. None when the pointer is off-canvas.
@@ -538,10 +530,10 @@ pub fn SkyTab(
         Rc::new(RefCell::new(VecDeque::with_capacity(128)));
     let last_trail_sample = StoredValue::new((f64::NAN, f64::NAN));
 
-    // Click-to-info popup target (or None for closed).
-    let (info_popup, set_info_popup) = signal(None::<HitItem>);
+    // Target card subject (or None for closed) — tap, right-click, long-press.
+    let target = RwSignal::new(None::<SkyTarget>);
 
-    // Goto-and-align coordination: the context menu / confirm popup set this
+    // Goto-and-align coordination: the target card sets this
     // to `true` after dispatching a goto. An Effect below watches the mount's
     // slewing status and fires `align_solve` once the slew completes. Firing
     // align_solve immediately (what we used to do) caused the solver to run
@@ -554,16 +546,15 @@ pub fn SkyTab(
     let pinch_start_dist = StoredValue::new(0.0_f64);
     let pinch_start_fov  = StoredValue::new(0.0_f64);
 
-    // Long-press timer for touch-triggered context menu (drop = cancel)
+    // Long-press timer for the touch target card (drop = cancel). The flag
+    // stops the finger lift that ends a long-press from also counting as a tap.
     let longpress_timer: Rc<RefCell<Option<gloo_timers::callback::Timeout>>> =
         Rc::new(RefCell::new(None));
+    let longpress_fired = StoredValue::new(false);
 
     // Canvas refs
     let overlay_ref = NodeRef::<leptos::html::Canvas>::new();
     let gpu_canvas_ref = NodeRef::<leptos::html::Canvas>::new();
-
-    // Context menu state
-    let (ctx_menu, set_ctx_menu) = signal(None::<(f64, f64, f64, f64)>);
 
     // GPU renderer
     let gpu_renderer: Rc<RefCell<Option<SkyRenderer>>> = Rc::new(RefCell::new(None));
@@ -666,30 +657,10 @@ pub fn SkyTab(
         let sched = scheduler.get();
         let mos = mosaic.get();
         let fov = fov_radius.get();
-        let t_off = time_offset_s.get();
-        let stars_on = show_stars.get();
-        let names_on = show_names.get();
-        let const_on = show_constellations.get();
-        let con_names_on = show_con_names.get();
-        let grid_on = show_grid.get();
-        let eq_grid_on = show_eq_grid.get();
-        let meridian_on = show_meridian.get();
-        let ecliptic_on = show_ecliptic.get();
-        let zenith_on = show_zenith.get();
-        let solar_system_on = show_solar_system.get();
-        let solve_marker_on = show_solve_marker.get();
-        let slew_trail_on = show_slew_trail.get();
-        let fov_on = show_fov.get();
-        let dso_on = show_dso.get();
-        let dso_gx  = dso_filter_galaxy.get();
-        let dso_oc  = dso_filter_open_cluster.get();
-        let dso_gc  = dso_filter_globular.get();
-        let dso_nb  = dso_filter_nebula.get();
-        let dso_pn  = dso_filter_planetary.get();
-        let dso_snr = dso_filter_snr.get();
-        let dso_gal = dso_filter_galaxy_cluster.get();
+        let sim = clock.get();
+        let layer_toggles = toggles.layer_toggles();
+        let dso_filter = toggles.dso_filter();
         let dso_mag = dso_mag_limit.get();
-        let scheduler_jobs_on = show_scheduler_jobs.get();
         // Prefer a focal length back-computed from the last plate solve's
         // measured pixel scale over the nominal scope focal × CCD_INFO. This
         // makes the FOV reticle (and mosaic preview / scheduler-job frames,
@@ -755,14 +726,7 @@ pub fn SkyTab(
         let hf = h as f64;
 
         // ── Time ───────────────────────────────────────────────────────
-        let now = js_sys::Date::new_0();
-        let y = now.get_utc_full_year() as i32;
-        let mo = now.get_utc_month() + 1;
-        let d = now.get_utc_date();
-        let hr = now.get_utc_hours();
-        let mn = now.get_utc_minutes();
-        let sc = now.get_utc_seconds() as f64 + now.get_utc_milliseconds() as f64 / 1000.0;
-        let jd = astro::julian_date(y, mo, d, hr, mn, sc + t_off);
+        let jd = sim.jd();
         let gmst = astro::gmst_deg(jd);
         let lst = astro::lst_deg(gmst, s.longitude);
 
@@ -853,13 +817,12 @@ pub fn SkyTab(
             mount_ra_h: m.ra_h,
             mount_dec_deg: m.dec_deg,
             rotation_deg: sv.rotation_deg,
-            t_off,
             cursor_altaz,
             cursor_radec,
         });
 
         // ── Derive scheduler job render list ───────────────────────────
-        let scheduler_jobs_data = derive_scheduler_jobs(scheduler_jobs_on, &sched, jd);
+        let scheduler_jobs_data = derive_scheduler_jobs(layer_toggles.scheduler_jobs_on, &sched, jd);
 
         // ── KStars mosaic tiles → MosaicPlanRender ─────────────────────
         let mosaic_kstars_render = derive_kstars_mosaic_plan(&mos, jd);
@@ -899,15 +862,11 @@ pub fn SkyTab(
                     dso_cat: dso_cat.as_ref(),
                     dso_index: dso_idx.as_deref(),
                     mag_limit,
-                    stars_on,
-                    dso_on,
-                    dso_filter: dso_render::KindFilter {
-                        gx: dso_gx, oc: dso_oc, gc: dso_gc,
-                        nb: dso_nb, pn: dso_pn, snr: dso_snr,
-                        gal: dso_gal,
-                    },
+                    stars_on: layer_toggles.stars_on,
+                    dso_on: layer_toggles.dso_on,
+                    dso_filter,
                     dso_mag,
-                    solar_on: solar_system_on,
+                    solar_on: layer_toggles.solar_system_on,
                     lang: cur_lang,
                 },
                 &mut hits,
@@ -930,15 +889,9 @@ pub fn SkyTab(
         let view = ViewParams { wf, hf, c_alt, c_az, fov, cx, cy, scale };
         let scene = SceneParams {
             jd, lst, latitude: s.latitude,
-            sin_lat, cos_lat, t_off,
+            sin_lat, cos_lat,
             mag_limit, cur_lang,
             is_mobile: mobile_profile.is_mobile,
-        };
-        let toggles = LayerToggles {
-            stars_on, names_on, const_on, con_names_on,
-            grid_on, eq_grid_on, meridian_on, ecliptic_on, zenith_on,
-            solar_system_on, solve_marker_on, slew_trail_on, fov_on,
-            dso_on, scheduler_jobs_on,
         };
         let state = OverlayState {
             mount_connected: m.connected,
@@ -953,12 +906,12 @@ pub fn SkyTab(
             solve_dec_jnow_deg: sv.dec_jnow_deg,
             solve_pixscale_arcsec: sv.pixscale_arcsec,
             solve_age_ms: sv.solved_at_ms.map(|t| js_sys::Date::now() - t),
-            cursor_altaz,
-            cursor_radec,
             scheduler_jobs: scheduler_jobs_data,
             mosaic_kstars: mosaic_kstars_render,
             mosaic_plan:   mosaic_plan_render,
-            dso_gx, dso_oc, dso_gc, dso_nb, dso_pn, dso_snr, dso_gal, dso_mag,
+            dso_gx: dso_filter.gx, dso_oc: dso_filter.oc, dso_gc: dso_filter.gc,
+            dso_nb: dso_filter.nb, dso_pn: dso_filter.pn, dso_snr: dso_filter.snr,
+            dso_gal: dso_filter.gal, dso_mag,
         };
         let mode = PipelineMode::from_has_gpu(has_gpu);
         let catalogs = Catalogs {
@@ -970,7 +923,7 @@ pub fn SkyTab(
             view: &view,
             scene: &scene,
             state: &state,
-            toggles: &toggles,
+            toggles: &layer_toggles,
             mode,
             catalogs: &catalogs,
             hit_items: &mut hits,
@@ -988,8 +941,8 @@ pub fn SkyTab(
                         lines: pipe.gpu_prepare().lines.clone(),
                         dso: pipe.gpu_prepare().dso.clone(),
                         text: pipe.gpu_prepare().text.clone(),
-                        show_stars: stars_on,
-                        show_constellations: const_on,
+                        show_stars: layer_toggles.stars_on,
+                        show_constellations: layer_toggles.const_on,
                     };
                     renderer.submit_frame(&prep, &uniforms);
                 }
@@ -1048,7 +1001,9 @@ pub fn SkyTab(
 
         *g.borrow_mut() = Some(Closure::<dyn FnMut()>::new(move || {
             let now_ms = js_sys::Date::now();
-            let active = (now_ms - last_active.get()) < 500.0;
+            // Time-lapse playback counts as activity so the sky moves smoothly.
+            let active = (now_ms - last_active.get()) < 500.0
+                || clock.with_untracked(|c| c.rate != 1.0);
             let count = fc.get().wrapping_add(1);
             fc.set(count);
 
@@ -1080,24 +1035,78 @@ pub fn SkyTab(
         );
     });
 
-    // ── Mouse handlers ─────────────────────────────────────────────────────
-    let hit_items_for_click = Rc::clone(&hit_items);
-    let on_mousedown = move |ev: MouseEvent| {
-        if ev.button() == 0 {
-            set_ctx_menu.set(None);
-            set_info_popup.set(None);
-            dragging.set_value(true);
-            drag_last.set_value((ev.client_x() as f64, ev.client_y() as f64));
-            mousedown_pos.set_value((ev.client_x() as f64, ev.client_y() as f64));
-            drag_dist.set_value(0.0);
-        }
+    // ── Pointer → sky ──────────────────────────────────────────────────────
+    // Viewport (client) px → overlay-canvas CSS px.
+    let to_canvas = move |client_x: f64, client_y: f64| -> Option<(f64, f64)> {
+        let rect = overlay_ref.get_untracked()?.get_bounding_client_rect();
+        Some((client_x - rect.left(), client_y - rect.top()))
+    };
+    let to_canvas_xy = move |ev: &MouseEvent| to_canvas(ev.client_x() as f64, ev.client_y() as f64);
+
+    // Canvas CSS px → JNow RA/Dec (deg) at the displayed time. Same
+    // projection as the render Effect (canvas height floored at 500 px).
+    let screen_to_radec = move |x: f64, y: f64| -> (f64, f64) {
+        let (w, h) = overlay_ref
+            .get_untracked()
+            .and_then(|el| el.parent_element())
+            .map(|p| (p.client_width() as f64, p.client_height().max(500) as f64))
+            .unwrap_or((800.0, 600.0));
+        let s = site.get_untracked();
+        let lst = astro::lst_deg(astro::gmst_deg(clock.get_untracked().jd()), s.longitude);
+        let r = h.min(w) / 2.0;
+        let (alt, az) = astro::unproject(
+            (x - w / 2.0) / r,
+            -(y - h / 2.0) / r,
+            center_alt.get_untracked(),
+            center_az.get_untracked(),
+            fov_radius.get_untracked(),
+        );
+        astro::altaz_to_eq(alt, az, lst, s.latitude)
     };
 
-    // Helper: convert a MouseEvent into (canvas CSS x, canvas CSS y).
-    let to_canvas_xy = move |ev: &MouseEvent| -> Option<(f64, f64)> {
-        let el = overlay_ref.get()?;
-        let rect = el.get_bounding_client_rect();
-        Some((ev.client_x() as f64 - rect.left(), ev.client_y() as f64 - rect.top()))
+    // Click / tap: Mosaic "Pick on Sky", else open the card on the object
+    // under the pointer (or close it on empty sky).
+    let hit_items_for_tap = Rc::clone(&hit_items);
+    let on_tap = move |x: f64, y: f64, min_r: f64| {
+        if planner.picking_center.get_untracked() {
+            planner.params.center.set(Some(screen_to_radec(x, y)));
+            planner.picking_center.set(false);
+            planner.planning.set(true);
+            if let Some(ctx) = tab_ctx {
+                ctx.0.set(Tab::Mosaic);
+            }
+            return;
+        }
+        let hit = hit_test(&hit_items_for_tap.borrow(), x, y, min_r);
+        target.set(hit.map(|h| SkyTarget::new(h.ra_jnow_deg, h.dec_jnow_deg, Some(h))));
+    };
+
+    // Right-click / long-press: open the card on the pressed point, snapped
+    // to the object under it when there is one.
+    let hit_items_for_press = Rc::clone(&hit_items);
+    let on_press = move |x: f64, y: f64, min_r: f64| {
+        let (ra, dec) = screen_to_radec(x, y);
+        let hit = hit_test(&hit_items_for_press.borrow(), x, y, min_r);
+        target.set(Some(SkyTarget::new(ra, dec, hit)));
+    };
+
+    // Drag by (dx, dy) CSS px: pan the view and stop following the mount.
+    let pan = move |dx: f64, dy: f64| {
+        if follow_mount.get_untracked() {
+            set_follow_mount.set(false);
+        }
+        let deg_per_px = fov_radius.get_untracked() * 2.0 / 500.0;
+        set_center_az.update(|az| *az = (*az - dx * deg_per_px).rem_euclid(360.0));
+        set_center_alt.update(|alt| *alt = (*alt + dy * deg_per_px).clamp(-90.0, 90.0));
+    };
+
+    // ── Mouse handlers ─────────────────────────────────────────────────────
+    let on_mousedown = move |ev: MouseEvent| {
+        if ev.button() == 0 {
+            dragging.set_value(true);
+            drag_last.set_value((ev.client_x() as f64, ev.client_y() as f64));
+            drag_dist.set_value(0.0);
+        }
     };
 
     let on_mousemove = move |ev: MouseEvent| {
@@ -1116,63 +1125,17 @@ pub fn SkyTab(
         // Only pan if the drag has exceeded a small threshold — otherwise
         // the mouseup below still triggers a hit-test (click-to-info).
         if drag_dist.get_value() < 4.0 { return; }
-        set_follow_mount.set(false);
-
-        let fov = fov_radius.get_untracked();
-        let deg_per_px = fov * 2.0 / 500.0;
-        set_center_az.update(|az| *az = (*az - dx * deg_per_px).rem_euclid(360.0));
-        set_center_alt.update(|alt| *alt = (*alt + dy * deg_per_px).clamp(-90.0, 90.0));
+        pan(dx, dy);
     };
 
+    let tap_for_mouse = on_tap.clone();
     let on_mouseup = move |ev: MouseEvent| {
+        let was_down = dragging.get_value();
         dragging.set_value(false);
         // If the pointer barely moved, treat this as a click → hit-test.
-        if drag_dist.get_value() >= 4.0 || ev.button() != 0 { return; }
-        let Some((cx, cy)) = to_canvas_xy(&ev) else { return };
-
-        // Center-pick mode (from "Pick on Sky" in Mosaic tab): left-click sets the mosaic center.
-        if planner.picking_center.get_untracked() {
-            let s = site.get_untracked();
-            let fov = fov_radius.get_untracked();
-            let alt_s = center_alt.get_untracked();
-            let az_s  = center_az.get_untracked();
-            let jd_now = astro::now_jd();
-            let gmst = astro::gmst_deg(jd_now);
-            let lst  = astro::lst_deg(gmst, s.longitude);
-            // Map CSS pixels → normalised disk coords → Alt/Az → RA/Dec
-            if let Some(overlay_canvas) = overlay_ref.get_untracked() {
-                let overlay_el: web_sys::HtmlCanvasElement = overlay_canvas.into();
-                let w = overlay_el.parent_element().map(|p| p.client_width() as f64).unwrap_or(800.0);
-                let h = overlay_el.parent_element().map(|p| p.client_height() as f64).unwrap_or(600.0);
-                let nx = (cx - w / 2.0) / (h.min(w) / 2.0);
-                let ny = -(cy - h / 2.0) / (h.min(w) / 2.0);
-                let (alt, az) = astro::unproject(nx, ny, alt_s, az_s, fov);
-                let (ra_deg, dec_deg) = astro::altaz_to_eq(alt, az, lst, s.latitude);
-                planner.params.center.set(Some((ra_deg, dec_deg)));
-                planner.picking_center.set(false);
-                planner.planning.set(true);
-                if let Some(ctx) = tab_ctx {
-                    ctx.0.set(Tab::Mosaic);
-                }
-            }
-            return;
-        }
-
-        let items = hit_items_for_click.borrow();
-        let mut best: Option<(f64, HitItem)> = None;
-        for it in items.iter() {
-            let dx = cx - it.sx;
-            let dy = cy - it.sy;
-            let d2 = dx * dx + dy * dy;
-            let r = it.radius.max(12.0);
-            if d2 > r * r { continue; }
-            if best.as_ref().map(|(bd, _)| d2 < *bd).unwrap_or(true) {
-                best = Some((d2, it.clone()));
-            }
-        }
-        drop(items);
-        if let Some((_, hit)) = best {
-            set_info_popup.set(Some(hit));
+        if !was_down || drag_dist.get_value() >= 4.0 || ev.button() != 0 { return; }
+        if let Some((x, y)) = to_canvas_xy(&ev) {
+            tap_for_mouse(x, y, MOUSE_HIT_R);
         }
     };
 
@@ -1192,42 +1155,40 @@ pub fn SkyTab(
         dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
     };
 
+    let press_for_mouse = on_press.clone();
+    let on_contextmenu = move |ev: MouseEvent| {
+        ev.prevent_default();
+        if let Some((x, y)) = to_canvas_xy(&ev) {
+            press_for_mouse(x, y, MOUSE_HIT_R);
+        }
+    };
+
     // ── Touch handlers ─────────────────────────────────────────────────────
+    // One finger: tap (< TAP_SLOP of travel) → on_tap, hold 500 ms →
+    // on_press, drag → pan. Two fingers: pinch-zoom. `preventDefault` also
+    // stops the browser's synthetic mouse events, so taps are handled here.
     let lp_timer_start = Rc::clone(&longpress_timer);
     let lp_timer_move  = Rc::clone(&longpress_timer);
     let lp_timer_end   = Rc::clone(&longpress_timer);
 
+    let press_for_touch = on_press.clone();
     let on_touchstart = move |ev: TouchEvent| {
         ev.prevent_default();
         let touches = ev.touches();
         if touches.length() == 1 {
             let t = touches.get(0).unwrap();
-            set_follow_mount.set(false);
-            set_ctx_menu.set(None);
+            let (tx, ty) = (t.client_x() as f64, t.client_y() as f64);
             dragging.set_value(true);
-            drag_last.set_value((t.client_x() as f64, t.client_y() as f64));
+            drag_last.set_value((tx, ty));
+            drag_dist.set_value(0.0);
             pinch_start_dist.set_value(0.0);
-
-            // Snapshot sky-center coords for the long-press callback
-            let tx = t.client_x() as f64;
-            let ty = t.client_y() as f64;
-            let lp_site = site.get_untracked();
-            let lp_alt  = center_alt.get_untracked();
-            let lp_az   = center_az.get_untracked();
-            let now = js_sys::Date::new_0();
-            let lp_jd = astro::julian_date(
-                now.get_utc_full_year() as i32,
-                now.get_utc_month() + 1,
-                now.get_utc_date(),
-                now.get_utc_hours(),
-                now.get_utc_minutes(),
-                now.get_utc_seconds() as f64 + time_offset_s.get_untracked(),
-            );
-            let lst = astro::lst_deg(astro::gmst_deg(lp_jd), lp_site.longitude);
-            let (ra_jnow, dec_jnow) = astro::altaz_to_eq(lp_alt, lp_az, lst, lp_site.latitude);
-            let timer_ref = Rc::clone(&lp_timer_start);
-            *timer_ref.borrow_mut() = Some(gloo_timers::callback::Timeout::new(500, move || {
-                set_ctx_menu.set(Some((tx, ty, ra_jnow, dec_jnow)));
+            longpress_fired.set_value(false);
+            let press = press_for_touch.clone();
+            *lp_timer_start.borrow_mut() = Some(gloo_timers::callback::Timeout::new(500, move || {
+                longpress_fired.set_value(true);
+                if let Some((x, y)) = to_canvas(tx, ty) {
+                    press(x, y, TOUCH_HIT_R);
+                }
             }));
         } else if touches.length() == 2 {
             *lp_timer_start.borrow_mut() = None;
@@ -1244,7 +1205,6 @@ pub fn SkyTab(
 
     let on_touchmove = move |ev: TouchEvent| {
         ev.prevent_default();
-        *lp_timer_move.borrow_mut() = None; // any movement cancels the long-press
         let touches = ev.touches();
         if touches.length() == 1 && dragging.get_value() {
             let t = touches.get(0).unwrap();
@@ -1252,10 +1212,10 @@ pub fn SkyTab(
             let dx = t.client_x() as f64 - lx;
             let dy = t.client_y() as f64 - ly;
             drag_last.set_value((t.client_x() as f64, t.client_y() as f64));
-            let fov = fov_radius.get_untracked();
-            let deg_per_px = fov * 2.0 / 500.0;
-            set_center_az.update(|az| *az = (*az - dx * deg_per_px).rem_euclid(360.0));
-            set_center_alt.update(|alt| *alt = (*alt + dy * deg_per_px).clamp(-90.0, 90.0));
+            drag_dist.update_value(|d| *d += (dx * dx + dy * dy).sqrt());
+            if drag_dist.get_value() < TAP_SLOP { return; }
+            *lp_timer_move.borrow_mut() = None; // a real drag cancels the long-press
+            pan(dx, dy);
         } else if touches.length() == 2 {
             let t0 = touches.get(0).unwrap();
             let t1 = touches.get(1).unwrap();
@@ -1273,50 +1233,31 @@ pub fn SkyTab(
         }
     };
 
+    let tap_for_touch = on_tap.clone();
     let on_touchend = move |ev: TouchEvent| {
         ev.prevent_default();
         *lp_timer_end.borrow_mut() = None; // lifted before 500ms — not a long-press
+        let is_tap = dragging.get_value()
+            && drag_dist.get_value() < TAP_SLOP
+            && !longpress_fired.get_value();
         dragging.set_value(false);
         pinch_start_dist.set_value(0.0);
+        if is_tap {
+            let (cx, cy) = drag_last.get_value();
+            if let Some((x, y)) = to_canvas(cx, cy) {
+                tap_for_touch(x, y, TOUCH_HIT_R);
+            }
+        }
     };
 
-    // Right-click context menu
-    let on_contextmenu = move |ev: MouseEvent| {
-        ev.prevent_default();
-
-        let now = js_sys::Date::new_0();
-        let jd = astro::julian_date(
-            now.get_utc_full_year() as i32,
-            now.get_utc_month() + 1,
-            now.get_utc_date(),
-            now.get_utc_hours(),
-            now.get_utc_minutes(),
-            now.get_utc_seconds() as f64 + time_offset_s.get_untracked(),
-        );
-        let gmst = astro::gmst_deg(jd);
-        let s = site.get_untracked();
-        let lst = astro::lst_deg(gmst, s.longitude);
-
-        // altaz_to_eq returns JNow — send it as-is; KStars' mount_goto_rade
-        // handler treats the input as JNow regardless of the isJ2000 flag.
-        let (ra_jnow, dec_jnow) = astro::altaz_to_eq(
-            center_alt.get_untracked(),
-            center_az.get_untracked(),
-            lst,
-            s.latitude,
-        );
-        set_ctx_menu.set(Some((ev.client_x() as f64, ev.client_y() as f64, ra_jnow, dec_jnow)));
+    let send_for_card = Arc::clone(&send);
+    let icon_btn = |on: bool| {
+        let base = "btn-icon shrink-0 pointer-events-auto";
+        if on { format!("{base} btn--active") } else { format!("{base} text-text-blue") }
     };
-
-    let send_for_ctx = Arc::clone(&send);
-
 
     view! {
-        <div class="relative w-full h-[100dvh] overflow-hidden"
-             on:click=move |_| {
-                 set_ctx_menu.set(None);
-                 set_info_popup.set(None);
-             }>
+        <div class="relative w-full h-[100dvh] overflow-hidden">
 
             // WebGPU canvas (bottom layer)
             <canvas
@@ -1342,114 +1283,65 @@ pub fn SkyTab(
 
             // ── Mosaic center-pick banner ──────────────────────────────────
             {move || planner.picking_center.get().then(|| view! {
-                <div class="absolute top-2 left-1/2 -translate-x-1/2 z-[100] pointer-events-none py-2 px-[18px] bg-bg-banner border border-accent-cyan-dim text-accent-cyan font-mono text-md rounded-md whitespace-nowrap">
+                <div class="absolute top-[56px] left-1/2 -translate-x-1/2 z-[100] pointer-events-none py-2 px-[18px] bg-bg-banner border border-accent-cyan-dim text-accent-cyan font-mono text-md rounded-md whitespace-nowrap">
                     {"Click on the sky to set mosaic center"}
                 </div>
             })}
 
-            // ── Bottom-left stack: time-shift on top, HUD below ────────────
-            <div class="absolute left-sp-3 bottom-sp-3 z-[90] flex flex-col gap-sp-2 items-start pointer-events-none">
-            // ── Time-shift toggle (visible on <md only, when row is collapsed) ──
-            <button
-                class=move || {
-                    let base = "md:hidden pointer-events-auto px-2 py-1 \
-                                bg-bg-panel-glass border border-border-accent rounded-md \
-                                font-mono text-xs text-text-blue-bright cursor-pointer";
-                    if time_shift_open.get() { format!("{base} hidden") } else { base.to_string() }
-                }
-                on:click=move |_| set_time_shift_open.set(true)
-            >
-                "🕒"
-            </button>
-            // ── Time-shift panel ───────────────────────────────────────────
-            <div
-                class=move || {
-                    let base = "flex items-center gap-1 max-md:gap-0.5 px-2 max-md:px-1 py-1 max-md:py-0.5 \
-                                max-w-[calc(100vw-16px)] flex-wrap pointer-events-auto \
-                                bg-bg-panel-glass border border-border-accent rounded-md \
-                                font-mono text-xs max-md:text-[10px] text-text-blue select-none";
-                    if time_shift_open.get() { base.to_string() } else { format!("{base} max-md:hidden") }
-                }
-            >
-                {
-                    let bump = move |delta: f64| {
-                        set_time_offset_s.update(|t| *t += delta);
-                    };
-                    let btn_cls = "min-w-0 px-1.5 max-md:px-1 py-0.5 bg-bg-button hover:bg-bg-button-info \
-                                   border border-border-accent rounded cursor-pointer \
-                                   text-text-blue-bright";
-                    view! {
-                        <button class=format!("{btn_cls} md:hidden")
-                                on:click=move |_| set_time_shift_open.set(false)>
-                            "×"
-                        </button>
-                        <button class=btn_cls on:click=move |_| bump(-3600.0)>"-1h"</button>
-                        <button class=btn_cls on:click=move |_| bump(-600.0)>"-10m"</button>
-                        <button class=btn_cls on:click=move |_| bump(-60.0)>"-1m"</button>
-                        <span class="min-w-[64px] max-md:min-w-[52px] text-center px-1 max-md:px-0 max-md:text-[10px]">
-                            {move || {
-                                let t = time_offset_s.get();
-                                if t.abs() < 0.5 { tr().now.to_string() }
-                                else {
-                                    let sign = if t < 0.0 { "-" } else { "+" };
-                                    let a = t.abs();
-                                    let h = (a / 3600.0) as i64;
-                                    let m = ((a % 3600.0) / 60.0) as i64;
-                                    format!("{sign}{h:02}h{m:02}m")
-                                }
-                            }}
-                        </span>
-                        <button class=btn_cls on:click=move |_| bump(60.0)>"+1m"</button>
-                        <button class=btn_cls on:click=move |_| bump(600.0)>"+10m"</button>
-                        <button class=btn_cls on:click=move |_| bump(3600.0)>"+1h"</button>
-                        <button class=btn_cls
-                                title=move || tr().reset.to_string()
-                                on:click=move |_| set_time_offset_s.set(0.0)>
-                            "⟲"
-                        </button>
-                    }
-                }
+            // ── Top bar: search · follow mount · layers ────────────────────
+            <div class="absolute z-50 top-[max(0.5rem,env(safe-area-inset-top))] left-2 right-2 md:right-[72px] \
+                        flex items-start gap-2 pointer-events-none">
+                <SkySearch
+                    sky_search=sky_search
+                    set_sky_search=set_sky_search
+                    catalog_sig=catalog_sig
+                    dso_catalog_sig=dso_catalog_sig
+                    site=site
+                    clock=clock
+                    set_center_alt=set_center_alt
+                    set_center_az=set_center_az
+                    set_follow_mount=set_follow_mount
+                    set_fov_radius=set_fov_radius
+                    dso_mag_limit=dso_mag_limit
+                />
+                <button class=move || {
+                            let c = icon_btn(follow_mount.get());
+                            if mount.with(|m| m.connected) { format!("{c} ml-auto") } else { format!("{c} ml-auto opacity-50") }
+                        }
+                        title=move || tr().follow_mount
+                        on:click=move |_| set_follow_mount.update(|f| *f = !*f)>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <circle cx="12" cy="12" r="6.5" />
+                        <path d="M12 2v5M12 17v5M2 12h5M17 12h5" />
+                    </svg>
+                </button>
+                <button class=move || icon_btn(layers_open.get())
+                        title=move || tr().layers
+                        on:click=move |_| layers_open.update(|v| *v = !*v)>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+                        <path d="M12 3 2 8l10 5 10-5z" />
+                        <path d="m2 13 10 5 10-5" />
+                    </svg>
+                </button>
             </div>
 
-            // ── DOM HUD (replaces render_info_overlay when GPU is up) ──────
-            {move || gpu_ready.get().then(|| view! {
+            // ── Bottom stack: HUD above the time bar ───────────────────────
+            <div class="absolute z-50 left-2 right-2 md:left-3 md:right-auto bottom-[max(0.5rem,env(safe-area-inset-bottom))] \
+                        flex flex-col gap-2 items-start pointer-events-none">
                 <hud::SkyHud hud=hud_data lang=lang.read_only() />
-            })}
+                <TimeBar clock=clock tick=tick site=site />
             </div>
 
-            // ── Object search box ──────────────────────────────────────────
-            <SkySearch
-                sky_search=sky_search
-                set_sky_search=set_sky_search
-                catalog_sig=catalog_sig
-                dso_catalog_sig=dso_catalog_sig
-                site=site
-                time_offset_s=time_offset_s
-                set_center_alt=set_center_alt
-                set_center_az=set_center_az
-                set_follow_mount=set_follow_mount
-                set_fov_radius=set_fov_radius
-                dso_mag_limit=dso_mag_limit
-            />
-
-            // ── Controls panel ─────────────────────────────────────────────
+            // ── Layers panel ───────────────────────────────────────────────
             <SkyControls
-                show_controls=show_controls
-                set_show_controls=set_show_controls
-                show_sky_section=show_sky_section
-                set_show_sky_section=set_show_sky_section
-                show_objects_section=show_objects_section
-                set_show_objects_section=set_show_objects_section
-                show_settings_section=show_settings_section
-                set_show_settings_section=set_show_settings_section
+                open=layers_open
                 toggles=toggles
-                set_follow_mount=set_follow_mount
                 site=site
                 set_site_location=set_site_location
                 mount_device=mount_device
             />
 
-            // ── Framing assistant overlay (opened from the context menu) ────
+            // ── Framing assistant overlay (opened from the target card) ────
             <FramingOverlay
                 camera=camera
                 focal_length_mm=focal_length_mm
@@ -1457,21 +1349,17 @@ pub fn SkyTab(
                 dso_catalog_sig=dso_catalog_sig
             />
 
-            // ── Context menu ────────────────────────────────────────────────
-            <SkyContextMenu
-                ctx_menu=ctx_menu
-                set_ctx_menu=set_ctx_menu
+            // ── Target card (tap, right-click, long-press) ─────────────────
+            <SkyTargetCard
+                target=target
+                clock=clock
+                site=site
                 pending_solve_after_slew=pending_solve_after_slew
-                send=send_for_ctx
-            />
-
-            // ── Click-to-info popup (left-click on object) ───────────────────
-            <SkyInfoPopup
-                info_popup=info_popup
-                set_info_popup=set_info_popup
+                send=send_for_card
+                set_center_alt=set_center_alt
+                set_center_az=set_center_az
+                set_follow_mount=set_follow_mount
             />
         </div>
     }
 }
-
-// (Removed) In-planetarium gear bar — replaced by `components::tab_wheel`.

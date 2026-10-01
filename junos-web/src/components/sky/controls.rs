@@ -1,4 +1,6 @@
-//! Sky controls panel (top-right collapsible settings).
+//! Layers panel — toggle chips for every sky layer, the DSO magnitude limit
+//! and the observer location. A bottom sheet on phones, a floating panel
+//! (clear of the desktop tab strip) on md+.
 
 use std::sync::Arc;
 
@@ -7,34 +9,49 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
 use crate::compat::SiteSnapshot;
-use crate::i18n::{Lang, t};
+use crate::dom::event_target_value;
+use crate::i18n::{Lang, Translations, t};
 
 use super::SkyToggles;
-use crate::dom::{event_target_checked, event_target_value};
 
-const CHECKBOX_ROW: &str = "flex items-center gap-[6px] cursor-pointer [&>svg]:shrink-0";
-const CONTROLS_INPUT: &str = "input input--sm font-mono";
-const SECTION_HDR: &str = "py-[7px] px-[10px] w-full text-left border-0 border-b border-border-strong bg-bg-section-hdr text-text-blue font-semibold text-sm uppercase tracking-[0.06em] cursor-pointer flex justify-between items-center min-h-[36px]";
+const CHIP: &str = "chip min-w-0 h-9 md:h-7 gap-1.5 cursor-pointer";
+const GROUP: &str = "text-xs uppercase tracking-[0.06em] text-text-muted mt-1";
+const ROW: &str = "flex flex-wrap gap-1.5";
+const CONTROLS_INPUT: &str = "input input--sm font-mono w-[96px]";
 const CONTROLS_BTN: &str = "btn btn--sm btn-ghost text-text-blue";
-const SETTINGS_ROW: &str = "text-sm flex items-center gap-1";
+const SETTINGS_ROW: &str = "text-sm flex items-center justify-between gap-2";
+
+fn lang_ctx() -> RwSignal<Lang> {
+    use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En))
+}
+
+/// One toggle pill bound to a layer signal; `children` is an optional icon.
+#[component]
+fn LayerChip(
+    on: RwSignal<bool>,
+    label: fn(&Translations) -> &'static str,
+    #[prop(optional)] children: Option<Children>,
+) -> impl IntoView {
+    let lang = lang_ctx();
+    view! {
+        <button class=move || if on.get() { format!("{CHIP} btn--active") } else { format!("{CHIP} text-text-muted") }
+                aria-pressed=move || on.get().to_string()
+                on:click=move |_| on.update(|v| *v = !*v)>
+            {children.map(|c| c())}
+            {move || label(t(lang.get()))}
+        </button>
+    }
+}
 
 #[component]
 pub fn SkyControls(
-    show_controls: ReadSignal<bool>,
-    set_show_controls: WriteSignal<bool>,
-    show_sky_section: ReadSignal<bool>,
-    set_show_sky_section: WriteSignal<bool>,
-    show_objects_section: ReadSignal<bool>,
-    set_show_objects_section: WriteSignal<bool>,
-    show_settings_section: ReadSignal<bool>,
-    set_show_settings_section: WriteSignal<bool>,
+    open: RwSignal<bool>,
     toggles: SkyToggles,
-    set_follow_mount: WriteSignal<bool>,
     #[prop(into)] site: Signal<SiteSnapshot>,
     set_site_location: Arc<dyn Fn(f64, f64) + Send + Sync>,
     #[prop(into)] mount_device: Signal<Option<String>>,
 ) -> impl IntoView {
-    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let lang = lang_ctx();
     let tr = move || t(lang.get());
 
     let s = site.get_untracked();
@@ -43,303 +60,199 @@ pub fn SkyControls(
     let send_location = StoredValue::new(Arc::clone(&set_site_location));
     // Writing KStars' location requires a connected mount to relay through.
     let has_mount = move || mount_device.get().is_some();
+    let location_open = RwSignal::new(false);
 
     view! {
-        <div class="absolute top-2 right-2 max-md:!top-[34px] flex flex-col items-end gap-1 z-50"
-             on:click=move |ev| ev.stop_propagation()>
-            // Toggle button
-            <button
-                class=move || {
-                    let base = "btn-icon text-text-blue !border-border-accent";
-                    if show_controls.get() {
-                        format!("{base} btn--active")
-                    } else {
-                        base.to_string()
-                    }
-                }
-                on:click=move |_| set_show_controls.update(|v| *v = !*v)
-                title=move || tr().toggle_controls>
-                {move || if show_controls.get() { "\u{2716}" } else { "\u{2699}" }}
-            </button>
-
-            // Collapsible panel
-            {move || show_controls.get().then(|| view! {
-                <div class="panel-glass text-[12px] overflow-hidden min-w-[180px] max-w-[calc(100vw-16px)] max-h-[calc(100dvh-120px)] overflow-y-auto [overscroll-behavior:contain] md:max-lg:min-w-[160px] max-md:!min-w-0 max-md:w-[calc(100vw-16px)] max-md:max-h-[calc(100dvh-160px)]">
-
-                    // ── Part 1 : Sky display ───────────────────────────
-                    <button class=SECTION_HDR
-                            on:click=move |_| set_show_sky_section.update(|v| *v = !*v)>
-                        {move || tr().sky_section}
-                        {move || if show_sky_section.get() { "\u{25be}" } else { "\u{25b8}" }}
-                    </button>
-                    {move || show_sky_section.get().then(|| view! {
-                        <div class="flex flex-col gap-1 py-[6px] px-[10px] border-b border-border-strong">
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.stars.get()
-                                       on:change=move |ev| toggles.stars.set(event_target_checked(&ev)) />
-                                {move || tr().stars_checkbox}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.names.get()
-                                       on:change=move |ev| toggles.names.set(event_target_checked(&ev)) />
-                                {move || tr().names_checkbox}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.constellations.get()
-                                       on:change=move |ev| toggles.constellations.set(event_target_checked(&ev)) />
-                                {move || tr().constellations}
-                            </label>
-                            <label class=format!("{CHECKBOX_ROW} pl-4")>
-                                <input type="checkbox" prop:checked=move || toggles.con_names.get()
-                                       on:change=move |ev| toggles.con_names.set(event_target_checked(&ev)) />
-                                {move || tr().names_checkbox}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.grid.get()
-                                       on:change=move |ev| toggles.grid.set(event_target_checked(&ev)) />
-                                {move || tr().grid}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.eq_grid.get()
-                                       on:change=move |ev| toggles.eq_grid.set(event_target_checked(&ev)) />
-                                {move || tr().eq_grid}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.meridian.get()
-                                       on:change=move |ev| toggles.meridian.set(event_target_checked(&ev)) />
-                                {move || tr().meridian}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.ecliptic.get()
-                                       on:change=move |ev| toggles.ecliptic.set(event_target_checked(&ev)) />
-                                {move || tr().ecliptic}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.zenith.get()
-                                       on:change=move |ev| toggles.zenith.set(event_target_checked(&ev)) />
-                                {move || tr().zenith}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.fov.get()
-                                       on:change=move |ev| toggles.fov.set(event_target_checked(&ev)) />
-                                {move || tr().fov}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.solve_marker.get()
-                                       on:change=move |ev| toggles.solve_marker.set(event_target_checked(&ev)) />
-                                {move || tr().solve_marker}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.slew_trail.get()
-                                       on:change=move |ev| toggles.slew_trail.set(event_target_checked(&ev)) />
-                                {move || tr().slew_trail}
-                            </label>
-                            <label class=format!("{CHECKBOX_ROW} border-t border-border-strong pt-1 mt-[2px]")>
-                                <input type="checkbox" prop:checked=move || toggles.scheduler_jobs.get()
-                                       on:change=move |ev| toggles.scheduler_jobs.set(event_target_checked(&ev)) />
-                                {move || tr().sky_scheduler_jobs}
-                            </label>
-                        </div>
-                    })}
-
-                    // ── Part 2 : Objects (DSO) ─────────────────────────
-                    <button class=SECTION_HDR
-                            on:click=move |_| set_show_objects_section.update(|v| *v = !*v)>
-                        {move || tr().objects_section}
-                        {move || if show_objects_section.get() { "\u{25be}" } else { "\u{25b8}" }}
-                    </button>
-                    {move || show_objects_section.get().then(|| view! {
-                        <div class="flex flex-col gap-1 py-[6px] px-[10px] border-b border-border-strong">
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.dso.get()
-                                       on:change=move |ev| toggles.dso.set(event_target_checked(&ev)) />
-                                {move || tr().all_dso}
-                            </label>
-                            <label class=CHECKBOX_ROW>
-                                <input type="checkbox" prop:checked=move || toggles.solar_system.get()
-                                       on:change=move |ev| toggles.solar_system.set(event_target_checked(&ev)) />
-                                {move || tr().solar_system}
-                            </label>
-                            <label class=format!("{CHECKBOX_ROW} !gap-[5px]")>
-                                <input type="checkbox" prop:checked=move || toggles.dso_galaxy.get()
-                                       on:change=move |ev| toggles.dso_galaxy.set(event_target_checked(&ev)) />
-                                <svg width="14" height="10">
-                                    <ellipse cx="7" cy="5" rx="6" ry="2.5"
-                                             fill="none" stroke="rgba(0,200,220,0.85)" stroke-width="1.2"/>
-                                </svg>
-                                {move || tr().galaxies}
-                            </label>
-                            <label class=format!("{CHECKBOX_ROW} !gap-[5px]")>
-                                <input type="checkbox" prop:checked=move || toggles.dso_open_cluster.get()
-                                       on:change=move |ev| toggles.dso_open_cluster.set(event_target_checked(&ev)) />
-                                <svg width="14" height="14">
-                                    <circle cx="7" cy="7" r="5.5"
-                                            fill="none" stroke="rgba(255,220,50,0.85)" stroke-width="1.2"
-                                            stroke-dasharray="3,2"/>
-                                </svg>
-                                {move || tr().open_clusters}
-                            </label>
-                            <label class=format!("{CHECKBOX_ROW} !gap-[5px]")>
-                                <input type="checkbox" prop:checked=move || toggles.dso_globular.get()
-                                       on:change=move |ev| toggles.dso_globular.set(event_target_checked(&ev)) />
-                                <svg width="14" height="14">
-                                    <circle cx="7" cy="7" r="5.5"
-                                            fill="none" stroke="rgba(255,160,60,0.85)" stroke-width="1.2"/>
-                                    <line x1="1.5" y1="7" x2="12.5" y2="7"
-                                          stroke="rgba(255,160,60,0.85)" stroke-width="1.2"/>
-                                    <line x1="7" y1="1.5" x2="7" y2="12.5"
-                                          stroke="rgba(255,160,60,0.85)" stroke-width="1.2"/>
-                                </svg>
-                                {move || tr().globular_clusters}
-                            </label>
-                            <label class=format!("{CHECKBOX_ROW} !gap-[5px]")>
-                                <input type="checkbox" prop:checked=move || toggles.dso_nebula.get()
-                                       on:change=move |ev| toggles.dso_nebula.set(event_target_checked(&ev)) />
-                                <svg width="14" height="14">
-                                    <rect x="1.5" y="1.5" width="11" height="11"
-                                          fill="none" stroke="rgba(60,220,100,0.85)" stroke-width="1.2"/>
-                                </svg>
-                                {move || tr().nebulae}
-                            </label>
-                            <label class=format!("{CHECKBOX_ROW} !gap-[5px]")>
-                                <input type="checkbox" prop:checked=move || toggles.dso_planetary.get()
-                                       on:change=move |ev| toggles.dso_planetary.set(event_target_checked(&ev)) />
-                                <svg width="18" height="14">
-                                    <circle cx="9" cy="7" r="4"
-                                            fill="none" stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
-                                    <line x1="1" y1="7" x2="5" y2="7"
-                                          stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
-                                    <line x1="13" y1="7" x2="17" y2="7"
-                                          stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
-                                    <line x1="9" y1="1" x2="9" y2="3"
-                                          stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
-                                    <line x1="9" y1="11" x2="9" y2="13"
-                                          stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
-                                </svg>
-                                {move || tr().planetary_nebulae}
-                            </label>
-                            <label class=format!("{CHECKBOX_ROW} !gap-[5px]")>
-                                <input type="checkbox" prop:checked=move || toggles.dso_snr.get()
-                                       on:change=move |ev| toggles.dso_snr.set(event_target_checked(&ev)) />
-                                <svg width="14" height="14">
-                                    <rect x="1.5" y="1.5" width="11" height="11"
-                                          fill="none" stroke="rgba(60,220,100,0.65)" stroke-width="1.2"
-                                          stroke-dasharray="2,2"/>
-                                </svg>
-                                {move || tr().supernova_remnants}
-                            </label>
-                            <label class=format!("{CHECKBOX_ROW} !gap-[5px]")>
-                                <input type="checkbox" prop:checked=move || toggles.dso_galaxy_cluster.get()
-                                       on:change=move |ev| toggles.dso_galaxy_cluster.set(event_target_checked(&ev)) />
-                                <svg width="14" height="14">
-                                    <circle cx="7" cy="7" r="5.5"
-                                            fill="none" stroke="rgba(220,100,220,0.85)" stroke-width="1.2"
-                                            stroke-dasharray="2,3"/>
-                                </svg>
-                                {move || tr().galaxy_clusters}
-                            </label>
-                            <label class="flex items-center gap-1 mt-[2px] [&>span]:text-text-muted [&>span]:whitespace-nowrap [&>span]:text-sm [&>input]:w-[52px]">
-                                <span>{move || tr().mag_limit}</span>
-                                <input type="number" min="1" max="20" step="0.5"
-                                       class=CONTROLS_INPUT
-                                       prop:value=move || format!("{:.1}", toggles.dso_mag_limit.get())
-                                       on:input=move |ev| {
-                                           if let Ok(v) = event_target_value(&ev).parse::<f64>() {
-                                               toggles.dso_mag_limit.set(v);
-                                           }
-                                       } />
-                            </label>
-                        </div>
-                    })}
-
-                    // ── Part 3 : Settings ──────────────────────────────
-                    <button class=SECTION_HDR
-                            on:click=move |_| set_show_settings_section.update(|v| *v = !*v)>
-                        {move || tr().settings_section}
-                        {move || if show_settings_section.get() { "\u{25be}" } else { "\u{25b8}" }}
-                    </button>
-                    {move || show_settings_section.get().then(|| view! {
-                        <div class="flex flex-col gap-[6px] py-[6px] px-[10px]">
-                            <button class=CONTROLS_BTN
-                                    on:click=move |_| {
-                                        set_follow_mount.set(true);
-                                    }>
-                                {move || tr().follow_mount}
-                            </button>
-                            <div class="border-t border-border-strong mt-1 pt-[6px]">
-                                <div class="text-sm text-text-blue mb-1 font-bold">
-                                    {move || tr().location_section}
-                                </div>
-                                <label class=format!("{SETTINGS_ROW} mb-[3px] [&>input]:w-[72px]")>
-                                    {move || tr().latitude_label}
-                                    <input type="number" step="0.0001" min="-90" max="90"
-                                           class=CONTROLS_INPUT
-                                           prop:value=move || lat_str.get()
-                                           on:input=move |ev| lat_str.set(event_target_value(&ev)) />
-                                </label>
-                                <label class=format!("{SETTINGS_ROW} mb-[3px] [&>input]:w-[72px]")>
-                                    {move || tr().longitude_label}
-                                    <input type="number" step="0.0001" min="-180" max="180"
-                                           class=CONTROLS_INPUT
-                                           prop:value=move || lon_str.get()
-                                           on:input=move |ev| lon_str.set(event_target_value(&ev)) />
-                                </label>
-                                <div class="flex gap-1 flex-wrap">
-                                    <button
-                                        class=CONTROLS_BTN
-                                        prop:disabled=move || !has_mount()
-                                        on:click=move |_| {
-                                            if !has_mount() { return; }
-                                            let lat = lat_str.get().parse::<f64>().unwrap_or(0.0);
-                                            let lon = lon_str.get().parse::<f64>().unwrap_or(0.0);
-                                            send_location.get_value()(lat, lon);
-                                        }>
-                                        {move || tr().set_location_btn}
-                                    </button>
-                                    <button
-                                        class=format!("{CONTROLS_BTN} !bg-bg-button-ok !text-accent-green-soft !border-border-ok")
-                                        prop:disabled=move || !has_mount()
-                                        on:click=move |_| {
-                                            if !has_mount() { return; }
-                                            let lat_s = lat_str;
-                                            let lon_s = lon_str;
-                                            let send_loc = send_location.get_value();
-                                            let success = Closure::wrap(Box::new(move |val: wasm_bindgen::JsValue| {
-                                                let lat = js_sys::Reflect::get(&val, &"coords".into())
-                                                    .ok()
-                                                    .and_then(|c| js_sys::Reflect::get(&c, &"latitude".into()).ok())
-                                                    .and_then(|v| v.as_f64());
-                                                let lon = js_sys::Reflect::get(&val, &"coords".into())
-                                                    .ok()
-                                                    .and_then(|c| js_sys::Reflect::get(&c, &"longitude".into()).ok())
-                                                    .and_then(|v| v.as_f64());
-                                                if let (Some(lat), Some(lon)) = (lat, lon) {
-                                                    lat_s.set(format!("{:.6}", lat));
-                                                    lon_s.set(format!("{:.6}", lon));
-                                                    send_loc(lat, lon);
-                                                }
-                                            }) as Box<dyn FnMut(wasm_bindgen::JsValue)>);
-                                            if let Some(window) = web_sys::window() {
-                                                if let Ok(geo) = window.navigator().geolocation() {
-                                                    let _ = geo.get_current_position(success.as_ref().unchecked_ref());
-                                                }
-                                            }
-                                            success.forget();
-                                        }>
-                                        {move || tr().get_location_btn}
-                                    </button>
-                                </div>
-                                <Show when=move || !has_mount()>
-                                    <div class="text-text-muted text-[11px] mt-[3px]">
-                                        {move || tr().location_needs_mount}
-                                    </div>
-                                </Show>
-                            </div>
-                        </div>
-                    })}
-
+        <Show when=move || open.get()>
+            <div class="panel absolute z-[70] inset-x-0 bottom-0 max-h-[70dvh] \
+                        rounded-b-none pb-[max(0.75rem,env(safe-area-inset-bottom))] \
+                        md:inset-x-auto md:bottom-auto md:top-[56px] md:right-[72px] md:w-[300px] \
+                        md:max-h-[calc(100dvh-140px)] md:rounded-lg md:pb-3 \
+                        overflow-y-auto [overscroll-behavior:contain] px-3 pt-2 flex flex-col gap-1.5 text-sm"
+                 on:click=|ev| ev.stop_propagation()>
+                <div class="flex items-center justify-between">
+                    <span class="font-semibold text-text-blue">{move || tr().layers}</span>
+                    <button class="btn-icon" title=move || tr().info_close
+                            on:click=move |_| open.set(false)>"\u{2716}"</button>
                 </div>
-            })}
-        </div>
+
+                <div class=GROUP>{move || tr().layer_sky}</div>
+                <div class=ROW>
+                    <LayerChip on=toggles.stars label=|t| t.stars_checkbox />
+                    <LayerChip on=toggles.names label=|t| t.layer_star_names />
+                    <LayerChip on=toggles.constellations label=|t| t.constellations />
+                    <LayerChip on=toggles.con_names label=|t| t.layer_con_names />
+                    <LayerChip on=toggles.solar_system label=|t| t.solar_system />
+                </div>
+
+                <div class=GROUP>{move || tr().layer_grids}</div>
+                <div class=ROW>
+                    <LayerChip on=toggles.grid label=|t| t.grid />
+                    <LayerChip on=toggles.eq_grid label=|t| t.eq_grid />
+                    <LayerChip on=toggles.meridian label=|t| t.meridian />
+                    <LayerChip on=toggles.ecliptic label=|t| t.ecliptic />
+                    <LayerChip on=toggles.zenith label=|t| t.zenith />
+                </div>
+
+                <div class=GROUP>{move || tr().layer_dso}</div>
+                <div class=ROW>
+                    <LayerChip on=toggles.dso label=|t| t.all_dso />
+                    <LayerChip on=toggles.dso_galaxy label=|t| t.galaxies>
+                        <svg width="14" height="10">
+                            <ellipse cx="7" cy="5" rx="6" ry="2.5"
+                                     fill="none" stroke="rgba(0,200,220,0.85)" stroke-width="1.2"/>
+                        </svg>
+                    </LayerChip>
+                    <LayerChip on=toggles.dso_open_cluster label=|t| t.open_clusters>
+                        <svg width="14" height="14">
+                            <circle cx="7" cy="7" r="5.5"
+                                    fill="none" stroke="rgba(255,220,50,0.85)" stroke-width="1.2"
+                                    stroke-dasharray="3,2"/>
+                        </svg>
+                    </LayerChip>
+                    <LayerChip on=toggles.dso_globular label=|t| t.globular_clusters>
+                        <svg width="14" height="14">
+                            <circle cx="7" cy="7" r="5.5"
+                                    fill="none" stroke="rgba(255,160,60,0.85)" stroke-width="1.2"/>
+                            <line x1="1.5" y1="7" x2="12.5" y2="7"
+                                  stroke="rgba(255,160,60,0.85)" stroke-width="1.2"/>
+                            <line x1="7" y1="1.5" x2="7" y2="12.5"
+                                  stroke="rgba(255,160,60,0.85)" stroke-width="1.2"/>
+                        </svg>
+                    </LayerChip>
+                    <LayerChip on=toggles.dso_nebula label=|t| t.nebulae>
+                        <svg width="14" height="14">
+                            <rect x="1.5" y="1.5" width="11" height="11"
+                                  fill="none" stroke="rgba(60,220,100,0.85)" stroke-width="1.2"/>
+                        </svg>
+                    </LayerChip>
+                    <LayerChip on=toggles.dso_planetary label=|t| t.planetary_nebulae>
+                        <svg width="18" height="14">
+                            <circle cx="9" cy="7" r="4"
+                                    fill="none" stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
+                            <line x1="1" y1="7" x2="5" y2="7"
+                                  stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
+                            <line x1="13" y1="7" x2="17" y2="7"
+                                  stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
+                            <line x1="9" y1="1" x2="9" y2="3"
+                                  stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
+                            <line x1="9" y1="11" x2="9" y2="13"
+                                  stroke="rgba(0,230,180,0.85)" stroke-width="1.2"/>
+                        </svg>
+                    </LayerChip>
+                    <LayerChip on=toggles.dso_snr label=|t| t.supernova_remnants>
+                        <svg width="14" height="14">
+                            <rect x="1.5" y="1.5" width="11" height="11"
+                                  fill="none" stroke="rgba(60,220,100,0.65)" stroke-width="1.2"
+                                  stroke-dasharray="2,2"/>
+                        </svg>
+                    </LayerChip>
+                    <LayerChip on=toggles.dso_galaxy_cluster label=|t| t.galaxy_clusters>
+                        <svg width="14" height="14">
+                            <circle cx="7" cy="7" r="5.5"
+                                    fill="none" stroke="rgba(220,100,220,0.85)" stroke-width="1.2"
+                                    stroke-dasharray="2,3"/>
+                        </svg>
+                    </LayerChip>
+                </div>
+                <label class="flex items-center gap-2 text-text-muted">
+                    <span class="whitespace-nowrap">{move || tr().mag_limit}</span>
+                    <input type="range" min="4" max="20" step="0.5" class="flex-1 accent-accent-cyan"
+                           prop:value=move || toggles.dso_mag_limit.get().to_string()
+                           on:input=move |ev| {
+                               if let Ok(v) = event_target_value(&ev).parse::<f64>() {
+                                   toggles.dso_mag_limit.set(v);
+                               }
+                           } />
+                    <span class="font-mono text-text w-[4ch] text-right">
+                        {move || format!("{:.1}", toggles.dso_mag_limit.get())}
+                    </span>
+                </label>
+
+                <div class=GROUP>{move || tr().layer_gear}</div>
+                <div class=ROW>
+                    <LayerChip on=toggles.fov label=|t| t.fov />
+                    <LayerChip on=toggles.solve_marker label=|t| t.solve_marker />
+                    <LayerChip on=toggles.slew_trail label=|t| t.slew_trail />
+                    <LayerChip on=toggles.scheduler_jobs label=|t| t.sky_scheduler_jobs />
+                </div>
+
+                // ── Observer location (collapsed by default) ──────────────
+                <button class="flex items-center justify-between w-full min-h-0 h-9 mt-1 px-0 bg-transparent \
+                               border-0 border-t border-solid border-border-strong rounded-none text-text-blue"
+                        on:click=move |_| location_open.update(|v| *v = !*v)>
+                    <span>{move || tr().location_section}</span>
+                    <span>{move || if location_open.get() { "\u{25be}" } else { "\u{25b8}" }}</span>
+                </button>
+                <Show when=move || location_open.get()>
+                    <div class="flex flex-col gap-1.5">
+                        <label class=SETTINGS_ROW>
+                            {move || tr().latitude_label}
+                            <input type="number" step="0.0001" min="-90" max="90"
+                                   class=CONTROLS_INPUT
+                                   prop:value=move || lat_str.get()
+                                   on:input=move |ev| lat_str.set(event_target_value(&ev)) />
+                        </label>
+                        <label class=SETTINGS_ROW>
+                            {move || tr().longitude_label}
+                            <input type="number" step="0.0001" min="-180" max="180"
+                                   class=CONTROLS_INPUT
+                                   prop:value=move || lon_str.get()
+                                   on:input=move |ev| lon_str.set(event_target_value(&ev)) />
+                        </label>
+                        <div class="flex gap-1 flex-wrap">
+                            <button
+                                class=CONTROLS_BTN
+                                prop:disabled=move || !has_mount()
+                                on:click=move |_| {
+                                    if !has_mount() { return; }
+                                    let lat = lat_str.get().parse::<f64>().unwrap_or(0.0);
+                                    let lon = lon_str.get().parse::<f64>().unwrap_or(0.0);
+                                    send_location.get_value()(lat, lon);
+                                }>
+                                {move || tr().set_location_btn}
+                            </button>
+                            <button
+                                class=format!("{CONTROLS_BTN} !bg-bg-button-ok !text-accent-green-soft !border-border-ok")
+                                prop:disabled=move || !has_mount()
+                                on:click=move |_| {
+                                    if !has_mount() { return; }
+                                    let lat_s = lat_str;
+                                    let lon_s = lon_str;
+                                    let send_loc = send_location.get_value();
+                                    let success = Closure::wrap(Box::new(move |val: wasm_bindgen::JsValue| {
+                                        let lat = js_sys::Reflect::get(&val, &"coords".into())
+                                            .ok()
+                                            .and_then(|c| js_sys::Reflect::get(&c, &"latitude".into()).ok())
+                                            .and_then(|v| v.as_f64());
+                                        let lon = js_sys::Reflect::get(&val, &"coords".into())
+                                            .ok()
+                                            .and_then(|c| js_sys::Reflect::get(&c, &"longitude".into()).ok())
+                                            .and_then(|v| v.as_f64());
+                                        if let (Some(lat), Some(lon)) = (lat, lon) {
+                                            lat_s.set(format!("{:.6}", lat));
+                                            lon_s.set(format!("{:.6}", lon));
+                                            send_loc(lat, lon);
+                                        }
+                                    }) as Box<dyn FnMut(wasm_bindgen::JsValue)>);
+                                    if let Some(window) = web_sys::window() {
+                                        if let Ok(geo) = window.navigator().geolocation() {
+                                            let _ = geo.get_current_position(success.as_ref().unchecked_ref());
+                                        }
+                                    }
+                                    success.forget();
+                                }>
+                                {move || tr().get_location_btn}
+                            </button>
+                        </div>
+                        <Show when=move || !has_mount()>
+                            <div class="text-text-muted text-[11px]">
+                                {move || tr().location_needs_mount}
+                            </div>
+                        </Show>
+                    </div>
+                </Show>
+            </div>
+        </Show>
     }
 }

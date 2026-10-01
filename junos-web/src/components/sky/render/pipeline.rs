@@ -13,7 +13,6 @@ use super::layers::dso::DsoLayer;
 use super::layers::fov_reticle::FovReticleLayer;
 use super::layers::grids::{AltAzGridLayer, EclipticLayer, EqGridLayer, MeridianLayer};
 use super::layers::ground::GroundLayer;
-use super::layers::info_overlay::InfoOverlayLayer;
 use super::layers::mosaic::MosaicLayer;
 use super::layers::mount_crosshair::MountCrosshairLayer;
 use super::layers::scheduler_jobs::SchedulerJobsLayer;
@@ -72,8 +71,6 @@ impl RenderPipeline {
         // Mosaic plans + scheduler jobs.
         p.register(Box::new(MosaicLayer));
         p.register(Box::new(SchedulerJobsLayer));
-        // Bottom-left info strip last so it sits on top.
-        p.register(Box::new(InfoOverlayLayer));
         p
     }
 

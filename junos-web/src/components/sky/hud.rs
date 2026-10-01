@@ -1,9 +1,8 @@
-//! Bottom-left status HUD — Leptos DOM overlay.
+//! Bottom-left status HUD — Leptos DOM overlay (the time bar shows the time).
 //!
-//! Replaces `render::render_info_overlay` (Canvas2D). The render Effect in
-//! `mod.rs` writes a `HudData` snapshot every frame; this component reads it
-//! reactively. Positioned absolute, `pointer-events:none` so the GPU canvas
-//! beneath it still receives mouse/touch input.
+//! The render Effect in `mod.rs` writes a `HudData` snapshot every frame (GPU
+//! and Canvas2D-fallback alike); this component reads it reactively.
+//! `pointer-events:none` so the canvas beneath still receives input.
 
 use leptos::prelude::*;
 
@@ -18,7 +17,6 @@ pub struct HudData {
     pub mount_ra_h:     Option<f64>,
     pub mount_dec_deg:  Option<f64>,
     pub rotation_deg:   Option<f64>,
-    pub t_off:          f64,
     pub cursor_altaz:   Option<(f64, f64)>,
     pub cursor_radec:   Option<(f64, f64)>,
 }
@@ -60,15 +58,6 @@ pub fn SkyHud(
         let tr = t(lang.get());
         h.rotation_deg.map(|r| format!("{}: {:.1}°", tr.overlay_camera_angle, r))
     };
-    let line_t_off = move || {
-        let h = hud.get();
-        let tr = t(lang.get());
-        if h.t_off.abs() > 0.5 {
-            Some(format!("{}: {:+.0}s", tr.overlay_time_offset, h.t_off))
-        } else {
-            None
-        }
-    };
     let line_cursor = move || {
         let h = hud.get();
         let tr = t(lang.get());
@@ -88,15 +77,15 @@ pub fn SkyHud(
     };
 
     view! {
-        <div class="panel-glass w-[360px] \
+        <div class="panel-glass max-w-full md:w-[360px] \
                     text-text-muted font-mono text-sm leading-4 \
                     px-sp-3 py-sp-2 pointer-events-none box-border">
             <div>{line_lst_fov}</div>
-            <div>{line_center}</div>
+            // Phones: no hover cursor, and the centre is what you see.
+            <div class="max-md:hidden">{line_center}</div>
             <div>{line_mount}</div>
             { move || line_rotation().map(|s| view! { <div>{s}</div> }) }
-            { move || line_t_off().map(|s| view! { <div>{s}</div> }) }
-            { move || line_cursor().map(|s| view! { <div>{s}</div> }) }
+            { move || line_cursor().map(|s| view! { <div class="max-md:hidden">{s}</div> }) }
         </div>
     }
 }
