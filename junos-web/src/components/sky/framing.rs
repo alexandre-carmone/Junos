@@ -504,7 +504,7 @@ pub fn FramingOverlay(
     view! {
         <Show when=move || framing.open.get()>
             <div
-                class="fixed inset-0 z-[100] bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
+                class="fixed inset-0 md:right-[64px] z-[100] bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
                 on:click=move |_| close()
             >
                 <div

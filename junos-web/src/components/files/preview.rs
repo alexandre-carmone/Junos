@@ -50,7 +50,7 @@ pub(super) fn render_preview_modal(
     view! {
         // On desktop (≥640px): grid-rows-[auto_1fr_auto] — header | image | metadata
         // On mobile (<640px):  grid-rows-[auto_1fr_auto_auto] — slim-header | image | metadata | action-bar
-        <div class="fixed inset-0 z-[70] grid grid-rows-[auto_1fr_auto] bg-[rgba(0,0,0,0.86)] text-text font-ui max-[639px]:grid-rows-[auto_1fr_auto_auto]">
+        <div class="fixed inset-0 md:right-[64px] z-[70] grid grid-rows-[auto_1fr_auto] bg-[rgba(0,0,0,0.86)] text-text font-ui max-[639px]:grid-rows-[auto_1fr_auto_auto]">
 
             // ── Header: file path + desktop actions ──────────────────────
             <div class="flex flex-wrap items-center gap-sp-2 border-b border-border bg-bg-panel-solid px-sp-4 py-sp-2">

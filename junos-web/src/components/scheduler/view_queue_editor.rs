@@ -672,7 +672,7 @@ pub fn SchedulerQueueEditor(
     let close_btn = Arc::clone(&on_close);
 
     view! {
-        <div class="fixed inset-0 z-[60] bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2">
+        <div class="fixed inset-0 md:right-[64px] z-[60] bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2">
             <div class="w-full max-w-[860px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col">
                 <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
                     <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">

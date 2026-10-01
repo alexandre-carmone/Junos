@@ -909,7 +909,7 @@ pub fn FocusTab(
             // Fullscreen settings overlay (mirrors guide tab).
             <Show when=move || settings_open.get()>
                 <div
-                    class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
+                    class="fixed inset-0 md:right-[64px] z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
                     on:click=move |_| settings_open.set(false)>
                     <div
                         class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col"

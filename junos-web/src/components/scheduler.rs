@@ -419,7 +419,7 @@ pub fn SchedulerTab(
             // ── Add-job overlay ──────────────────────────────────────────────
             <Show when=move || add_open.get()>
                 <div
-                    class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
+                    class="fixed inset-0 md:right-[64px] z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
                     on:click=move |_| add_open.set(false)
                 >
                     <div
@@ -478,7 +478,7 @@ pub fn SchedulerTab(
             // ── Settings overlay (scheduler toggles + observatory scripts) ──
             <Show when=move || settings_open.get()>
                 <div
-                    class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
+                    class="fixed inset-0 md:right-[64px] z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
                     on:click=move |_| settings_open.set(false)
                 >
                     <div

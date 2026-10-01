@@ -821,7 +821,7 @@ pub fn ImagingTab(
                     {move || match capture.with(|c| c.preview_url.clone()) {
                         None => { zoom_open.set(false); view! {}.into_any() }
                         Some(url) => view! {
-                            <div class="fixed inset-0 z-[80] bg-[rgba(0,0,0,0.92)]">
+                            <div class="fixed inset-0 md:right-[64px] z-[80] bg-[rgba(0,0,0,0.92)]">
                                 // Pan/zoom surface: wheel/pinch to zoom about the
                                 // pointer, drag to pan, double-click to reset.
                                 <div
@@ -854,7 +854,7 @@ pub fn ImagingTab(
 
                 // ─ Sequence editor (full-screen overlay) ─────────────────
                 <Show when=move || editor_open.get()>
-                    <div class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2">
+                    <div class="fixed inset-0 md:right-[64px] z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2">
                         <div class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col">
                             <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
                                 <h2 class="text-text-blue text-sm uppercase tracking-[0.08em]">{move || tr().imaging_sequence_editor}</h2>
@@ -886,7 +886,7 @@ pub fn ImagingTab(
                         let rows = job_detail_rows(&job, tr());
                         let on_remove = on_remove_job.clone();
                         view! {
-                            <div class="fixed inset-0 z-50 bg-[rgba(2,4,10,0.82)] backdrop-blur-sm flex items-center justify-center p-sp-4 max-[759px]:items-stretch max-[759px]:p-sp-2">
+                            <div class="fixed inset-0 md:right-[64px] z-50 bg-[rgba(2,4,10,0.82)] backdrop-blur-sm flex items-center justify-center p-sp-4 max-[759px]:items-stretch max-[759px]:p-sp-2">
                                 <div class="w-full max-w-[720px] max-h-[90vh] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col">
                                     <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
                                         <h2 class="text-text-blue text-sm uppercase tracking-[0.08em]">{format!("{} #{}", tr().imaging_job_detail, idx + 1)}</h2>

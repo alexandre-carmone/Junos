@@ -353,7 +353,7 @@ pub fn AberrationInspector(
 
         <Show when=move || open.get()>
             <div
-                class="fixed inset-0 z-[60] bg-[rgba(2,4,10,0.9)] backdrop-blur-sm flex items-center justify-center p-sp-4 max-[759px]:p-sp-2"
+                class="fixed inset-0 md:right-[64px] z-[60] bg-[rgba(2,4,10,0.9)] backdrop-blur-sm flex items-center justify-center p-sp-4 max-[759px]:p-sp-2"
                 on:click=move |_| { if phase.get() != Phase::Running { open.set(false); } }
             >
                 <div

@@ -201,7 +201,7 @@ pub fn ProfilesTab(
                     let name_for_yes = name.clone();
                     let send_yes = send_for_del.clone();
                     view! {
-                        <div class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center"
+                        <div class="fixed inset-0 md:right-[64px] bg-black/60 z-[100] flex items-center justify-center"
                              on:click=move |_| confirm_delete.set(None)
                         >
                             <div class="bg-[#0a0a14] border border-[#5a2a2a] rounded-lg py-sp-5 px-[22px] min-w-[280px]"
@@ -1073,7 +1073,7 @@ fn RigSection(
                     let name_yes = name.clone();
                     let send_yes = confirm_train_send.clone();
                     view! {
-                        <div class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center"
+                        <div class="fixed inset-0 md:right-[64px] bg-black/60 z-[100] flex items-center justify-center"
                              on:click=move |_| confirm_train.set(None)>
                             <div class="bg-[#0a0a14] border border-[#5a2a2a] rounded-lg py-sp-5 px-[22px] min-w-[280px]"
                                  on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()>
@@ -1102,7 +1102,7 @@ fn RigSection(
                 move || confirm_scope.get().map(|(id, disp)| {
                     let send_yes = confirm_scope_send.clone();
                     view! {
-                        <div class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center"
+                        <div class="fixed inset-0 md:right-[64px] bg-black/60 z-[100] flex items-center justify-center"
                              on:click=move |_| confirm_scope.set(None)>
                             <div class="bg-[#0a0a14] border border-[#5a2a2a] rounded-lg py-sp-5 px-[22px] min-w-[280px]"
                                  on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()>

@@ -3,6 +3,11 @@
 //! `TabContent` reads the active tab from `ActiveTabCtx` and renders the
 //! matching tab pane. SkyTab is kept mounted (display:none) so its WebGPU
 //! context survives tab switches; the others are mounted lazily via `<Show>`.
+//!
+//! Each pane is `z-[40]` and stops `md:right-[64px]` short of the right edge,
+//! where the desktop tab strip lives (`z-[60]`). The pane's z-index traps any
+//! `fixed inset-0` overlay inside it below the strip, so those overlays repeat
+//! `md:right-[64px]` to stay clear of it.
 
 use std::sync::Arc;
 
