@@ -4,6 +4,18 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Border reset — the part of Tailwind's preflight this build needs (there is
+   no `@tailwind base`). Without it, `border` / `border-t` / … only set a
+   width and the browser default `border-style: none` hides every border.
+   `:where()` keeps it at zero specificity, so every rule in this file and
+   every utility still wins. Form controls are left out so they keep their
+   native borders. The default color is the `--border` token. */
+:where(*:not(button, input, select, textarea, fieldset, hr, iframe)) {
+    border-width: 0;
+    border-style: solid;
+    border-color: var(--border);
+}
+
 html, body {
     /* Lock the page: no pinch-zoom, no double-tap zoom, no rubber-band
        scroll, no horizontal pan. Each tab owns its own scrolling. */

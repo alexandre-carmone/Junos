@@ -210,7 +210,7 @@ pub fn JobCard(
     let adu_invalid = move || frame().flat_adu_target().is_none();
     let is_flat = Memo::new(move |_| frame().frame_type == "Flat");
     let flat = move || is_flat.get().then(|| view! {
-        <div class="flex flex-col gap-sp-2 rounded-md border border-solid border-border-base p-sp-2">
+        <div class="flex flex-col gap-sp-2 rounded-md border border-border-base p-sp-2">
             <span class=LABEL>{move || tr().seq_flat_duration}</span>
             <div class="flex gap-[4px]">
                 <button type="button" class=PILL
@@ -271,7 +271,7 @@ pub fn JobCard(
     };
     let show_iso = move || !camera.with(|c| c.iso_options.is_empty()) || !frame().iso.is_empty();
     let more = move || view! {
-        <details class="group rounded-md border border-solid border-border-base">
+        <details class="group rounded-md border border-border-base">
             <summary class="list-none cursor-pointer flex items-center gap-sp-2 min-h-9 px-sp-2 text-sm select-none [&::-webkit-details-marker]:hidden">
                 <span class="text-text-blue transition-transform group-open:rotate-90">"\u{25B8}"</span>
                 <span class="text-text-blue">{move || tr().seq_more}</span>
@@ -351,13 +351,11 @@ pub fn JobCard(
     };
 
     view! {
-        // `border-solid` is explicit: the Tailwind build has no preflight, so
-        // `border` alone sets a width but no style (= no visible border).
-        <div class="rounded-md border border-solid border-border-base border-l-[3px] border-l-[color:var(--card-accent)] bg-bg-elev-1 overflow-hidden"
+        <div class="rounded-md border border-border-base border-l-[3px] border-l-[color:var(--card-accent)] bg-bg-elev-1 overflow-hidden"
              style=accent>
             {header}
             <Show when=move || is_open.get()>
-                <div class="flex flex-col gap-sp-3 px-sp-3 pb-sp-3 pt-sp-2 border-0 border-t border-solid border-border-base">
+                <div class="flex flex-col gap-sp-3 px-sp-3 pb-sp-3 pt-sp-2 border-t border-border-base">
                     {frame_type()}
                     {filter()}
                     <div class=GRID_2>{exposure()}{count()}</div>

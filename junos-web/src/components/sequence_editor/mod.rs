@@ -91,7 +91,7 @@ pub fn SequenceEditor(
             // Sticky inside whatever scroll container hosts the editor, so
             // the totals and "Add exposure" stay reachable on long lists.
             <div class="sticky bottom-0 z-[1] flex flex-wrap items-center justify-between gap-sp-2 py-sp-2 \
-                        border-0 border-t border-solid border-border-base bg-bg">
+                        border-t border-border-base bg-bg">
                 <span class="min-w-0 font-mono text-sm text-text-muted">{totals}</span>
                 <button type="button" class="btn btn-primary shrink-0" on:click=add_row>
                     {move || tr().imaging_add_exposure}
