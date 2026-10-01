@@ -1,9 +1,15 @@
 //! Focus module UI — full-screen tab.
 //!
+//! Layout (phone-first): a header (status · settings), the focus frame, then
+//! the controls and the HFR V-curve. On phones the frame stays pinned and the
+//! rest scrolls beneath it; from `md` up the frame and the curve share the left
+//! column and the controls get the right one. Settings open as a bottom sheet
+//! on phones and a floating panel on md+.
+//!
 //! Talks to KStars via Ekos Live:
 //!   - Inbound: `new_focus_state` (status/hfr/pos/log), `focus_get_all_settings`
 //!     (debounced settings snapshot), `new_preview_image` with `uuid: "+F"`
-//!     (focus frames). See `ws.rs::apply_ekos_event` for the match arms.
+//!     (focus frames). See `ws/store.rs::apply_ekos_event` for the match arms.
 //!   - Outbound: `focus_start`, `focus_stop`, `focus_capture`, `focus_loop`,
 //!     `focus_reset`, `focus_in{steps}`, `focus_out{steps}`,
 //!     `focus_set_all_settings{…}`, `focus_set_crosshair{x,y}`.
@@ -16,14 +22,24 @@ use wasm_bindgen::{closure::Closure, JsCast};
 use web_sys::{HtmlCanvasElement, CanvasRenderingContext2d, MouseEvent};
 
 use crate::compat::{CameraSnapshot, FocusSnapshot};
+use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
-use crate::ws_helpers::{send_cmd, dispatch_setting as ws_dispatch_setting};
+use crate::ws_helpers::{send_cmd, dispatch_setting};
+use crate::Tab;
 
 mod abmath;
 mod aberration;
 use aberration::AberrationInspector;
 use crate::dom::{event_target_checked, event_target_value};
+
+const CARD: &str = "panel p-3 flex flex-col gap-2";
+const CARD_TITLE: &str = "text-xs uppercase tracking-[0.06em] font-semibold text-text-muted";
+const CHIP: &str = "chip min-w-0 h-9 md:h-7 justify-center cursor-pointer font-mono";
+const SHORT_HIDDEN: &str = "[@media(max-height:500px)]:hidden";
+
+/// Manual-move step presets; the number input next to them takes any value.
+const STEP_PRESETS: [i64; 4] = [10, 50, 100, 500];
 
 /// A `js_sys::Array` of dash lengths for `CanvasRenderingContext2d::set_line_dash`.
 /// An empty slice resets to a solid stroke.
@@ -46,44 +62,31 @@ fn halo_text(ctx: &CanvasRenderingContext2d, text: &str, x: f64, y: f64, fill: &
     let _ = ctx.fill_text(text, x, y);
 }
 
-fn status_color(status: &str) -> &'static str {
-    let s = status.to_lowercase();
-    if s.contains("fail") || s.contains("abort") { "var(--state-err)" }
-    else if s.contains("complete")                { "var(--state-ok)" }
-    else if s.contains("progress")                { "var(--state-info)" }
-    else if s.contains("framing")                 { "var(--state-warn)" }
-    else if s.contains("changing")                { "var(--state-warn)" }
-    else if s.contains("user input")              { "var(--state-warn)" }
-    else                                           { "var(--text-muted)" }
+// KStars sends the focus state untranslated (`getFocusStatusString(s, false)`,
+// manager.cpp:3431): Idle, Complete, Failed, Aborted, User Input, In Progress,
+// Framing, Changing Filter (ekos.h:117).
+
+fn status_badge(status: &str) -> &'static str {
+    match status {
+        "Complete" => "badge badge--ok",
+        "Failed" | "Aborted" => "badge badge--err",
+        "In Progress" => "badge badge--info",
+        "Framing" | "Changing Filter" | "User Input" => "badge badge--warn",
+        _ => "badge",
+    }
 }
 
-/// Combo lists for keys that KStars exposes as `currentText` of a QComboBox.
-/// Sourced from `kstars/ekos/focus/opsfocusprocess.ui` and the focus widgets.
-/// When a key appears here, the settings overlay renders a `<select>` instead
-/// of a free-text input.
+/// No autofocus run and no loop. Any other state — even one we don't know —
+/// counts as busy, so the Stop button is always reachable during a run.
+fn is_idle(status: &str) -> bool {
+    matches!(status, "" | "Idle" | "Complete" | "Failed" | "Aborted")
+}
+
+/// Combo lists for keys that KStars exposes as `currentText` of a QComboBox
+/// (`kstars/ekos/focus/opsfocusprocess.ui`); these render as a `<select>`.
 const FOCUS_ALGORITHM_OPTS: &[&str] =
     &["Iterative", "Polynomial", "Linear", "Linear 1 Pass"];
 const FOCUS_BINNING_OPTS: &[&str] = &["1x1", "2x2", "3x3", "4x4"];
-
-fn param_label(key: &str, tr: &Translations) -> &'static str {
-    match key {
-        "focusExposure"        => tr.focus_param_exposure,
-        "focusBinning"         => tr.focus_param_binning,
-        "focusGain"            => tr.gain,
-        "focusISO"             => tr.focus_param_iso,
-        "focusIterations"      => tr.focus_param_iterations,
-        "focusStepSize"        => tr.focus_step_size,
-        "focusMaxStep"         => tr.focus_param_max_step,
-        "focusMaxTravel"       => tr.focus_param_max_travel,
-        "focusTolerance"       => tr.focus_tolerance,
-        "focusBacklash"        => tr.focus_backlash,
-        "focusAlgorithm"       => tr.focus_algorithm,
-        "focusAutoStarEnabled" => tr.focus_param_auto_star,
-        "focusSuspendGuiding"  => tr.focus_param_suspend_guiding,
-        "focusUseFullField"    => tr.focus_param_use_full_field,
-        _ => "",
-    }
-}
 
 fn enum_options_for(key: &str) -> Option<&'static [&'static str]> {
     match key {
@@ -93,23 +96,23 @@ fn enum_options_for(key: &str) -> Option<&'static [&'static str]> {
     }
 }
 
-/// Subset of `focus_get_all_settings` keys this first cut knows how to render.
-/// Unknown keys are ignored (no generic fallback in v1, per plan).
-const KNOWN_SETTING_KEYS: &[&str] = &[
-    "focusExposure",
-    "focusBinning",
-    "focusGain",
-    "focusISO",
-    "focusIterations",
-    "focusStepSize",
-    "focusMaxStep",
-    "focusMaxTravel",
-    "focusTolerance",
-    "focusBacklash",
-    "focusAlgorithm",
-    "focusAutoStarEnabled",
-    "focusSuspendGuiding",
-    "focusUseFullField",
+/// The `focus_get_all_settings` keys the settings sheet shows, in order, with
+/// their label. Other keys are ignored.
+const SETTINGS: &[(&str, fn(&Translations) -> &'static str)] = &[
+    ("focusExposure",        |t| t.focus_param_exposure),
+    ("focusBinning",         |t| t.focus_param_binning),
+    ("focusGain",            |t| t.gain),
+    ("focusISO",             |t| t.focus_param_iso),
+    ("focusIterations",      |t| t.focus_param_iterations),
+    ("focusStepSize",        |t| t.focus_step_size),
+    ("focusMaxStep",         |t| t.focus_param_max_step),
+    ("focusMaxTravel",       |t| t.focus_param_max_travel),
+    ("focusTolerance",       |t| t.focus_tolerance),
+    ("focusBacklash",        |t| t.focus_backlash),
+    ("focusAlgorithm",       |t| t.focus_algorithm),
+    ("focusAutoStarEnabled", |t| t.focus_param_auto_star),
+    ("focusSuspendGuiding",  |t| t.focus_param_suspend_guiding),
+    ("focusUseFullField",    |t| t.focus_param_use_full_field),
 ];
 
 #[component]
@@ -122,21 +125,22 @@ pub fn FocusTab(
     let tr = move || t(lang.get());
 
     let step_size = RwSignal::new(100_i64);
-
-    // Settings overlay open/closed (mirrors guide tab pattern).
     let settings_open = RwSignal::new(false);
+    let status = Memo::new(move |_| focus.with(|f| f.status.clone()));
+    // A Memo so the open settings sheet only re-renders when the settings
+    // change, not on every HFR update (which would eat a half-typed value).
+    let settings = Memo::new(move |_| focus.with(|f| f.settings.clone()));
 
     // Detected-stars overlay: on by default. `resize_tick` is bumped whenever
-    // the preview box can change size, so both canvas draw Effects re-run:
-    // the window `resize` listener below, `<img on:load>`, and the settings
-    // overlay opening/closing. (There is no ResizeObserver — `web-sys` isn't
-    // built with that feature here.)
+    // the preview box can change size (the window `resize` listener below and
+    // `<img on:load>`), so both canvas draw Effects re-run. (There is no
+    // ResizeObserver — `web-sys` isn't built with that feature here.)
     let show_stars = RwSignal::new(true);
     let resize_tick = RwSignal::new(0u32);
 
-    // Escape closes the overlay. forget() the closure (one persistent listener
-    // per FocusTab mount); calls into a disposed RwSignal are a no-op in
-    // leptos 0.7, so leftover listeners after a tab switch are harmless.
+    // Escape closes the settings sheet. forget() the closure (one persistent
+    // listener per FocusTab mount); calls into a disposed RwSignal are a no-op
+    // in leptos 0.7, so leftover listeners after a tab switch are harmless.
     {
         let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
             move |e: web_sys::KeyboardEvent| {
@@ -153,24 +157,23 @@ pub fn FocusTab(
     }
 
     // ── Action dispatchers ────────────────────────────────────────────────
-    let send1 = send.clone();
-    let on_start = move |_| send_cmd(&send1, "focus_start", serde_json::json!({}));
-    let send2 = send.clone();
-    let on_stop = move |_| send_cmd(&send2, "focus_stop", serde_json::json!({}));
-    let send3 = send.clone();
-    let on_capture = move |_| send_cmd(&send3, "focus_capture", serde_json::json!({}));
-    let send4 = send.clone();
-    let on_loop = move |_| send_cmd(&send4, "focus_loop", serde_json::json!({}));
-    let send5 = send.clone();
-    let on_reset = move |_| send_cmd(&send5, "focus_reset", serde_json::json!({}));
-
-    let send_in = send.clone();
-    let on_in = move |_| {
-        send_cmd(&send_in, "focus_in", serde_json::json!({ "steps": step_size.get() }));
+    // One click handler per command; `focus_in` / `focus_out` carry the step.
+    let cmd = {
+        let send = send.clone();
+        move |ty: &'static str| {
+            let send = send.clone();
+            move |_: MouseEvent| {
+                let payload = match ty {
+                    "focus_in" | "focus_out" => serde_json::json!({ "steps": step_size.get_untracked() }),
+                    _ => serde_json::json!({}),
+                };
+                send_cmd(&send, ty, payload);
+            }
+        }
     };
-    let send_out = send.clone();
-    let on_out = move |_| {
-        send_cmd(&send_out, "focus_out", serde_json::json!({ "steps": step_size.get() }));
+    let (start, stop) = (cmd("focus_start"), cmd("focus_stop"));
+    let on_autofocus = move |ev: MouseEvent| {
+        if is_idle(&status.get_untracked()) { start(ev) } else { stop(ev) }
     };
 
     // ── Preview click → focus_set_crosshair ───────────────────────────────
@@ -528,13 +531,6 @@ pub fn FocusTab(
         cb.forget();
     }
 
-    // Opening or closing the settings overlay reflows the page without firing
-    // a window `resize`, which would otherwise leave the overlay misaligned.
-    Effect::new(move |_| {
-        settings_open.track();
-        resize_tick.update(|n| *n = n.wrapping_add(1));
-    });
-
     Effect::new(move |_| {
         resize_tick.track();
         let tr = tr();
@@ -726,130 +722,177 @@ pub fn FocusTab(
         }
     });
 
-    // ── Settings grid ─────────────────────────────────────────────────────
-    // Stash `send` in a StoredValue so the reactive closure that renders
-    // settings rows (now nested inside <Show>) doesn't have to capture a
-    // non-Copy SendCmd through two layers of Fn closures. We rebuild the
-    // dispatcher fresh on each reactive evaluation.
     let send_sv = StoredValue::new(send.clone());
     let send_ab = send.clone();
-
-    let settings_rows = move || {
-        let settings = focus.with(|f| f.settings.clone());
-        let obj = match settings.as_object() {
-            Some(o) => o.clone(),
-            None => return Vec::new(),
-        };
-        let mut rows: Vec<(String, String, serde_json::Value)> = Vec::new();
-        for key in KNOWN_SETTING_KEYS {
-            if let Some(v) = obj.get(*key) {
-                let kind = if v.is_boolean() { "bool" }
-                           else if v.is_number() { "number" }
-                           else { "string" };
-                rows.push((key.to_string(), kind.to_string(), v.clone()));
-            }
-        }
-        rows
-    };
-
-    let btn_action = "btn btn-ghost text-text-blue !border-text-blue".to_string();
-    let btn_action_clone = btn_action.clone();
-    let fieldset_cls = "fieldset";
-    let legend_cls = "fieldset__legend";
-    let header_label = "text-text-blue";
+    let dash = || "—".to_string();
 
     view! {
-        <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[56px_1fr] overflow-hidden">
+        <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
             // Header
-            <div class="flex flex-wrap items-center gap-y-[10px] gap-x-[18px] py-[10px] pr-5 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)] text-md min-h-[44px] max-[759px]:py-sp-2 max-[759px]:pl-16 max-[759px]:pr-3 max-[759px]:gap-x-3 max-[759px]:gap-y-[6px] max-[759px]:text-sm">
-                <span
-                    class="inline-block py-sp-1 px-sp-3 rounded-[14px] border border-current text-sm"
-                    style=move || format!(
-                        "color:{};",
-                        status_color(&focus.with(|f| f.status.clone()))
-                    )
-                >
+            <div class="shrink-0 flex items-center gap-2 min-h-[48px] px-3 md:pl-4 md:pr-6 pb-1.5 \
+                        pt-[max(0.375rem,env(safe-area-inset-top))] border-b border-border-base bg-bg-elev-1">
+                <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Focus)></span>
+                <span class="shrink-0 font-semibold text-text-blue-bright">{move || tr().tab_focus}</span>
+                <span class="min-w-0 truncate text-sm text-text-muted">{move || focus.with(|f| f.device.clone())}</span>
+                <span class=move || format!("{} ml-auto shrink-0", status_badge(&status.get()))>
                     {move || {
-                        let s = focus.with(|f| f.status.clone());
+                        let s = status.get();
                         if s.is_empty() { tr().idle.to_string() } else { s }
                     }}
                 </span>
-                <span class="inline-flex items-center gap-[6px]">
-                    <span class=header_label>{move || tr().focus_header_focuser}</span>
-                    <span>{move || {
-                        let d = focus.with(|f| f.device.clone());
-                        if d.is_empty() { "—".to_string() } else { d }
-                    }}</span>
-                </span>
-                <span class="inline-flex items-center gap-[6px]">
-                    <span class=header_label>{move || tr().focus_header_hfr}</span>
-                    <span>{move || focus.with(|f| f.hfr
-                        .map(|v| format!("{:.3}", v))
-                        .unwrap_or_else(|| "—".into()))}</span>
-                </span>
-                <span class="inline-flex items-center gap-[6px]">
-                    <span class=header_label>{move || tr().focus_header_position}</span>
-                    <span>{move || focus.with(|f| f.position
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "—".into()))}</span>
-                </span>
-                <span class="inline-flex items-center gap-[6px]">
-                    <span class=header_label>{move || tr().focus_header_temperature}</span>
-                    <span>{move || focus.with(|f| f.temperature
-                        .map(|v| format!("{:.1}°C", v))
-                        .unwrap_or_else(|| "—".into()))}</span>
-                </span>
+                <button class="btn-icon shrink-0 text-text-muted"
+                        title=move || tr().focus_settings_section
+                        on:click=move |_| settings_open.set(true)>
+                    <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
+                </button>
             </div>
 
-            // Body — 1fr | 320 px on desktop, narrower right column on tablet, stacked on mobile
-            <div class="grid grid-cols-[1fr_320px] max-[1199px]:grid-cols-[minmax(0,1fr)_280px] max-[759px]:flex max-[759px]:flex-col min-h-0">
-                // Left — preview + HFR plot
-                <div class="grid grid-rows-[minmax(0,1fr)_182px] max-[759px]:grid-rows-[minmax(0,1fr)_140px] min-h-0 border-r border-border-base max-[759px]:shrink-0 max-[759px]:min-h-[300px] max-[759px]:max-h-[52vh] max-[759px]:border-r-0 max-[759px]:border-b max-[759px]:border-border-base">
-                    <div
-                        node_ref=preview_box_ref
-                        class="relative min-h-0 overflow-hidden flex items-center justify-center bg-bg-input-deep"
-                    >
-                        {move || match focus.with(|f| f.preview_url.clone()) {
-                            Some(url) => view! {
-                                <img
-                                    node_ref=img_ref
-                                    src=url
-                                    class="max-w-full max-h-full object-contain cursor-crosshair [image-rendering:pixelated]"
-                                    on:click=on_preview_click.clone()
-                                    on:load=move |_| resize_tick.update(|n| *n = n.wrapping_add(1))
-                                />
-                            }.into_any(),
-                            None => view! {
-                                <div class="text-[#444] text-sm text-center px-3">
-                                    {move || tr().focus_no_frame}
-                                </div>
-                            }.into_any(),
-                        }}
-                        // Detected-stars overlay (pointer-events-none so the
-                        // crosshair click on the <img> still fires through it).
-                        <canvas
-                            node_ref=stars_canvas_ref
-                            class="absolute inset-0 w-full h-full pointer-events-none"
-                        ></canvas>
-                        <Show when=move || focus.with(|f| f.preview_url.is_some())>
+            // Body — a column on phones, a 2×2 grid on md+ (frame | controls
+            // over curve | controls).
+            <div class="flex-1 min-h-0 flex flex-col \
+                        md:grid md:grid-cols-[minmax(0,1fr)_300px] lg:grid-cols-[minmax(0,1fr)_340px] \
+                        md:grid-rows-[minmax(0,1fr)_minmax(120px,26dvh)] md:gap-3 md:p-3 md:pr-6">
+                // Focus frame — pinned on phones.
+                <div
+                    node_ref=preview_box_ref
+                    class="relative shrink-0 h-[40dvh] min-h-[200px] overflow-hidden flex items-center justify-center \
+                           bg-bg-input-deep border-b border-border-base \
+                           md:h-auto md:min-h-0 md:col-start-1 md:row-start-1 md:border md:rounded-lg"
+                >
+                    {move || match focus.with(|f| f.preview_url.clone()) {
+                        Some(url) => view! {
+                            <img
+                                node_ref=img_ref
+                                src=url
+                                class="max-w-full max-h-full object-contain cursor-crosshair [image-rendering:pixelated]"
+                                on:click=on_preview_click.clone()
+                                on:load=move |_| resize_tick.update(|n| *n = n.wrapping_add(1))
+                            />
+                        }.into_any(),
+                        None => view! {
+                            <div class="text-text-faint text-sm text-center px-6">
+                                {move || tr().focus_no_frame}
+                            </div>
+                        }.into_any(),
+                    }}
+                    // Detected-stars overlay (pointer-events-none so the
+                    // crosshair click on the <img> still fires through it).
+                    <canvas
+                        node_ref=stars_canvas_ref
+                        class="absolute inset-0 w-full h-full pointer-events-none"
+                    ></canvas>
+                    <Show when=move || focus.with(|f| f.preview_url.is_some())>
+                        <button
+                            class=move || format!("{CHIP} absolute top-2 right-2 font-ui {}",
+                                if show_stars.get() { "btn--active" } else { "text-text-muted" })
+                            aria-pressed=move || show_stars.get().to_string()
+                            on:click=move |_| show_stars.update(|v| *v = !*v)
+                        >
+                            {move || tr().focus_stars_toggle}
+                        </button>
+                    </Show>
+                </div>
+
+                // Phones: the scroll area under the frame. md+: `contents`, so
+                // the controls and the curve become grid cells of their own.
+                <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] flex flex-col gap-3 \
+                            p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:contents">
+                    // Controls
+                    <div class="flex flex-col gap-3 md:col-start-2 md:row-start-1 md:row-span-2 md:min-h-0 md:overflow-y-auto">
+                        <div class="grid grid-cols-4 md:grid-cols-2 gap-2">
+                            {stat_tile(move || tr().focus_hfr, "text-accent-cyan",
+                                move || focus.with(|f| f.hfr.map(|v| format!("{v:.2}"))).unwrap_or_else(dash))}
+                            {stat_tile(move || tr().focus_position, "text-text-dim",
+                                move || focus.with(|f| f.position.map(|v| v.to_string())).unwrap_or_else(dash))}
+                            {stat_tile(move || tr().focus_header_temperature, "text-text-dim",
+                                move || focus.with(|f| f.temperature.map(|v| format!("{v:.1}°C"))).unwrap_or_else(dash))}
+                            {stat_tile(move || tr().focus_stars, "text-text-dim",
+                                move || focus.with(|f| f.stars.as_ref().map(|s| s.stars.len().to_string())).unwrap_or_else(dash))}
+                        </div>
+
+                        // Autofocus + framing
+                        <div class=CARD>
                             <button
-                                class="absolute top-2 right-2 py-[3px] px-[10px] rounded-[12px] text-sm border border-current cursor-pointer bg-[rgba(6,6,15,0.7)]"
-                                style=move || format!(
-                                    "color:{};",
-                                    if show_stars.get() { "var(--accent-cyan)" } else { "var(--text-muted)" }
-                                )
-                                on:click=move |_| show_stars.update(|v| *v = !*v)
+                                class=move || if is_idle(&status.get()) {
+                                    "btn btn-primary w-full h-12 text-base"
+                                } else {
+                                    "btn btn-danger w-full h-12 text-base"
+                                }
+                                on:click=on_autofocus
                             >
-                                {move || tr().focus_stars_toggle}
+                                {move || if is_idle(&status.get()) {
+                                    format!("\u{25B6}\u{FE0E} {}", tr().focus_start)
+                                } else {
+                                    format!("\u{25A0} {}", tr().stop)
+                                }}
                             </button>
-                        </Show>
+                            <div class="grid grid-cols-3 gap-2">
+                                <button class="btn px-1 leading-tight" on:click=cmd("focus_capture")>
+                                    {move || tr().focus_capture_btn}
+                                </button>
+                                <button
+                                    class=move || if status.get() == "Framing" {
+                                        "btn px-1 leading-tight btn--active"
+                                    } else {
+                                        "btn px-1 leading-tight"
+                                    }
+                                    on:click=cmd("focus_loop")
+                                >
+                                    {move || tr().focus_loop_btn}
+                                </button>
+                                <button class="btn btn-ghost h-auto py-1 px-1 leading-tight" on:click=cmd("focus_reset")>
+                                    {move || tr().focus_reset_frame}
+                                </button>
+                            </div>
+                        </div>
+
+                        // Manual focuser moves
+                        <div class=CARD>
+                            <span class=CARD_TITLE>{move || tr().focus_manual_section}</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-sm text-text-muted">{move || tr().focus_step_label}</span>
+                                {STEP_PRESETS.into_iter().map(|n| view! {
+                                    <button
+                                        class=move || if step_size.get() == n {
+                                            format!("{CHIP} flex-1 btn--active")
+                                        } else {
+                                            format!("{CHIP} flex-1")
+                                        }
+                                        on:click=move |_| step_size.set(n)
+                                    >
+                                        {n.to_string()}
+                                    </button>
+                                }).collect::<Vec<_>>()}
+                                <input
+                                    type="number"
+                                    min="1"
+                                    inputmode="numeric"
+                                    class="input input--sm font-mono w-[72px] shrink-0 max-md:h-9"
+                                    prop:value=move || step_size.get().to_string()
+                                    on:input=move |ev| {
+                                        if let Ok(v) = event_target_value(&ev).trim().parse::<i64>() {
+                                            step_size.set(v.max(1));
+                                        }
+                                    }
+                                />
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <button class="btn h-12 text-base" on:click=cmd("focus_in")>{move || tr().focus_in_btn}</button>
+                                <button class="btn h-12 text-base" on:click=cmd("focus_out")>{move || tr().focus_out_btn}</button>
+                            </div>
+                        </div>
+
+                        <AberrationInspector focus=focus camera=camera send=send_ab.clone() />
                     </div>
-                    <div class="border-t border-border-base p-sp-2 bg-bg-input-deep grid grid-rows-[1fr_auto] min-h-0 gap-1">
-                        <canvas
-                            node_ref=canvas_ref
-                            class="block w-full h-full min-h-0"
-                        ></canvas>
-                        <div class="text-xs text-text-muted leading-tight line-clamp-2">
+
+                    // HFR V-curve — under the frame on md+. Title and caption
+                    // give way to the plot on short (landscape phone) screens.
+                    <div class=format!("{CARD} h-[220px] md:h-auto md:min-h-0 md:col-start-1 md:row-start-2")>
+                        <span class=format!("{CARD_TITLE} {SHORT_HIDDEN}")>{move || tr().focus_curve}</span>
+                        <div class="relative flex-1 min-h-0">
+                            <canvas node_ref=canvas_ref class="absolute inset-0 w-full h-full"></canvas>
+                        </div>
+                        <div class=format!("text-xs text-text-muted leading-tight line-clamp-2 {SHORT_HIDDEN}")>
                             {move || {
                                 let title = focus.with(|f| f.plot_title.clone());
                                 if title.is_empty() { tr().focus_chart_caption.to_string() } else { title }
@@ -857,208 +900,110 @@ pub fn FocusTab(
                         </div>
                     </div>
                 </div>
-
-                // Right — controls
-                <div class="flex flex-col min-h-0 overflow-y-auto py-sp-4 px-4 gap-4 max-[759px]:p-sp-3 max-[759px]:gap-sp-3 max-[759px]:pb-sp-6">
-
-                    // Actions
-                    <fieldset class=fieldset_cls>
-                        <legend class=legend_cls>{move || tr().focus_actions_section}</legend>
-                        <div class="grid grid-cols-2 gap-sp-2">
-                            <button on:click=on_start class="btn btn-primary">{move || tr().start}</button>
-                            <button on:click=on_stop  class="btn btn-danger">{move || tr().stop}</button>
-                            <button on:click=on_capture class=btn_action.clone()>{move || tr().focus_capture_btn}</button>
-                            <button on:click=on_loop    class=btn_action.clone()>{move || tr().focus_loop_btn}</button>
-                            <button on:click=on_reset class="btn btn-ghost col-span-2">
-                                {move || tr().focus_reset_frame}
-                            </button>
-                            <button
-                                class="btn btn-ghost col-span-2"
-                                on:click=move |_| settings_open.set(true)>
-                                {move || tr().guide_settings_button}
-                            </button>
-                            <AberrationInspector focus=focus camera=camera send=send_ab.clone() />
-                        </div>
-                    </fieldset>
-
-                    // Manual
-                    <fieldset class=fieldset_cls>
-                        <legend class=legend_cls>{move || tr().focus_manual_section}</legend>
-                        <div class="flex items-center gap-sp-2 mb-sp-2">
-                            <span class="text-sm text-text-blue">{move || tr().focus_step_label}</span>
-                            <input
-                                type="number"
-                                min="1"
-                                value=move || step_size.get().to_string()
-                                on:input=move |ev| {
-                                    let v: i64 = event_target_value(&ev).parse().unwrap_or(100);
-                                    step_size.set(v.max(1));
-                                }
-                                class="input input--sm flex-1 font-mono"
-                            />
-                        </div>
-                        <div class="grid grid-cols-2 gap-sp-2">
-                            <button on:click=on_in  class=btn_action_clone.clone()>{move || tr().focus_in_btn}</button>
-                            <button on:click=on_out class=btn_action_clone>{move || tr().focus_out_btn}</button>
-                        </div>
-                    </fieldset>
-
-                </div>
             </div>
 
-            // Fullscreen settings overlay (mirrors guide tab).
+            // Settings — bottom sheet on phones, floating panel on md+.
             <Show when=move || settings_open.get()>
-                <div
-                    class="fixed inset-0 md:right-[64px] z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
-                    on:click=move |_| settings_open.set(false)>
-                    <div
-                        class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col"
-                        on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()>
-                        <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
-                            <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
-                                {move || tr().focus_settings_section}
-                            </h2>
-                            <button
-                                class="btn btn-ghost"
-                                on:click=move |_| settings_open.set(false)>
-                                {move || tr().imaging_close}
-                            </button>
-                        </div>
-                        <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 flex flex-col gap-sp-2">
-                            {move || {
-                                let send = send_sv.get_value();
-                                let dispatch_setting = move |key: &'static str, value: serde_json::Value| {
-                                    ws_dispatch_setting(&send, "focus_set_all_settings", None, key, value);
-                                };
-                                let rows = settings_rows();
-                                if rows.is_empty() {
-                                    return view! {
-                                        <div class="text-[#555] text-sm">
-                                            {tr().focus_settings_not_loaded}
-                                        </div>
-                                    }.into_any();
-                                }
-                                rows.into_iter().map(|(key, kind, val)| {
-                                    let dispatch = dispatch_setting.clone();
-                                    let label = param_label(&key, tr());
-                                    render_setting_row(key, kind, val, label, dispatch)
-                                }).collect::<Vec<_>>().into_any()
-                            }}
-                        </div>
+                <div class="absolute inset-0 z-[70] bg-[rgba(2,4,10,0.6)]"
+                     on:click=move |_| settings_open.set(false)></div>
+                <div class="panel absolute z-[80] inset-x-0 bottom-0 max-h-[80dvh] rounded-b-none \
+                            pb-[max(0.75rem,env(safe-area-inset-bottom))] \
+                            md:inset-x-auto md:bottom-auto md:top-14 md:right-6 md:w-[380px] \
+                            md:max-h-[calc(100%-4.5rem)] md:rounded-lg md:pb-3 \
+                            overflow-y-auto [overscroll-behavior:contain] px-3 pt-2 flex flex-col gap-1 text-sm">
+                    <div class="flex items-center justify-between">
+                        <span class="font-semibold text-text-blue">{move || tr().focus_settings_section}</span>
+                        <button class="btn-icon" title=move || tr().info_close
+                                on:click=move |_| settings_open.set(false)>"\u{2716}"</button>
                     </div>
+                    {move || {
+                        let tr = tr();
+                        let send = send_sv.get_value();
+                        let rows: Vec<AnyView> = settings.with(|s| SETTINGS
+                            .iter()
+                            .filter_map(|&(key, label)| {
+                                s.get(key).map(|v| setting_row(key, label(tr), v.clone(), send.clone()))
+                            })
+                            .collect());
+                        if rows.is_empty() {
+                            view! {
+                                <div class="text-text-faint py-2">{tr.focus_settings_not_loaded}</div>
+                            }.into_any()
+                        } else {
+                            rows.into_any()
+                        }
+                    }}
                 </div>
             </Show>
         </div>
     }
 }
 
-fn render_setting_row(
-    key: String,
-    kind: String,
-    val: serde_json::Value,
-    label: &'static str,
-    dispatch: impl Fn(&'static str, serde_json::Value) + Clone + 'static,
-) -> leptos::prelude::AnyView {
-    // Find the static slice for the key so the dispatcher closure stays 'static.
-    let static_key: &'static str = KNOWN_SETTING_KEYS
-        .iter()
-        .find(|k| **k == key.as_str())
-        .copied()
-        .unwrap_or("");
+/// One readout tile: a small uppercase label over a mono value.
+fn stat_tile(
+    label: impl Fn() -> &'static str + Send + 'static,
+    value_cls: &'static str,
+    value: impl Fn() -> String + Send + 'static,
+) -> impl IntoView {
+    view! {
+        <div class="min-w-0 rounded-lg bg-bg-elev-1 border border-border-base px-2 py-1.5 flex flex-col">
+            <span class="text-xs uppercase tracking-[0.06em] text-text-muted truncate">{move || label()}</span>
+            <span class=format!("font-mono text-base md:text-lg leading-tight truncate {value_cls}")>
+                {move || value()}
+            </span>
+        </div>
+    }
+}
 
-    let display = match &val {
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => s.clone(),
+/// One settings row: label left, control right. The control follows the
+/// value's JSON type, except combo-box keys, which always get a `<select>`.
+fn setting_row(key: &'static str, label: &'static str, val: serde_json::Value, send: SendCmd) -> AnyView {
+    use serde_json::Value;
+    const INPUT: &str = "input input--sm font-mono w-[150px] shrink-0 max-md:h-9";
+    let set = move |v: Value| dispatch_setting(&send, "focus_set_all_settings", None, key, v);
+    let text = |v: &Value| match v {
+        Value::String(s) => s.clone(),
         other => other.to_string(),
     };
 
-    // Enum-valued keys (combo boxes in KStars) render as <select>, regardless
-    // of whether the current payload happened to type them as string/number.
-    let field = if let Some(opts) = enum_options_for(static_key) {
-        let d = dispatch.clone();
-        let current = display.clone();
-        let opts_vec: Vec<String> = {
-            let mut v: Vec<String> = opts.iter().map(|s| s.to_string()).collect();
-            if !current.is_empty() && !v.iter().any(|o| o == &current) {
-                v.insert(0, current.clone());
-            }
-            v
-        };
-        view! {
-            <select
-                class="input input--sm flex-1 font-mono"
-                prop:value=current.clone()
-                on:change=move |ev| {
-                    let s = ev.target()
-                        .and_then(|t| t.dyn_into::<web_sys::HtmlSelectElement>().ok())
-                        .map(|el| el.value())
-                        .unwrap_or_default();
-                    d(static_key, serde_json::Value::String(s));
-                }
-            >
-                {opts_vec.into_iter().map(|o| {
-                    let l = o.clone();
-                    view! { <option value=o>{l}</option> }
-                }).collect::<Vec<_>>()}
-            </select>
-        }.into_any()
-    } else { match kind.as_str() {
-        "bool" => {
-            let checked = val.as_bool().unwrap_or(false);
-            let d = dispatch.clone();
+    let field = match (enum_options_for(key), &val) {
+        (Some(opts), _) => {
+            let current = text(&val);
+            // Keep an unexpected current value selectable rather than drop it.
+            let extra = (!current.is_empty() && !opts.contains(&current.as_str())).then(|| current.clone());
+            let options = extra
+                .into_iter()
+                .chain(opts.iter().map(|o| o.to_string()))
+                .map(|o| view! { <option value=o.clone() selected={o == current}>{o.clone()}</option> })
+                .collect::<Vec<_>>();
             view! {
-                <input
-                    type="checkbox"
-                    checked=checked
-                    on:change=move |ev| {
-                        let on = event_target_checked(&ev);
-                        d(static_key, serde_json::Value::Bool(on));
-                    }
-                />
+                <select class=INPUT on:change=move |ev| set(Value::String(event_target_value(&ev)))>
+                    {options}
+                </select>
             }.into_any()
         }
-        "number" => {
-            let d = dispatch.clone();
-            view! {
-                <input
-                    type="number"
-                    value=display.clone()
-                    on:change=move |ev| {
-                        let s = event_target_value(&ev);
-                        if let Ok(n) = s.parse::<f64>() {
-                            if let Some(num) = serde_json::Number::from_f64(n) {
-                                d(static_key, serde_json::Value::Number(num));
-                            }
-                        }
-                    }
-                    class="input input--sm flex-1 font-mono"
-                />
-            }.into_any()
-        }
-        _ => {
-            let d = dispatch.clone();
-            view! {
-                <input
-                    type="text"
-                    value=display.clone()
-                    on:change=move |ev| {
-                        let s = event_target_value(&ev);
-                        d(static_key, serde_json::Value::String(s));
-                    }
-                    class="input input--sm flex-1 font-mono"
-                />
-            }.into_any()
-        }
-    } };
+        (None, Value::Bool(on)) => view! {
+            <input type="checkbox" class="w-5 h-5 min-h-0 shrink-0 accent-accent-cyan" checked=*on
+                   on:change=move |ev| set(Value::Bool(event_target_checked(&ev))) />
+        }.into_any(),
+        (None, Value::Number(n)) => view! {
+            <input type="number" step="any" class=INPUT value=n.to_string()
+                   on:change=move |ev| {
+                       let n = event_target_value(&ev).trim().parse::<f64>().ok()
+                           .and_then(serde_json::Number::from_f64);
+                       if let Some(n) = n { set(Value::Number(n)); }
+                   } />
+        }.into_any(),
+        (None, other) => view! {
+            <input type="text" class=INPUT value=text(other)
+                   on:change=move |ev| set(Value::String(event_target_value(&ev))) />
+        }.into_any(),
+    };
 
-    let title_key = key.clone();
     view! {
-        <div class="flex items-center gap-sp-2 text-sm max-[420px]:flex-col max-[420px]:items-stretch">
-            <span class="basis-[140px] grow-0 shrink-0 text-text-blue overflow-hidden text-ellipsis whitespace-nowrap max-[759px]:basis-[110px] max-[420px]:basis-auto" title=title_key>
-                {if label.is_empty() { key } else { label.to_string() }}
-            </span>
+        <label class="flex items-center justify-between gap-3 min-h-[40px]">
+            <span class="min-w-0 truncate text-text-blue" title=key>{label}</span>
             {field}
-        </div>
+        </label>
     }.into_any()
 }

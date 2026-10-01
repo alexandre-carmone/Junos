@@ -345,7 +345,7 @@ pub fn AberrationInspector(
 
     view! {
         <button
-            class="btn btn-ghost col-span-2 !border-accent-cyan text-accent-cyan"
+            class="btn btn-ghost w-full !border-accent-cyan text-accent-cyan"
             on:click=move |_| { phase.set(Phase::Config); outcome.set(None); status_msg.set(String::new()); open.set(true); }
         >
             {move || tr().ab_open_btn}
