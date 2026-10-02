@@ -13,7 +13,7 @@ mod esq;
 mod model;
 
 pub use esq::build_esq_xml;
-pub use model::SeqFrame;
+pub use model::{SeqFrame, fmt_duration};
 
 use leptos::prelude::*;
 
@@ -22,7 +22,6 @@ use crate::dom::event_target_value;
 use crate::i18n::{Lang, t};
 
 use card::JobCard;
-use model::fmt_duration;
 
 #[component]
 pub fn SequenceEditor(

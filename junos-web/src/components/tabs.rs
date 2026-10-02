@@ -2,7 +2,8 @@
 //!
 //! `TabContent` reads the active tab from `ActiveTabCtx` and renders the
 //! matching tab pane. SkyTab is kept mounted (display:none) so its WebGPU
-//! context survives tab switches; the others are mounted lazily via `<Show>`.
+//! context survives tab switches, and MosaicTab so its form survives the Pick
+//! on Sky round trip; the others are mounted lazily via `<Show>`.
 //!
 //! Each pane is `z-[40]` and stops `md:right-[64px]` short of the right edge,
 //! where the desktop tab strip lives (`z-[60]`). The pane's z-index traps any
@@ -160,18 +161,18 @@ pub fn TabContent(
                 <SchedulerTab scheduler=scheduler_snapshot camera=camera filter_wheel=filter_wheel send=Arc::clone(&send_scheduler) />
             </div>
         </Show>
-        <Show when=mosaic_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
-                <MosaicTab
-                    camera=camera
-                    filter_wheel=filter_wheel
-                    focal_length_mm=focal_length_mm
-                    home_dir=home_dir
-                    mosaic_tiles=store.mosaic_tiles
-                    send=Arc::clone(&send_mosaic)
-                />
-            </div>
-        </Show>
+        // Kept mounted too: a Pick on Sky round trip leaves this tab, and its
+        // sequence and scheduler options live in local signals.
+        <div class="absolute inset-0 z-[40] md:right-[64px]" class:hidden=move || !mosaic_visible()>
+            <MosaicTab
+                camera=camera
+                filter_wheel=filter_wheel
+                focal_length_mm=focal_length_mm
+                home_dir=home_dir
+                mosaic_tiles=store.mosaic_tiles
+                send=Arc::clone(&send_mosaic)
+            />
+        </div>
         <Show when=devices_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <DevicesTab

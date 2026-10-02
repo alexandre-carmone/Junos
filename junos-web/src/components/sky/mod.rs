@@ -50,6 +50,8 @@ use controls::SkyControls;
 use framing::FramingOverlay;
 
 pub use framing::FramingState;
+pub(crate) use actions::{fmt_dec, fmt_ra};
+pub(crate) use framing::mosaic_span_am;
 use render::{HitItem, MosaicPlanRender, MosaicTileRender, SchedulerJobRender};
 use render::layer::{Catalogs, Frame};
 use render::params::{LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
@@ -196,7 +198,6 @@ pub struct MosaicPlannerState {
     pub planning:       RwSignal<bool>,
     pub picking_center: RwSignal<bool>,  // true while "Pick on Sky" is active
     pub params:         MosaicParams,
-    pub dir:            RwSignal<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1064,6 +1065,21 @@ pub fn SkyTab(
         astro::altaz_to_eq(alt, az, lst, s.latitude)
     };
 
+    // Leaving the sky abandons a pending Mosaic "Pick on Sky".
+    if let Some(ctx) = tab_ctx {
+        Effect::new(move |_| {
+            if ctx.0.get() != Tab::Sky && planner.picking_center.get_untracked() {
+                planner.picking_center.set(false);
+            }
+        });
+    }
+    let cancel_pick = move |_| {
+        planner.picking_center.set(false);
+        if let Some(ctx) = tab_ctx {
+            ctx.0.set(Tab::Mosaic);
+        }
+    };
+
     // Click / tap: Mosaic "Pick on Sky", else open the card on the object
     // under the pointer (or close it on empty sky).
     let hit_items_for_tap = Rc::clone(&hit_items);
@@ -1282,9 +1298,13 @@ pub fn SkyTab(
             />
 
             // ── Mosaic center-pick banner ──────────────────────────────────
+            // Sits just under the top bar (mt-14 clears its 44 px row).
             {move || planner.picking_center.get().then(|| view! {
-                <div class="absolute top-[56px] left-1/2 -translate-x-1/2 z-[100] pointer-events-none py-2 px-[18px] bg-bg-banner border border-accent-cyan-dim text-accent-cyan font-mono text-md rounded-md whitespace-nowrap">
-                    {"Click on the sky to set mosaic center"}
+                <div class="absolute z-[100] top-[max(0.5rem,env(safe-area-inset-top))] mt-14 left-1/2 -translate-x-1/2 \
+                            w-max max-w-[calc(100%-1rem)] flex items-center gap-3 py-1.5 pl-4 pr-1.5 \
+                            bg-bg-banner border border-accent-cyan-dim text-accent-cyan text-sm rounded-md">
+                    <span class="min-w-0">{move || tr().mosaic_pick_hint}</span>
+                    <button class="btn btn--sm btn-ghost shrink-0" on:click=cancel_pick>{move || tr().cancel}</button>
                 </div>
             })}
 

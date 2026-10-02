@@ -66,13 +66,13 @@ fn goto_rade_msg(ra_deg_jnow: f64, dec_deg_jnow: f64) -> String {
 }
 
 /// "05h35m17.3s"
-fn fmt_ra(ra_deg: f64) -> String {
+pub(crate) fn fmt_ra(ra_deg: f64) -> String {
     let s = ra_deg.rem_euclid(360.0) / 15.0 * 3600.0;
     format!("{:02}h{:02}m{:04.1}s", (s / 3600.0) as u32, ((s % 3600.0) / 60.0) as u32, s % 60.0)
 }
 
 /// "+05°23'28\""
-fn fmt_dec(dec_deg: f64) -> String {
+pub(crate) fn fmt_dec(dec_deg: f64) -> String {
     let sign = if dec_deg < 0.0 { '-' } else { '+' };
     let s = (dec_deg.abs() * 3600.0).round() as u32;
     format!("{sign}{:02}\u{00b0}{:02}'{:02}\"", s / 3600, (s % 3600) / 60, s % 60)

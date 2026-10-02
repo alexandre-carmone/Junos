@@ -136,6 +136,8 @@ translations! {
     mosaic_picking, mosaic_repick, mosaic_pick_sky, mosaic_grid_label, mosaic_overlap_label, mosaic_pa_label, mosaic_cam_no_fov, mosaic_kstars_fov_note, mosaic_capture_seq,
     mosaic_filter_col, mosaic_exp_col, mosaic_count_col, mosaic_filter_placeholder, mosaic_add_filter, mosaic_step_track, mosaic_step_focus, mosaic_step_align,
     mosaic_step_guide, mosaic_output, mosaic_output_dir, mosaic_output_placeholder, mosaic_send_scheduler, mosaic_err_no_center, mosaic_err_no_frames, mosaic_err_no_fov, mosaic_scheduler_opts,
+    // Mosaic tab — redesigned layout, sky pick banner
+    mosaic_no_center, mosaic_clear_center, mosaic_pick_hint, mosaic_cols, mosaic_rows, mosaic_tile_unit, mosaic_tiles_unit,
     sched_title, sched_job_singular, sched_job_plural, sched_status_idle, sched_status_running, sched_status_paused, sched_status_unknown, sched_status_startup, sched_status_shutdown, sched_status_loading, sched_status_aborted, sched_state_idle,
     sched_state_evaluating, sched_state_scheduled, sched_state_active, sched_state_error, sched_state_aborted, sched_state_invalid, sched_state_complete, sched_stage_slewing,
     sched_stage_slew_done, sched_stage_focusing, sched_stage_focus_done, sched_stage_aligning, sched_stage_align_done, sched_stage_reslewing, sched_stage_reslew_done, sched_stage_post_focus,

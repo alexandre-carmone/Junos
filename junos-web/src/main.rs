@@ -265,7 +265,6 @@ fn App() -> impl IntoView {
             overlap: RwSignal::new(10.0f64),
             pa:      RwSignal::new(0.0f64),
         },
-        dir:            RwSignal::new(String::new()),
     };
     provide_context(MosaicPlannerCtx(mosaic_planner));
 

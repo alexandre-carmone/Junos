@@ -99,7 +99,7 @@ fn offscreen_canvas(px: u32) -> Option<(web_sys::HtmlCanvasElement, web_sys::Can
 
 /// Angular span (arcmin) of the whole mosaic bounding box, before rotation.
 /// Mirrors the offsets `derive_planner_mosaic_plan` computes.
-fn mosaic_span_am(
+pub(crate) fn mosaic_span_am(
     fov_w_deg: f64,
     fov_h_deg: f64,
     grid_w: u32,

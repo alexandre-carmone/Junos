@@ -1,75 +1,42 @@
-//! Dedicated Mosaic Planner tab.
+//! Mosaic Planner tab.
+//!
+//! Layout (phone-first, like Focus / Polar Align): a header, the cards in one
+//! scrolling column — Target, Grid (with a live tile diagram), Capture
+//! sequence, Scheduler — and a pinned footer with the tile count, the total
+//! capture time and Send to Scheduler. From `md` up the cards split into two
+//! columns.
 //!
 //! Workflow:
-//!   1. User clicks [Pick on Sky] → Sky tab activates with a pick-center banner.
-//!   2. User clicks the sky → center is set and this tab is restored.
-//!   3. User configures grid / overlap / PA and an inline capture sequence.
-//!   4. [Send to Scheduler] saves the ESQ file and imports all tiles as jobs.
+//!   1. [Pick on Sky] → the Sky tab shows a pick banner; tapping the sky sets
+//!      the center and brings this tab back. The tab stays mounted
+//!      (`tabs.rs`), so the sequence and options survive the round trip.
+//!   2. Set grid / overlap / PA (previewed live on the sky) and the capture
+//!      sequence shared by every tile.
+//!   3. [Send to Scheduler] saves the ESQ file and imports all tiles as jobs.
 
 use std::sync::Arc;
 
 use leptos::prelude::*;
 
 use crate::astro;
-use crate::components::branding::{JUNOS_LOGO_SVG, junos_header, section_card};
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
-use crate::components::sequence_editor::{SeqFrame, SequenceEditor, build_esq_xml};
+use crate::components::sequence_editor::{SeqFrame, SequenceEditor, build_esq_xml, fmt_duration};
+use crate::components::sky::{fmt_dec, fmt_ra, mosaic_span_am};
+use crate::components::tab_wheel_icons::tab_icon;
 use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{Lang, t};
 use crate::ws::SendCmd;
+use crate::ws_helpers::send_cmd;
 use crate::{ActiveTabCtx, MosaicPlannerCtx, Tab};
 
-fn send_cmd(send: &SendCmd, type_str: &str, payload: serde_json::Value) {
-    let msg = serde_json::json!({"type": type_str, "payload": payload}).to_string();
-    send(msg);
-}
-
-/// A labelled checkbox bound to a bool signal (startup flags, twilight/horizon).
-fn flag_toggle(
-    sig: RwSignal<bool>,
-    label: impl Fn() -> &'static str + Copy + Send + 'static,
-) -> impl IntoView {
-    view! {
-        <label class="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox"
-                   prop:checked=move || sig.get()
-                   on:change=move |ev| sig.set(event_target_checked(&ev)) />
-            {move || label()}
-        </label>
-    }
-}
-
-/// A checkbox that gates a numeric input with a `°` suffix (alt / moon
-/// constraints). `enabled` toggles the constraint; `value` holds its text.
-fn constraint_row(
-    enabled: RwSignal<bool>,
-    value: RwSignal<String>,
-    label: impl Fn() -> &'static str + Copy + Send + 'static,
-    min: &'static str,
-    max: &'static str,
-) -> impl IntoView {
-    view! {
-        <label class="text-sm flex items-center gap-1">
-            <input type="checkbox"
-                   prop:checked=move || enabled.get()
-                   on:change=move |ev| enabled.set(event_target_checked(&ev)) />
-            {move || label()}
-            <input type="number" min=min max=max step="1"
-                   class="input input--sm font-mono w-[56px]"
-                   prop:disabled=move || !enabled.get()
-                   prop:value=move || value.get()
-                   on:input=move |ev| value.set(event_target_value(&ev)) />
-            {"\u{00b0}"}
-        </label>
-    }
-}
-
-// Section header glyphs. 24×24 viewBox, `currentColor` so each inherits the
-// accent color of its card header. Style matches `tab_wheel_icons.rs`.
-const ICON_TARGET: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></svg>"##;
-const ICON_SEQUENCE: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="13" height="13" rx="2"/><path d="M16.5 4 L5 4 A1 1 0 0 0 4 5 L4 16.5"/></svg>"##;
-const ICON_CLOCK: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7 L12 12 L15.5 14"/></svg>"##;
-const ICON_FOLDER: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 L3 19 A1 1 0 0 0 4 20 L20 20 A1 1 0 0 0 21 19 L21 9 A1 1 0 0 0 20 8 L12 8 L10 5.5 L4 5.5 A1 1 0 0 0 3 6.5 Z"/></svg>"##;
+const CARD: &str = "panel p-3 flex flex-col gap-2";
+const CARD_TITLE: &str = "text-xs uppercase tracking-[0.06em] font-semibold text-text-muted";
+const ROW: &str = "flex items-center gap-2 min-h-[44px] md:min-h-9";
+const LABEL: &str = "min-w-0 truncate text-sm text-text-blue";
+const NUM: &str = "input input--sm font-mono w-[64px] shrink-0 text-right max-md:h-9";
+const SELECT: &str = "input input--sm w-[170px] shrink-0 max-md:h-9";
+const CHIP: &str = "chip h-9 md:h-7 px-3 justify-center cursor-pointer";
+const CHECK: &str = "w-5 h-5 min-h-0 shrink-0 accent-accent-cyan";
 
 fn sanitize_name(name: &str) -> String {
     name.chars()
@@ -99,6 +66,11 @@ fn fmt_dms(dec_deg: f64) -> String {
     format!("{}{:02} {:02} {:05.2}", sign, d, m, s)
 }
 
+/// Arcmin below 1°, degrees above: "52.1′", "2.41°".
+fn fmt_arc(am: f64) -> String {
+    if am < 60.0 { format!("{am:.1}\u{2032}") } else { format!("{:.2}\u{00b0}", am / 60.0) }
+}
+
 #[component]
 pub fn MosaicTab(
     #[prop(into)] camera: Signal<CameraSnapshot>,
@@ -114,11 +86,13 @@ pub fn MosaicTab(
     let planner = use_context::<MosaicPlannerCtx>()
         .expect("MosaicPlannerCtx not provided")
         .0;
+    let p = planner.params;
     let tab_ctx = use_context::<ActiveTabCtx>();
 
     // ── Sequence rows ──────────────────────────────────────────────────────
     let seq_frames: RwSignal<Vec<SeqFrame>> = RwSignal::new(vec![SeqFrame::default()]);
-    // Destination folder for captured .fits; defaults from CaptureDirCtx.
+    // Capture folder (defaults from CaptureDirCtx); also the base directory
+    // KStars puts each tile's folder under.
     let seq_fits_dir: RwSignal<String> = RwSignal::new(String::new());
 
     // ── Startup flags ──────────────────────────────────────────────────────
@@ -146,58 +120,60 @@ pub fn MosaicTab(
     let twilight     = RwSignal::new(true);
     let horizon      = RwSignal::new(true);
 
-    // ── Error display ──────────────────────────────────────────────────────
     let form_error: RwSignal<Option<String>> = RwSignal::new(None);
 
-    let send_s = Arc::clone(&send);
+    // Tile FOV in arcmin, once the scope focal length and CCD_INFO are known.
+    let tile_am = Memo::new(move |_| {
+        let cam = camera.get();
+        let (fl, px, sw, sh) =
+            (focal_length_mm.get()?, cam.pixel_size_um?, cam.sensor_width?, cam.sensor_height?);
+        Some((astro::fov_deg(fl, sw as f64, px) * 60.0, astro::fov_deg(fl, sh as f64, px) * 60.0))
+    });
+
+    // An error goes away once the inputs it was about change.
+    Effect::new(move |_| {
+        p.center.track();
+        seq_frames.track();
+        tile_am.track();
+        form_error.set(None);
+    });
 
     let on_pick_sky = move |_| {
         planner.picking_center.set(true);
         if let Some(ctx) = tab_ctx { ctx.0.set(Tab::Sky); }
     };
+    let clear_center = move |_| {
+        p.center.set(None);
+        planner.planning.set(false);
+    };
 
+    let send_s = Arc::clone(&send);
     let on_send = move |_| {
-        let Some((center_ra_deg, center_dec_deg)) = planner.params.center.get_untracked() else {
-            form_error.set(Some(t(lang.get_untracked()).mosaic_err_no_center.to_string()));
-            return;
+        let tr = t(lang.get_untracked());
+        let fail = |msg: &str| form_error.set(Some(msg.to_string()));
+        let Some((center_ra_deg, center_dec_deg)) = p.center.get_untracked() else {
+            return fail(tr.mosaic_err_no_center);
         };
-        let cam = camera.get_untracked();
-        let fl  = focal_length_mm.get_untracked();
-        let gw  = planner.params.grid_w.get_untracked();
-        let gh  = planner.params.grid_h.get_untracked();
-        let overlap = planner.params.overlap.get_untracked();
-        let pa  = planner.params.pa.get_untracked();
-        let target = planner.params.target.get_untracked();
-        let dir = planner.dir.get_untracked();
-        let home = home_dir.get_untracked();
-
-        let frames_raw = seq_frames.get_untracked();
-        let valid_frames: Vec<SeqFrame> = frames_raw.iter()
-            .filter(|f| f.duration_secs().is_some())
-            .cloned()
-            .collect();
+        let valid_frames: Vec<SeqFrame> =
+            seq_frames.with_untracked(|fs| fs.iter().filter(|f| f.is_valid()).cloned().collect());
         if valid_frames.is_empty() {
-            form_error.set(Some(t(lang.get_untracked()).mosaic_err_no_frames.to_string()));
-            return;
+            return fail(tr.mosaic_err_no_frames);
         }
-
-        let (fl_mm, px_um, sw, sh) = match (fl, cam.pixel_size_um, cam.sensor_width, cam.sensor_height) {
-            (Some(a), Some(b), Some(c), Some(d)) => (a, b, c, d),
-            _ => {
-                form_error.set(Some(t(lang.get_untracked()).mosaic_err_no_fov.to_string()));
-                return;
-            }
+        let Some((fov_w_arcmin, fov_h_arcmin)) = tile_am.get_untracked() else {
+            return fail(tr.mosaic_err_no_fov);
         };
+        let gw  = p.grid_w.get_untracked();
+        let gh  = p.grid_h.get_untracked();
+        let overlap = p.overlap.get_untracked();
+        let pa  = p.pa.get_untracked();
+        let target = p.target.get_untracked();
+        let home = home_dir.get_untracked();
 
         // Build Telescopius-format mosaic CSV for scheduler_import_mosaic.
         // KStars' parseMosaicCSV reads: Center row sets RA/DEC/PA/FOV/overlap;
         // tile rows are only counted for grid W×H (Row→W axis, Column→H axis).
-        let fov_w = astro::fov_deg(fl_mm, sw as f64, px_um);
-        let fov_h = astro::fov_deg(fl_mm, sh as f64, px_um);
-        let fov_w_arcmin = fov_w * 60.0;
-        let fov_h_arcmin = fov_h * 60.0;
-        // planner.params.center is JNow, but KStars' parseMosaicCSV reads the CSV
-        // RA/DEC into RA0/Dec0 (J2000) and precesses it forward again. Convert
+        // p.center is JNow, but KStars' parseMosaicCSV reads the CSV RA/DEC
+        // into RA0/Dec0 (J2000) and precesses it forward again. Convert
         // JNow→J2000 here so the round-trip lands on the intended position
         // instead of a doubly-precessed one (~0.4° off in 2026).
         let jd = astro::now_jd();
@@ -235,23 +211,18 @@ pub fn MosaicTab(
             format!("{}/.junos-sequences/{}.esq", home, safe_name)
         };
 
-        // Base capture directory (Output field → sequence destination → home).
-        // Each tile job KStars generates is named `<safe_name>-Part_<N>`, and the
-        // `%T` placeholder resolves to that job name at capture time, so the
-        // frames land under `<base>/<safe_name>-Part_<N>/...`. We therefore leave
-        // the base bare here (no `safe_name`) and let `%T` supply the per-tile
+        // Base capture directory (sequence destination → home). Each tile job
+        // KStars generates is named `<safe_name>-Part_<N>`, and the `%T`
+        // placeholder resolves to that job name at capture time, so the frames
+        // land under `<base>/<safe_name>-Part_<N>/...`. We therefore leave the
+        // base bare here (no `safe_name`) and let `%T` supply the per-tile
         // leaf folder.
         let import_base = {
-            let d = dir.trim();
-            if !d.is_empty() {
-                d.to_string()
-            } else {
-                let fits = seq_fits_dir.get_untracked();
-                let fits = fits.trim();
-                if !fits.is_empty() { fits.to_string() } else { home.clone() }
-            }
+            let fits = seq_fits_dir.get_untracked();
+            let fits = fits.trim();
+            if fits.is_empty() { home.clone() } else { fits.to_string() }
         };
-        let import_base = import_base.trim().trim_end_matches('/').to_string();
+        let import_base = import_base.trim_end_matches('/').to_string();
         // Emit a non-empty <TargetName> so KStars' createJobSequence rewrites it
         // per tile to `<safe_name>-Part_<N>`; the `%T` placeholder then resolves
         // to that job name at capture time. Leaving it empty drops the element,
@@ -267,8 +238,7 @@ pub fn MosaicTab(
             serde_json::json!({"path": rel_path, "filedata": xml}));
 
         // Resolve start-condition & completion-condition fields.
-        let sc = startup_cond.get_untracked();
-        let (asap_r, start_time_r, start_time_val) = if sc == "at" {
+        let (asap_r, start_time_r, start_time_val) = if startup_cond.get_untracked() == "at" {
             (false, true, startup_at.get_untracked())
         } else {
             (true, false, String::new())
@@ -327,275 +297,318 @@ pub fn MosaicTab(
         });
     };
 
-    const INPUT_BASE: &str = "input input--sm font-mono";
-    const PARAM_LABEL: &str = "text-sm flex items-center gap-1";
-    const TARGET_LABEL: &str = "text-sm flex items-center gap-[6px] flex-1 min-w-[200px]";
+    // "9 tiles · 10 h 48 min" — every tile runs the whole sequence. On a
+    // narrow footer it may only wrap at the "·" (non-breaking spaces).
+    let summary = move || {
+        let tr = tr();
+        let n = p.grid_w.get() * p.grid_h.get();
+        let secs: f64 = seq_frames.with(|fs| fs.iter().filter_map(SeqFrame::duration_secs).sum());
+        let unit = if n == 1 { tr.mosaic_tile_unit } else { tr.mosaic_tiles_unit };
+        let tiles = format!("{n}\u{00a0}{unit}");
+        if secs > 0.0 {
+            format!("{tiles} \u{00b7} {}", fmt_duration(secs * n as f64).replace(' ', "\u{00a0}"))
+        } else {
+            tiles
+        }
+    };
+
+    // Tile / total field and the equipment they come from. KStars'
+    // parseMosaicCSV ignores the FOV columns we send: its framing assistant
+    // spaces tiles from its own persisted equipment, so show ours to
+    // cross-check, plus the note on how to resync KStars.
+    let fov_info = move || {
+        let tr = tr();
+        let cam = camera.get();
+        let (Some((fw, fh)), Some(fl), Some(px), Some(sw), Some(sh)) = (
+            tile_am.get(), focal_length_mm.get(),
+            cam.pixel_size_um, cam.sensor_width, cam.sensor_height,
+        ) else {
+            return view! { <div class="text-xs text-state-warn">{tr.mosaic_cam_no_fov}</div> }.into_any();
+        };
+        let (tw, th) = mosaic_span_am(fw / 60.0, fh / 60.0, p.grid_w.get(), p.grid_h.get(), p.overlap.get());
+        view! {
+            <div class="flex flex-col gap-1 pt-2 border-t border-border-base">
+                <div class="flex flex-wrap gap-x-4 font-mono text-sm text-text-dim">
+                    <span>{format!("{} {} \u{00d7} {}", tr.framing_tile_fov, fmt_arc(fw), fmt_arc(fh))}</span>
+                    <span>{format!("{} {} \u{00d7} {}", tr.framing_total_fov, fmt_arc(tw), fmt_arc(th))}</span>
+                </div>
+                <span class="font-mono text-xs text-text-muted">
+                    {format!("FL {fl:.0} mm \u{00b7} {sw}\u{00d7}{sh} px @ {px:.2} \u{00b5}m")}
+                </span>
+                <span class="text-xs text-text-faint leading-snug">{tr.mosaic_kstars_fov_note}</span>
+            </div>
+        }.into_any()
+    };
 
     view! {
-        <div class="absolute inset-0 overflow-y-auto bg-bg text-text font-mono p-4 box-border">
-        <div class="max-w-[680px] mx-auto flex flex-col gap-4">
-
-            // ── Branded header ──────────────────────────────────────────────
-            <div class="pb-1">
-                {junos_header(JUNOS_LOGO_SVG, move || tr().mosaic_planner_title.to_string())}
+        <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
+            // Header
+            <div class="shrink-0 flex items-center gap-2 min-h-[48px] px-3 md:pl-4 md:pr-6 pb-1.5 \
+                        pt-[max(0.375rem,env(safe-area-inset-top))] border-b border-border-base bg-bg-elev-1">
+                <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Mosaic)></span>
+                <span class="min-w-0 truncate font-semibold text-text-blue-bright">{move || tr().mosaic_planner_title}</span>
             </div>
 
-            // ── Target & Field ───────────────────────────────────────────────
-            {section_card("text-accent-cyan", "bg-accent-cyan", ICON_TARGET,
-                move || tr().mosaic_target_field, view! {
-
-                // Target name + Pick on Sky button
-                <div class="flex items-center gap-2 flex-wrap">
-                    <label class=TARGET_LABEL>
-                        {move || tr().mosaic_target_label}
-                        <input type="text"
-                               class=format!("{INPUT_BASE} flex-1")
-                               placeholder=move || tr().mosaic_target_placeholder
-                               prop:value=move || planner.params.target.get()
-                               on:input=move |ev| planner.params.target.set(event_target_value(&ev)) />
-                    </label>
-                    <button
-                        class=move || {
-                            let base = "btn btn--sm whitespace-nowrap";
-                            if planner.picking_center.get() {
-                                format!("{base} btn--active")
-                            } else {
-                                format!("{base} btn-primary")
-                            }
-                        }
-                        on:click=on_pick_sky>
-                        {move || {
-                            if planner.picking_center.get() {
-                                tr().mosaic_picking
-                            } else if planner.params.center.get().is_some() {
-                                tr().mosaic_repick
-                            } else {
-                                tr().mosaic_pick_sky
-                            }
-                        }}
-                    </button>
-                </div>
-
-                // Center display
-                {move || planner.params.center.get().map(|(ra_deg, dec_deg)| {
-                    let ra_h = ra_deg / 15.0;
-                    let rah  = ra_h as u32;
-                    let ram  = ((ra_h - rah as f64) * 60.0).abs() as u32;
-                    let dec_s = if dec_deg < 0.0 { "\u{2212}" } else { "+" };
-                    let dec_abs = dec_deg.abs();
-                    let decd = dec_abs as u32;
-                    let decm = ((dec_abs - decd as f64) * 60.0) as u32;
-                    view! {
-                        <div class="text-sm text-text-blue py-[2px]">
-                            {format!("Center: {:02}h {:02}m  {}{}\u{00b0} {:02}\u{2019}",
-                                     rah, ram, dec_s, decd, decm)}
+            // Cards — one column on phones, two from md.
+            <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 md:pl-4 md:pr-6">
+                <div class="max-w-[1100px] mx-auto grid gap-3 md:grid-cols-2 md:items-start">
+                    <div class="min-w-0 flex flex-col gap-3">
+                        // Target: name, center, pick on sky.
+                        <div class=CARD>
+                            <span class=CARD_TITLE>{move || tr().mosaic_target_label}</span>
+                            <input type="text" class="input w-full min-w-0"
+                                   placeholder=move || tr().mosaic_target_placeholder
+                                   prop:value=move || p.target.get()
+                                   on:input=move |ev| p.target.set(event_target_value(&ev)) />
+                            <div class=ROW>
+                                {move || match p.center.get() {
+                                    Some((ra, dec)) => view! {
+                                        <span class="flex-1 min-w-0 truncate font-mono text-sm text-text-blue">
+                                            {format!("{}  {}", fmt_ra(ra), fmt_dec(dec))}
+                                        </span>
+                                        <button class="btn-icon shrink-0 text-text-muted"
+                                                title=tr().mosaic_clear_center
+                                                on:click=clear_center>"\u{2716}"</button>
+                                    }.into_any(),
+                                    None => view! {
+                                        <span class="flex-1 text-sm text-text-faint">{tr().mosaic_no_center}</span>
+                                    }.into_any(),
+                                }}
+                            </div>
+                            <button
+                                class=move || if p.center.get().is_some() {
+                                    "btn btn-ghost w-full h-11"
+                                } else {
+                                    "btn btn-primary w-full h-11"
+                                }
+                                on:click=on_pick_sky>
+                                {move || if p.center.get().is_some() { tr().mosaic_repick } else { tr().mosaic_pick_sky }}
+                            </button>
                         </div>
-                    }
-                })}
 
-                // Grid + Overlap + PA
-                <div class="flex items-center gap-[14px] flex-wrap">
-                    <label class=PARAM_LABEL>
-                        {move || tr().mosaic_grid_label}
-                        <input type="number" min="1" max="10"
-                               class=format!("{INPUT_BASE} w-[44px] text-center")
-                               prop:value=move || planner.params.grid_w.get().to_string()
-                               on:input=move |ev| {
-                                   if let Ok(n) = event_target_value(&ev).parse::<u32>() {
-                                       planner.params.grid_w.set(n.clamp(1, 10));
-                                   }
-                               } />
-                        {"\u{00d7}"}
-                        <input type="number" min="1" max="10"
-                               class=format!("{INPUT_BASE} w-[44px] text-center")
-                               prop:value=move || planner.params.grid_h.get().to_string()
-                               on:input=move |ev| {
-                                   if let Ok(n) = event_target_value(&ev).parse::<u32>() {
-                                       planner.params.grid_h.set(n.clamp(1, 10));
-                                   }
-                               } />
-                    </label>
-                    <label class=PARAM_LABEL>
-                        {move || tr().mosaic_overlap_label}
-                        <input type="number" min="0" max="50" step="1"
-                               class=format!("{INPUT_BASE} w-[50px]")
-                               prop:value=move || format!("{:.0}", planner.params.overlap.get())
-                               on:input=move |ev| {
-                                   if let Ok(n) = event_target_value(&ev).parse::<f64>() {
-                                       planner.params.overlap.set(n.clamp(0.0, 50.0));
-                                   }
-                               } />
-                        {"%"}
-                    </label>
-                    <label class=PARAM_LABEL>
-                        {move || tr().mosaic_pa_label}
-                        <input type="number" min="-180" max="180" step="1"
-                               class=format!("{INPUT_BASE} w-[56px]")
-                               prop:value=move || format!("{:.0}", planner.params.pa.get())
-                               on:input=move |ev| {
-                                   if let Ok(n) = event_target_value(&ev).parse::<f64>() {
-                                       planner.params.pa.set(n);
-                                   }
-                               } />
-                        {"\u{00b0}"}
-                    </label>
-                </div>
-
-                // FOV hint from camera + KStars persisted-equipment caveat.
-                // KStars' parseMosaicCSV ignores the FOV columns we send; the
-                // framing assistant computes spacing from its own persisted
-                // focal length/pixel size/sensor size. Surface our values so
-                // the user can cross-check, and warn about the mismatch path.
-                {move || {
-                    let cam = camera.get();
-                    let fl  = focal_length_mm.get();
-                    let no_fov_msg = tr().mosaic_cam_no_fov.to_string();
-                    let kstars_note = tr().mosaic_kstars_fov_note.to_string();
-                    if let (Some(fl_mm), Some(px_um), Some(sw), Some(sh)) =
-                        (fl, cam.pixel_size_um, cam.sensor_width, cam.sensor_height)
-                    {
-                        let fw = astro::fov_deg(fl_mm, sw as f64, px_um) * 60.0;
-                        let fh = astro::fov_deg(fl_mm, sh as f64, px_um) * 60.0;
-                        let gw = planner.params.grid_w.get() as f64;
-                        let gh = planner.params.grid_h.get() as f64;
-                        view! {
-                            <div class="flex flex-col gap-[2px] py-[2px]">
-                                <div class="text-sm text-text-muted">
-                                    {format!("Tile: {fw:.1}\u{2019}\u{00d7}{fh:.1}\u{2019}   \
-                                              Full field: {:.0}\u{2019}\u{00d7}{:.0}\u{2019}",
-                                              fw * gw, fh * gh)}
-                                </div>
-                                <div class="text-sm text-text-muted">
-                                    {format!("FL {fl_mm:.0} mm  \u{00b7}  Sensor {sw}\u{00d7}{sh} px @ {px_um:.2} \u{00b5}m")}
-                                </div>
-                                <div class="text-[12px] text-text-faint leading-snug">
-                                    {kstars_note}
-                                </div>
+                        // Grid: live diagram, size, overlap, PA, field.
+                        <div class=CARD>
+                            <span class=CARD_TITLE>{move || tr().mosaic_grid_label}</span>
+                            <div class="relative h-40 md:h-48 p-2 rounded-md bg-bg-input-deep border border-border-base">
+                                {move || tile_diagram(tile_am.get(), p.grid_w.get(), p.grid_h.get(), p.overlap.get(), p.pa.get())}
+                                <span class="absolute top-1.5 left-2 font-mono text-[10px] text-text-faint">
+                                    "N \u{2191}  E \u{2190}"
+                                </span>
                             </div>
-                        }.into_any()
-                    } else {
-                        view! {
-                            <div class="text-sm text-text-faint py-[2px]">
-                                {no_fov_msg}
+                            {stepper(move || tr().mosaic_cols, p.grid_w)}
+                            {stepper(move || tr().mosaic_rows, p.grid_h)}
+                            {slider_row(move || tr().mosaic_overlap_label, p.overlap, 0.0, 50.0, "%")}
+                            {slider_row(move || tr().mosaic_pa_label, p.pa, -180.0, 180.0, "\u{00b0}")}
+                            {fov_info}
+                        </div>
+                    </div>
+
+                    <div class="min-w-0 flex flex-col gap-3">
+                        // Capture sequence, run on every tile.
+                        <div class=CARD>
+                            <span class=CARD_TITLE>{move || tr().mosaic_capture_seq}</span>
+                            <SequenceEditor frames=seq_frames fits_dir=seq_fits_dir camera=camera filter_wheel=filter_wheel />
+                            <span class=format!("{CARD_TITLE} pt-1")>{move || tr().sched_steps_legend}</span>
+                            <div class="flex flex-wrap gap-1.5">
+                                {toggle_chip(step_track, move || tr().mosaic_step_track)}
+                                {toggle_chip(step_focus, move || tr().mosaic_step_focus)}
+                                {toggle_chip(step_align, move || tr().mosaic_step_align)}
+                                {toggle_chip(step_guide, move || tr().mosaic_step_guide)}
                             </div>
-                        }.into_any()
-                    }
-                }}
-            })}
+                        </div>
 
-            // ── Capture Sequence ─────────────────────────────────────────────
-            {section_card("text-accent-violet", "bg-accent-violet", ICON_SEQUENCE,
-                move || tr().mosaic_capture_seq, view! {
-                <SequenceEditor frames=seq_frames fits_dir=seq_fits_dir camera=camera filter_wheel=filter_wheel />
+                        // Scheduler options, copied into every tile job.
+                        <div class=CARD>
+                            <span class=CARD_TITLE>{move || tr().mosaic_scheduler_opts}</span>
+                            {setting_row(move || tr().sched_start_when, view! {
+                                <select class=SELECT on:change=move |ev| startup_cond.set(event_target_value(&ev))>
+                                    <option value="asap" selected=move || startup_cond.get() == "asap">
+                                        {move || tr().sched_cond_asap}
+                                    </option>
+                                    <option value="at" selected=move || startup_cond.get() == "at">
+                                        {move || tr().sched_cond_at_time}
+                                    </option>
+                                </select>
+                            })}
+                            <Show when=move || startup_cond.get() == "at">
+                                <input type="datetime-local" class="input w-full min-w-0 font-mono"
+                                       prop:value=move || startup_at.get()
+                                       on:input=move |ev| startup_at.set(event_target_value(&ev)) />
+                            </Show>
+                            {setting_row(move || tr().sched_complete_when, view! {
+                                <select class=SELECT on:change=move |ev| completion_cond.set(event_target_value(&ev))>
+                                    <option value="sequence" selected=move || completion_cond.get() == "sequence">
+                                        {move || tr().sched_cond_seq}
+                                    </option>
+                                    <option value="repeat" selected=move || completion_cond.get() == "repeat">
+                                        {move || tr().sched_cond_repeat}
+                                    </option>
+                                    <option value="loop" selected=move || completion_cond.get() == "loop">
+                                        {move || tr().sched_cond_loop}
+                                    </option>
+                                </select>
+                            })}
+                            <Show when=move || completion_cond.get() == "repeat">
+                                <div class=format!("{ROW} justify-end")>
+                                    <input type="number" min="1" step="1" inputmode="numeric" class=NUM
+                                           prop:value=move || completion_count.get()
+                                           on:input=move |ev| completion_count.set(event_target_value(&ev)) />
+                                    <span class="text-sm text-text-muted">{move || tr().sched_times_unit}</span>
+                                </div>
+                            </Show>
 
-                // Startup flags
-                <div class="flex gap-4 flex-wrap text-sm pt-1">
-                    {flag_toggle(step_track, move || tr().mosaic_step_track)}
-                    {flag_toggle(step_focus, move || tr().mosaic_step_focus)}
-                    {flag_toggle(step_align, move || tr().mosaic_step_align)}
-                    {flag_toggle(step_guide, move || tr().mosaic_step_guide)}
+                            <span class=format!("{CARD_TITLE} pt-1")>{move || tr().sched_constraints_legend}</span>
+                            {constraint_row(use_alt,      min_alt,      move || tr().sched_min_alt,      "90")}
+                            {constraint_row(use_moon,     min_moon,     move || tr().sched_moon_sep,     "180")}
+                            {constraint_row(use_moon_alt, moon_max_alt, move || tr().sched_moon_max_alt, "90")}
+                            <div class="flex flex-wrap gap-1.5 pt-1">
+                                {toggle_chip(twilight, move || tr().sched_twilight)}
+                                {toggle_chip(horizon, move || tr().sched_horizon)}
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            })}
+            </div>
 
-            // ── Scheduler options ────────────────────────────────────────────
-            {section_card("text-accent-amber", "bg-accent-amber", ICON_CLOCK,
-                move || tr().mosaic_scheduler_opts, view! {
-
-                // Start when
-                <div class="flex items-center gap-[14px] flex-wrap">
-                    <label class=PARAM_LABEL>
-                        {move || tr().sched_start_when}
-                        <select class=format!("{INPUT_BASE} w-[140px]")
-                                prop:value=move || startup_cond.get()
-                                on:change=move |ev| startup_cond.set(event_target_value(&ev))>
-                            <option value="asap" selected=move || startup_cond.get() == "asap">
-                                {move || tr().sched_cond_asap}
-                            </option>
-                            <option value="at" selected=move || startup_cond.get() == "at">
-                                {move || tr().sched_cond_at_time}
-                            </option>
-                        </select>
-                    </label>
-                    {move || (startup_cond.get() == "at").then(|| view! {
-                        <input type="datetime-local"
-                               class=format!("{INPUT_BASE} w-[200px]")
-                               prop:value=move || startup_at.get()
-                               on:input=move |ev| startup_at.set(event_target_value(&ev)) />
-                    })}
+            // Footer: summary (or the last error) and the send button.
+            <div class="shrink-0 flex items-center gap-3 px-3 md:pl-4 md:pr-6 pt-2 \
+                        pb-[max(0.5rem,env(safe-area-inset-bottom))] border-t border-border-base bg-bg-elev-1">
+                <div class="flex-1 min-w-0 text-sm leading-snug">
+                    {move || match form_error.get() {
+                        Some(e) => view! { <span class="text-state-err">{e}</span> }.into_any(),
+                        None => view! { <span class="font-mono text-text-muted">{summary()}</span> }.into_any(),
+                    }}
                 </div>
-
-                // Complete when
-                <div class="flex items-center gap-[14px] flex-wrap">
-                    <label class=PARAM_LABEL>
-                        {move || tr().sched_complete_when}
-                        <select class=format!("{INPUT_BASE} w-[160px]")
-                                prop:value=move || completion_cond.get()
-                                on:change=move |ev| completion_cond.set(event_target_value(&ev))>
-                            <option value="sequence" selected=move || completion_cond.get() == "sequence">
-                                {move || tr().sched_cond_seq}
-                            </option>
-                            <option value="repeat" selected=move || completion_cond.get() == "repeat">
-                                {move || tr().sched_cond_repeat}
-                            </option>
-                            <option value="loop" selected=move || completion_cond.get() == "loop">
-                                {move || tr().sched_cond_loop}
-                            </option>
-                        </select>
-                    </label>
-                    {move || (completion_cond.get() == "repeat").then(|| view! {
-                        <label class=PARAM_LABEL>
-                            <input type="number" min="1" step="1"
-                                   class=format!("{INPUT_BASE} w-[60px]")
-                                   prop:value=move || completion_count.get()
-                                   on:input=move |ev| completion_count.set(event_target_value(&ev)) />
-                            {move || tr().sched_times_unit}
-                        </label>
-                    })}
-                </div>
-
-                // Constraints
-                <div class="flex items-center gap-[14px] flex-wrap">
-                    {constraint_row(use_alt,      min_alt,      move || tr().sched_min_alt,      "0", "90")}
-                    {constraint_row(use_moon,     min_moon,     move || tr().sched_moon_sep,     "0", "180")}
-                    {constraint_row(use_moon_alt, moon_max_alt, move || tr().sched_moon_max_alt, "0", "90")}
-                </div>
-
-                // Constraints (toggles)
-                <div class="flex items-center gap-4 flex-wrap text-sm">
-                    {flag_toggle(twilight, move || tr().sched_twilight)}
-                    {flag_toggle(horizon, move || tr().sched_horizon)}
-                </div>
-            })}
-
-            // ── Output dir ────────────────────────────────────────────────────
-            {section_card("text-accent-green", "bg-accent-green", ICON_FOLDER,
-                move || tr().mosaic_output, view! {
-                <label class=TARGET_LABEL>
-                    {move || tr().mosaic_output_dir}
-                    <input type="text"
-                           class=format!("{INPUT_BASE} flex-1")
-                           placeholder=move || tr().mosaic_output_placeholder
-                           prop:value=move || planner.dir.get()
-                           on:input=move |ev| planner.dir.set(event_target_value(&ev)) />
-                </label>
-            })}
-
-            // ── Error ──────────────────────────────────────────────────────────
-            {move || form_error.get().map(|e| view! {
-                <div class="text-state-err text-sm py-1">{e}</div>
-            })}
-
-            // ── Send button ────────────────────────────────────────────────────
-            <div class="flex justify-end pb-6">
-                <button
-                    class="btn btn-primary px-7 font-bold"
-                    disabled=move || planner.params.center.get().is_none()
-                    on:click=on_send>
+                <button class="btn btn-primary shrink-0 h-11 px-5 font-semibold"
+                        disabled=move || p.center.get().is_none()
+                        on:click=on_send>
                     {move || tr().mosaic_send_scheduler}
                 </button>
             </div>
+        </div>
+    }
+}
 
+/// One row: label left, control right.
+fn setting_row(
+    label: impl Fn() -> &'static str + Send + 'static,
+    control: impl IntoView,
+) -> impl IntoView {
+    view! {
+        <div class=ROW>
+            <span class=format!("{LABEL} flex-1")>{move || label()}</span>
+            {control}
         </div>
+    }
+}
+
+/// − n + stepper for a grid dimension (1–10).
+fn stepper(label: impl Fn() -> &'static str + Send + 'static, n: RwSignal<u32>) -> impl IntoView {
+    view! {
+        <div class=ROW>
+            <span class=format!("{LABEL} flex-1")>{move || label()}</span>
+            <button type="button" class="btn-icon" disabled=move || { n.get() <= 1 }
+                    on:click=move |_| n.update(|v| *v = v.saturating_sub(1).max(1))>"\u{2212}"</button>
+            <span class="w-7 text-center font-mono text-base">{move || n.get()}</span>
+            <button type="button" class="btn-icon" disabled=move || { n.get() >= 10 }
+                    on:click=move |_| n.update(|v| *v = (*v + 1).min(10))>"+"</button>
         </div>
+    }
+}
+
+/// Label · slider · number input, both bound to one value (overlap %, PA °).
+fn slider_row(
+    label: impl Fn() -> &'static str + Send + 'static,
+    v: RwSignal<f64>,
+    min: f64,
+    max: f64,
+    unit: &'static str,
+) -> impl IntoView {
+    let set = move |ev: web_sys::Event| {
+        if let Ok(x) = event_target_value(&ev).parse::<f64>() {
+            v.set(x.clamp(min, max));
+        }
+    };
+    view! {
+        <div class=ROW>
+            <span class=format!("{LABEL} w-24 shrink-0")>{move || label()}</span>
+            <input type="range" min=min.to_string() max=max.to_string() step="1"
+                   class="flex-1 min-w-0 accent-accent-cyan"
+                   prop:value=move || v.get().to_string()
+                   on:input=set />
+            <input type="number" min=min.to_string() max=max.to_string() step="1" class=NUM
+                   prop:value=move || format!("{:.0}", v.get())
+                   on:input=set />
+            <span class="w-3 text-sm text-text-muted">{unit}</span>
+        </div>
+    }
+}
+
+/// A checkbox-gated degree value (min altitude, moon separation / altitude).
+fn constraint_row(
+    on: RwSignal<bool>,
+    value: RwSignal<String>,
+    label: impl Fn() -> &'static str + Send + 'static,
+    max: &'static str,
+) -> impl IntoView {
+    view! {
+        <div class=ROW>
+            <label class="flex-1 min-w-0 flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" class=CHECK
+                       prop:checked=move || on.get()
+                       on:change=move |ev| on.set(event_target_checked(&ev)) />
+                <span class=LABEL>{move || label()}</span>
+            </label>
+            <input type="number" min="0" max=max step="1" inputmode="numeric" class=NUM
+                   prop:disabled=move || !on.get()
+                   prop:value=move || value.get()
+                   on:input=move |ev| value.set(event_target_value(&ev)) />
+            <span class="w-3 text-sm text-text-muted">"\u{00b0}"</span>
+        </div>
+    }
+}
+
+/// A pill that toggles a bool (startup steps, twilight / horizon).
+fn toggle_chip(on: RwSignal<bool>, label: impl Fn() -> &'static str + Send + 'static) -> impl IntoView {
+    view! {
+        <button type="button"
+                class=move || if on.get() { format!("{CHIP} btn--active") } else { CHIP.to_string() }
+                aria-pressed=move || on.get().to_string()
+                on:click=move |_| on.update(|v| *v = !*v)>
+            {move || label()}
+        </button>
+    }
+}
+
+/// Schematic tile layout, north up and east left: one translucent rectangle
+/// per tile (overlaps read brighter), rotated by PA (east of north, so
+/// counter-clockwise on screen). `tile_am` is the tile size in arcmin; a 3:2
+/// placeholder stands in until the camera FOV is known.
+fn tile_diagram(tile_am: Option<(f64, f64)>, gw: u32, gh: u32, overlap: f64, pa: f64) -> impl IntoView {
+    let (fw, fh) = tile_am.unwrap_or((3.0, 2.0));
+    let (w, h) = mosaic_span_am(fw / 60.0, fh / 60.0, gw, gh, overlap);
+    let (dx, dy) = (fw * (1.0 - overlap / 100.0), fh * (1.0 - overlap / 100.0));
+    // Bounding box of the rotated mosaic, with a margin.
+    let (s, c) = pa.to_radians().sin_cos();
+    let bw = (w * c.abs() + h * s.abs()) * 1.08;
+    let bh = (w * s.abs() + h * c.abs()) * 1.08;
+    let tiles = (0..gw)
+        .flat_map(|i| (0..gh).map(move |j| (i, j)))
+        .map(|(i, j)| view! {
+            <rect x=format!("{:.3}", -w / 2.0 + i as f64 * dx)
+                  y=format!("{:.3}", -h / 2.0 + j as f64 * dy)
+                  width=format!("{fw:.3}") height=format!("{fh:.3}")
+                  vector-effect="non-scaling-stroke" />
+        })
+        .collect::<Vec<_>>();
+    view! {
+        <svg viewBox=format!("{:.3} {:.3} {:.3} {:.3}", -bw / 2.0, -bh / 2.0, bw, bh)
+             class="block w-full h-full">
+            <g transform=format!("rotate({:.1})", -pa)
+               fill="var(--accent-cyan)" fill-opacity="0.12"
+               stroke="var(--accent-cyan)" stroke-width="1.2">
+                {tiles}
+            </g>
+        </svg>
     }
 }
