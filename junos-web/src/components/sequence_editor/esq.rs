@@ -63,7 +63,10 @@ pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame], target
         if !job_name.is_empty() {
             xml.push_str(&format!("<TargetName>{job_name}</TargetName>\n"));
         }
-        xml.push_str("<GuideDitherPerJob>-1</GuideDitherPerJob>\n");
+        // -1 would disable dithering for the job outright, overriding the Guide
+        // module's "Enable dithering" (camerastate.cpp checkDithering). 0 keeps
+        // it on and falls back to the global DitherFrames — KStars' own default.
+        xml.push_str("<GuideDitherPerJob>0</GuideDitherPerJob>\n");
         xml.push_str(&format!("<FITSDirectory>{fits_dir}</FITSDirectory>\n"));
         // %t = target name (per-tile job name for mosaics), %F = Filter,
         // %T = frame Type, %e = exposure (adds "_secs"), %D = datetime.
