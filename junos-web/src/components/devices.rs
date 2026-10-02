@@ -1,12 +1,13 @@
 //! INDI device manager tab — web equivalent of KStars' INDI Control Panel.
 //!
-//! Left sidebar lists every device from `get_devices`; the panel shows all
-//! INDI properties of the selected device grouped by INDI group, with
-//! editable widgets per property type:
+//! Layout (phone-first, like Guide / Scheduler): a header (the selected
+//! device's connection badge), the device list — a chip strip on phones, a
+//! sidebar from `md` — then pills for the device's INDI groups, one card per
+//! property of the chosen group, and a pinned footer with the latest device
+//! message (tap → all of them in a sheet). Widgets per property type:
 //!
-//!   - numbers → slider (sane min/max/step) or input, buffered + SET
-//!   - texts   → input, buffered + SET
-//!   - switches → button group / select (1OFMANY, ATMOST1) or checkboxes
+//!   - numbers / texts → input, buffered; Set (or Enter) sends the vector
+//!   - switches → pills / select (1OFMANY, ATMOST1) or checkboxes
 //!                (NOFMANY), applied immediately
 //!   - lights  → read-only status LEDs
 //!
@@ -21,59 +22,88 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
+use crate::components::form::{sheet, CARD, CHECK, CHIP, FOOTER, LABEL, ROW};
+use crate::components::tab_wheel_icons::tab_icon;
+use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{Lang, t};
 use crate::ws::{
     DeviceInfo, IndiElement, IndiElementValue, IndiProperty, IndiRule, IndiState, SendCmd,
 };
 use crate::ws_helpers::send_device_property_set;
-use crate::dom::event_target_value;
+use crate::Tab;
 
-const SECTION_CLS: &str = "fieldset m-0";
-const LEGEND_CLS: &str = "fieldset__legend";
-const INPUT_CLS: &str = "input input--sm flex-1 min-w-0 font-mono";
-const ELEM_LABEL_CLS: &str =
-    "basis-[clamp(90px,30%,180px)] grow-0 shrink-0 max-md:basis-full text-text-blue text-sm overflow-hidden text-ellipsis whitespace-nowrap";
+const LED: &str = "inline-block w-2.5 h-2.5 rounded-full shrink-0";
+const INPUT: &str = "input input--sm font-mono min-w-0 max-md:h-9";
+/// Device pill on phones, full-width sidebar row from md.
+const DEVICE: &str = "chip shrink-0 max-w-[14rem] h-9 gap-2 px-3 cursor-pointer \
+                      md:max-w-none md:w-full md:h-10 md:rounded-md";
 
-fn state_color(s: IndiState) -> &'static str {
+fn led(s: IndiState) -> &'static str {
     match s {
-        IndiState::Idle => "var(--text-muted)",
-        IndiState::Ok => "var(--state-ok)",
-        IndiState::Busy => "var(--state-warn)",
-        IndiState::Alert => "var(--state-err)",
+        IndiState::Idle => "bg-text-muted",
+        IndiState::Ok => "bg-state-ok",
+        IndiState::Busy => "bg-state-warn animate-pulse",
+        IndiState::Alert => "bg-state-err",
     }
 }
 
-fn state_led(color: &'static str) -> impl IntoView {
-    view! {
-        <span
-            class="inline-block w-[9px] h-[9px] rounded-full shrink-0 border border-border-base"
-            style=format!("background:{color}")
-        ></span>
-    }
+/// Kind icon from the libindi driver-interface bits (basedevice.h).
+fn device_icon(iface: i64) -> &'static str {
+    let tab = match iface {
+        i if i & 1 != 0 => Tab::Mount,                         // TELESCOPE
+        i if i & (1 << 1) != 0 => Tab::Imaging,                // CCD
+        i if i & (1 << 2) != 0 => Tab::Guide,                  // GUIDER
+        i if i & (1 << 3) != 0 => Tab::Focus,                  // FOCUSER
+        i if i & ((1 << 9) | (1 << 10)) != 0 => Tab::FlatCal,  // DUSTCAP / LIGHTBOX
+        _ => Tab::Devices,
+    };
+    tab_icon(tab)
 }
 
-/// Minimal INDI printf renderer. Handles the common `%<w>.<p>f` case;
-/// sexagesimal (`%m`) and anything unrecognised fall back to a trimmed
-/// plain rendering.
+/// The live `CONNECTION` switch once the device is mirrored, else the
+/// `get_devices` flag.
+fn is_connected(props: &HashMap<String, Vec<IndiProperty>>, d: &DeviceInfo) -> bool {
+    props
+        .get(&d.name)
+        .and_then(|ps| ps.iter().find(|p| p.name == "CONNECTION"))
+        .and_then(|p| p.elements.iter().find(|e| e.name == "CONNECT"))
+        .map_or(d.connected, |e| matches!(e.value, IndiElementValue::Switch(true)))
+}
+
+/// Minimal INDI printf renderer: `%<w>.<p>f`, `%d` and sexagesimal
+/// `%<w>.<f>m`; anything else falls back to a plain rendering.
 fn format_indi_number(format: &str, v: f64) -> String {
-    if let Some(rest) = format.strip_prefix('%') {
-        if let Some(f_pos) = rest.find('f') {
-            let spec = &rest[..f_pos];
-            let prec = spec
-                .split_once('.')
-                .and_then(|(_, p)| p.parse::<usize>().ok())
-                .unwrap_or(2);
-            return format!("{v:.prec$}");
-        }
-        if rest.ends_with('d') {
-            return format!("{}", v.round() as i64);
-        }
+    let Some(rest) = format.strip_prefix('%') else { return v.to_string() };
+    let prec = |spec: &str| spec.split_once('.').and_then(|(_, p)| p.parse::<usize>().ok());
+    if let Some(f_pos) = rest.find('f') {
+        let p = prec(&rest[..f_pos]).unwrap_or(2);
+        return format!("{v:.p$}");
     }
-    let s = format!("{v}");
-    s
+    if rest.ends_with('d') {
+        return format!("{}", v.round() as i64);
+    }
+    if let Some(spec) = rest.strip_suffix('m') {
+        return sexagesimal(v, prec(spec).unwrap_or(6));
+    }
+    v.to_string()
+}
+
+/// INDI `%m`: `f` ≤ 5 → H:MM, else H:MM:SS with `f`−6 decimals (≤ 2).
+/// Rounded in the finest unit so a carry never shows `:60`.
+fn sexagesimal(v: f64, f: usize) -> String {
+    let sign = if v < 0.0 { "-" } else { "" };
+    if f <= 5 {
+        let m = (v.abs() * 60.0).round() as i64;
+        return format!("{sign}{:02}:{:02}", m / 60, m % 60);
+    }
+    let d = (f - 6).min(2);
+    let k = 10_i64.pow(d as u32);
+    let t = (v.abs() * 3600.0 * k as f64).round() as i64;
+    let s = t / k;
+    let hms = format!("{sign}{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60);
+    if d == 0 { hms } else { format!("{hms}.{:0d$}", t % k) }
 }
 
 /// Subscribe (all properties) + enumerate one device, retrying until the
@@ -166,155 +196,190 @@ pub fn DevicesTab(
         spawn_device_fetch(Arc::clone(&send_fetch), dev, indi_properties);
     });
 
-    // Properties of the selected device, grouped by INDI group in
-    // definition order.
-    let grouped = Signal::derive(move || {
-        let Some(dev) = selected.get() else {
-            return Vec::new();
-        };
+    let connected = Memo::new(move |_| {
+        let Some(dev) = selected.get() else { return false };
+        online.get()
+            && devices.with(|ds| {
+                ds.iter()
+                    .find(|d| d.name == dev)
+                    .is_some_and(|d| indi_properties.with(|m| is_connected(m, d)))
+            })
+    });
+
+    // INDI groups of the selected device in definition order, and the one
+    // shown: the picked group while this device has it (so "Main Control"
+    // sticks across devices), else the first.
+    let groups = Memo::new(move |_| {
+        let Some(dev) = selected.get() else { return Vec::new() };
         indi_properties.with(|m| {
-            let mut out: Vec<(String, Vec<IndiProperty>)> = Vec::new();
-            for p in m.get(&dev).map(|v| v.as_slice()).unwrap_or(&[]) {
-                match out.iter_mut().find(|(g, _)| *g == p.group) {
-                    Some((_, v)) => v.push(p.clone()),
-                    None => out.push((p.group.clone(), vec![p.clone()])),
+            let mut out: Vec<String> = Vec::new();
+            for p in m.get(&dev).into_iter().flatten() {
+                if !out.contains(&p.group) {
+                    out.push(p.group.clone());
                 }
             }
             out
         })
     });
-
-    let messages = Signal::derive(move || {
-        let Some(dev) = selected.get() else {
-            return Vec::new();
-        };
-        indi_messages.with(|m| {
-            m.get(&dev)
-                .map(|v| v.iter().rev().cloned().collect::<Vec<_>>())
-                .unwrap_or_default()
+    let group_pick: RwSignal<Option<String>> = RwSignal::new(None);
+    let group = Memo::new(move |_| {
+        groups.with(|gs| group_pick.with(|p| p.as_ref().filter(|g| gs.contains(g)).or(gs.first()).cloned()))
+    });
+    let props = Memo::new(move |_| {
+        let (Some(dev), Some(g)) = (selected.get(), group.get()) else { return Vec::new() };
+        indi_properties.with(|m| {
+            m.get(&dev).into_iter().flatten().filter(|p| p.group == g).cloned().collect::<Vec<_>>()
         })
     });
+
+    // Newest first (the store appends).
+    let messages = Memo::new(move |_| {
+        let Some(dev) = selected.get() else { return Vec::new() };
+        indi_messages.with(|m| m.get(&dev).map(|v| v.iter().rev().cloned().collect()).unwrap_or_default())
+    });
+    let messages_open = RwSignal::new(false);
 
     let send_rows = Arc::clone(&send);
 
     view! {
-        <div class="absolute inset-0 bg-bg text-text font-mono grid grid-rows-[auto_1fr] overflow-hidden">
-
-            // ── Header: device selector ───────────────────────────────
-            <div class="flex items-center gap-x-sp-2 gap-y-sp-1 flex-wrap max-md:flex-nowrap max-md:overflow-x-auto md:flex-wrap min-h-[48px] py-sp-2 pr-5 max-md:pr-3 pl-20 border-b border-border-base bg-[rgba(6,6,15,0.85)]">
-                <Show when=move || devices.with(|d| d.is_empty())>
-                    <span class="text-sm text-text-muted">{move || tr().no_devices}</span>
+        <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
+            // Header
+            <div class="shrink-0 flex items-center gap-2 min-h-[48px] px-3 md:pl-4 md:pr-6 pb-1.5 \
+                        pt-[max(0.375rem,env(safe-area-inset-top))] border-b border-border-base bg-bg-elev-1">
+                <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Devices)></span>
+                <span class="min-w-0 truncate font-semibold text-text-blue-bright">{move || tr().tab_devices}</span>
+                <Show when=move || selected.with(Option::is_some)>
+                    <span class=move || if connected.get() { "badge badge--ok ml-auto shrink-0" } else { "badge ml-auto shrink-0" }>
+                        {move || if connected.get() { tr().connected_label } else { tr().disconnected }}
+                    </span>
                 </Show>
-                <For
-                    each=move || devices.get()
-                    key=|d| (d.name.clone(), d.connected)
-                    children=move |d: DeviceInfo| {
-                        let name = d.name.clone();
-                        let name_click = d.name.clone();
-                        let name_active = d.name.clone();
-                        let dot = if d.connected { "var(--state-ok)" } else { "var(--text-muted)" };
-                        view! {
-                            <button
-                                class="btn btn-ghost flex items-center gap-sp-1 text-sm shrink-0"
-                                class:btn-primary=move || selected.get().as_deref() == Some(name_active.as_str())
-                                on:click=move |_| selected.set(Some(name_click.clone()))
-                            >
-                                {state_led(dot)}
-                                {name}
-                            </button>
-                        }
-                    }
-                />
             </div>
 
-            // ── Body: grouped properties ──────────────────────────────
-            <div class="overflow-y-auto py-4 px-5 max-md:px-3 flex flex-col gap-sp-4 max-w-[860px] w-full">
+            <Show when=move || devices.with(Vec::is_empty)>
+                <div class="flex-1 grid place-items-center p-6 text-center text-sm text-text-muted">
+                    {move || tr().no_devices}
+                </div>
+            </Show>
 
-                <Show when=move || selected.with(|s| s.is_none())>
-                    <div class="text-sm text-text-muted py-sp-3 px-sp-3 border border-border-base">
-                        {move || tr().dev_select_device}
-                    </div>
-                </Show>
-
-                <Show when=move || selected.with(|s| s.is_some()) && grouped.with(|g| g.is_empty())>
-                    <div class="text-sm text-text-muted py-sp-3 px-sp-3 border border-border-base">
-                        {move || if online.get() { tr().dev_loading_props } else { tr().disconnected }}
-                    </div>
-                </Show>
-
-                <For
-                    each=move || grouped.get()
-                    key=move |(g, _)| format!("{:?}/{g}", selected.get_untracked())
-                    children=move |(group, _props): (String, Vec<IndiProperty>)| {
-                        let send_group = Arc::clone(&send_rows);
-                        let group_key = group.clone();
-                        view! {
-                            <fieldset class=SECTION_CLS>
-                                <legend class=LEGEND_CLS>{group.clone()}</legend>
-                                <div class="flex flex-col">
-                                    <For
-                                        each={
-                                            let group_key = group_key.clone();
-                                            move || {
-                                                grouped.with(|gs| {
-                                                    gs.iter()
-                                                        .find(|(g, _)| *g == group_key)
-                                                        .map(|(_, ps)| ps.clone())
-                                                        .unwrap_or_default()
-                                                })
-                                            }
+            <div class="flex-1 min-h-0 flex flex-col md:flex-row" class:hidden=move || devices.with(Vec::is_empty)>
+                // Devices — chip strip on phones, sidebar from md.
+                <div class="shrink-0 flex gap-1.5 overflow-x-auto max-md:[scrollbar-width:none] px-3 py-2 \
+                            border-b border-border-base md:w-60 md:flex-col md:overflow-x-hidden \
+                            md:overflow-y-auto md:py-3 md:border-b-0 md:border-r">
+                    <For
+                        each=move || devices.get()
+                        key=|d| (d.name.clone(), d.connected, d.interface)
+                        children=move |d: DeviceInfo| {
+                            let (name, pick, me) = (d.name.clone(), d.name.clone(), d.name.clone());
+                            let icon = device_icon(d.interface);
+                            view! {
+                                <button type="button"
+                                        class=move || if selected.with(|s| s.as_deref() == Some(me.as_str())) {
+                                            format!("{DEVICE} btn--active")
+                                        } else {
+                                            DEVICE.to_string()
                                         }
-                                        // Structural key: rebuilds the row when the
-                                        // compact placeholder is upgraded to the full
-                                        // record or the element set changes; value
-                                        // updates keep the DOM (and input focus).
-                                        key=move |p: &IndiProperty| format!(
-                                            "{:?}/{}/{}/{}",
-                                            selected.get_untracked(), p.name, p.full, p.elements.len()
-                                        )
-                                        children=move |p: IndiProperty| {
-                                            let device = selected.get_untracked().unwrap_or_default();
-                                            view! {
-                                                <PropertyRow
-                                                    device=device
-                                                    snapshot=p
-                                                    indi_properties=indi_properties
-                                                    send=Arc::clone(&send_group)
-                                                />
-                                            }
-                                        }
-                                    />
-                                </div>
-                            </fieldset>
+                                        on:click=move |_| selected.set(Some(pick.clone()))>
+                                    <span class=move || format!("{LED} {}",
+                                        if indi_properties.with(|m| is_connected(m, &d)) { "bg-state-ok" } else { "bg-text-muted" })>
+                                    </span>
+                                    <span class="inline-block w-4 h-4 shrink-0 text-text-muted" inner_html=icon></span>
+                                    <span class="min-w-0 truncate">{name}</span>
+                                </button>
+                            }
                         }
-                        .into_any()
-                    }
-                />
+                    />
+                </div>
 
-                // ── Device message log ────────────────────────────────
-                <Show when=move || messages.with(|m| !m.is_empty())>
-                    <details class="text-sm">
-                        <summary class="cursor-pointer text-text-blue">
-                            {move || tr().dev_messages_title}
-                        </summary>
-                        <div class="flex flex-col gap-[2px] pt-sp-2 text-text-muted">
-                            {move || messages
-                                .get()
-                                .into_iter()
-                                .map(|m| view! { <div>{m}</div> })
-                                .collect::<Vec<_>>()}
+                <div class="flex-1 min-w-0 min-h-0 flex flex-col">
+                    // Group pills — swiped on phones, wrapped from md.
+                    <Show when=move || groups.with(|g| !g.is_empty())>
+                        <div class="shrink-0 px-3 py-2 md:pl-4 md:pr-6 border-b border-border-base">
+                            <div class="max-w-[760px] mx-auto flex gap-1.5 overflow-x-auto \
+                                        max-md:[scrollbar-width:none] md:flex-wrap">
+                            <For
+                                each=move || groups.get()
+                                key=|g| g.clone()
+                                children=move |g: String| {
+                                    let (pick, me) = (g.clone(), g.clone());
+                                    view! {
+                                        <button type="button"
+                                                class=move || if group.with(|c| c.as_deref() == Some(me.as_str())) {
+                                                    format!("{CHIP} shrink-0 whitespace-nowrap btn--active")
+                                                } else {
+                                                    format!("{CHIP} shrink-0 whitespace-nowrap")
+                                                }
+                                                on:click=move |_| group_pick.set(Some(pick.clone()))>
+                                            {g}
+                                        </button>
+                                    }
+                                }
+                            />
+                            </div>
                         </div>
-                    </details>
-                </Show>
+                    </Show>
+
+                    // Properties of the group, one card each.
+                    <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 md:pl-4 md:pr-6">
+                        <div class="max-w-[760px] mx-auto flex flex-col gap-3">
+                            <Show when=move || props.with(Vec::is_empty)>
+                                <div class="py-8 text-center text-sm text-text-muted">
+                                    {move || if online.get() { tr().dev_loading_props } else { tr().disconnected }}
+                                </div>
+                            </Show>
+                            <For
+                                each=move || props.get()
+                                // Structural key: rebuilds the card when the
+                                // compact placeholder is upgraded to the full
+                                // record or the element set changes; value
+                                // updates keep the DOM (and input focus).
+                                key=move |p: &IndiProperty| format!(
+                                    "{:?}/{}/{}/{}",
+                                    selected.get_untracked(), p.name, p.full, p.elements.len()
+                                )
+                                children=move |p: IndiProperty| {
+                                    view! {
+                                        <PropertyRow
+                                            device=selected.get_untracked().unwrap_or_default()
+                                            snapshot=p
+                                            indi_properties=indi_properties
+                                            send=Arc::clone(&send_rows)
+                                        />
+                                    }
+                                }
+                            />
+                        </div>
+                    </div>
+
+                    // Latest device message → all of them in a sheet.
+                    <Show when=move || messages.with(|m| !m.is_empty())>
+                        <button type="button" class=format!("{FOOTER} w-full text-left md:pl-4 md:pr-6")
+                                on:click=move |_| messages_open.set(true)>
+                            <span class="flex-1 min-w-0 truncate font-mono text-xs text-text-muted">
+                                {move || messages.with(|m| m.first().cloned().unwrap_or_default())}
+                            </span>
+                            <span class="badge shrink-0">{move || messages.with(Vec::len)}</span>
+                        </button>
+                    </Show>
+                </div>
             </div>
+
+            <Show when=move || messages_open.get()>
+                {sheet(move || tr().dev_messages_title, move || messages_open.set(false), view! {
+                    <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 \
+                                flex flex-col gap-1 font-mono text-xs text-text-muted">
+                        {move || messages.get().into_iter().map(|m| view! { <div class="break-words">{m}</div> }).collect::<Vec<_>>()}
+                    </div>
+                })}
+            </Show>
         </div>
     }
 }
 
-/// One INDI property: state LED + label + per-element widgets (+ SET for
-/// buffered kinds). Structure comes from the `snapshot` the row was keyed
-/// on; live values are read reactively from the store so pushed updates
-/// refresh in place without rebuilding the DOM.
+/// One INDI property as a card: state LED + label (+ Set for buffered
+/// kinds), then per-element widgets. Structure comes from the `snapshot` the
+/// card was keyed on; live values are read reactively from the store so
+/// pushed updates refresh in place without rebuilding the DOM.
 #[component]
 fn PropertyRow(
     device: String,
@@ -325,7 +390,6 @@ fn PropertyRow(
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let name = snapshot.name.clone();
     let writable = snapshot.perm.writable();
-    let is_switch = snapshot.is_switch();
     let is_buffered = writable
         && matches!(
             snapshot.elements.first().map(|e| &e.value),
@@ -348,14 +412,14 @@ fn PropertyRow(
     // Pending edits (element name → raw input string) for buffered kinds.
     let edits: RwSignal<HashMap<String, String>> = RwSignal::new(HashMap::new());
 
-    // SET — send ALL elements (INDI vectors are atomic): pending edits where
+    // Set — send ALL elements (INDI vectors are atomic): pending edits where
     // present, current store values otherwise. Unparseable number input is
-    // sent as a string — KStars runs f_scansexa on it (indistd.cpp:967).
+    // sent as a string — KStars runs f_scansexa on it (indistd.cpp:1095).
     let on_set = {
         let send = Arc::clone(&send);
         let device = device.clone();
         let name = name.clone();
-        move |_| {
+        move || {
             let Some(p) = live.get_untracked() else { return };
             let pending = edits.get_untracked();
             let els: Vec<serde_json::Value> = p
@@ -385,13 +449,8 @@ fn PropertyRow(
         }
     };
 
-    let elements_view: Vec<AnyView> = if is_switch {
-        vec![render_switch_property(
-            &device,
-            &snapshot,
-            live,
-            Arc::clone(&send),
-        )]
+    let elements_view: Vec<AnyView> = if snapshot.is_switch() {
+        vec![render_switch_property(&device, &snapshot, live, Arc::clone(&send))]
     } else {
         snapshot
             .elements
@@ -403,29 +462,28 @@ fn PropertyRow(
     let title = snapshot.name.clone();
     let label = snapshot.label.clone();
     view! {
-        <div class="border-b border-border-base py-sp-2 flex flex-col gap-sp-1 last:border-b-0">
-            <div class="flex items-center gap-sp-2">
-                <span
-                    class="inline-block w-[9px] h-[9px] rounded-full shrink-0 border border-border-base"
-                    style=move || format!("background:{}", state_color(prop_state.get()))
-                ></span>
-                <span class="text-sm overflow-hidden text-ellipsis whitespace-nowrap" title=title>
+        // A form so Enter (the phone's Go key) applies like Set.
+        <form class=move || if prop_state.get() == IndiState::Alert { format!("{CARD} border-state-err") } else { CARD.to_string() }
+              on:submit=move |ev| { ev.prevent_default(); on_set(); }>
+            <div class="flex items-center gap-2 min-h-7">
+                <span class=move || format!("{LED} {}", led(prop_state.get()))></span>
+                <span class="flex-1 min-w-0 truncate text-sm font-semibold text-text-blue-bright" title=title>
                     {label}
                 </span>
-                <Show when=move || is_buffered>
-                    <button
-                        class="btn btn-primary ml-auto text-xs py-[2px] px-sp-2"
-                        disabled=move || prop_state.get() == IndiState::Busy
-                        on:click=on_set.clone()
-                    >
+                {is_buffered.then(|| view! {
+                    <button type="submit"
+                            class=move || if edits.with(HashMap::is_empty) {
+                                "btn btn-ghost btn--sm max-md:h-9 shrink-0"
+                            } else {
+                                "btn btn-primary btn--sm max-md:h-9 shrink-0"
+                            }
+                            disabled=move || prop_state.get() == IndiState::Busy>
                         {move || t(lang.get()).set_btn}
                     </button>
-                </Show>
+                })}
             </div>
-            <div class="flex flex-col gap-sp-1 pl-[17px]">
-                {elements_view}
-            </div>
-        </div>
+            <div class="flex flex-col">{elements_view}</div>
+        </form>
     }
 }
 
@@ -444,7 +502,36 @@ fn element_value(
     }
 }
 
-/// Number / text / light element row: label + widget.
+/// Buffered input: shows the pending edit, else the live value, so pushes
+/// don't stomp typing (Set or a card rebuild clears the buffer). Cyan while
+/// edited.
+fn edit_input(
+    el_name: &str,
+    edits: RwSignal<HashMap<String, String>>,
+    current: impl Fn() -> String + Send + Sync + 'static,
+    inputmode: &'static str,
+    width: &'static str,
+) -> AnyView {
+    let (edited, shown, typed) = (el_name.to_string(), el_name.to_string(), el_name.to_string());
+    view! {
+        <input type="text" inputmode=inputmode autocomplete="off" autocapitalize="off" spellcheck="false"
+               class=move || if edits.with(|e| e.contains_key(&edited)) {
+                   format!("{INPUT} {width} border-accent-cyan")
+               } else {
+                   format!("{INPUT} {width}")
+               }
+               prop:value=move || edits.with(|e| e.get(&shown).cloned()).unwrap_or_else(&current)
+               on:input=move |ev| {
+                   let v = event_target_value(&ev);
+                   edits.update(|e| {
+                       e.insert(typed.clone(), v);
+                   });
+               } />
+    }
+    .into_any()
+}
+
+/// Number / text / light element row: label left, widget right.
 fn render_scalar_element(
     el: &IndiElement,
     writable: bool,
@@ -452,164 +539,62 @@ fn render_scalar_element(
     edits: RwSignal<HashMap<String, String>>,
 ) -> AnyView {
     let el_name = el.name.clone();
-    let label = el.label.clone();
     let value = element_value(live, &el_name);
 
     let widget: AnyView = match &el.value {
-        IndiElementValue::Number { min, max, step, format, .. } => {
-            let format = format.clone();
-            let fmt2 = format.clone();
-            let current = {
-                let value = value.clone();
-                move || match value() {
-                    Some(IndiElementValue::Number { value, .. }) => value,
-                    _ => 0.0,
+        IndiElementValue::Number { min, format, .. } => {
+            let fmt = format.clone();
+            let current = move || match value() {
+                Some(IndiElementValue::Number { value, .. }) => format_indi_number(&fmt, value),
+                _ => String::new(),
+            };
+            if writable {
+                // Phone keypads: the decimal pad has no ':' or '-'.
+                let mode = if format.contains('m') || *min < 0.0 { "text" } else { "decimal" };
+                view! {
+                    <span class="shrink-0 font-mono text-sm text-text-muted">{current.clone()}</span>
+                    {edit_input(&el_name, edits, current, mode, "w-28 md:w-36 text-right")}
                 }
-            };
-            let current_txt = {
-                let current = current.clone();
-                move || format_indi_number(&fmt2, current())
-            };
-            if !writable {
-                view! { <span class="text-sm">{current_txt}</span> }.into_any()
+                .into_any()
             } else {
-                // Display: pending edit wins over the live value so pushes
-                // don't stomp typing; SET or a row rebuild clears the buffer.
-                let name_edit = el_name.clone();
-                let name_input = el_name.clone();
-                let display = {
-                    let current_txt = current_txt.clone();
-                    move || {
-                        edits.with(|e| e.get(&name_edit).cloned())
-                            .unwrap_or_else(|| current_txt())
-                    }
-                };
-                let on_input = move |ev: web_sys::Event| {
-                    let v = event_target_value(&ev);
-                    edits.update(|e| {
-                        e.insert(name_input.clone(), v);
-                    });
-                };
-                let sane_slider = *min < *max
-                    && min.is_finite()
-                    && max.is_finite()
-                    && *step > 0.0
-                    && (*max - *min) / *step <= 1000.0
-                    && !format.contains('m'); // sexagesimal — no slider
-                if sane_slider {
-                    let name_slider = el_name.clone();
-                    let slider_val = {
-                        let value = value.clone();
-                        move || {
-                            edits.with(|e| e.get(&name_slider).and_then(|s| s.parse::<f64>().ok()))
-                                .unwrap_or_else(|| match value() {
-                                    Some(IndiElementValue::Number { value, .. }) => value,
-                                    _ => 0.0,
-                                })
-                                .to_string()
-                        }
-                    };
-                    view! {
-                        <input
-                            type="range"
-                            class="flex-1 min-w-[80px]"
-                            min=min.to_string()
-                            max=max.to_string()
-                            step=step.to_string()
-                            prop:value=slider_val
-                            on:input=on_input
-                        />
-                        <span class="text-sm w-[72px] text-right shrink-0 max-md:w-auto max-md:text-left">{display}</span>
-                    }
-                    .into_any()
-                } else {
-                    // Plain text input so sexagesimal strings ("12:30:00")
-                    // stay typeable — KStars parses them server-side.
-                    view! {
-                        <span class="text-sm text-text-muted w-[88px] text-right shrink-0 max-md:w-auto max-md:text-left overflow-hidden text-ellipsis">
-                            {current_txt}
-                        </span>
-                        <input
-                            type="text"
-                            inputmode="decimal"
-                            class=INPUT_CLS
-                            prop:value=display
-                            on:input=on_input
-                        />
-                    }
-                    .into_any()
-                }
+                view! { <span class="shrink-0 font-mono text-sm">{current}</span> }.into_any()
             }
         }
         IndiElementValue::Text(_) => {
-            let current = {
-                let value = value.clone();
-                move || match value() {
-                    Some(IndiElementValue::Text(t)) => t,
-                    _ => String::new(),
-                }
+            let current = move || match value() {
+                Some(IndiElementValue::Text(t)) => t,
+                _ => String::new(),
             };
-            if !writable {
-                view! { <span class="text-sm break-all">{current}</span> }.into_any()
+            if writable {
+                edit_input(&el_name, edits, current, "text", "w-3/5")
             } else {
-                let name_edit = el_name.clone();
-                let name_input = el_name.clone();
-                let display = {
-                    let current = current.clone();
-                    move || {
-                        edits.with(|e| e.get(&name_edit).cloned())
-                            .unwrap_or_else(|| current())
-                    }
-                };
-                view! {
-                    <input
-                        type="text"
-                        class=INPUT_CLS
-                        prop:value=display
-                        on:input=move |ev| {
-                            let v = event_target_value(&ev);
-                            edits.update(|e| {
-                                e.insert(name_input.clone(), v);
-                            });
-                        }
-                    />
-                }
-                .into_any()
+                view! { <span class="max-w-[60%] text-sm text-right break-all">{current}</span> }.into_any()
             }
         }
         IndiElementValue::Light(_) => {
-            let color = {
-                let value = value.clone();
-                move || match value() {
-                    Some(IndiElementValue::Light(s)) => state_color(s),
-                    _ => "var(--text-muted)",
-                }
+            let cls = move || match value() {
+                Some(IndiElementValue::Light(s)) => led(s),
+                _ => led(IndiState::Idle),
             };
-            view! {
-                <span
-                    class="inline-block w-[9px] h-[9px] rounded-full shrink-0 border border-border-base"
-                    style=move || format!("background:{}", color())
-                ></span>
-            }
-            .into_any()
+            view! { <span class=move || format!("{LED} {}", cls())></span> }.into_any()
         }
         // Switches are rendered whole-property in render_switch_property.
-        IndiElementValue::Switch(_) => view! { <span></span> }.into_any(),
+        IndiElementValue::Switch(_) => ().into_any(),
     };
 
     view! {
-        <div class="flex items-center gap-sp-2 text-sm min-h-[26px] max-md:flex-wrap">
-            <span class=ELEM_LABEL_CLS title=el_name>{label}</span>
+        <div class=ROW>
+            <span class=format!("{LABEL} flex-1") title=el_name>{el.label.clone()}</span>
             {widget}
         </div>
     }
     .into_any()
 }
 
-/// Whole switch property as one control row. 1OFMANY/ATMOST1 → button group
-/// (≤6 options) or <select>; NOFMANY → checkboxes; read-only → static dots.
+/// Whole switch property as one control. 1OFMANY/ATMOST1 → pills (≤6
+/// options) or <select>; NOFMANY → checkboxes; read-only → status dots.
 /// Writes apply immediately: KStars resets exclusive vectors before applying
-/// (indistd.cpp:941), so sending just the target element is enough.
+/// (indistd.cpp:978), so sending just the target element is enough.
 fn render_switch_property(
     device: &str,
     snapshot: &IndiProperty,
@@ -622,14 +607,20 @@ fn render_switch_property(
     let device = device.to_string();
     let prop_name = snapshot.name.clone();
 
-    let el_on = move |live: Signal<Option<IndiProperty>>, el: &str| -> bool {
-        let el = el.to_string();
+    let el_on = move |el: &str| -> bool {
         live.with(|p| {
             p.as_ref()
                 .and_then(|p| p.elements.iter().find(|e| e.name == el))
-                .map(|e| matches!(e.value, IndiElementValue::Switch(true)))
-                .unwrap_or(false)
+                .is_some_and(|e| matches!(e.value, IndiElementValue::Switch(true)))
         })
+    };
+    let set = move |el: &str, on: bool| {
+        send_device_property_set(
+            &send,
+            &device,
+            &prop_name,
+            serde_json::json!([{ "name": el, "state": if on { 1 } else { 0 } }]),
+        );
     };
 
     if !writable {
@@ -638,28 +629,16 @@ fn render_switch_property(
             .iter()
             .map(|e| {
                 let el_name = e.name.clone();
-                let label = e.label.clone();
-                let on = {
-                    let el_on = el_on.clone();
-                    move || el_on(live, &el_name)
-                };
                 view! {
-                    <span class="flex items-center gap-sp-1 text-sm">
-                        <span
-                            class="inline-block w-[9px] h-[9px] rounded-full border border-border-base"
-                            style=move || format!(
-                                "background:{}",
-                                if on() { "var(--state-ok)" } else { "var(--text-muted)" }
-                            )
-                        ></span>
-                        {label}
+                    <span class="flex items-center gap-1.5 text-sm">
+                        <span class=move || format!("{LED} {}", if el_on(&el_name) { "bg-state-ok" } else { "bg-text-muted" })></span>
+                        {e.label.clone()}
                     </span>
                 }
                 .into_any()
             })
             .collect();
-        return view! { <div class="flex items-center gap-sp-3 flex-wrap">{items}</div> }
-            .into_any();
+        return view! { <div class="flex flex-wrap gap-x-4 gap-y-1 py-1">{items}</div> }.into_any();
     }
 
     if exclusive && snapshot.elements.len() > 6 {
@@ -669,30 +648,16 @@ fn render_switch_property(
             .iter()
             .map(|e| (e.name.clone(), e.label.clone()))
             .collect();
-        let active = {
-            let names: Vec<String> = options.iter().map(|(n, _)| n.clone()).collect();
-            let el_on = el_on.clone();
-            move || {
-                names
-                    .iter()
-                    .find(|n| el_on(live, n))
-                    .cloned()
-                    .unwrap_or_default()
-            }
-        };
-        let on_change = move |ev: web_sys::Event| {
-            let sel = event_target_value(&ev);
-            if !sel.is_empty() {
-                send_device_property_set(
-                    &send,
-                    &device,
-                    &prop_name,
-                    serde_json::json!([{ "name": sel, "state": 1 }]),
-                );
-            }
-        };
+        let names: Vec<String> = options.iter().map(|(n, _)| n.clone()).collect();
+        let active = move || names.iter().find(|n| el_on(n)).cloned().unwrap_or_default();
         return view! {
-            <select class=INPUT_CLS prop:value=active on:change=on_change>
+            <select class="input input--sm w-full max-md:h-9" prop:value=active
+                    on:change=move |ev| {
+                        let sel = event_target_value(&ev);
+                        if !sel.is_empty() {
+                            set(&sel, true);
+                        }
+                    }>
                 {options
                     .into_iter()
                     .map(|(n, l)| view! { <option value=n>{l}</option> })
@@ -702,64 +667,37 @@ fn render_switch_property(
         .into_any();
     }
 
-    // Button group (exclusive) / checkboxes (NOFMANY).
     let items: Vec<AnyView> = snapshot
         .elements
         .iter()
         .map(|e| {
             let el_name = e.name.clone();
             let label = e.label.clone();
-            let on = {
-                let el_on = el_on.clone();
-                let el_name = el_name.clone();
-                move || el_on(live, &el_name)
-            };
-            let send = Arc::clone(&send);
-            let device = device.clone();
-            let prop_name = prop_name.clone();
+            let set = set.clone();
             if exclusive {
-                let on_click = {
-                    let on = on.clone();
-                    move |_| {
-                        // ATMOST1 allows all-off: re-clicking the active
-                        // element turns it off.
-                        let new_state = if at_most_one && on() { 0 } else { 1 };
-                        send_device_property_set(
-                            &send,
-                            &device,
-                            &prop_name,
-                            serde_json::json!([{ "name": el_name, "state": new_state }]),
-                        );
-                    }
-                };
+                let shown = el_name.clone();
                 view! {
-                    <button
-                        class="btn btn-ghost text-sm py-[2px]"
-                        class:btn-primary=on.clone()
-                        on:click=on_click
-                    >
+                    <button type="button"
+                            class=move || if el_on(&shown) {
+                                format!("{CHIP} flex-1 whitespace-nowrap btn--active")
+                            } else {
+                                format!("{CHIP} flex-1 whitespace-nowrap")
+                            }
+                            // ATMOST1 allows all-off: re-clicking the active
+                            // element turns it off.
+                            on:click=move |_| set(&el_name, !(at_most_one && el_on(&el_name)))>
                         {label}
                     </button>
                 }
                 .into_any()
             } else {
-                let on_change = move |ev: web_sys::Event| {
-                    let checked = ev
-                        .target()
-                        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-                        .map(|el| el.checked())
-                        .unwrap_or(false);
-                    send_device_property_set(
-                        &send,
-                        &device,
-                        &prop_name,
-                        serde_json::json!([{ "name": el_name, "state": if checked { 1 } else { 0 } }]),
-                    );
-                };
+                let shown = el_name.clone();
                 view! {
-                    <label class="flex items-center gap-sp-1 text-sm cursor-pointer">
-                        <input type="checkbox" prop:checked=on.clone() on:change=on_change />
-                        {label}
+                    <label class="flex items-center gap-3 min-h-[44px] md:min-h-9 cursor-pointer">
+                        <input type="checkbox" class=CHECK
+                               prop:checked=move || el_on(&shown)
+                               on:change=move |ev| set(&el_name, event_target_checked(&ev)) />
+                        <span class=LABEL>{label}</span>
                     </label>
                 }
                 .into_any()
@@ -767,5 +705,9 @@ fn render_switch_property(
         })
         .collect();
 
-    view! { <div class="flex items-center gap-sp-2 flex-wrap">{items}</div> }.into_any()
+    if exclusive {
+        view! { <div class="flex flex-wrap gap-1.5 py-1">{items}</div> }.into_any()
+    } else {
+        view! { <div class="flex flex-col">{items}</div> }.into_any()
+    }
 }
