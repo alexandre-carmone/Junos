@@ -1,200 +1,161 @@
-//! Files tab: the LiveStacker panel (align + stack, with a live preview).
-
-use std::sync::Arc;
+//! Files tab: the Live Stack sheet, driving KStars' LiveStacker
+//! (message.cpp `processLiveStackerCommands`): status and the latest stacked
+//! frame, the settings cards (`settings.rs`), and a pinned footer with Init ·
+//! Close · Start / Stop.
+//!
+//! `new_livestacker_state.state` is one of initialized, started, stacking
+//! (with frame and SNR stats, `sendLiveStackerProgress`), stopped, closed,
+//! error (with a message).
 
 use leptos::prelude::*;
 use serde_json::{json, Value};
 
-use crate::i18n::{t, Lang, Translations};
+use crate::components::form::{CARD, CARD_TITLE, FOOTER};
+use crate::i18n::{t, Lang};
 use crate::ws::{LiveStackerState, SendCmd};
 use crate::ws_helpers::send_cmd;
 
-use super::actions::open_abs_setting_dir;
-use super::settings::LiveStackSettings;
-use super::types::LiveStackTab;
-use super::utils::{fmt_float, kv, url_encode, SMALL_BTN};
+use super::api::newest_image_in_abs_dir;
+use super::utils::{fmt_float, preview_url};
+use super::{settings, Shared};
 
-#[component]
-fn LiveStackPreview(
-    state: RwSignal<Option<LiveStackerState>>,
-    latest: RwSignal<Option<String>>,
-    latest_warning: RwSignal<Option<String>>,
-    selected: RwSignal<Option<String>>,
-) -> impl IntoView {
-    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
-    let tr = move || t(lang.get());
+fn running(state: &str) -> bool {
+    matches!(state, "started" | "stacking")
+}
 
+/// Status dot color, for the header's Live Stack button.
+pub(super) fn dot(state: &str) -> &'static str {
+    match state {
+        "started" | "stacking" => "bg-state-ok",
+        "error" => "bg-state-err",
+        "initialized" | "stopped" => "bg-state-info",
+        _ => "bg-text-faint",
+    }
+}
+
+fn badge(state: &str) -> &'static str {
+    match state {
+        "started" | "stacking" => "badge badge--ok",
+        "error" => "badge badge--err",
+        "initialized" | "stopped" => "badge badge--info",
+        _ => "badge",
+    }
+}
+
+fn stat(label: &'static str, value: String) -> impl IntoView {
     view! {
-        <div class="flex flex-col gap-sp-3 p-sp-4">
-            <div class="flex items-center justify-between gap-sp-3">
-                <span class="text-sm font-semibold uppercase tracking-[0.06em] text-text-blue">{move || tr().livestack_latest_preview}</span>
-                {move || render_livestack_badge(state.get())}
-            </div>
-            {move || render_livestack_status(state.get(), tr())}
-            <Show when=move || latest_warning.get().is_some()>
-                <div class="text-sm text-state-warn">{move || latest_warning.get().unwrap_or_default()}</div>
-            </Show>
-            <Show
-                when=move || latest.get().is_some()
-                fallback=move || view! { <div class="rounded-md border border-border bg-bg-elev-1 p-sp-5 text-center text-sm text-text-faint">{tr().livestack_preview_hint}</div> }
-            >
-                {move || {
-                    let rel = latest.get().unwrap_or_default();
-                    let url = format!("/api/files/raw?as=preview&path={}", url_encode(&rel));
-                    view! {
-                        <button class="block w-full overflow-hidden rounded-md border border-border-strong bg-black p-0" on:click=move |_| selected.set(Some(rel.clone()))>
-                            <img class="max-h-[62vh] w-full object-contain" src=url />
-                        </button>
-                    }
-                }}
-            </Show>
+        <div class="min-w-0 rounded-lg bg-bg-elev-2 border border-border-base px-2.5 py-1.5 flex flex-col">
+            <span class="text-xs uppercase tracking-[0.06em] text-text-muted truncate">{label}</span>
+            <span class="font-mono tabular-nums text-base leading-tight truncate text-text-blue-bright">{value}</span>
         </div>
     }
 }
 
 #[component]
-fn LiveStackControls(
+pub(super) fn LiveStack(
+    s: Shared,
+    /// The sheet; "Open" a folder closes it.
+    open: RwSignal<bool>,
     state: RwSignal<Option<LiveStackerState>>,
     settings: RwSignal<Value>,
-    current_path: RwSignal<String>,
-    selected: RwSignal<Option<String>>,
-    refresh_tick: RwSignal<u32>,
     send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
-    let send_init = Arc::clone(&send);
-    let send_start = Arc::clone(&send);
-    let send_stop = Arc::clone(&send);
-    let send_close = Arc::clone(&send);
+    let st = Memo::new(move |_| state.with(|o| o.as_ref().map(|l| l.state.clone()).unwrap_or_default()));
 
-    view! {
-        <div class="flex flex-col gap-sp-3 p-sp-4">
-            <div class="flex items-center justify-between gap-sp-3">
-                <span class="text-sm font-semibold uppercase tracking-[0.06em] text-text-blue">{move || tr().livestack_title}</span>
-                {move || render_livestack_badge(state.get())}
-            </div>
-            {move || render_livestack_status(state.get(), tr())}
-            <div class="flex flex-wrap gap-sp-2">
-                <button class=SMALL_BTN on:click=move |_| send_cmd(&send_init, "livestacker_initialize", json!({}))>{move || tr().livestack_init}</button>
-                <button class="btn btn--sm btn-primary" on:click=move |_| send_cmd(&send_start, "livestacker_start", json!({}))>{move || tr().livestack_start}</button>
-                <button class=SMALL_BTN on:click=move |_| send_cmd(&send_stop, "livestacker_stop", json!({}))>{move || tr().livestack_stop}</button>
-                <button class=SMALL_BTN on:click=move |_| send_cmd(&send_close, "livestacker_close", json!({}))>{move || tr().livestack_close}</button>
-            </div>
-            <div class="grid grid-cols-2 gap-sp-2 max-[700px]:grid-cols-1">
-                <button class=SMALL_BTN on:click=move |_| open_abs_setting_dir(settings.get(), "outputDirectory", current_path, selected, refresh_tick)>
-                    {move || tr().livestack_open_output}
-                </button>
-                <button class=SMALL_BTN on:click=move |_| open_abs_setting_dir(settings.get(), "stackingDirectory", current_path, selected, refresh_tick)>
-                    {move || tr().livestack_open_input}
-                </button>
-            </div>
-        </div>
-    }
-}
+    send_cmd(&send, "livestacker_get_all_settings", json!({}));
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn render_livestack_workspace(
-    selected_folder: Option<String>,
-    tab_signal: RwSignal<LiveStackTab>,
-    tab: LiveStackTab,
-    state: RwSignal<Option<LiveStackerState>>,
-    settings: RwSignal<Value>,
-    latest: RwSignal<Option<String>>,
-    latest_warning: RwSignal<Option<String>>,
-    current_path: RwSignal<String>,
-    selected: RwSignal<Option<String>>,
-    refresh_tick: RwSignal<u32>,
-    send_controls: SendCmd,
-    send_settings: SendCmd,
-    tr: &'static Translations,
-) -> impl IntoView {
-    let Some(folder) = selected_folder else {
-        return view! {
-            <div class="panel p-sp-5 text-center text-sm text-text-faint">{tr.files_folder_hint}</div>
-        }.into_any();
-    };
-    view! {
-        <div class="panel overflow-hidden">
-            <div class="flex items-center justify-between gap-sp-3 border-b border-border px-sp-4 py-sp-3">
-                <div class="min-w-0">
-                    <div class="text-sm font-semibold uppercase tracking-[0.06em] text-text-blue">{tr.livestack_title}</div>
-                    <div class="truncate text-xs text-text-faint">{folder}</div>
-                </div>
-                {render_livestack_badge(state.get())}
-            </div>
-            <div class="flex flex-wrap gap-sp-2 border-b border-border bg-bg-elev-1 px-sp-3 py-sp-2">
-                {livestack_tab_button(LiveStackTab::Preview, tab_signal, tab, tr.files_subtab_preview)}
-                {livestack_tab_button(LiveStackTab::Controls, tab_signal, tab, tr.files_subtab_controls)}
-                {livestack_tab_button(LiveStackTab::Settings, tab_signal, tab, tr.files_subtab_settings)}
-            </div>
-            {match tab {
-                LiveStackTab::Preview => view! { <LiveStackPreview state=state latest=latest latest_warning=latest_warning selected=selected /> }.into_any(),
-                LiveStackTab::Controls => view! { <LiveStackControls state=state settings=settings current_path=current_path selected=selected refresh_tick=refresh_tick send=send_controls /> }.into_any(),
-                LiveStackTab::Settings => view! { <LiveStackSettings settings=settings current_path=current_path send=send_settings /> }.into_any(),
-            }}
-        </div>
-    }.into_any()
-}
-
-fn livestack_tab_button(
-    kind: LiveStackTab,
-    signal: RwSignal<LiveStackTab>,
-    active: LiveStackTab,
-    label: &'static str,
-) -> impl IntoView {
-    view! {
-        <button
-            class=if active == kind { "btn btn--sm btn--active" } else { SMALL_BTN }
-            on:click=move |_| signal.set(kind)
-        >
-            {label}
-        </button>
-    }
-}
-
-pub(super) fn render_livestack_badge(s: Option<LiveStackerState>) -> impl IntoView {
-    let (class, label) = match s {
-        None => ("badge", "idle".to_string()),
-        Some(st) => {
-            let lower = st.state.to_ascii_lowercase();
-            let class = if lower.contains("error") {
-                "badge badge--err"
-            } else if lower.contains("run") || lower.contains("loop") {
-                "badge badge--ok"
-            } else if lower.contains("init") {
-                "badge badge--info"
-            } else {
-                "badge"
-            };
-            (class, st.state)
+    // The newest image in the output folder, re-read on each state push (one
+    // per stacked frame). The mtime busts the browser cache.
+    let latest = RwSignal::new(None::<String>);
+    let warning = RwSignal::new(None::<String>);
+    Effect::new(move |_| {
+        state.track();
+        let out = settings.with(|v| v["outputDirectory"].as_str().unwrap_or_default().to_string());
+        if out.is_empty() {
+            return;
         }
-    };
-    view! { <span class=class>{label}</span> }
-}
-
-pub(super) fn render_livestack_status(
-    s: Option<LiveStackerState>,
-    tr: &'static Translations,
-) -> impl IntoView {
-    match s {
-        None => view! { <span class="text-sm text-text-faint">{tr.livestack_no_state}</span> }
-            .into_any(),
-        Some(st) => {
-            let msg = st.message.clone().unwrap_or_default();
-            let msg_visible = msg.clone();
-            view! {
-            <div class="grid grid-cols-2 gap-sp-2 text-sm max-[700px]:grid-cols-1">
-                {kv(tr.livestack_frames, format!("{} / {}", st.frames_stacked, st.total_frames))}
-                {kv(tr.livestack_snr, fmt_float(st.mean_snr))}
-                {kv(tr.livestack_min_snr, fmt_float(st.min_snr))}
-                {kv(tr.livestack_max_snr, fmt_float(st.max_snr))}
-                <Show when=move || !msg_visible.is_empty()>
-                    <div class="col-span-2 text-sm text-text-muted">{msg.clone()}</div>
-                </Show>
-            </div>
+        let outside = tr().livestack_out_of_sandbox;
+        wasm_bindgen_futures::spawn_local(async move {
+            match newest_image_in_abs_dir(&out, outside).await {
+                Ok(img) => {
+                    latest.set(img.map(|(rel, mtime)| format!("{}&v={mtime}", preview_url(&rel))));
+                    warning.set(None);
+                }
+                Err(e) => warning.set(Some(e)),
             }
-            .into_any()
-        }
+        });
+    });
+
+    let send_cards = send.clone();
+    let cmd = move |ty: &'static str| {
+        let send = send.clone();
+        move |_| send_cmd(&send, ty, json!({}))
+    };
+    let (on_init, on_close, on_start, on_stop) =
+        (cmd("livestacker_initialize"), cmd("livestacker_close"), cmd("livestacker_start"), cmd("livestacker_stop"));
+
+    view! {
+        <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 flex flex-col gap-3">
+            <div class=CARD>
+                <div class="flex items-center gap-2">
+                    <span class=format!("{CARD_TITLE} flex-1")>{move || tr().livestack_state}</span>
+                    <span class=move || badge(&st.get())>
+                        {move || { let v = st.get(); if v.is_empty() { tr().idle.to_string() } else { v } }}
+                    </span>
+                </div>
+                {move || {
+                    let (tr, l) = (tr(), state.get().unwrap_or_default());
+                    let message = l.message.clone().filter(|m| !m.is_empty());
+                    view! {
+                        <div class="grid grid-cols-4 gap-2">
+                            {stat(tr.livestack_frames, format!("{} / {}", l.frames_stacked, l.total_frames))}
+                            {stat(tr.livestack_snr, fmt_float(l.mean_snr))}
+                            {stat(tr.livestack_min_snr, fmt_float(l.min_snr))}
+                            {stat(tr.livestack_max_snr, fmt_float(l.max_snr))}
+                        </div>
+                        {message.map(|m| view! {
+                            <div class=if l.state == "error" { "text-sm text-state-err" } else { "text-sm text-text-muted" }>{m}</div>
+                        })}
+                    }
+                }}
+            </div>
+
+            // Latest stacked frame; a tap opens it full screen.
+            <div class="relative shrink-0 h-[32dvh] min-h-[160px] overflow-hidden rounded-lg border border-border-base \
+                        bg-bg-input-deep flex items-center justify-center">
+                {move || match latest.get() {
+                    Some(url) => view! {
+                        <img class="w-full h-full object-contain cursor-zoom-in" src=url.clone() alt=""
+                             title=move || tr().livestack_latest_preview
+                             on:click=move |_| s.zoom(url.clone()) />
+                    }.into_any(),
+                    None => view! {
+                        <span class="px-6 text-center text-sm text-text-faint">
+                            {move || warning.get().unwrap_or_else(|| tr().livestack_preview_hint.to_string())}
+                        </span>
+                    }.into_any(),
+                }}
+            </div>
+
+            {settings::cards(s, open, settings, send_cards, lang)}
+        </div>
+
+        <div class=FOOTER>
+            <button class="btn btn-ghost h-11 px-4 max-md:flex-1" on:click=on_init>{move || tr().livestack_init}</button>
+            <button class="btn btn-ghost h-11 px-4 max-md:flex-1" on:click=on_close>{move || tr().livestack_close}</button>
+            <Show when=move || running(&st.get())
+                  fallback=move || view! {
+                      <button class="btn btn-primary h-11 px-5 font-semibold max-md:flex-1 md:ml-auto"
+                              on:click=on_start.clone()>
+                          {move || format!("\u{25B6}\u{FE0E} {}", tr().livestack_start)}
+                      </button>
+                  }>
+                <button class="btn btn-danger h-11 px-5 font-semibold max-md:flex-1 md:ml-auto" on:click=on_stop.clone()>
+                    {move || format!("\u{25A0} {}", tr().livestack_stop)}
+                </button>
+            </Show>
+        </div>
     }
 }

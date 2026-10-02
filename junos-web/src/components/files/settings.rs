@@ -1,264 +1,172 @@
-//! Files tab: the LiveStacker settings form.
-
-use std::sync::Arc;
+//! Files tab: the Live Stack settings cards. Each field shows KStars' value
+//! (`livestacker_get_all_settings`) and sends its own key on change:
+//! `livestacker_set_all_settings` merges the keys it gets and echoes the
+//! whole map back (message.cpp:3404). The defaults are KStars' own, for keys
+//! it hasn't stored yet (message.cpp:3490).
 
 use leptos::prelude::*;
 use serde_json::{json, Value};
 
-use crate::i18n::{t, Lang};
+use crate::components::form::{setting_row, CARD, CARD_TITLE, CHECK, LABEL, NUM, SELECT};
+use crate::dom::{event_target_checked, event_target_value};
+use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
-use crate::dom::{event_target_checked, event_target_value};
 
-use super::utils::{
-    parse_f64, parse_i64, FIELD_CLS, INPUT_CLS,
-    PANEL_CLS, SMALL_BTN, SUMMARY_CLS,
-};
+use super::Shared;
 
-#[component]
-pub(super) fn LiveStackSettings(
+type Label = fn(&'static Translations) -> &'static str;
+
+#[derive(Clone)]
+struct Form {
     settings: RwSignal<Value>,
-    current_path: RwSignal<String>,
     send: SendCmd,
-) -> impl IntoView {
-    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
-    let tr = move || t(lang.get());
+    lang: RwSignal<Lang>,
+}
 
-    let dir_in = RwSignal::new(String::new());
-    let dir_out = RwSignal::new(String::new());
-    let align_method = RwSignal::new("0".to_string());
-    let stacking_method = RwSignal::new("0".to_string());
-    let downscale = RwSignal::new("0".to_string());
-    let num_in_mem = RwSignal::new("10".to_string());
-    let weighting = RwSignal::new("0".to_string());
-    let low_sigma = RwSignal::new("2.0".to_string());
-    let high_sigma = RwSignal::new("3.0".to_string());
-    let looping = RwSignal::new(false);
-    let calc_snr = RwSignal::new(true);
-    let post_process = RwSignal::new(false);
-    let sharpen = RwSignal::new("0.0".to_string());
-    let denoise = RwSignal::new("0.0".to_string());
-    let deconv = RwSignal::new("0.0".to_string());
-    let master_dark = RwSignal::new(String::new());
-    let master_flat = RwSignal::new(String::new());
-
-    Effect::new(move |_| {
-        hydrate_livestack_settings(
-            settings.get(),
-            dir_in,
-            dir_out,
-            align_method,
-            stacking_method,
-            downscale,
-            num_in_mem,
-            weighting,
-            low_sigma,
-            high_sigma,
-            looping,
-            calc_snr,
-            post_process,
-            sharpen,
-            denoise,
-            deconv,
-            master_dark,
-            master_flat,
-        )
-    });
-
-    let send_apply = Arc::clone(&send);
-    let on_apply = move |_| {
-        let payload = json!({
-            "stackingDirectory": dir_in.get(),
-            "outputDirectory":   dir_out.get(),
-            "alignMethod":       parse_i64(&align_method.get(), 0),
-            "stackingMethod":    parse_i64(&stacking_method.get(), 0),
-            "downscale":         parse_i64(&downscale.get(), 0),
-            "numInMem":          parse_i64(&num_in_mem.get(), 10),
-            "weighting":         parse_i64(&weighting.get(), 0),
-            "looping":           looping.get(),
-            "calcSNR":           calc_snr.get(),
-            "lowSigma":          parse_f64(&low_sigma.get(), 2.0),
-            "highSigma":         parse_f64(&high_sigma.get(), 3.0),
-            "postProcess":       post_process.get(),
-            "sharpenAmt":        parse_f64(&sharpen.get(), 0.0),
-            "denoiseAmt":        parse_f64(&denoise.get(), 0.0),
-            "deconvAmt":         parse_f64(&deconv.get(), 0.0),
-            "masterDarkPath":    master_dark.get(),
-            "masterFlatPath":    master_flat.get(),
-        });
-        send_cmd(&send_apply, "livestacker_set_all_settings", payload);
-    };
-
-    let send_reset = Arc::clone(&send);
-    let pick_current_in = move |_| dir_in.set(current_path.get());
-    let pick_current_out = move |_| dir_out.set(current_path.get());
-
-    view! {
-        <details class=PANEL_CLS>
-            <summary class=SUMMARY_CLS><span>{move || tr().livestack_settings}</span></summary>
-            <div class="grid gap-sp-3 p-sp-4">
-                <fieldset class="fieldset">
-                    <legend class="fieldset__legend">{move || tr().livestack_section_directories}</legend>
-                    {text_field(move || tr().livestack_dir_in, dir_in)}
-                    <button class=SMALL_BTN on:click=pick_current_in>{move || tr().files_reveal_captures}</button>
-                    {text_field(move || tr().livestack_dir_out, dir_out)}
-                    <button class=SMALL_BTN on:click=pick_current_out>{move || tr().files_reveal_captures}</button>
-                </fieldset>
-                <fieldset class="fieldset">
-                    <legend class="fieldset__legend">{move || tr().livestack_section_alignment}</legend>
-                    {select_field(move || tr().livestack_align_method, align_method, vec![("0", tr().livestack_align_plate_solve), ("1", tr().livestack_align_none)])}
-                </fieldset>
-                <fieldset class="fieldset">
-                    <legend class="fieldset__legend">{move || tr().livestack_section_stacking}</legend>
-                    {select_field(move || tr().livestack_stack_method, stacking_method, vec![("0", tr().livestack_stack_mean), ("1", tr().livestack_stack_sigma), ("2", tr().livestack_stack_windsor), ("3", tr().livestack_stack_imagemm)])}
-                    {select_field(move || tr().livestack_downscale, downscale, vec![("0", tr().livestack_downscale_none), ("1", tr().livestack_downscale_x2), ("2", tr().livestack_downscale_x3), ("3", tr().livestack_downscale_x4)])}
-                    {number_field(move || tr().livestack_num_in_mem, num_in_mem, "1")}
-                    {select_field(move || tr().livestack_weighting, weighting, vec![("0", tr().livestack_weighting_equal), ("1", tr().livestack_weighting_hfr), ("2", tr().livestack_weighting_stars)])}
-                </fieldset>
-                <fieldset class="fieldset">
-                    <legend class="fieldset__legend">{move || tr().livestack_section_rejection}</legend>
-                    {check_field(move || tr().livestack_looping, looping)}
-                    {check_field(move || tr().livestack_calc_snr, calc_snr)}
-                    {number_field(move || tr().livestack_low_sigma, low_sigma, "0.1")}
-                    {number_field(move || tr().livestack_high_sigma, high_sigma, "0.1")}
-                </fieldset>
-                <fieldset class="fieldset">
-                    <legend class="fieldset__legend">{move || tr().livestack_section_postprocess}</legend>
-                    {check_field(move || tr().livestack_post_process, post_process)}
-                    {number_field(move || tr().livestack_sharpen, sharpen, "0.1")}
-                    {number_field(move || tr().livestack_denoise, denoise, "0.1")}
-                    {number_field(move || tr().livestack_deconv, deconv, "0.1")}
-                </fieldset>
-                <fieldset class="fieldset">
-                    <legend class="fieldset__legend">{move || tr().livestack_section_calibration}</legend>
-                    {text_field(move || tr().livestack_master_dark, master_dark)}
-                    {text_field(move || tr().livestack_master_flat, master_flat)}
-                </fieldset>
-                <div class="flex gap-sp-2">
-                    <button class="btn btn--sm btn-primary" on:click=on_apply>{move || tr().livestack_apply}</button>
-                    <button class=SMALL_BTN on:click=move |_| send_cmd(&send_reset, "livestacker_get_all_settings", json!({}))>{move || tr().livestack_reset}</button>
-                </div>
-            </div>
-        </details>
+impl Form {
+    fn put(&self, key: &'static str, v: Value) {
+        send_cmd(&self.send, "livestacker_set_all_settings", json!({ key: v }));
     }
-}
 
-#[allow(clippy::too_many_arguments)]
-fn hydrate_livestack_settings(
-    v: Value,
-    dir_in: RwSignal<String>,
-    dir_out: RwSignal<String>,
-    align_method: RwSignal<String>,
-    stacking_method: RwSignal<String>,
-    downscale: RwSignal<String>,
-    num_in_mem: RwSignal<String>,
-    weighting: RwSignal<String>,
-    low_sigma: RwSignal<String>,
-    high_sigma: RwSignal<String>,
-    looping: RwSignal<bool>,
-    calc_snr: RwSignal<bool>,
-    post_process: RwSignal<bool>,
-    sharpen: RwSignal<String>,
-    denoise: RwSignal<String>,
-    deconv: RwSignal<String>,
-    master_dark: RwSignal<String>,
-    master_flat: RwSignal<String>,
-) {
-    set_str(&v, "stackingDirectory", dir_in);
-    set_str(&v, "outputDirectory", dir_out);
-    set_num(&v, "alignMethod", align_method, 0);
-    set_num(&v, "stackingMethod", stacking_method, 0);
-    set_num(&v, "downscale", downscale, 0);
-    set_num(&v, "numInMem", num_in_mem, 10);
-    set_num(&v, "weighting", weighting, 0);
-    set_float(&v, "lowSigma", low_sigma, 2.0);
-    set_float(&v, "highSigma", high_sigma, 3.0);
-    set_bool(&v, "looping", looping, false);
-    set_bool(&v, "calcSNR", calc_snr, true);
-    set_bool(&v, "postProcess", post_process, false);
-    set_float(&v, "sharpenAmt", sharpen, 0.0);
-    set_float(&v, "denoiseAmt", denoise, 0.0);
-    set_float(&v, "deconvAmt", deconv, 0.0);
-    set_str(&v, "masterDarkPath", master_dark);
-    set_str(&v, "masterFlatPath", master_flat);
-}
-
-fn set_str(v: &Value, key: &str, sig: RwSignal<String>) {
-    if let Some(s) = v.get(key).and_then(|x| x.as_str()) {
-        sig.set(s.to_string());
+    fn label(&self, label: Label) -> impl Fn() -> &'static str + Copy + Send + 'static + use<> {
+        let lang = self.lang;
+        move || label(t(lang.get()))
     }
-}
 
-fn set_num(v: &Value, key: &str, sig: RwSignal<String>, default: i64) {
-    sig.set(
-        v.get(key)
-            .and_then(|x| x.as_i64())
-            .unwrap_or(default)
-            .to_string(),
-    );
-}
-
-fn set_float(v: &Value, key: &str, sig: RwSignal<String>, default: f64) {
-    sig.set(
-        v.get(key)
-            .and_then(|x| x.as_f64())
-            .unwrap_or(default)
-            .to_string(),
-    );
-}
-
-fn set_bool(v: &Value, key: &str, sig: RwSignal<bool>, default: bool) {
-    sig.set(v.get(key).and_then(|x| x.as_bool()).unwrap_or(default));
-}
-
-fn text_field(
-    label: impl Fn() -> &'static str + Copy + 'static,
-    sig: RwSignal<String>,
-) -> impl IntoView {
-    view! {
-        <label class="flex flex-col gap-sp-1 text-sm text-text-muted">
-            <span>{label()}</span>
-            <input type="text" class=INPUT_CLS prop:value=move || sig.get() on:input=move |ev| sig.set(event_target_value(&ev)) />
-        </label>
+    fn text(&self, key: &'static str) -> Signal<String> {
+        let settings = self.settings;
+        Signal::derive(move || settings.with(|v| v[key].as_str().unwrap_or_default().to_string()))
     }
-}
 
-fn number_field(
-    label: impl Fn() -> &'static str + Copy + 'static,
-    sig: RwSignal<String>,
-    step: &'static str,
-) -> impl IntoView {
-    view! {
-        <label class=FIELD_CLS>
-            <span>{label()}</span>
-            <input type="number" step=step class="input input--sm w-[120px] num" prop:value=move || sig.get() on:input=move |ev| sig.set(event_target_value(&ev)) />
-        </label>
+    /// A host path, sent on Enter / blur.
+    fn path(&self, key: &'static str, label: Label) -> impl IntoView + use<> {
+        let (f, value) = (self.clone(), self.text(key));
+        view! {
+            <label class="flex flex-col gap-1">
+                <span class=LABEL>{self.label(label)}</span>
+                <input type="text" class="input w-full h-11 md:h-9 font-mono text-sm" spellcheck="false"
+                       prop:value=move || value.get()
+                       on:change=move |ev| f.put(key, event_target_value(&ev).trim().into()) />
+            </label>
+        }
     }
-}
 
-fn check_field(
-    label: impl Fn() -> &'static str + Copy + 'static,
-    sig: RwSignal<bool>,
-) -> impl IntoView {
-    view! {
-        <label class="flex items-center justify-between gap-sp-3 text-sm text-text-muted">
-            <span>{label()}</span>
-            <input type="checkbox" prop:checked=move || sig.get() on:change=move |ev| sig.set(event_target_checked(&ev)) />
-        </label>
-    }
-}
-
-fn select_field(
-    label: impl Fn() -> &'static str + Copy + 'static,
-    sig: RwSignal<String>,
-    options: Vec<(&'static str, &'static str)>,
-) -> impl IntoView {
-    view! {
-        <label class=FIELD_CLS>
-            <span>{label()}</span>
-            <select class="input input--sm min-w-[150px]" prop:value=move || sig.get() on:change=move |ev| sig.set(event_target_value(&ev))>
-                {options.into_iter().map(|(value, label)| view! { <option value=value>{label}</option> }).collect_view()}
+    fn select(&self, key: &'static str, default: i64, label: Label, options: Vec<(i64, Label)>) -> impl IntoView + use<> {
+        let (f, settings, lang) = (self.clone(), self.settings, self.lang);
+        let cur = move || settings.with(|v| v[key].as_i64().unwrap_or(default));
+        setting_row(self.label(label), view! {
+            <select class=SELECT on:change=move |ev| {
+                if let Ok(n) = event_target_value(&ev).parse::<i64>() { f.put(key, n.into()) }
+            }>
+                {options.into_iter().map(|(n, l)| view! {
+                    <option value=n.to_string() prop:selected=move || cur() == n>{move || l(t(lang.get()))}</option>
+                }).collect_view()}
             </select>
-        </label>
+        })
+    }
+
+    /// Sent as a double; KStars reads integer keys with `toInt()`.
+    fn number(&self, key: &'static str, default: f64, step: &'static str, label: Label) -> impl IntoView + use<> {
+        let (f, settings) = (self.clone(), self.settings);
+        setting_row(self.label(label), view! {
+            <input type="number" step=step min="0" inputmode="decimal" class=NUM
+                   prop:value=move || settings.with(|v| v[key].as_f64().unwrap_or(default)).to_string()
+                   on:change=move |ev| {
+                       if let Ok(x) = event_target_value(&ev).trim().parse::<f64>() { f.put(key, x.into()) }
+                   } />
+        })
+    }
+
+    fn check(&self, key: &'static str, default: bool, label: Label) -> impl IntoView + use<> {
+        let (f, settings) = (self.clone(), self.settings);
+        view! {
+            <label class="flex items-center gap-3 min-h-[44px] md:min-h-9 cursor-pointer">
+                <input type="checkbox" class=CHECK
+                       prop:checked=move || settings.with(|v| v[key].as_bool().unwrap_or(default))
+                       on:change=move |ev| f.put(key, event_target_checked(&ev).into()) />
+                <span class=LABEL>{self.label(label)}</span>
+            </label>
+        }
+    }
+}
+
+/// A stacking / output folder, with Use current folder and Open buttons.
+fn folder(f: &Form, s: Shared, open: RwSignal<bool>, key: &'static str, label: Label) -> impl IntoView + use<> {
+    let (put, value, lang) = (f.clone(), f.text(key), f.lang);
+    let tr = move || t(lang.get());
+    view! {
+        <div class="flex flex-col gap-2">
+            {f.path(key, label)}
+            <div class="grid grid-cols-2 gap-2">
+                <button class="btn btn-ghost h-11 md:h-9 px-2" disabled=move || s.root.with(String::is_empty)
+                        on:click=move |_| put.put(key, s.abs(&s.path.get_untracked()).into())>
+                    {move || tr().files_use_current}
+                </button>
+                <button class="btn btn-ghost h-11 md:h-9 px-2" disabled=move || value.with(String::is_empty)
+                        on:click=move |_| {
+                            s.reveal(value.get_untracked());
+                            open.set(false);
+                        }>
+                    {move || tr().files_open}
+                </button>
+            </div>
+        </div>
+    }
+}
+
+pub(super) fn cards(s: Shared, open: RwSignal<bool>, settings: RwSignal<Value>, send: SendCmd, lang: RwSignal<Lang>) -> impl IntoView {
+    let f = Form { settings, send, lang };
+    let title = |label: Label| view! { <span class=CARD_TITLE>{f.label(label)}</span> };
+    view! {
+        <div class=CARD>
+            {title(|t| t.livestack_section_directories)}
+            {folder(&f, s, open, "stackingDirectory", |t| t.livestack_dir_in)}
+            {folder(&f, s, open, "outputDirectory", |t| t.livestack_dir_out)}
+        </div>
+        <div class=CARD>
+            {title(|t| t.livestack_section_stacking)}
+            {f.select("alignMethod", 0, |t| t.livestack_align_method, vec![
+                (0, |t| t.livestack_align_plate_solve),
+                (1, |t| t.livestack_align_none),
+            ])}
+            {f.select("stackingMethod", 0, |t| t.livestack_stack_method, vec![
+                (0, |t| t.livestack_stack_mean),
+                (1, |t| t.livestack_stack_sigma),
+                (2, |t| t.livestack_stack_windsor),
+                (3, |t| t.livestack_stack_imagemm),
+            ])}
+            {f.select("weighting", 0, |t| t.livestack_weighting, vec![
+                (0, |t| t.livestack_weighting_equal),
+                (1, |t| t.livestack_weighting_hfr),
+                (2, |t| t.livestack_weighting_stars),
+            ])}
+            {f.select("downscale", 0, |t| t.livestack_downscale, vec![
+                (0, |t| t.livestack_downscale_none),
+                (1, |t| t.livestack_downscale_x2),
+                (2, |t| t.livestack_downscale_x3),
+                (3, |t| t.livestack_downscale_x4),
+            ])}
+            {f.number("numInMem", 10.0, "1", |t| t.livestack_num_in_mem)}
+            {f.check("looping", false, |t| t.livestack_looping)}
+        </div>
+        <div class=CARD>
+            {title(|t| t.livestack_section_rejection)}
+            {f.check("calcSNR", true, |t| t.livestack_calc_snr)}
+            {f.number("lowSigma", 2.0, "0.1", |t| t.livestack_low_sigma)}
+            {f.number("highSigma", 3.0, "0.1", |t| t.livestack_high_sigma)}
+        </div>
+        <div class=CARD>
+            {title(|t| t.livestack_section_postprocess)}
+            {f.check("postProcess", false, |t| t.livestack_post_process)}
+            {f.number("sharpenAmt", 0.0, "0.1", |t| t.livestack_sharpen)}
+            {f.number("denoiseAmt", 0.0, "0.1", |t| t.livestack_denoise)}
+            {f.number("deconvAmt", 0.0, "0.1", |t| t.livestack_deconv)}
+        </div>
+        <div class=CARD>
+            {title(|t| t.livestack_section_calibration)}
+            {f.path("masterDarkPath", |t| t.livestack_master_dark)}
+            {f.path("masterFlatPath", |t| t.livestack_master_flat)}
+        </div>
     }
 }

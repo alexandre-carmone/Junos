@@ -1,188 +1,192 @@
-//! Files tab: the directory and file listing, as cards or rows.
+//! Files tab: the toolbar (path, search, sort, type pills) and the listing —
+//! folder rows, then a thumbnail grid (two columns on phones).
 
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 
-use crate::i18n::Translations;
+use crate::components::form::CHIP;
+use crate::dom::event_target_value;
+use crate::i18n::{t, Lang, Translations};
 
-use super::types::{DirEntry, FileMenuState, FilterKind, ListReply, SortDir, SortKey};
-use super::utils::{
-    format_mtime, format_size, is_fits_ext, is_image_ext, is_jpg_ext, url_encode, FILE_CARD,
-    FILE_CARD_ACTIVE, FILE_ROW, FILE_ROW_ACTIVE, SMALL_BTN,
-};
+use super::types::{FilterKind, SortDir, SortKey};
+use super::utils::{format_mtime, format_size, is_image_ext, join, parent_of, thumb_url, FOLDER_ICON};
+use super::{Item, Shared};
 
-fn open_menu_for(rel: String, ev: &web_sys::MouseEvent, file_menu: RwSignal<Option<FileMenuState>>) {
-    let (x, y) = ev
-        .current_target()
-        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-        .map(|el| {
-            let r = el.get_bounding_client_rect();
-            (r.right(), r.bottom())
-        })
-        .unwrap_or((0.0, 0.0));
-    file_menu.set(Some(FileMenuState { rel, anchor_x: x, anchor_y: y }));
-}
+const CRUMB: &str = "shrink-0 h-9 min-h-0 min-w-0 px-1.5 rounded-md bg-transparent border-0";
 
-pub(super) fn filter_button(
-    label_kind: FilterKind,
-    signal: RwSignal<FilterKind>,
-    label: impl Fn() -> &'static str + Copy + 'static,
-) -> impl IntoView {
-    view! {
-        <button
-            class=move || if signal.get() == label_kind { "btn btn--sm btn--active" } else { SMALL_BTN }
-            on:click=move |_| signal.set(label_kind)
-        >
-            {label()}
-        </button>
+fn filter_label(k: FilterKind, tr: &'static Translations) -> &'static str {
+    match k {
+        FilterKind::Images => tr.files_filter_images,
+        FilterKind::Fits => tr.files_filter_fits,
+        FilterKind::Jpg => tr.files_filter_jpg,
+        FilterKind::All => tr.files_filter_all,
     }
 }
 
-pub(super) fn render_dirs(
-    listing: Option<ListReply>,
-    current_path: RwSignal<String>,
-    selected: RwSignal<Option<String>>,
-    selected_folder: RwSignal<Option<String>>,
-    selected_folder_value: Option<String>,
-) -> impl IntoView {
-    let dirs: Vec<DirEntry> = listing
-        .map(|r| r.entries.into_iter().filter(|e| e.kind == "dir").collect())
-        .unwrap_or_default();
-    dirs.into_iter().map(|d| {
-        let name = d.name.clone();
-        let cur = current_path.get_untracked();
-        let rel = if cur.is_empty() { name.clone() } else { format!("{}/{}", cur, name) };
-        let active = selected_folder_value.as_deref() == Some(rel.as_str());
-        let rel_click = rel.clone();
-        view! {
-            <button
-                class=if active { "mb-sp-1 flex w-full items-center gap-sp-2 rounded-md border border-accent-cyan bg-[color-mix(in_srgb,var(--accent-cyan)_14%,var(--bg-elev-2))] px-sp-2 py-sp-2 text-left text-sm text-text" } else { "mb-sp-1 flex w-full items-center gap-sp-2 rounded-md border border-border-strong bg-bg-elev-2 px-sp-2 py-sp-2 text-left text-sm text-text transition hover:border-border-mid hover:bg-bg-elev-3" }
-                on:click=move |_| {
-                current_path.set(rel_click.clone());
-                selected_folder.set(Some(rel_click.clone()));
-                selected.set(None);
-            }>
-                <span class="text-text-blue">"DIR"</span>
-                <span class="min-w-0 truncate">{d.name}</span>
-            </button>
-        }
+/// "Captures › Light › M31", each crumb opening its folder.
+fn crumbs(path: &str, root: &'static str, target: RwSignal<String>) -> impl IntoView + use<> {
+    let mut items = vec![(String::new(), root.to_string())];
+    for seg in path.split('/').filter(|s| !s.is_empty()) {
+        let rel = join(&items[items.len() - 1].0, seg);
+        items.push((rel, seg.to_string()));
+    }
+    let last = items.len() - 1;
+    items.into_iter().enumerate().map(|(i, (rel, label))| view! {
+        {(i > 0).then(|| view! { <span class="shrink-0 text-text-faint">"\u{203A}"</span> })}
+        <button class=if i == last {
+                    format!("{CRUMB} font-semibold text-text")
+                } else {
+                    format!("{CRUMB} text-text-blue hover:bg-bg-elev-2")
+                }
+                on:click=move |_| target.set(rel.clone())>
+            {label}
+        </button>
     }).collect_view()
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn render_files(
-    listing: Option<ListReply>,
-    current_path: String,
-    selected: RwSignal<Option<String>>,
-    selected_value: Option<String>,
-    sort_key: SortKey,
-    sort_dir: SortDir,
-    filter_kind: FilterKind,
-    name_filter: String,
-    loading: bool,
-    tr: &'static Translations,
-    preview_open: RwSignal<bool>,
-    file_menu: RwSignal<Option<FileMenuState>>,
+pub(super) fn toolbar(
+    s: Shared,
+    search: RwSignal<String>,
+    sort_key: RwSignal<SortKey>,
+    sort_dir: RwSignal<SortDir>,
+    filter: RwSignal<FilterKind>,
+    lang: RwSignal<Lang>,
 ) -> impl IntoView {
-    let mut files: Vec<DirEntry> = listing
-        .map(|r| r.entries.into_iter().filter(|e| e.kind == "file").collect())
-        .unwrap_or_default();
-    let needle = name_filter.trim().to_ascii_lowercase();
-    files.retain(|f| {
-        let by_kind = match filter_kind {
-            FilterKind::Images => is_image_ext(&f.ext),
-            FilterKind::Fits => is_fits_ext(&f.ext),
-            FilterKind::Jpg => is_jpg_ext(&f.ext),
-            FilterKind::All => true,
-        };
-        by_kind && (needle.is_empty() || f.name.to_ascii_lowercase().contains(&needle))
+    let tr = move || t(lang.get());
+    // Keep the deepest crumb in sight.
+    let crumb_box = NodeRef::<leptos::html::Div>::new();
+    Effect::new(move |_| {
+        s.path.track();
+        if let Some(el) = crumb_box.get() {
+            request_animation_frame(move || el.set_scroll_left(el.scroll_width()));
+        }
     });
-    files.sort_by(|a, b| match sort_key {
-        SortKey::Name => a
-            .name
-            .to_ascii_lowercase()
-            .cmp(&b.name.to_ascii_lowercase()),
-        SortKey::Date => a.mtime.cmp(&b.mtime),
-        SortKey::Size => a.size.cmp(&b.size),
-    });
-    if sort_dir == SortDir::Desc {
-        files.reverse();
-    }
+    let sort_option = move |k: SortKey, label: fn(&'static Translations) -> &'static str| view! {
+        <option value=k.storage() prop:selected=move || sort_key.get() == k>{move || label(tr())}</option>
+    };
 
-    if files.is_empty() && !loading {
-        return view! { <div class="p-sp-5 text-center text-sm text-text-faint">{tr.files_empty_dir}</div> }.into_any();
-    }
-
-    let selected_snapshot = selected_value.unwrap_or_default();
     view! {
-        <div class="grid grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-sp-3">
-            {files.into_iter().map(|f| {
-                let rel = if current_path.is_empty() { f.name.clone() } else { format!("{}/{}", current_path, f.name) };
-                if is_image_ext(&f.ext) {
-                    render_file_card(f, rel, selected_snapshot.clone(), selected, preview_open, file_menu, tr).into_any()
-                } else {
-                    render_file_row(f, rel, selected_snapshot.clone(), selected, preview_open, file_menu, tr).into_any()
-                }
-            }).collect_view()}
-        </div>
-    }.into_any()
-}
-
-fn render_file_card(
-    f: DirEntry,
-    rel: String,
-    selected_snapshot: String,
-    selected: RwSignal<Option<String>>,
-    preview_open: RwSignal<bool>,
-    file_menu: RwSignal<Option<FileMenuState>>,
-    tr: &'static Translations,
-) -> impl IntoView {
-    let thumb = format!("/api/files/thumb?size=256&path={}", url_encode(&rel));
-    let rel_select = rel.clone();
-    let rel_menu = rel.clone();
-    view! {
-        <div class=if rel == selected_snapshot { FILE_CARD_ACTIVE } else { FILE_CARD }>
-            <button class="flex flex-1 flex-col bg-transparent p-0 text-left text-inherit" on:click=move |_| { selected.set(Some(rel_select.clone())); preview_open.set(true); }>
-                <img class="aspect-square w-full bg-black object-cover" src=thumb loading="lazy" />
-                <span class="truncate px-sp-2 py-sp-2 text-xs text-text-muted">{f.name.clone()}</span>
-            </button>
-            <div class="absolute left-sp-2 right-sp-2 top-sp-2 flex justify-between gap-sp-2">
-                <span class="badge">{format_size(f.size)}</span>
-                <button
-                    class="btn btn--sm btn-ghost bg-bg-panel-solid"
-                    title=tr.files_action_menu
-                    on:click=move |ev| { ev.stop_propagation(); open_menu_for(rel_menu.clone(), &ev, file_menu); }
-                >"..."</button>
+        <div class="shrink-0 flex flex-col gap-2 px-3 py-2 md:pl-4 md:pr-6 border-b border-border-base">
+            <div class="flex items-center gap-1 min-w-0">
+                <button class="btn-icon shrink-0" title=move || tr().files_parent
+                        disabled=move || s.path.with(String::is_empty)
+                        on:click=move |_| s.path.update(|p| *p = parent_of(p))>
+                    "\u{2191}"
+                </button>
+                <div node_ref=crumb_box
+                     class="flex-1 min-w-0 flex items-center gap-0.5 overflow-x-auto [scrollbar-width:none] \
+                            whitespace-nowrap text-sm">
+                    {move || crumbs(&s.path.get(), tr().files_breadcrumb_root, s.path)}
+                </div>
+            </div>
+            <div class="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
+                <div class="flex items-center gap-2 md:flex-1 md:max-w-[520px]">
+                    <input type="search" class="input flex-1 min-w-0 h-11 md:h-9"
+                           placeholder=move || tr().files_filter_placeholder
+                           prop:value=move || search.get()
+                           on:input=move |ev| search.set(event_target_value(&ev)) />
+                    <select class="input shrink-0 h-11 md:h-9"
+                            on:change=move |ev| sort_key.set(SortKey::from_storage(Some(event_target_value(&ev))))>
+                        {sort_option(SortKey::Date, |t| t.files_sort_date)}
+                        {sort_option(SortKey::Name, |t| t.files_sort_name)}
+                        {sort_option(SortKey::Size, |t| t.files_sort_size)}
+                    </select>
+                    <button class="btn-icon shrink-0 !w-11 !h-11 md:!w-9 md:!h-9"
+                            title=move || if sort_dir.get() == SortDir::Asc { tr().files_sort_asc } else { tr().files_sort_desc }
+                            on:click=move |_| sort_dir.update(|d| *d = if *d == SortDir::Asc { SortDir::Desc } else { SortDir::Asc })>
+                        {move || if sort_dir.get() == SortDir::Asc { "\u{2191}" } else { "\u{2193}" }}
+                    </button>
+                </div>
+                <div class="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
+                    {FilterKind::ALL.map(|k| view! {
+                        <button type="button"
+                                class=move || if filter.get() == k { format!("{CHIP} shrink-0 btn--active") } else { format!("{CHIP} shrink-0") }
+                                aria-pressed=move || (filter.get() == k).to_string()
+                                on:click=move |_| filter.set(k)>
+                            {move || filter_label(k, tr())}
+                        </button>
+                    })}
+                </div>
             </div>
         </div>
     }
 }
 
-fn render_file_row(
-    f: DirEntry,
-    rel: String,
-    selected_snapshot: String,
-    selected: RwSignal<Option<String>>,
-    preview_open: RwSignal<bool>,
-    file_menu: RwSignal<Option<FileMenuState>>,
-    tr: &'static Translations,
+pub(super) fn listing(
+    s: Shared,
+    folders: Memo<Vec<Item>>,
+    files: Memo<Vec<Item>>,
+    error: RwSignal<Option<String>>,
+    loading: RwSignal<bool>,
+    lang: RwSignal<Lang>,
 ) -> impl IntoView {
-    let rel_select = rel.clone();
-    let rel_menu = rel.clone();
+    let tr = move || t(lang.get());
+    let empty = move || {
+        !loading.get() && error.with(Option::is_none) && folders.with(Vec::is_empty) && files.with(Vec::is_empty)
+    };
     view! {
-        <div class=if rel == selected_snapshot { FILE_ROW_ACTIVE } else { FILE_ROW }>
-            <button class="min-w-0 flex-1 bg-transparent text-left text-inherit" on:click=move |_| { selected.set(Some(rel_select.clone())); preview_open.set(true); }>
-                <div class="truncate text-text">{f.name}</div>
-                <div class="mt-[2px] flex gap-sp-3 text-xs text-text-faint">
-                    <span>{format_size(f.size)}</span>
-                    <span>{format_mtime(f.mtime)}</span>
-                </div>
-            </button>
-            <button
-                class=SMALL_BTN
-                title=tr.files_action_menu
-                on:click=move |ev| { ev.stop_propagation(); open_menu_for(rel_menu.clone(), &ev, file_menu); }
-            >"..."</button>
+        {move || error.get().map(|e| view! {
+            <div class="panel mb-3 p-3 text-sm text-state-err break-words">{format!("{}: {e}", tr().files_error)}</div>
+        })}
+        <Show when=move || folders.with(|f| !f.is_empty())>
+            <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 mb-3">
+                <For each=move || folders.get() key=|(rel, _)| rel.clone()
+                     children=move |item| folder_row(s, item) />
+            </div>
+        </Show>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-[repeat(auto-fill,minmax(160px,1fr))]">
+            <For each=move || files.get() key=|(rel, e)| (rel.clone(), e.mtime, e.size)
+                 children=move |item| file_card(s, item) />
         </div>
+        <Show when=empty>
+            <div class="py-12 text-center text-sm text-text-faint">{move || tr().files_empty_dir}</div>
+        </Show>
+    }
+}
+
+fn folder_row(s: Shared, (rel, e): Item) -> impl IntoView {
+    view! {
+        <button class="flex items-center gap-3 h-12 px-3 rounded-lg border border-border-base bg-bg-elev-1 text-left \
+                       transition-colors hover:bg-bg-elev-2 hover:border-border-mid"
+                on:click=move |_| s.path.set(rel.clone())>
+            <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=FOLDER_ICON></span>
+            <span class="flex-1 min-w-0 truncate text-sm text-text">{e.name}</span>
+            <span class="shrink-0 font-mono text-xs text-text-faint">{format_mtime(e.mtime, true)}</span>
+            <span class="shrink-0 text-text-faint">"\u{203A}"</span>
+        </button>
+    }
+}
+
+fn file_card(s: Shared, (rel, e): Item) -> impl IntoView {
+    let thumb = is_image_ext(&e.ext).then(|| thumb_url(&rel));
+    let info = format!("{} \u{00b7} {}", format_mtime(e.mtime, true), format_size(e.size));
+    let open = rel.clone();
+    view! {
+        <button class=move || format!(
+                    "flex flex-col min-w-0 overflow-hidden rounded-lg border bg-bg-elev-1 text-left transition-colors \
+                     hover:border-border-mid {}",
+                    if s.selected.with(|x| x.as_deref() == Some(rel.as_str())) {
+                        "border-accent-cyan ring-1 ring-accent-cyan"
+                    } else {
+                        "border-border-base"
+                    })
+                on:click=move |_| {
+                    s.selected.set(Some(open.clone()));
+                    s.viewer.set(true);
+                }>
+            <div class="aspect-square bg-bg-input-deep flex items-center justify-center overflow-hidden">
+                {match thumb {
+                    Some(src) => view! {
+                        <img class="w-full h-full object-cover" src=src loading="lazy" decoding="async" alt="" />
+                    }.into_any(),
+                    None => view! {
+                        <span class="font-mono text-lg uppercase text-text-faint">{e.ext.clone()}</span>
+                    }.into_any(),
+                }}
+            </div>
+            <div class="min-w-0 flex flex-col px-2 py-1.5">
+                <span class="truncate text-xs text-text">{e.name.clone()}</span>
+                <span class="truncate font-mono text-xs text-text-faint">{info}</span>
+            </div>
+        </button>
     }
 }

@@ -5,8 +5,8 @@
 //! Files), then the frame — pinned on phones with the cards scrolling beneath
 //! it, frame | cards from `md` — and a pinned footer with Preview, Loop and
 //! Start / Stop, so Stop is always one tap away. Tapping the frame opens it
-//! full screen (`zoom.rs`); the sequence editor and a job's details open as
-//! `sheet`s.
+//! full screen (`components/zoom.rs`); the sequence editor and a job's
+//! details open as `sheet`s.
 //!
 //! Outbound (message.cpp::processCaptureCommands):
 //!   - capture_preview, capture_loop, capture_start (runs the next pending
@@ -25,7 +25,6 @@
 
 mod fields;
 mod jobs;
-mod zoom;
 
 use leptos::prelude::*;
 use serde_json::json;
@@ -34,6 +33,7 @@ use crate::compat::{CameraSnapshot, CaptureSnapshot, FilterWheelSnapshot};
 use crate::components::form::{sheet, CARD, CARD_TITLE, CHIP, FOOTER, LABEL, NUM};
 use crate::components::sequence_editor::{build_esq_xml, SeqFrame, SequenceEditor};
 use crate::components::tab_wheel_icons::tab_icon;
+use crate::components::zoom::frame_zoom;
 use crate::dom::event_target_value;
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
@@ -432,7 +432,7 @@ pub fn ImagingTab(
             <Show when=move || detail.get().is_some()>
                 {sheet(move || tr().imaging_job_detail, move || detail.set(None), detail_body())}
             </Show>
-            {zoom::frame_zoom(preview, zoom_open, lang)}
+            {frame_zoom(preview.into(), zoom_open, lang)}
         </div>
     }
 }

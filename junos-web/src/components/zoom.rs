@@ -1,7 +1,7 @@
-//! The last frame full screen: wheel / pinch zooms about the pointer, drag
-//! pans, double-click resets, and a click at fit size closes. This is the
-//! transmitted preview — KStars sends stretched JPEGs (media.cpp), not the
-//! raw FITS.
+//! A frame full screen: wheel / pinch zooms about the pointer, drag pans,
+//! double-click resets, and a click at fit size closes. Imaging shows KStars'
+//! transmitted preview (stretched JPEGs, media.cpp), Files the server's
+//! preview render of a capture.
 
 use std::collections::HashMap;
 
@@ -11,7 +11,7 @@ use web_sys::{PointerEvent, WheelEvent};
 
 use crate::i18n::{t, Lang};
 
-pub(super) fn frame_zoom(url: Memo<Option<String>>, open: RwSignal<bool>, lang: RwSignal<Lang>) -> impl IntoView {
+pub fn frame_zoom(url: Signal<Option<String>>, open: RwSignal<bool>, lang: RwSignal<Lang>) -> impl IntoView {
     // Image transform: scale (1 = fit) and translation from the centre, px.
     let scale = RwSignal::new(1.0_f64);
     let tx = RwSignal::new(0.0_f64);
@@ -106,7 +106,7 @@ pub(super) fn frame_zoom(url: Memo<Option<String>>, open: RwSignal<bool>, lang: 
                          src=move || url.get().unwrap_or_default() />
                 </div>
                 <button class="btn-icon absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))]"
-                        title=move || t(lang.get()).imaging_close on:click=move |_| open.set(false)>
+                        title=move || t(lang.get()).info_close on:click=move |_| open.set(false)>
                     "\u{2716}"
                 </button>
             </div>

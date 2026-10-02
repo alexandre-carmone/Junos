@@ -1331,8 +1331,10 @@ impl DeviceStore {
             "new_livestacker_state" => {
                 self.livestacker_state.update(|opt| {
                     let s = opt.get_or_insert_with(LiveStackerState::default);
+                    // A message belongs to its state (an error's reason).
                     if let Some(v) = payload["state"].as_str() {
                         s.state = v.to_string();
+                        s.message = payload["message"].as_str().map(str::to_string);
                     }
                     if let Some(v) = payload["ok"].as_bool() {
                         s.ok = v;
@@ -1351,9 +1353,6 @@ impl DeviceStore {
                     }
                     if let Some(v) = payload["max_snr"].as_f64() {
                         s.max_snr = v;
-                    }
-                    if let Some(v) = payload["message"].as_str() {
-                        s.message = Some(v.to_string());
                     }
                 });
             }

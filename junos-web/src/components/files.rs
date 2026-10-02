@@ -1,35 +1,116 @@
-//! Files tab — segmented capture browser + promoted LiveStacker panel.
+//! Files tab — browse the captures, view a frame with its FITS header, and
+//! drive KStars' Live Stack.
 //!
-//! File browsing is HTTP-backed and sandboxed by junos-server's captures root.
-//! LiveStacker controls still dispatch raw Ekos Live JSON over the shared WS.
-
-use std::sync::Arc;
-
-use leptos::prelude::*;
-use serde_json::{json, Value};
-
-use crate::i18n::{t, Lang};
-use crate::ws::{LiveStackerState, SendCmd};
-use crate::ws_helpers::send_cmd;
-use crate::RevealInFilesCtx;
+//! Layout (phone-first, like Imaging): a header (Live Stack · refresh), a
+//! toolbar (path, search, sort, type pills), then the folder rows and the
+//! thumbnail grid, scrolling (`browser.rs`). A tap on a file opens the viewer
+//! (`viewer.rs`), a page over the list; Live Stack opens as a `sheet`
+//! (`livestack.rs`, `settings.rs`). One `frame_zoom` serves both.
+//!
+//! Browsing is HTTP (`/api/files/*`, sandboxed to the server's captures root);
+//! Resolve & Slew and Live Stack go to KStars over the shared WS.
 
 mod actions;
 mod api;
 mod browser;
 mod livestack;
-mod preview;
 mod settings;
 mod types;
 mod utils;
+mod viewer;
 
-use actions::{copy_to_clipboard, delete_file_action, download_file, rename_file_action, resolve_and_slew};
-use api::{fetch_list, fetch_meta, newest_image_in_abs_dir, resolve_abs};
-use browser::{filter_button, render_dirs, render_files};
-use livestack::render_livestack_workspace;
-use preview::render_preview_modal;
-use types::{FileMenuState, FileMeta, FilterKind, ListReply, LiveStackTab, SortDir, SortKey};
-use crate::dom::event_target_value;
-use utils::{parent_of, PANEL_BODY, PANEL_CLS, SELECT_CLS, SUMMARY_CLS, INPUT_CLS};
+use leptos::prelude::*;
+use serde_json::Value;
+
+use crate::components::form::{sheet, CHIP};
+use crate::components::tab_wheel_icons::tab_icon;
+use crate::components::zoom::frame_zoom;
+use crate::i18n::{t, Lang};
+use crate::ws::{LiveStackerState, SendCmd};
+use crate::{CaptureDirCtx, RevealInFilesCtx, Tab};
+
+use api::{fetch_list, resolve_abs};
+use types::{DirEntry, FilterKind, ListReply, SortDir, SortKey};
+use utils::{join, REFRESH_ICON};
+
+/// A listed entry with its sandbox-relative path.
+type Item = (String, DirEntry);
+
+/// The signals the tab's parts share.
+#[derive(Clone, Copy)]
+struct Shared {
+    /// Folder shown, relative to the captures root ("" = the root).
+    path: RwSignal<String>,
+    /// File in the viewer — or the last one viewed, ringed in the grid.
+    selected: RwSignal<Option<String>>,
+    viewer: RwSignal<bool>,
+    refresh: RwSignal<u32>,
+    /// Toast text; clears itself.
+    flash: RwSignal<Option<String>>,
+    /// Full-screen frame (`frame_zoom`).
+    zoom_url: RwSignal<Option<String>>,
+    zoom_open: RwSignal<bool>,
+    /// Absolute captures root on the host (`CaptureDirCtx`).
+    root: RwSignal<String>,
+}
+
+impl Shared {
+    fn reload(self) {
+        self.refresh.update(|n| *n = n.wrapping_add(1));
+    }
+
+    fn zoom(self, url: String) {
+        self.zoom_url.set(Some(url));
+        self.zoom_open.set(true);
+    }
+
+    /// The host path KStars needs for a sandbox-relative one; "" while the
+    /// root is unknown.
+    fn abs(self, rel: &str) -> String {
+        let root = self.root.get_untracked();
+        if root.is_empty() || rel.is_empty() { root } else { join(root.trim_end_matches('/'), rel) }
+    }
+
+    /// Show a host path: a folder opens, a file opens in the viewer. Outside
+    /// the captures root, the root.
+    fn reveal(self, abs: String) {
+        wasm_bindgen_futures::spawn_local(async move {
+            let r = match resolve_abs(&abs).await {
+                Ok(r) if r.in_sandbox && !abs.is_empty() => r,
+                _ => {
+                    self.path.set(String::new());
+                    self.viewer.set(false);
+                    return;
+                }
+            };
+            if fetch_list(&r.relative).await.is_ok() {
+                self.path.set(r.relative);
+                self.viewer.set(false);
+            } else {
+                self.path.set(r.parent);
+                self.selected.set(Some(r.relative));
+                self.viewer.set(true);
+            }
+            self.reload();
+        });
+    }
+
+    /// Step the viewer `by` files through the list.
+    fn step(self, files: Memo<Vec<Item>>, by: isize) {
+        let Some(cur) = self.selected.get_untracked() else { return };
+        let next = files.with_untracked(|f| {
+            let i = f.iter().position(|(rel, _)| *rel == cur)?;
+            f.get(i.checked_add_signed(by)?).map(|(rel, _)| rel.clone())
+        });
+        if next.is_some() {
+            self.selected.set(next);
+        }
+    }
+}
+
+fn stored(key: &str) -> Option<String> {
+    web_sys::window()?.local_storage().ok()??.get_item(key).ok()?
+}
 
 #[component]
 pub fn FilesTab(
@@ -40,56 +121,53 @@ pub fn FilesTab(
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
 
-    let ls = web_sys::window().and_then(|w| w.local_storage().ok().flatten());
-    let current_path = RwSignal::new(
-        ls.as_ref().and_then(|s| s.get_item("files_path").ok().flatten()).unwrap_or_default()
-    );
-    let sort_key = RwSignal::new(SortKey::from_storage(ls.as_ref().and_then(|s| s.get_item("files_sort").ok().flatten())));
-    let sort_dir = RwSignal::new(SortDir::from_storage(ls.as_ref().and_then(|s| s.get_item("files_sort_dir").ok().flatten())));
-    let filter_kind = RwSignal::new(FilterKind::from_storage(ls.as_ref().and_then(|s| s.get_item("files_filter").ok().flatten())));
-    let livestack_tab = RwSignal::new(LiveStackTab::from_storage(ls.as_ref().and_then(|s| s.get_item("files_livestack_tab").ok().flatten())));
-    let name_filter = RwSignal::new(String::new());
-
-    let listing = RwSignal::new(None::<ListReply>);
-    let list_error = RwSignal::new(None::<String>);
-    let loading = RwSignal::new(false);
-    let refresh_tick = RwSignal::new(0u32);
-
-    let selected = RwSignal::new(None::<String>);
-    let selected_folder = RwSignal::new(None::<String>);
-    let preview_open = RwSignal::new(false);
-    let selected_meta = RwSignal::new(None::<FileMeta>);
-    let meta_error = RwSignal::new(None::<String>);
-    let flash = RwSignal::new(None::<String>);
-    let file_menu = RwSignal::new(None::<FileMenuState>);
-
-    let latest_stacked = RwSignal::new(None::<String>);
-    let latest_stacked_warning = RwSignal::new(None::<String>);
+    let s = Shared {
+        path: RwSignal::new(stored("files_path").unwrap_or_default()),
+        selected: RwSignal::new(None),
+        viewer: RwSignal::new(false),
+        refresh: RwSignal::new(0),
+        flash: RwSignal::new(None),
+        zoom_url: RwSignal::new(None),
+        zoom_open: RwSignal::new(false),
+        root: use_context::<CaptureDirCtx>().map_or_else(|| RwSignal::new(String::new()), |c| c.0),
+    };
+    let sort_key = RwSignal::new(SortKey::from_storage(stored("files_sort")));
+    let sort_dir = RwSignal::new(SortDir::from_storage(stored("files_sort_dir")));
+    let filter = RwSignal::new(FilterKind::from_storage(stored("files_filter")));
+    let search = RwSignal::new(String::new());
+    let stack_open = RwSignal::new(false);
 
     Effect::new(move |_| {
-        let p = current_path.get();
-        let k = sort_key.get().storage().to_string();
-        let d = sort_dir.get().storage().to_string();
-        let f = filter_kind.get().storage().to_string();
-        let tab = livestack_tab.get().storage().to_string();
-        if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-            let _ = s.set_item("files_path", &p);
-            let _ = s.set_item("files_sort", &k);
-            let _ = s.set_item("files_sort_dir", &d);
-            let _ = s.set_item("files_filter", &f);
-            let _ = s.set_item("files_livestack_tab", &tab);
+        let pairs = [
+            ("files_path", s.path.get()),
+            ("files_sort", sort_key.get().storage().to_string()),
+            ("files_sort_dir", sort_dir.get().storage().to_string()),
+            ("files_filter", filter.get().storage().to_string()),
+        ];
+        if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            for (k, v) in pairs {
+                let _ = ls.set_item(k, &v);
+            }
         }
     });
 
+    // The folder's listing, re-read on navigation and on refresh.
+    let listing = RwSignal::new(None::<ListReply>);
+    let list_error = RwSignal::new(None::<String>);
+    let loading = RwSignal::new(false);
     Effect::new(move |_| {
-        let path = current_path.get();
-        let _tick = refresh_tick.get();
+        let path = s.path.get();
+        s.refresh.track();
         loading.set(true);
-        list_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            match fetch_list(&path).await {
-                Ok(reply) => {
-                    listing.set(Some(reply));
+            let reply = fetch_list(&path).await;
+            // Another folder was opened meanwhile: its own fetch reports.
+            if s.path.try_get_untracked().as_ref() != Some(&path) {
+                return;
+            }
+            match reply {
+                Ok(r) => {
+                    listing.set(Some(r));
                     list_error.set(None);
                 }
                 Err(e) => {
@@ -101,336 +179,115 @@ pub fn FilesTab(
         });
     });
 
+    // Entries after search, type filter and sort; ties keep the server's
+    // name order.
+    let sorted = Memo::new(move |_| {
+        let needle = search.get().trim().to_lowercase();
+        let (key, dir, kind) = (sort_key.get(), sort_dir.get(), filter.get());
+        listing.with(|l| {
+            let Some(l) = l else { return Vec::new() };
+            let mut v: Vec<Item> = l.entries.iter()
+                .filter(|e| e.kind == "dir" || kind.accepts(&e.ext))
+                .filter(|e| needle.is_empty() || e.name.to_lowercase().contains(&needle))
+                .map(|e| (join(&l.path, &e.name), e.clone()))
+                .collect();
+            v.sort_by(|(_, a), (_, b)| {
+                let o = match key {
+                    SortKey::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                    SortKey::Date => a.mtime.cmp(&b.mtime),
+                    SortKey::Size => a.size.cmp(&b.size),
+                };
+                if dir == SortDir::Desc { o.reverse() } else { o }
+            });
+            v
+        })
+    });
+    let of_kind = move |kind: &'static str| {
+        Memo::new(move |_| sorted.with(|v| v.iter().filter(|(_, e)| e.kind == kind).cloned().collect::<Vec<_>>()))
+    };
+    let (folders, files) = (of_kind("dir"), of_kind("file"));
+
+    if let Some(reveal) = use_context::<RevealInFilesCtx>() {
+        Effect::new(move |_| {
+            if let Some(abs) = reveal.0.get() {
+                reveal.0.set(None);
+                s.reveal(abs);
+            }
+        });
+    }
+
+    // The toast fades after a moment.
     Effect::new(move |_| {
-        let Some(rel) = selected.get() else {
-            selected_meta.set(None);
-            return;
-        };
-        meta_error.set(None);
+        let Some(msg) = s.flash.get() else { return };
         wasm_bindgen_futures::spawn_local(async move {
-            match fetch_meta(&rel).await {
-                Ok(m) => {
-                    selected_meta.set(Some(m));
-                    meta_error.set(None);
-                }
-                Err(e) => {
-                    selected_meta.set(None);
-                    meta_error.set(Some(e));
-                }
+            gloo_timers::future::TimeoutFuture::new(2500).await;
+            if s.flash.try_get_untracked().flatten() == Some(msg) {
+                s.flash.set(None);
             }
         });
     });
 
-    {
-        let send_init = Arc::clone(&send);
-        Effect::new(move |prev: Option<()>| {
-            if prev.is_none() {
-                send_cmd(&send_init, "livestacker_get_all_settings", json!({}));
-            }
-        });
-    }
-
-    if let Some(reveal_ctx) = use_context::<RevealInFilesCtx>() {
-        Effect::new(move |_| {
-            let Some(abs) = reveal_ctx.0.get() else { return; };
-            reveal_ctx.0.set(None);
-            wasm_bindgen_futures::spawn_local(async move {
-                if abs.is_empty() {
-                    current_path.set(String::new());
-                    selected.set(None);
-                    selected_folder.set(None);
-                    preview_open.set(false);
-                    return;
-                }
-                match resolve_abs(&abs).await {
-                    Ok(r) if r.in_sandbox => {
-                        current_path.set(r.parent.clone());
-                        if !r.relative.is_empty() {
-                            selected.set(Some(r.relative));
-                            preview_open.set(true);
-                        }
-                    }
-                    _ => {
-                        current_path.set(String::new());
-                        selected.set(None);
-                        selected_folder.set(None);
-                        preview_open.set(false);
-                    }
-                }
-                refresh_tick.update(|n| *n = n.wrapping_add(1));
-            });
-        });
-    }
-
-    {
-        let settings_sig = livestacker_settings;
-        let state_sig = livestacker_state;
-        Effect::new(move |_| {
-            let state = state_sig.get().map(|s| s.state.to_ascii_lowercase()).unwrap_or_default();
-            let active = matches!(state.as_str(), "running" | "looping" | "busy" | "active" | "initialized");
-            let output = settings_sig.get().get("outputDirectory").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if !active || output.is_empty() {
-                return;
-            }
-            latest_stacked_warning.set(None);
-            wasm_bindgen_futures::spawn_local(async move {
-                match newest_image_in_abs_dir(&output).await {
-                    Ok(Some(rel)) => latest_stacked.set(Some(rel)),
-                    Ok(None) => {}
-                    Err(e) => latest_stacked_warning.set(Some(e)),
-                }
-            });
-        });
-    }
-
-    let send_controls = Arc::clone(&send);
-    let send_settings = Arc::clone(&send);
-    // Stashed in a StoredValue (Copy) so the reactive <Show> children — which
-    // must be `Fn` — can clone it out on each re-render.
-    let send_sv = StoredValue::new(Arc::clone(&send));
-
-    // Mobile tab switcher: 0 = Browser, 1 = LiveStacker
-    let mobile_tab = RwSignal::new(0u8);
-
-    view! {
-        <div class="absolute inset-0 grid grid-rows-[auto_1fr] overflow-hidden bg-bg text-text font-ui">
-            // ── Header bar ──────────────────────────────────────────────────
-            <div class="flex min-h-[52px] flex-wrap items-center gap-sp-2 border-b border-border bg-bg-panel-solid py-sp-2 pl-20 pr-sp-4 max-[640px]:pl-sp-3">
-                <span class="font-semibold uppercase tracking-[0.08em] text-text-blue">{move || tr().files_title}</span>
-                <div class="min-w-0 flex-1 overflow-hidden text-sm text-text-muted">
-                    {move || render_breadcrumb(&current_path.get(), tr().files_breadcrumb_root, current_path)}
-                </div>
-                <Show when=move || loading.get()>
-                    <span class="badge badge--info">{move || tr().files_loading}</span>
-                </Show>
-                <Show when=move || flash.get().is_some()>
-                    <span class="badge badge--ok">{move || flash.get().unwrap_or_default()}</span>
-                </Show>
-            </div>
-
-            // ── Mobile tab switcher bar (≤860px only) ────────────────────
-            <div class="hidden max-[860px]:flex border-b border-border bg-bg-elev-1 px-sp-3 py-sp-2 gap-sp-2">
-                <button
-                    class=move || if mobile_tab.get() == 0 { "btn btn--sm btn--active flex-1" } else { "btn btn--sm btn-ghost flex-1" }
-                    on:click=move |_| mobile_tab.set(0)
-                >{move || tr().files_section_browser}</button>
-                <button
-                    class=move || if mobile_tab.get() == 1 { "btn btn--sm btn--active flex-1" } else { "btn btn--sm btn-ghost flex-1" }
-                    on:click=move |_| mobile_tab.set(1)
-                >{move || tr().livestack_title}</button>
-            </div>
-
-            // ── Main content ─────────────────────────────────────────────
-            <div class="grid min-h-0 grid-cols-[minmax(320px,1.35fr)_minmax(360px,0.9fr)] gap-sp-4 overflow-hidden p-sp-4 max-[860px]:block max-[860px]:overflow-y-auto max-[860px]:p-sp-3">
-
-                // Left column: File browser
-                <section
-                    class=move || {
-                        // On desktop always visible; on mobile hide when LiveStacker tab active
-                        let hidden = mobile_tab.get() == 1;
-                        if hidden { "flex min-h-0 flex-col gap-sp-3 overflow-hidden max-[860px]:hidden".to_string() }
-                        else { "flex min-h-0 flex-col gap-sp-3 overflow-hidden".to_string() }
-                    }
-                >
-                    <details class=PANEL_CLS open>
-                        <summary class=SUMMARY_CLS>
-                            <span>{move || tr().files_section_browser}</span>
-                            <button class="btn btn--sm btn-ghost" on:click=move |ev| { ev.stop_propagation(); refresh_tick.update(|n| *n = n.wrapping_add(1)); }>
-                                {move || tr().files_refresh}
-                            </button>
-                        </summary>
-                        <div class=PANEL_BODY>
-                            <div class="grid grid-cols-[1fr_auto_auto] gap-sp-2 max-[860px]:grid-cols-1">
-                                <input
-                                    class=INPUT_CLS
-                                    placeholder=move || tr().files_filter_placeholder
-                                    prop:value=move || name_filter.get()
-                                    on:input=move |ev| name_filter.set(event_target_value(&ev))
-                                />
-                                <select class=SELECT_CLS prop:value=move || sort_key.get().storage().to_string() on:change=move |ev| {
-                                    sort_key.set(match event_target_value(&ev).as_str() { "date" => SortKey::Date, "size" => SortKey::Size, _ => SortKey::Name });
-                                }>
-                                    <option value="name">{move || tr().files_sort_name}</option>
-                                    <option value="date">{move || tr().files_sort_date}</option>
-                                    <option value="size">{move || tr().files_sort_size}</option>
-                                </select>
-                                <button class="btn btn--sm btn-ghost" on:click=move |_| sort_dir.update(|d| *d = if *d == SortDir::Asc { SortDir::Desc } else { SortDir::Asc })>
-                                    {move || if sort_dir.get() == SortDir::Asc { tr().files_sort_asc } else { tr().files_sort_desc }}
-                                </button>
-                            </div>
-                            <div class="mt-sp-3 flex flex-wrap gap-sp-2">
-                                {filter_button(FilterKind::Images, filter_kind, move || tr().files_filter_images)}
-                                {filter_button(FilterKind::Fits, filter_kind, move || tr().files_filter_fits)}
-                                {filter_button(FilterKind::Jpg, filter_kind, move || tr().files_filter_jpg)}
-                                {filter_button(FilterKind::All, filter_kind, move || tr().files_filter_all)}
-                            </div>
-                        </div>
-                    </details>
-
-                    <details class=PANEL_CLS open>
-                        <summary class=SUMMARY_CLS><span>{move || tr().livestack_section_directories}</span></summary>
-                        <div class="max-h-[190px] overflow-y-auto p-sp-2">
-                            <Show when=move || !current_path.with(|p| p.is_empty())>
-                                <button class="mb-sp-1 flex w-full items-center gap-sp-2 rounded-md border border-border-strong bg-bg-elev-2 px-sp-2 py-sp-2 text-left text-sm text-text-blue transition hover:border-border-mid hover:bg-bg-elev-3" on:click=move |_| {
-                                    let parent = parent_of(&current_path.get());
-                                    current_path.set(parent.clone());
-                                    selected.set(None);
-                                    selected_folder.set(if parent.is_empty() { None } else { Some(parent) });
-                                }>
-                                    {move || tr().files_parent}
-                                </button>
-                            </Show>
-                            {move || render_dirs(listing.get(), current_path, selected, selected_folder, selected_folder.get())}
-                            <Show when=move || list_error.get().is_some()>
-                                <div class="p-sp-2 text-sm text-state-err">{move || format!("{}: {}", tr().files_error, list_error.get().unwrap_or_default())}</div>
-                            </Show>
-                        </div>
-                    </details>
-
-                    <div class="panel min-h-0 flex-1 overflow-y-auto p-sp-3">
-                        {move || render_files(
-                            listing.get(),
-                            current_path.get(),
-                            selected,
-                            selected.get(),
-                            sort_key.get(),
-                            sort_dir.get(),
-                            filter_kind.get(),
-                            name_filter.get(),
-                            loading.get(),
-                            tr(),
-                            preview_open,
-                            file_menu,
-                        )}
-                    </div>
-                </section>
-
-                // Right column: LiveStacker
-                <section
-                    class=move || {
-                        // On desktop always visible; on mobile hide when Browser tab active
-                        let hidden = mobile_tab.get() == 0;
-                        if hidden { "min-h-0 overflow-y-auto max-[860px]:hidden".to_string() }
-                        else { "min-h-0 overflow-y-auto".to_string() }
-                    }
-                >
-                    {move || render_livestack_workspace(
-                        selected_folder.get(),
-                        livestack_tab,
-                        livestack_tab.get(),
-                        livestacker_state,
-                        livestacker_settings,
-                        latest_stacked,
-                        latest_stacked_warning,
-                        current_path,
-                        selected,
-                        refresh_tick,
-                        Arc::clone(&send_controls),
-                        Arc::clone(&send_settings),
-                        tr(),
-                    )}
-                </section>
-            </div>
-
-            <Show when=move || preview_open.get()>
-                {
-                    move || render_preview_modal(
-                        selected.get(),
-                        selected_meta.get(),
-                        meta_error.get(),
-                        tr(),
-                        refresh_tick,
-                        selected,
-                        flash,
-                        preview_open,
-                        send_sv.get_value(),
-                    )
-                }
-            </Show>
-
-            <Show when=move || file_menu.get().is_some()>
-                {
-                    move || render_file_menu(file_menu, refresh_tick, selected, flash, send_sv.get_value(), tr())
-                }
-            </Show>
-        </div>
-    }
-}
-
-fn render_file_menu(
-    file_menu: RwSignal<Option<FileMenuState>>,
-    refresh_tick: RwSignal<u32>,
-    selected: RwSignal<Option<String>>,
-    flash: RwSignal<Option<String>>,
-    send: SendCmd,
-    tr: &'static crate::i18n::Translations,
-) -> impl IntoView + use<> {
-    let state = file_menu.get_untracked().unwrap_or(FileMenuState {
-        rel: String::new(),
-        anchor_x: 0.0,
-        anchor_y: 0.0,
-    });
-    const MENU_W: f64 = 180.0;
-    let left = (state.anchor_x - MENU_W).max(8.0);
-    let top = state.anchor_y + 4.0;
-    let style = format!("left:{}px;top:{}px;width:{}px;", left, top, MENU_W);
-    let close = move || file_menu.set(None);
-
-    let rel_d = state.rel.clone();
-    let rel_r = state.rel.clone();
-    let rel_x = state.rel.clone();
-    let rel_c = state.rel.clone();
-    let rel_s = state.rel.clone();
-
-    view! {
-        <div class="fixed inset-0 z-50" on:click=move |_| close()>
-            <div
-                class="panel absolute flex flex-col gap-sp-1 p-sp-1 shadow-lg"
-                style=style
-                on:click=move |ev| ev.stop_propagation()
-            >
-                <button class="btn btn--sm btn-primary w-full justify-start" on:click=move |_| {
-                    resolve_and_slew(&rel_s, Arc::clone(&send), flash, tr);
-                    close();
-                }>{tr.files_resolve_slew}</button>
-                <button class="btn btn--sm btn-ghost w-full justify-start" on:click=move |_| {
-                    download_file(&rel_d);
-                    close();
-                }>{tr.files_download}</button>
-                <button class="btn btn--sm btn-ghost w-full justify-start" on:click=move |_| {
-                    rename_file_action(&rel_r, refresh_tick, selected, tr);
-                    close();
-                }>{tr.files_rename}</button>
-                <button class="btn btn--sm btn-ghost w-full justify-start" on:click=move |_| {
-                    delete_file_action(&rel_x, refresh_tick, selected, flash, tr);
-                    close();
-                }>{tr.files_delete}</button>
-                <button class="btn btn--sm btn-ghost w-full justify-start" on:click=move |_| {
-                    copy_to_clipboard(&rel_c, flash, tr.files_path_copied);
-                    close();
-                }>{tr.files_copy_path}</button>
-            </div>
-        </div>
-    }
-}
-
-fn render_breadcrumb(path: &str, root_label: &'static str, current_path: RwSignal<String>) -> impl IntoView + use<> {
-    let mut acc = String::new();
-    let mut chips: Vec<(String, String)> = vec![(String::new(), root_label.to_string())];
-    for seg in path.split('/').filter(|s| !s.is_empty()) {
-        if !acc.is_empty() { acc.push('/'); }
-        acc.push_str(seg);
-        chips.push((acc.clone(), seg.to_string()));
-    }
-    let total = chips.len();
-    chips.into_iter().enumerate().map(|(i, (target, label))| {
-        let is_last = i + 1 == total;
-        view! {
-            <span class="text-text-faint">{if i == 0 { "" } else { " / " }}</span>
-            <button
-                class=if is_last { "rounded-sm bg-transparent px-sp-1 py-[2px] text-text-dim" } else { "rounded-sm bg-transparent px-sp-1 py-[2px] text-text-blue hover:bg-bg-elev-1" }
-                on:click=move |_| current_path.set(target.clone())
-            >{label}</button>
+    // Escape closes the top layer; the arrows step the viewer.
+    let keys = window_event_listener(leptos::ev::keydown, move |e| {
+        let zoomed = s.zoom_open.get_untracked();
+        match e.key().as_str() {
+            "Escape" if zoomed => s.zoom_open.set(false),
+            "Escape" if stack_open.get_untracked() => stack_open.set(false),
+            "Escape" => s.viewer.set(false),
+            "ArrowLeft" if s.viewer.get_untracked() && !zoomed => s.step(files, -1),
+            "ArrowRight" if s.viewer.get_untracked() && !zoomed => s.step(files, 1),
+            _ => {}
         }
-    }).collect_view()
+    });
+    on_cleanup(move || keys.remove());
+
+    let stack_state = Memo::new(move |_| livestacker_state.with(|o| o.as_ref().map(|l| l.state.clone()).unwrap_or_default()));
+    let send_viewer = StoredValue::new(send.clone());
+    let send_stack = StoredValue::new(send);
+
+    view! {
+        <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
+            // Header
+            <div class="shrink-0 flex items-center gap-2 min-h-[48px] px-3 md:pl-4 md:pr-6 pb-1.5 \
+                        pt-[max(0.375rem,env(safe-area-inset-top))] border-b border-border-base bg-bg-elev-1">
+                <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Files)></span>
+                <span class="shrink-0 font-semibold text-text-blue-bright">{move || tr().files_title}</span>
+                <button type="button" class=format!("{CHIP} gap-2 ml-auto shrink-0")
+                        on:click=move |_| stack_open.set(true)>
+                    <span class=move || format!("w-2 h-2 rounded-full {}", livestack::dot(&stack_state.get()))></span>
+                    {move || tr().livestack_title}
+                </button>
+                <button class="btn-icon shrink-0 text-text-muted" title=move || tr().files_refresh
+                        on:click=move |_| s.reload()>
+                    <span class=move || if loading.get() { "inline-block w-5 h-5 animate-spin" } else { "inline-block w-5 h-5" }
+                          inner_html=REFRESH_ICON></span>
+                </button>
+            </div>
+
+            {browser::toolbar(s, search, sort_key, sort_dir, filter, lang)}
+
+            <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 md:pl-4 md:pr-6 \
+                        pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                {browser::listing(s, folders, files, list_error, loading, lang)}
+            </div>
+
+            <Show when=move || s.viewer.get() && s.selected.with(Option::is_some)>
+                {viewer::viewer(s, files, send_viewer.get_value(), lang)}
+            </Show>
+            <Show when=move || stack_open.get()>
+                {sheet(move || tr().livestack_title, move || stack_open.set(false), view! {
+                    <livestack::LiveStack s=s open=stack_open state=livestacker_state
+                                          settings=livestacker_settings send=send_stack.get_value() />
+                })}
+            </Show>
+            {frame_zoom(s.zoom_url.into(), s.zoom_open, lang)}
+
+            {move || s.flash.get().map(|msg| view! {
+                <div class="absolute left-1/2 -translate-x-1/2 z-[90] bottom-[max(5rem,calc(env(safe-area-inset-bottom)+4.5rem))] \
+                            max-w-[min(90%,420px)] panel px-4 py-2 text-sm text-center text-text shadow-lg pointer-events-none">
+                    {msg}
+                </div>
+            })}
+        </div>
+    }
 }

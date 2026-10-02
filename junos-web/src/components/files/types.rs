@@ -1,12 +1,13 @@
-//! Files tab: the JSON shapes returned by `/api/files/*`.
+//! Files tab: the JSON shapes returned by `/api/files/*`, and the list's
+//! sort / filter choices.
 
 use serde::Deserialize;
 use serde_json::Value;
 
-/// One entry of `GET /api/files/list`. Mirrors the server's JSON, so some
-/// fields are decoded but unused by the current UI.
-#[allow(dead_code)]
-#[derive(Clone, Debug, Deserialize)]
+use super::utils::{is_fits_ext, is_image_ext, is_jpg_ext};
+
+/// One entry of `GET /api/files/list`.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub(super) struct DirEntry {
     pub(super) name: String,
     pub(super) kind: String,
@@ -18,7 +19,8 @@ pub(super) struct DirEntry {
     pub(super) ext: String,
 }
 
-/// Reply of `GET /api/files/list`. Mirrors the server's JSON.
+/// Reply of `GET /api/files/list`. Mirrors the server's JSON, so `parent` is
+/// decoded but unused.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct ListReply {
@@ -27,7 +29,8 @@ pub(super) struct ListReply {
     pub(super) entries: Vec<DirEntry>,
 }
 
-/// Reply of `GET /api/files/meta`. Mirrors the server's JSON.
+/// Reply of `GET /api/files/meta`. Mirrors the server's JSON, so `ext` is
+/// decoded but unused.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct FileMeta {
@@ -64,13 +67,6 @@ pub(super) struct ResolveReply {
     pub(super) parent: String,
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct FileMenuState {
-    pub(super) rel: String,
-    pub(super) anchor_x: f64,
-    pub(super) anchor_y: f64,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SortKey {
     Name,
@@ -92,19 +88,13 @@ pub(super) enum FilterKind {
     All,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LiveStackTab {
-    Preview,
-    Controls,
-    Settings,
-}
-
 impl SortKey {
+    /// Newest first unless the user picked otherwise.
     pub(super) fn from_storage(v: Option<String>) -> Self {
         match v.as_deref() {
-            Some("date") => Self::Date,
+            Some("name") => Self::Name,
             Some("size") => Self::Size,
-            _ => Self::Name,
+            _ => Self::Date,
         }
     }
 
@@ -119,11 +109,7 @@ impl SortKey {
 
 impl SortDir {
     pub(super) fn from_storage(v: Option<String>) -> Self {
-        if v.as_deref() == Some("asc") {
-            Self::Asc
-        } else {
-            Self::Desc
-        }
+        if v.as_deref() == Some("asc") { Self::Asc } else { Self::Desc }
     }
 
     pub(super) fn storage(self) -> &'static str {
@@ -135,6 +121,8 @@ impl SortDir {
 }
 
 impl FilterKind {
+    pub(super) const ALL: [Self; 4] = [Self::Images, Self::Fits, Self::Jpg, Self::All];
+
     pub(super) fn from_storage(v: Option<String>) -> Self {
         match v.as_deref() {
             Some("all") => Self::All,
@@ -152,22 +140,13 @@ impl FilterKind {
             Self::All => "all",
         }
     }
-}
 
-impl LiveStackTab {
-    pub(super) fn from_storage(v: Option<String>) -> Self {
-        match v.as_deref() {
-            Some("controls") => Self::Controls,
-            Some("settings") => Self::Settings,
-            _ => Self::Preview,
-        }
-    }
-
-    pub(super) fn storage(self) -> &'static str {
+    pub(super) fn accepts(self, ext: &str) -> bool {
         match self {
-            Self::Preview => "preview",
-            Self::Controls => "controls",
-            Self::Settings => "settings",
+            Self::Images => is_image_ext(ext),
+            Self::Fits => is_fits_ext(ext),
+            Self::Jpg => is_jpg_ext(ext),
+            Self::All => true,
         }
     }
 }

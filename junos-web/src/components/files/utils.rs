@@ -1,39 +1,36 @@
-//! Files tab: shared class strings and small formatting helpers.
+//! Files tab: small helpers — paths, extensions, formatting, icons.
 
-use leptos::prelude::*;
 use serde_json::Value;
 
-pub(super) const PANEL_CLS: &str = "panel overflow-hidden";
-pub(super) const SUMMARY_CLS: &str = "flex cursor-pointer list-none items-center justify-between gap-sp-3 border-b border-border px-sp-4 py-sp-3 text-sm font-semibold uppercase tracking-[0.06em] text-text-blue [&::-webkit-details-marker]:hidden";
-pub(super) const PANEL_BODY: &str = "p-sp-4";
-pub(super) const FIELD_CLS: &str = "field justify-between";
-pub(super) const INPUT_CLS: &str = "input input--sm w-full";
-pub(super) const SELECT_CLS: &str = "input input--sm";
-pub(super) const SMALL_BTN: &str = "btn btn--sm btn-ghost";
-pub(super) const KV_ROW: &str = "grid grid-cols-[minmax(92px,auto)_1fr] gap-sp-2 text-sm";
-pub(super) const FILE_CARD: &str = "group relative flex min-h-[164px] flex-col overflow-hidden rounded-md border border-border-strong bg-bg-elev-2 text-left text-text transition hover:border-border-mid hover:bg-bg-elev-3";
-pub(super) const FILE_CARD_ACTIVE: &str = "group relative flex min-h-[164px] flex-col overflow-hidden rounded-md border border-accent-cyan bg-[color-mix(in_srgb,var(--accent-cyan)_14%,var(--bg-elev-2))] text-left text-text shadow-[0_0_0_2px_rgba(40,220,240,0.16)]";
-pub(super) const FILE_ROW: &str = "group flex items-center gap-sp-3 rounded-md border border-border-strong bg-bg-elev-2 px-sp-3 py-sp-2 text-left text-sm text-text transition hover:border-border-mid hover:bg-bg-elev-3";
-pub(super) const FILE_ROW_ACTIVE: &str = "group flex items-center gap-sp-3 rounded-md border border-accent-cyan bg-[color-mix(in_srgb,var(--accent-cyan)_14%,var(--bg-elev-2))] px-sp-3 py-sp-2 text-left text-sm text-text";
+pub(super) const DASH: &str = "\u{2014}";
 
-pub(super) fn kv(label: &'static str, value: String) -> impl IntoView {
-    view! { <div class=KV_ROW><span class="text-text-muted">{label}</span><span class="break-words text-right text-text-dim num">{value}</span></div> }
+// 24×24, `currentColor`, sized by the wrapping <span> (like `tab_icon`).
+pub(super) const FOLDER_ICON: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 L3 18 A1 1 0 0 0 4 19 L20 19 A1 1 0 0 0 21 18 L21 9 A1 1 0 0 0 20 8 L12 8 L10 5.5 L4 5.5 A1 1 0 0 0 3 6.5 Z"/></svg>"##;
+pub(super) const REFRESH_ICON: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 4v6h-6"/><path d="M19.5 15a8.5 8.5 0 1 1-2-8.8L22 10"/></svg>"##;
+pub(super) const TRASH_ICON: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>"##;
+
+/// `dir/name`, or `name` at the captures root.
+pub(super) fn join(dir: &str, name: &str) -> String {
+    if dir.is_empty() { name.to_string() } else { format!("{dir}/{name}") }
 }
 
 pub(super) fn parent_of(path: &str) -> String {
-    match path.rfind('/') {
-        Some(i) => path[..i].to_string(),
-        None => String::new(),
-    }
+    path.rfind('/').map(|i| path[..i].to_string()).unwrap_or_default()
+}
+
+pub(super) fn name_of(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// Extension without the dot, "" if none.
+pub(super) fn ext_of(path: &str) -> &str {
+    name_of(path).rsplit_once('.').map_or("", |(_, e)| e)
 }
 
 pub(super) fn is_image_ext(ext: &str) -> bool {
     is_fits_ext(ext)
         || is_jpg_ext(ext)
-        || matches!(
-            ext.to_ascii_lowercase().as_str(),
-            "tif" | "tiff" | "xisf" | "cr2" | "nef" | "arw"
-        )
+        || matches!(ext.to_ascii_lowercase().as_str(), "tif" | "tiff" | "xisf" | "cr2" | "nef" | "arw")
 }
 
 pub(super) fn is_fits_ext(ext: &str) -> bool {
@@ -45,45 +42,51 @@ pub(super) fn is_jpg_ext(ext: &str) -> bool {
 }
 
 pub(super) fn url_encode(s: &str) -> String {
-    js_sys::encode_uri_component(s)
-        .as_string()
-        .unwrap_or_default()
+    js_sys::encode_uri_component(s).as_string().unwrap_or_default()
 }
 
-pub(super) fn parse_i64(v: &str, default: i64) -> i64 {
-    v.trim().parse().unwrap_or(default)
+/// The server's 256 px JPEG thumbnail (cached on disk).
+pub(super) fn thumb_url(rel: &str) -> String {
+    format!("/api/files/thumb?size=256&path={}", url_encode(rel))
 }
-pub(super) fn parse_f64(v: &str, default: f64) -> f64 {
-    v.trim().parse().unwrap_or(default)
+
+/// The server's full-size preview render (FITS stretched to JPEG).
+pub(super) fn preview_url(rel: &str) -> String {
+    format!("/api/files/raw?as=preview&path={}", url_encode(rel))
 }
 
 pub(super) fn format_size(n: u64) -> String {
     if n < 1024 {
-        return format!("{} B", n);
+        return format!("{n} B");
     }
-    let kb = n as f64 / 1024.0;
-    if kb < 1024.0 {
-        return format!("{:.1} KB", kb);
+    let mut v = n as f64 / 1024.0;
+    for unit in ["KB", "MB"] {
+        if v < 1024.0 {
+            return format!("{v:.1} {unit}");
+        }
+        v /= 1024.0;
     }
-    let mb = kb / 1024.0;
-    if mb < 1024.0 {
-        return format!("{:.1} MB", mb);
-    }
-    format!("{:.1} GB", mb / 1024.0)
+    format!("{v:.1} GB")
 }
 
-pub(super) fn format_mtime(secs: u64) -> String {
+/// Local time, `YYYY-MM-DD HH:MM` — or `MM-DD HH:MM` when `short`.
+pub(super) fn format_mtime(secs: u64, short: bool) -> String {
     if secs == 0 {
-        return "—".into();
+        return DASH.into();
     }
     let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(secs as f64 * 1000.0));
-    d.to_iso_string().as_string().unwrap_or_default()
+    let (mo, day, h, mi) = (d.get_month() + 1, d.get_date(), d.get_hours(), d.get_minutes());
+    if short {
+        format!("{mo:02}-{day:02} {h:02}:{mi:02}")
+    } else {
+        format!("{}-{mo:02}-{day:02} {h:02}:{mi:02}", d.get_full_year())
+    }
 }
 
 pub(super) fn value_or_dash(v: Option<&Value>) -> String {
     match v {
-        None | Some(Value::Null) => "—".into(),
-        Some(Value::String(s)) if s.is_empty() => "—".into(),
+        None | Some(Value::Null) => DASH.into(),
+        Some(Value::String(s)) if s.is_empty() => DASH.into(),
         Some(Value::String(s)) => s.clone(),
         Some(Value::Bool(b)) => (if *b { "Y" } else { "N" }).into(),
         Some(Value::Number(n)) => n.as_f64().map(fmt_float).unwrap_or_else(|| n.to_string()),
@@ -93,20 +96,14 @@ pub(super) fn value_or_dash(v: Option<&Value>) -> String {
 
 pub(super) fn fmt_float(f: f64) -> String {
     if !f.is_finite() || f == 0.0 {
-        return "—".into();
+        return DASH.into();
     }
-    format!("{:.4}", f)
-        .trim_end_matches('0')
-        .trim_end_matches('.')
-        .to_string()
+    format!("{f:.4}").trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 pub(super) fn fov_str(v: Option<&Value>) -> String {
-    let Some(o) = v else { return "—".into() };
-    if o.is_null() {
-        return "—".into();
-    }
-    let w = o.get("w").and_then(|x| x.as_f64()).unwrap_or(0.0);
-    let h = o.get("h").and_then(|x| x.as_f64()).unwrap_or(0.0);
-    format!("{:.1} x {:.1}", w, h)
+    let (Some(w), Some(h)) = (v.and_then(|o| o["w"].as_f64()), v.and_then(|o| o["h"].as_f64())) else {
+        return DASH.into();
+    };
+    format!("{w:.1} \u{00d7} {h:.1}")
 }

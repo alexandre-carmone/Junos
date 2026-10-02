@@ -1,51 +1,64 @@
-//! Files tab: the actions a file menu can trigger (download, rename, delete, slew).
+//! Files tab: what the viewer's buttons do — rename, delete, copy, slew.
+//! Each reports through `flash`, the tab's toast.
 
 use leptos::prelude::*;
-use serde_json::Value;
 use wasm_bindgen::JsCast;
 
 use crate::i18n::Translations;
 use crate::ws::SendCmd;
 
-use super::api::{abs_path_of, delete_file, rename_file, resolve_abs};
-use super::utils::url_encode;
+use super::api::{delete_file, rename_file};
+use super::utils::join;
 
-pub(super) fn download_file(rel: &str) {
-    let Some(win) = web_sys::window() else { return; };
-    let Some(doc) = win.document() else { return; };
-    if let Ok(a) = doc.create_element("a") {
-        let _ = a.set_attribute("href", &format!("/api/files/download?path={}", url_encode(rel)));
-        let _ = a.set_attribute("download", "");
-        if let Ok(a) = a.dyn_into::<web_sys::HtmlElement>() { a.click(); }
+type Flash = RwSignal<Option<String>>;
+
+fn report(flash: Flash, tr: &'static Translations, e: String) {
+    flash.set(Some(format!("{}: {e}", tr.files_error)));
+}
+
+/// Ask for a new name, rename, then `done(new_rel)`.
+pub(super) fn rename(rel: String, flash: Flash, tr: &'static Translations, done: impl FnOnce(String) + 'static) {
+    let Some(win) = web_sys::window() else { return };
+    let (dir, old) = rel.rsplit_once('/').unwrap_or(("", &rel));
+    let Some(name) = win.prompt_with_message_and_default(tr.files_rename_prompt, old).ok().flatten() else { return };
+    let name = name.trim().to_string();
+    if name.is_empty() || name == old {
+        return;
     }
-}
-
-pub(super) fn rename_file_action(rel: &str, refresh_tick: RwSignal<u32>, selected: RwSignal<Option<String>>, tr: &'static Translations) {
-    let Some(win) = web_sys::window() else { return; };
-    let old_name = rel.rsplit('/').next().unwrap_or(rel);
-    let Some(new_name) = win.prompt_with_message_and_default(tr.files_rename_prompt, old_name).ok().flatten() else { return; };
-    if new_name.trim().is_empty() || new_name == old_name { return; }
-    let path = rel.to_string();
+    let new_rel = join(dir, &name);
     wasm_bindgen_futures::spawn_local(async move {
-        if rename_file(&path, &new_name).await.is_ok() {
-            let new_rel = if let Some(i) = path.rfind('/') { format!("{}/{}", &path[..i], new_name) } else { new_name };
-            selected.set(Some(new_rel));
-            refresh_tick.update(|n| *n = n.wrapping_add(1));
+        match rename_file(&rel, &name).await {
+            Ok(()) => done(new_rel),
+            Err(e) => report(flash, tr, e),
         }
     });
 }
 
-pub(super) fn delete_file_action(rel: &str, refresh_tick: RwSignal<u32>, selected: RwSignal<Option<String>>, flash: RwSignal<Option<String>>, tr: &'static Translations) {
-    let Some(win) = web_sys::window() else { return; };
-    if !win.confirm_with_message(tr.files_confirm_delete).unwrap_or(false) { return; }
-    let path = rel.to_string();
+/// Confirm, delete, then `done()`.
+pub(super) fn delete(rel: String, flash: Flash, tr: &'static Translations, done: impl FnOnce() + 'static) {
+    let Some(win) = web_sys::window() else { return };
+    if !win.confirm_with_message(tr.files_confirm_delete).unwrap_or(false) {
+        return;
+    }
     wasm_bindgen_futures::spawn_local(async move {
-        if delete_file(&path).await.is_ok() {
-            selected.set(None);
-            flash.set(Some(tr.files_delete.to_string()));
-            refresh_tick.update(|n| *n = n.wrapping_add(1));
+        match delete_file(&rel).await {
+            Ok(()) => done(),
+            Err(e) => report(flash, tr, e),
         }
     });
+}
+
+/// `navigator.clipboard` exists only in a secure context (the HTTPS port);
+/// elsewhere, a prompt the user can copy from.
+pub(super) fn copy_text(text: &str, flash: Flash, done_msg: &'static str) {
+    let Some(win) = web_sys::window() else { return };
+    let clip = js_sys::Reflect::get(&win.navigator(), &"clipboard".into()).unwrap_or_default();
+    let write = js_sys::Reflect::get(&clip, &"writeText".into()).ok()
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok());
+    match write {
+        Some(f) if f.call1(&clip, &text.into()).is_ok() => flash.set(Some(done_msg.to_string())),
+        _ => drop(win.prompt_with_message_and_default(done_msg, text)),
+    }
 }
 
 /// Plate-solve a captured file and slew the mount to its framing, reproducing a
@@ -56,46 +69,15 @@ pub(super) fn delete_file_action(rel: &str, refresh_tick: RwSignal<u32>, selecte
 /// becomes a ~400 MB text frame, far past the relay's 16 MiB WebSocket frame
 /// cap, so the browser socket is dropped and nothing reaches KStars.
 /// `Align::loadAndSlew` forces GOTO_SLEW, so it solves then slews on its own.
-pub(super) fn resolve_and_slew(
-    rel: &str,
-    send: SendCmd,
-    flash: RwSignal<Option<String>>,
-    tr: &'static Translations,
-) {
-    let Some(win) = web_sys::window() else { return; };
-    if !win.confirm_with_message(tr.files_resolve_slew_confirm).unwrap_or(false) { return; }
-    let path = rel.to_string();
-    wasm_bindgen_futures::spawn_local(async move {
-        let Ok(abs) = abs_path_of(&path).await else {
-            flash.set(Some(tr.files_resolve_slew_fail.to_string()));
-            return;
-        };
-        send(serde_json::json!({
-            "type": "align_load_and_slew",
-            "payload": { "filename": abs }
-        }).to_string());
-        flash.set(Some(tr.files_resolve_slew_sent.to_string()));
-    });
-}
-
-pub(super) fn copy_to_clipboard(text: &str, flash: RwSignal<Option<String>>, msg: &'static str) {
-    // web-sys clipboard APIs are not always enabled in this crate; show a
-    // selectable prompt as a reliable fallback.
-    if let Some(win) = web_sys::window() {
-        let _ = win.prompt_with_message_and_default(msg, text);
+pub(super) fn resolve_and_slew(abs: String, send: &SendCmd, flash: Flash, tr: &'static Translations) {
+    let Some(win) = web_sys::window() else { return };
+    if abs.is_empty() {
+        flash.set(Some(tr.files_resolve_slew_fail.to_string()));
+        return;
     }
-    flash.set(Some(msg.to_string()));
-}
-
-pub(super) fn open_abs_setting_dir(settings: Value, key: &'static str, current_path: RwSignal<String>, selected: RwSignal<Option<String>>, refresh_tick: RwSignal<u32>) {
-    let Some(abs) = settings.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string) else { return; };
-    wasm_bindgen_futures::spawn_local(async move {
-        if let Ok(r) = resolve_abs(&abs).await {
-            if r.in_sandbox {
-                current_path.set(if r.relative.is_empty() { r.parent } else { r.relative });
-                selected.set(None);
-                refresh_tick.update(|n| *n = n.wrapping_add(1));
-            }
-        }
-    });
+    if !win.confirm_with_message(tr.files_resolve_slew_confirm).unwrap_or(false) {
+        return;
+    }
+    send(serde_json::json!({ "type": "align_load_and_slew", "payload": { "filename": abs } }).to_string());
+    flash.set(Some(tr.files_resolve_slew_sent.to_string()));
 }
