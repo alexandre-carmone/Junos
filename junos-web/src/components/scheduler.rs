@@ -3,8 +3,8 @@
 //! Layout (phone-first, like Focus / Mosaic): a header (status · settings),
 //! the job cards and the live log — one scrolling column on phones, jobs |
 //! log from `md` — and a pinned footer with Add job and Start / Stop. Add job,
-//! Settings and the startup/shutdown queue editor open as [`sheet`]s: bottom
-//! sheets on phones, centered panels on md+.
+//! Settings and the startup/shutdown queue editor open as `form::sheet`s:
+//! bottom sheets on phones, centered panels on md+.
 //!
 //! Inbound:  `new_scheduler_state`, `scheduler_get_jobs`,
 //!           `scheduler_get_all_settings`
@@ -31,7 +31,7 @@ mod view_queue_editor;
 mod view_settings;
 
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot, SchedulerSnapshot};
-use crate::components::form::FOOTER;
+use crate::components::form::{sheet, FOOTER};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{Lang, t};
 use crate::ws::SendCmd;
@@ -68,7 +68,8 @@ pub fn SchedulerTab(
     let jobs = Memo::new(move |_| scheduler.with(|s| s.jobs.clone()));
     let log = Memo::new(move |_| scheduler.with(|s| s.log.clone()));
     let home_dir = Signal::derive(move || scheduler.with(|s| s.home_dir.clone()));
-    let latest = move || log.with(|l| l.lines().rev().find(|x| !x.trim().is_empty()).unwrap_or("").to_string());
+    // KStars' log is newest first.
+    let latest = move || log.with(|l| l.lines().find(|x| !x.trim().is_empty()).unwrap_or("").to_string());
 
     // ── Sheets ──────────────────────────────────────────────────────────────
     let add_open      = RwSignal::new(false);
@@ -205,35 +206,6 @@ pub fn SchedulerTab(
                                           path=path enabled=enabled on_close=Arc::clone(&on_close_queue) />
                 }
             })}
-        </div>
-    }
-}
-
-/// A sheet over the dimmed tab: bottom sheet on phones, centered panel on
-/// md+. `body` brings its own scroll area and footer. Each sheet is one layer,
-/// so a later one (the queue editor) dims and blocks the one under it.
-fn sheet(
-    title: impl Fn() -> &'static str + Send + 'static,
-    on_close: impl Fn() + Clone + Send + 'static,
-    body: impl IntoView,
-) -> impl IntoView {
-    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
-    let close_backdrop = on_close.clone();
-    view! {
-        <div class="absolute inset-0 z-[70]">
-            <div class="absolute inset-0 bg-[rgba(2,4,10,0.6)]" on:click=move |_| close_backdrop()></div>
-            <div class="panel absolute inset-x-0 bottom-0 max-h-[calc(100%-3.5rem)] rounded-b-none \
-                        flex flex-col overflow-hidden \
-                        md:inset-x-auto md:left-1/2 md:-translate-x-1/2 md:bottom-auto md:top-6 \
-                        md:max-h-[calc(100%-3rem)] md:w-[min(760px,calc(100%-3rem))] md:rounded-lg">
-                <div class="shrink-0 flex items-center gap-2 pl-4 pr-2 py-1.5 border-b border-border-base">
-                    <span class="flex-1 min-w-0 truncate font-semibold text-text-blue">{move || title()}</span>
-                    <button class="btn-icon" title=move || t(lang.get()).info_close on:click=move |_| on_close()>
-                        "\u{2716}"
-                    </button>
-                </div>
-                {body}
-            </div>
         </div>
     }
 }

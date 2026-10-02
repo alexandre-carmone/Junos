@@ -21,10 +21,8 @@ use super::queue_model::{
 use crate::dom::event_target_value;
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
-use crate::components::form::FOOTER;
+use crate::components::form::{sheet, FOOTER};
 use crate::ws_helpers::send_cmd;
-
-use super::sheet;
 
 const FIELDS: &str = "flex flex-wrap items-center gap-x-3 gap-y-2";
 const FIELD_LABEL: &str = "text-sm text-text-blue";

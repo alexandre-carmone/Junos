@@ -279,7 +279,7 @@ pub fn derive_polar_align(store: &DeviceStore) -> Signal<PolarAlignSnapshot> {
     })
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct GuideSnapshot {
     pub device:      String,
     pub connected:   bool,

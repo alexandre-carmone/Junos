@@ -91,6 +91,36 @@ pub fn toggle_chip(on: RwSignal<bool>, label: impl Fn() -> &'static str + Send +
     }
 }
 
+/// A sheet over the dimmed tab (Scheduler, Guide): bottom sheet on phones,
+/// centered panel on md+. `body` brings its own scroll area and footer. Each
+/// sheet is one layer, so a later one (the queue editor) dims and blocks the
+/// one under it.
+pub fn sheet(
+    title: impl Fn() -> &'static str + Send + 'static,
+    on_close: impl Fn() + Clone + Send + 'static,
+    body: impl IntoView,
+) -> impl IntoView {
+    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let close_backdrop = on_close.clone();
+    view! {
+        <div class="absolute inset-0 z-[70]">
+            <div class="absolute inset-0 bg-[rgba(2,4,10,0.6)]" on:click=move |_| close_backdrop()></div>
+            <div class="panel absolute inset-x-0 bottom-0 max-h-[calc(100%-3.5rem)] rounded-b-none \
+                        flex flex-col overflow-hidden \
+                        md:inset-x-auto md:left-1/2 md:-translate-x-1/2 md:bottom-auto md:top-6 \
+                        md:max-h-[calc(100%-3rem)] md:w-[min(760px,calc(100%-3rem))] md:rounded-lg">
+                <div class="shrink-0 flex items-center gap-2 pl-4 pr-2 py-1.5 border-b border-border-base">
+                    <span class="flex-1 min-w-0 truncate font-semibold text-text-blue">{move || title()}</span>
+                    <button class="btn-icon" title=move || t(lang.get()).info_close on:click=move |_| on_close()>
+                        "\u{2716}"
+                    </button>
+                </div>
+                {body}
+            </div>
+        </div>
+    }
+}
+
 fn option(value: &'static str, cur: RwSignal<String>, label: impl Fn() -> &'static str + Send + 'static) -> impl IntoView {
     view! { <option value=value prop:selected=move || cur.with(|c| c == value)>{move || label()}</option> }
 }

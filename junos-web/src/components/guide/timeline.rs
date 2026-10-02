@@ -1,214 +1,102 @@
-//! Drift plot + state-timeline ribbon for the Guide tab.
+//! Drift plot for the Guide tab: RA / DEC error over the last two minutes,
+//! from the per-frame `new_guide_state {drift_ra, drift_de}` samples
+//! (kstars/ekos/manager.cpp:2772-2776), with the guide state as a ribbon
+//! underneath (`GuideStatusData.history`).
 //!
-//! KStars emits drift samples (RA/DEC arcsec) per guide frame via a
-//! `new_guide_state {drift_ra, drift_de}` event (see
-//! kstars/ekos/manager.cpp:2772-2776). We capture them into
-//! `GuideStatusData.drift` and plot the last 2 minutes here.
-//!
-//! A thin ribbon underneath shows the colour-coded guide state over the
-//! same window (built from `GuideStatusData.history`).
+//! The SVG stretches to its box (`preserveAspectRatio="none"`, strokes don't
+//! scale) and the labels are HTML on top, so the plot stays legible from a
+//! phone to a wide screen. The Y range is the smallest of ±1/2/4/8″ that
+//! holds the samples.
 
 use leptos::prelude::*;
 
+use crate::i18n::Translations;
 use crate::ws::{GuideDriftSample, GuideStateSample};
 
-const WINDOW_S: f64 = 120.0;
-const VIEW_W: f64 = 800.0;
-const PLOT_H: f64 = 160.0;
-const RIBBON_H: f64 = 12.0;
-const AXIS_LABEL_H: f64 = 14.0;
+use super::tone;
 
-/// Plot Y-range clamped symmetrically. Real drift is typically < 2".
-const Y_MIN: f64 = -4.0;
-const Y_MAX: f64 = 4.0;
-
-fn color_for(status: &str) -> &'static str {
-    match status {
-        "Idle" | "Aborted" | "Disconnected" | "" => "#555",
-        "Calibrating" | "Selecting star" | "Looping" | "Capturing" | "Subtracting"
-        | "Subframing" | "Reacquiring" => "#ffd060",
-        "Calibrated" | "Connected" => "#88aaff",
-        "Guiding" => "#7affa0",
-        "Dithering" | "Dithering successful" | "Manual Dithering" | "Settling" => "#66e0e0",
-        "Calibration error" | "Dithering error" | "Suspended" => "#ff6a6a",
-        _ => "#c0c0d0",
-    }
-}
-
-fn time_to_x(t_ms: f64, now_ms: f64) -> f64 {
-    ((t_ms - (now_ms - WINDOW_S * 1000.0)) / (WINDOW_S * 1000.0)) * VIEW_W
-}
-
-fn y_to_px(arcsec: f64) -> f64 {
-    let v = arcsec.clamp(Y_MIN, Y_MAX);
-    PLOT_H - ((v - Y_MIN) / (Y_MAX - Y_MIN)) * PLOT_H
-}
-
-fn build_path(samples: &[GuideDriftSample], now_ms: f64, axis: Axis) -> String {
-    let mut d = String::new();
-    let mut started = false;
-    for s in samples {
-        let v = match axis {
-            Axis::Ra => s.ra,
-            Axis::De => s.de,
-        };
-        if !v.is_finite() {
-            continue;
-        }
-        let x = time_to_x(s.t_ms, now_ms);
-        let y = y_to_px(v);
-        if !started {
-            d.push_str(&format!("M{x:.1} {y:.1}"));
-            started = true;
-        } else {
-            d.push_str(&format!(" L{x:.1} {y:.1}"));
-        }
-    }
-    d
-}
-
-#[derive(Copy, Clone)]
-enum Axis {
-    Ra,
-    De,
-}
+const WINDOW_MS: f64 = 120_000.0;
+const W: f64 = 1000.0;
+const H: f64 = 100.0;
 
 pub fn drift_plot(
     drift: &[GuideDriftSample],
     history: &[GuideStateSample],
+    tr: &'static Translations,
 ) -> impl IntoView + use<> {
-    let now_ms = web_sys::js_sys::Date::now();
-    let start_ms = now_ms - WINDOW_S * 1000.0;
+    let now = web_sys::js_sys::Date::now();
+    let start = now - WINDOW_MS;
+    let x = |t: f64| (t - start) / WINDOW_MS * W;
 
-    // Filter drift samples to the window (for clean paths; we don't want
-    // a line stretching in from outside).
-    let drift_in_window: Vec<GuideDriftSample> = drift
-        .iter()
-        .filter(|s| s.t_ms >= start_ms)
-        .cloned()
-        .collect();
-    let has_drift = !drift_in_window.is_empty();
+    let recent: Vec<&GuideDriftSample> = drift.iter().filter(|s| s.t_ms >= start).collect();
+    let peak = recent.iter()
+        .flat_map(|s| [s.ra, s.de])
+        .filter(|v| v.is_finite())
+        .fold(0.0_f64, |m, v| m.max(v.abs()));
+    let range = [1.0, 2.0, 4.0, 8.0].into_iter().find(|r| peak <= *r).unwrap_or(8.0);
+    let y = |v: f64| H / 2.0 - v.clamp(-range, range) / range * (H / 2.0);
+    let path = |axis: fn(&GuideDriftSample) -> f64| {
+        recent.iter()
+            .filter(|s| axis(s).is_finite())
+            .enumerate()
+            .map(|(i, s)| format!("{}{:.1} {:.1}", if i == 0 { 'M' } else { 'L' }, x(s.t_ms), y(axis(s))))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let (ra, de) = (path(|s| s.ra), path(|s| s.de));
+    let empty = recent.is_empty();
 
-    let ra_path = build_path(&drift_in_window, now_ms, Axis::Ra);
-    let de_path = build_path(&drift_in_window, now_ms, Axis::De);
+    // One segment per guide state, clipped to the window.
+    let ribbon = history.iter().enumerate().filter_map(|(i, h)| {
+        let a = h.t_ms.max(start);
+        let b = history.get(i + 1).map_or(now, |n| n.t_ms).min(now);
+        (b > a).then(|| view! {
+            <rect x=format!("{:.1}", x(a)) width=format!("{:.1}", x(b) - x(a)) height="1" fill=tone(&h.status).1 />
+        })
+    }).collect::<Vec<_>>();
 
-    // State-ribbon segments (x, w, color).
-    let mut segments: Vec<(f64, f64, &'static str)> = Vec::new();
-    for (i, sample) in history.iter().enumerate() {
-        let seg_start = sample.t_ms.max(start_ms);
-        let seg_end = history
-            .get(i + 1)
-            .map(|n| n.t_ms)
-            .unwrap_or(now_ms)
-            .min(now_ms);
-        if seg_end <= start_ms || seg_start >= now_ms {
-            continue;
-        }
-        let x0 = time_to_x(seg_start, now_ms);
-        let x1 = time_to_x(seg_end, now_ms);
-        segments.push((x0, (x1 - x0).max(1.0), color_for(&sample.status)));
-    }
-    let ribbon_placeholder = segments.is_empty();
-
-    let total_h = PLOT_H + RIBBON_H + AXIS_LABEL_H;
-
-    // Y-axis gridlines at -3, -2, -1, 0, +1, +2, +3 arcsec.
-    let ygrid: Vec<i32> = (-3..=3).collect();
-    // X-axis ticks at 0, 30, 60, 90, 120 seconds (rendered as -120..0 s).
-    let xticks: Vec<f64> = (0..=4).map(|i| i as f64 * VIEW_W / 4.0).collect();
+    let hline = |at: f64, color: &'static str| view! {
+        <line x1="0" x2=W y1=at y2=at stroke=color stroke-width="1" vector-effect="non-scaling-stroke" />
+    };
+    let vline = |at: f64| view! {
+        <line x1=at x2=at y1="0" y2=H stroke="var(--border)" stroke-width="1" vector-effect="non-scaling-stroke" />
+    };
+    let axis_label = |pos: &'static str, text: String| view! {
+        <span class=format!("absolute left-1.5 font-mono text-[10px] leading-none text-text-faint {pos}")>{text}</span>
+    };
 
     view! {
-        <div class="flex flex-col gap-1">
-            <svg viewBox=format!("0 0 {} {}", VIEW_W, total_h)
-                 width="100%"
-                 class="bg-bg-input-deep border border-border-base">
-
-                // Plot area background
-                <rect x="0" y="0" width=VIEW_W height=PLOT_H fill="#0a0a12"/>
-
-                // Horizontal gridlines + arcsec labels
-                {ygrid.iter().map(|&v| {
-                    let y = y_to_px(v as f64);
-                    let is_zero = v == 0;
-                    view! {
-                        <g>
-                            <line x1="0" y1=y x2=VIEW_W y2=y
-                                  stroke=if is_zero { "#444" } else { "#1f1f28" }
-                                  stroke-width=if is_zero { "0.8" } else { "0.4" }/>
-                            <text x="4" y={y - 2.0}
-                                  fill="#556" font-size="9"
-                                  text-anchor="start">
-                                {format!("{}\"", v)}
-                            </text>
-                        </g>
-                    }
-                }).collect::<Vec<_>>()}
-
-                // Vertical time gridlines
-                {xticks.iter().map(|&x| view! {
-                    <line x1=x y1="0" x2=x y2=PLOT_H
-                          stroke="#1f1f28" stroke-width="0.4"/>
-                }).collect::<Vec<_>>()}
-
-                // Drift traces (only if we have data)
-                {if has_drift {
-                    view! {
-                        <g>
-                            <path d=de_path fill="none"
-                                  stroke="#ffb060" stroke-width="1.2"
-                                  stroke-linejoin="round"/>
-                            <path d=ra_path fill="none"
-                                  stroke="#88aaff" stroke-width="1.2"
-                                  stroke-linejoin="round"/>
-                        </g>
-                    }.into_any()
-                } else {
-                    view! {
-                        <text x={VIEW_W / 2.0} y={PLOT_H / 2.0}
-                              fill="#556" font-size="11"
-                              text-anchor="middle" dominant-baseline="middle">
-                            "waiting for drift samples…"
-                        </text>
-                    }.into_any()
-                }}
-
-                // Legend (top-right)
-                <g transform=format!("translate({}, 10)", VIEW_W - 110.0)>
-                    <line x1="0" y1="0" x2="14" y2="0" stroke="#88aaff" stroke-width="1.5"/>
-                    <text x="18" y="3" fill="#88aaff" font-size="10">"RA"</text>
-                    <line x1="40" y1="0" x2="54" y2="0" stroke="#ffb060" stroke-width="1.5"/>
-                    <text x="58" y="3" fill="#ffb060" font-size="10">"DEC"</text>
-                </g>
-
-                // State ribbon underneath the plot
-                <g transform=format!("translate(0, {})", PLOT_H)>
-                    <rect x="0" y="0" width=VIEW_W height=RIBBON_H fill="#101018"/>
-                    {if ribbon_placeholder {
-                        view! { <rect x="0" y="0" width=VIEW_W height=RIBBON_H fill="#2a2a35"/> }.into_any()
-                    } else {
-                        segments.iter().map(|&(x, w, c)| view! {
-                            <rect x=x y="0" width=w height=RIBBON_H fill=c/>
-                        }).collect::<Vec<_>>().into_any()
-                    }}
-                </g>
-
-                // X-axis labels
-                {xticks.iter().enumerate().map(|(i, &x)| {
-                    let label = format!("-{}s", (4 - i) * 30);
-                    view! {
-                        <text x=x y={PLOT_H + RIBBON_H + 10.0}
-                              fill="#667" font-size="9"
-                              text-anchor=if i == 0 { "start" }
-                                          else if i == 4 { "end" }
-                                          else { "middle" }>
-                            {label}
-                        </text>
-                    }
-                }).collect::<Vec<_>>()}
+        <div class="flex flex-col gap-1 md:flex-1 md:min-h-0">
+            <div class="relative h-40 md:h-auto md:flex-1 md:min-h-48 rounded-md bg-bg-input-deep \
+                        border border-border-base overflow-hidden">
+                <svg viewBox=format!("0 0 {W} {H}") preserveAspectRatio="none" class="absolute inset-0 w-full h-full">
+                    {hline(H * 0.25, "var(--border)")}
+                    {hline(H * 0.75, "var(--border)")}
+                    {[W * 0.25, W * 0.5, W * 0.75].map(vline)}
+                    {hline(H * 0.5, "var(--border-mid)")}
+                    <path d=de fill="none" stroke="var(--accent-amber)" stroke-width="1.5"
+                          stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+                    <path d=ra fill="none" stroke="var(--text-blue)" stroke-width="1.5"
+                          stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+                </svg>
+                {axis_label("top-1.5", format!("+{range}\u{2033}"))}
+                {axis_label("top-1/2 -translate-y-1/2", "0".into())}
+                {axis_label("bottom-1.5", format!("\u{2212}{range}\u{2033}"))}
+                <div class="absolute top-1.5 right-2 flex gap-3 font-mono text-[10px] leading-none">
+                    <span class="text-text-blue">{format!("\u{25cf} {}", tr.ra_label)}</span>
+                    <span class="text-accent-amber">{format!("\u{25cf} {}", tr.dec_label)}</span>
+                </div>
+                {empty.then(|| view! {
+                    <div class="absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-text-faint">
+                        {tr.guide_no_drift}
+                    </div>
+                })}
+            </div>
+            <svg viewBox=format!("0 0 {W} 1") preserveAspectRatio="none" class="block w-full h-1.5 rounded-full bg-border-strong">
+                {ribbon}
             </svg>
-            <div class="text-xs text-[#667]">
-                "RA/DEC drift (arcsec) over the last 2 minutes. \
-                 Coloured ribbon shows guide state."
+            <div class="flex justify-between font-mono text-[10px] leading-none text-text-faint">
+                <span>"\u{2212}120 s"</span><span>"\u{2212}60 s"</span><span>"0 s"</span>
             </div>
         </div>
     }

@@ -188,6 +188,8 @@ translations! {
     mount_solve_download,
     // Guide tab — new actions (refresh, bulk-save, log export)
     guide_refresh_settings, guide_save_calibration, guide_export_log,
+    // Guide tab — redesigned layout
+    guide_btn_start, guide_btn_stop, guide_drift_title, guide_target_title, guide_no_drift, guide_total,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust,
     // Flat Cal tab — extra labels not already in fc_* / dc_*

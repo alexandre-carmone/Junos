@@ -501,13 +501,13 @@ pub struct SchedulerStatusData {
 // emission: either {status}, {drift_ra, drift_de}, {rarms, derms}, or
 // {log}. See kstars/ekos/manager.cpp:2769-2786 for the four distinct
 // senders. We merge them all into one struct.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GuideStateSample {
     pub t_ms:   f64,
     pub status: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GuideDriftSample {
     pub t_ms: f64,
     pub ra:   f64,  // arcsec drift on RA axis
