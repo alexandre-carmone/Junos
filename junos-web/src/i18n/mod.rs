@@ -59,6 +59,7 @@ translations! {
     profiles_edit, profiles_delete, profiles_save, profiles_cancel, profiles_launch, profiles_stop, profiles_active, profiles_mode,
     profiles_mode_local, profiles_mode_remote, profiles_host, profiles_port, profiles_auto_connect, profiles_port_selector, profiles_guiding, profiles_web_manager,
     profiles_remote_drivers, profiles_drivers, profiles_name, profiles_confirm_delete, profiles_confirm_launch, profiles_starting, profiles_empty, profiles_new,
+    profiles_name_taken, profiles_guiding_host, profiles_guiding_port,
     no_devices, role_grid_title, all_devices_title, auto_connect_label, none_option, no_mount_assigned, no_camera_assigned, telescope_title,
     focal_length_mm, aperture_mm, guide_scope_title, guide_focal_length_mm, guide_aperture_mm, connection, connected_label, connect_existing,
     start_local, running, stopped, no_drivers, search_drivers, selected_label, save_profile, load_profile,
