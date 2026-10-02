@@ -150,7 +150,9 @@ translations! {
     sched_steps_legend, sched_step_track, sched_step_focus, sched_step_align, sched_step_guide, sched_start_when, sched_cond_asap, sched_cond_at_time,
     sched_complete_when, sched_cond_seq, sched_cond_repeat, sched_cond_loop, sched_cond_finish_at, sched_times_unit, sched_seq_label, sched_seq_col_type,
     sched_seq_col_filter, sched_seq_col_exp, sched_seq_col_count, sched_add_frame, sched_clear_btn, sched_add_job_btn, sched_settings_btn, sched_err_ra, sched_err_dec,
-    sched_err_frames, sched_err_flat_adu, sched_err_flat_encoding, sky_add_scheduler, sky_create_mosaic, sky_scheduler_jobs,
+    sched_err_frames, sched_err_flat_adu, sched_err_flat_encoding,
+    // Scheduler tab — redesigned add-job sheet
+    sched_err_name, sched_conditions_legend, sky_add_scheduler, sky_create_mosaic, sky_scheduler_jobs,
     apps_section, apps_kstars, apps_phd2, apps_launch, apps_stop, apps_running, apps_stopped,
     // Files tab v2 — browser controls, file actions, livestacker extras.
     files_sort_name, files_sort_date, files_sort_size, files_sort_asc, files_sort_desc, files_filter_all,

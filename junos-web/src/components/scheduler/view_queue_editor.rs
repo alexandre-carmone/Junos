@@ -21,7 +21,21 @@ use super::queue_model::{
 use crate::dom::event_target_value;
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
+use crate::components::form::FOOTER;
 use crate::ws_helpers::send_cmd;
+
+use super::sheet;
+
+const FIELDS: &str = "flex flex-wrap items-center gap-x-3 gap-y-2";
+const FIELD_LABEL: &str = "text-sm text-text-blue";
+const UNIT: &str = "text-sm text-text-faint";
+const INPUT: &str = "input input--sm font-mono max-md:h-9";
+const SELECT: &str = "input input--sm max-md:h-9";
+
+/// A text field of `width`, outlined red while its value is invalid.
+fn input_cls(width: &str, ok: bool) -> String {
+    format!("{INPUT} {width}{}", if ok { "" } else { " border-state-err" })
+}
 
 // ── Rows ─────────────────────────────────────────────────────────────────────
 
@@ -121,7 +135,7 @@ fn param_label(tr: &'static Translations, name: &str) -> &'static str {
     }
 }
 
-fn slot_title(tr: &'static Translations, slot: QueueSlot) -> &'static str {
+pub(super) fn slot_title(tr: &'static Translations, slot: QueueSlot) -> &'static str {
     match slot {
         QueueSlot::PreStartup   => tr.sched_q_slot_pre_startup,
         QueueSlot::PostStartup  => tr.sched_q_slot_post_startup,
@@ -174,15 +188,15 @@ fn number_field(lang: RwSignal<Lang>, p: &'static ParamSpec, value: RwSignal<Str
     };
     view! {
         <label class="flex items-center gap-sp-1">
-            <span class="sched-field-label min-w-0">{move || param_label(tr(), p.name)}</span>
+            <span class=format!("{FIELD_LABEL} min-w-0")>{move || param_label(tr(), p.name)}</span>
             <input
-                class=move || if out_of_range() { "sched-input w-[84px] border-state-err" } else { "sched-input w-[84px]" }
+                class=move || input_cls("w-[84px]", !out_of_range())
                 inputmode={if p.min < 0.0 { "text" } else { "decimal" }}
                 title=format!("{} … {}", fmt_num(p.min), fmt_num(p.max))
                 prop:value=move || value.get()
                 on:input=move |ev| value.set(event_target_value(&ev))
             />
-            <span class="sched-field-unit">{p.unit}</span>
+            <span class=UNIT>{p.unit}</span>
         </label>
     }
 }
@@ -218,9 +232,9 @@ fn step_card(
                 .collect::<Vec<_>>();
             let fail_select = spec.needs_device.then(|| view! {
                 <label class="flex items-center gap-sp-1">
-                    <span class="sched-field-label min-w-0">{move || tr().sched_q_if_no_device}</span>
+                    <span class=format!("{FIELD_LABEL} min-w-0")>{move || tr().sched_q_if_no_device}</span>
                     <select
-                        class="sched-select"
+                        class=SELECT
                         on:change=move |ev| fail.set(event_target_value(&ev).parse().unwrap_or(FAIL_SKIP))
                     >
                         <option value=FAIL_SKIP.to_string() prop:selected=move || fail.get() == FAIL_SKIP>
@@ -236,24 +250,20 @@ fn step_card(
                 </label>
             });
             let label = Signal::derive(move || step_label(tr(), id).to_string());
-            (label, view! { <div class="sched-field-row">{fields}{fail_select}</div> }.into_any())
+            (label, view! { <div class=FIELDS>{fields}{fail_select}</div> }.into_any())
         }
         RowKind::Managed { name, body, timeout } => {
             let label = Signal::derive(move || tr().sched_q_step_script.to_string());
             let view = view! {
-                <div class="sched-field-row">
+                <div class=FIELDS>
                     <label class="flex items-center gap-sp-1">
-                        <span class="sched-field-label min-w-0">{move || tr().sched_q_script_name}</span>
+                        <span class=format!("{FIELD_LABEL} min-w-0")>{move || tr().sched_q_script_name}</span>
                         <input
-                            class=move || if name.with(|n| is_safe_name(n.trim())) {
-                                "sched-input w-[200px]"
-                            } else {
-                                "sched-input w-[200px] border-state-err"
-                            }
+                            class=move || input_cls("w-[200px]", name.with(|n| is_safe_name(n.trim())))
                             prop:value=move || name.get()
                             on:input=move |ev| name.set(event_target_value(&ev))
                         />
-                        <span class="sched-field-unit">".sh"</span>
+                        <span class=UNIT>".sh"</span>
                     </label>
                     {number_field(lang, &SCRIPT_TIMEOUT, timeout)}
                 </div>
@@ -261,7 +271,7 @@ fn step_card(
                     {move || managed_script_path(&scripts_dir.get(), name.get().trim())}
                 </div>
                 <textarea
-                    class="sched-input w-full min-h-[180px] resize-y leading-snug whitespace-pre"
+                    class="input font-mono text-sm w-full h-auto min-h-[180px] py-2 resize-y leading-snug whitespace-pre"
                     spellcheck="false"
                     aria-label=move || tr().sched_q_script_body
                     placeholder=move || tr().sched_q_script_loading
@@ -276,14 +286,10 @@ fn step_card(
         RowKind::External { path, timeout } => {
             let label = Signal::derive(move || tr().sched_q_step_script_ext.to_string());
             let view = view! {
-                <div class="sched-field-row">
-                    <span class="sched-field-label">{move || tr().sched_q_script_path}</span>
+                <div class=FIELDS>
+                    <span class=FIELD_LABEL>{move || tr().sched_q_script_path}</span>
                     <input
-                        class=move || if path.with(|p| p.trim().starts_with('/')) {
-                            "sched-input sched-input-path"
-                        } else {
-                            "sched-input sched-input-path border-state-err"
-                        }
+                        class=move || input_cls("flex-1 min-w-[200px]", path.with(|p| p.trim().starts_with('/')))
                         placeholder="/home/astronaut/bin/open_roof.sh"
                         prop:value=move || path.get()
                         on:input=move |ev| path.set(event_target_value(&ev))
@@ -308,19 +314,19 @@ fn step_card(
                 <span class="text-text-blue text-sm font-semibold">{label}</span>
                 <span class="flex-1"></span>
                 <button
-                    class="sched-btn-icon"
+                    class="btn-icon"
                     title=move || tr().sched_q_move_up
                     prop:disabled=move || index() == 0
                     on:click=move |_| move_by(-1)
                 >"↑"</button>
                 <button
-                    class="sched-btn-icon"
+                    class="btn-icon"
                     title=move || tr().sched_q_move_down
                     prop:disabled={move || index() + 1 >= count()}
                     on:click=move |_| move_by(1)
                 >"↓"</button>
                 <button
-                    class="sched-btn-icon"
+                    class="btn-icon"
                     title=move || tr().sched_q_remove_step
                     on:click=move |_| rows.update(|v| v.retain(|r| r.key != key))
                 >"✕"</button>
@@ -669,141 +675,124 @@ pub fn SchedulerQueueEditor(
         });
     };
 
-    let close_btn = Arc::clone(&on_close);
+    let close = Arc::clone(&on_close);
 
-    view! {
-        <div class="fixed inset-0 md:right-[64px] z-[60] bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2">
-            <div class="w-full max-w-[860px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col">
-                <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
-                    <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
-                        {move || slot_title(tr(), slot)}
-                    </h2>
-                    <button class="btn btn-ghost" on:click=move |_| close_btn()>
-                        {move || tr().imaging_close}
-                    </button>
+    sheet(move || slot_title(tr(), slot), move || close(), view! {
+        <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 flex flex-col gap-3">
+            <Show
+                when=move || !loading.get()
+                fallback=move || view! { <div class="text-text-muted text-sm">{move || tr().sched_q_script_loading}</div> }
+            >
+                {move || foreign.get().map(|p| view! {
+                    <div class="text-text-muted text-xs">
+                        {move || tr().sched_q_foreign_note}
+                        " "
+                        <span class="font-mono break-all">{p}</span>
+                    </div>
+                })}
+
+                <div class=FIELDS>
+                    <label class="flex items-center gap-sp-1">
+                        <span class=FIELD_LABEL>{move || tr().sched_q_name}</span>
+                        <input
+                            class=move || input_cls("w-[220px]", name.with(|n| is_safe_name(n.trim())))
+                            prop:value=move || name.get()
+                            on:input=move |ev| name.set(event_target_value(&ev))
+                        />
+                        <span class=UNIT>".json"</span>
+                    </label>
+                    <label class="flex items-center gap-sp-1 flex-1 min-w-[200px]">
+                        <span class=FIELD_LABEL>{move || tr().sched_q_title}</span>
+                        <input
+                            class=format!("{INPUT} flex-1 min-w-0")
+                            placeholder=move || name.get()
+                            prop:value=move || title.get()
+                            on:input=move |ev| title.set(event_target_value(&ev))
+                        />
+                    </label>
+                </div>
+                <div class="text-text-faint text-xs font-mono break-all -mt-sp-2">
+                    {move || format!(
+                        "→ {}/{}.json",
+                        collections_dir.get().trim_end_matches('/'),
+                        name.get().trim(),
+                    )}
                 </div>
 
-                <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 flex flex-col gap-sp-3">
-                    <Show
-                        when=move || !loading.get()
-                        fallback=move || view! { <div class="text-text-muted text-sm">{move || tr().sched_q_script_loading}</div> }
-                    >
-                        {move || foreign.get().map(|p| view! {
-                            <div class="text-text-muted text-xs">
-                                {move || tr().sched_q_foreign_note}
-                                " "
-                                <span class="font-mono break-all">{p}</span>
-                            </div>
-                        })}
-
-                        <div class="sched-field-row">
-                            <label class="flex items-center gap-sp-1">
-                                <span class="sched-field-label">{move || tr().sched_q_name}</span>
-                                <input
-                                    class=move || if name.with(|n| is_safe_name(n.trim())) {
-                                        "sched-input w-[220px]"
-                                    } else {
-                                        "sched-input w-[220px] border-state-err"
-                                    }
-                                    prop:value=move || name.get()
-                                    on:input=move |ev| name.set(event_target_value(&ev))
-                                />
-                                <span class="sched-field-unit">".json"</span>
-                            </label>
-                            <label class="flex items-center gap-sp-1 flex-1 min-w-[200px]">
-                                <span class="sched-field-label">{move || tr().sched_q_title}</span>
-                                <input
-                                    class="sched-input flex-1"
-                                    placeholder=move || name.get()
-                                    prop:value=move || title.get()
-                                    on:input=move |ev| title.set(event_target_value(&ev))
-                                />
-                            </label>
-                        </div>
-                        <div class="text-text-faint text-xs font-mono break-all -mt-sp-2">
-                            {move || format!(
-                                "→ {}/{}.json",
-                                collections_dir.get().trim_end_matches('/'),
-                                name.get().trim(),
-                            )}
-                        </div>
-
-                        <Show when=move || existing.with(Option::is_none) && slot.allows_devices()>
-                            <label class="sched-field-row">
-                                <span class="sched-field-label">{move || tr().sched_q_start_from}</span>
-                                <select
-                                    class="sched-select"
-                                    on:change=move |ev| {
-                                        let p = Preset::from_key(&event_target_value(&ev));
-                                        preset.set(p);
-                                        rows.set(new_rows(p.steps()));
-                                    }
-                                >
-                                    {[Preset::Empty, Preset::Startup, Preset::Shutdown]
-                                        .into_iter()
-                                        .map(|p| view! {
-                                            <option value=p.key() prop:selected=move || preset.get() == p>
-                                                {move || preset_label(tr(), p)}
-                                            </option>
-                                        })
-                                        .collect::<Vec<_>>()}
-                                </select>
-                            </label>
-                        </Show>
-
-                        <Show when=move || !slot.allows_devices()>
-                            <div class="text-text-muted text-xs">{move || tr().sched_q_devices_note}</div>
-                        </Show>
-                        <Show when=shows_device_warning>
-                            <div class="text-state-warn text-sm">{move || tr().sched_q_device_warning}</div>
-                        </Show>
-
-                        <div class="flex flex-col gap-sp-2">
-                            <For
-                                each=move || rows.get()
-                                key=|r| r.key
-                                children=move |row: StepRow| step_card(row, rows, lang, scripts_dir)
-                            />
-                        </div>
-                        <Show when=move || rows.with(Vec::is_empty)>
-                            <div class="text-text-faint text-sm">{move || tr().sched_q_no_steps}</div>
-                        </Show>
-
-                        <select class="sched-select self-start" on:change=on_add>
-                            <option value="" selected>{move || tr().sched_q_add_step}</option>
-                            {TEMPLATES
-                                .iter()
-                                .filter(|spec| slot.allows_devices() || !spec.needs_device)
-                                .map(|spec| view! {
-                                    <option value=spec.id>{move || step_label(tr(), spec.id)}</option>
+                <Show when=move || existing.with(Option::is_none) && slot.allows_devices()>
+                    <label class=FIELDS>
+                        <span class=FIELD_LABEL>{move || tr().sched_q_start_from}</span>
+                        <select
+                            class=SELECT
+                            on:change=move |ev| {
+                                let p = Preset::from_key(&event_target_value(&ev));
+                                preset.set(p);
+                                rows.set(new_rows(p.steps()));
+                            }
+                        >
+                            {[Preset::Empty, Preset::Startup, Preset::Shutdown]
+                                .into_iter()
+                                .map(|p| view! {
+                                    <option value=p.key() prop:selected=move || preset.get() == p>
+                                        {move || preset_label(tr(), p)}
+                                    </option>
                                 })
                                 .collect::<Vec<_>>()}
-                            <option value="script_new">{move || tr().sched_q_step_script}</option>
-                            <option value="script_ext">{move || tr().sched_q_step_script_ext}</option>
                         </select>
-                    </Show>
-                </div>
+                    </label>
+                </Show>
 
-                <div class="flex items-center flex-wrap gap-sp-3 py-sp-3 px-sp-4 border-t border-border-base bg-[rgba(10,12,20,0.8)]">
-                    <div class="flex-1 min-w-[200px]">
-                        {move || error.get().map(|e| view! { <div class="sched-form-error">{e}</div> })}
-                    </div>
-                    <Show when=move || existing.with(Option::is_some)>
-                        <button
-                            class="sched-btn-clear"
-                            prop:disabled=move || busy.get()
-                            on:click=on_delete.clone()
-                        >{move || tr().sched_q_delete}</button>
-                    </Show>
-                    <button
-                        class="sched-btn-apply"
-                        prop:disabled=move || busy.get() || loading.get()
-                        on:click=on_save
-                    >
-                        {move || if busy.get() { tr().sched_q_saving } else { tr().sched_q_save_assign }}
-                    </button>
+                <Show when=move || !slot.allows_devices()>
+                    <div class="text-text-muted text-xs">{move || tr().sched_q_devices_note}</div>
+                </Show>
+                <Show when=shows_device_warning>
+                    <div class="text-state-warn text-sm">{move || tr().sched_q_device_warning}</div>
+                </Show>
+
+                <div class="flex flex-col gap-sp-2">
+                    <For
+                        each=move || rows.get()
+                        key=|r| r.key
+                        children=move |row: StepRow| step_card(row, rows, lang, scripts_dir)
+                    />
                 </div>
-            </div>
+                <Show when=move || rows.with(Vec::is_empty)>
+                    <div class="text-text-faint text-sm">{move || tr().sched_q_no_steps}</div>
+                </Show>
+
+                <select class=format!("{SELECT} self-start") on:change=on_add>
+                    <option value="" selected>{move || tr().sched_q_add_step}</option>
+                    {TEMPLATES
+                        .iter()
+                        .filter(|spec| slot.allows_devices() || !spec.needs_device)
+                        .map(|spec| view! {
+                            <option value=spec.id>{move || step_label(tr(), spec.id)}</option>
+                        })
+                        .collect::<Vec<_>>()}
+                    <option value="script_new">{move || tr().sched_q_step_script}</option>
+                    <option value="script_ext">{move || tr().sched_q_step_script_ext}</option>
+                </select>
+            </Show>
         </div>
-    }
+
+        <div class=FOOTER>
+            <div class="flex-1 min-w-0">
+                {move || error.get().map(|e| view! { <div class="text-state-err text-sm">{e}</div> })}
+            </div>
+            <Show when=move || existing.with(Option::is_some)>
+                <button
+                    class="btn btn-danger h-11 shrink-0"
+                    prop:disabled=move || busy.get()
+                    on:click=on_delete.clone()
+                >{move || tr().sched_q_delete}</button>
+            </Show>
+            <button
+                class="btn btn-primary h-11 px-5 shrink-0"
+                prop:disabled=move || busy.get() || loading.get()
+                on:click=on_save
+            >
+                {move || if busy.get() { tr().sched_q_saving } else { tr().sched_q_save_assign }}
+            </button>
+        </div>
+    })
 }

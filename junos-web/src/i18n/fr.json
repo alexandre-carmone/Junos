@@ -953,6 +953,8 @@
   "sched_err_frames": "Ajoutez au moins une trame de séquence valide (pose et compte numériques).",
   "sched_err_flat_adu": "Les flats en mode ADU nécessitent un ADU cible entre 1 et 65535 et une tolérance ≥ 0.",
   "sched_err_flat_encoding": "Les flats en mode ADU nécessitent l'encodage FITS ou XISF — KStars ne peut pas mesurer l'ADU sur les autres formats.",
+  "sched_err_name": "Saisissez un nom de cible.",
+  "sched_conditions_legend": "Conditions",
   "sky_add_scheduler": "Ajouter au planificateur",
   "sky_create_mosaic": "Créer une mosaïque",
   "sky_scheduler_jobs": "Tâches du planificateur",

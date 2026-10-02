@@ -863,6 +863,8 @@
   "sched_err_frames": "Add at least one valid sequence frame (numeric exposure and count).",
   "sched_err_flat_adu": "ADU flats need a target ADU between 1 and 65535 and a tolerance ≥ 0.",
   "sched_err_flat_encoding": "ADU flats need FITS or XISF encoding — KStars cannot measure ADU on other formats.",
+  "sched_err_name": "Enter a target name.",
+  "sched_conditions_legend": "Conditions",
   "sky_add_scheduler": "Add to Scheduler",
   "sky_create_mosaic": "Create Mosaic",
   "sky_scheduler_jobs": "Scheduler jobs",

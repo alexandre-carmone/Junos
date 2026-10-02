@@ -1,249 +1,130 @@
-//! Scheduler tab: the job queue table.
+//! Scheduler tab: the job list, one card per job.
 
 use std::sync::Arc;
 
 use leptos::prelude::*;
+use serde_json::Value;
 
-use crate::compat::SchedulerSnapshot;
-use crate::i18n::{t, Lang};
+use crate::components::form::{CARD, CARD_TITLE};
+use crate::components::sky::{fmt_dec, fmt_ra};
+use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 
-use super::labels::{job_stage_label, job_state_label, scheduler_status_label};
+use super::labels::{job_stage_label, job_state_label};
 
-/// Top toolbar: status badge, Start/Stop, Refresh, [right] Add job + Settings.
-/// Log line stays below for the latest scheduler message.
+/// `jobs` is the `scheduler_get_jobs` list (`SchedulerJob::toJson`). The
+/// cards are rebuilt only when it changes, not on every log line.
 #[component]
-pub fn SchedulerToolbar(
-    #[prop(into)] scheduler: Signal<SchedulerSnapshot>,
+pub fn SchedulerJobs(
+    #[prop(into)] jobs: Signal<Vec<Value>>,
     #[prop(into)] send: SendCmd,
-    #[prop(into)] lang: RwSignal<Lang>,
-    on_open_add: Arc<dyn Fn() + Send + Sync>,
-    on_open_settings: Arc<dyn Fn() + Send + Sync>,
+    lang: RwSignal<Lang>,
 ) -> impl IntoView {
     let tr = move || t(lang.get());
-
-    let send_toggle = Arc::clone(&send);
-    let on_toggle = move |_| {
-        send_cmd(&send_toggle, "scheduler_start_job", serde_json::json!({}));
-    };
-
-    let send_refresh = Arc::clone(&send);
-    let on_refresh = move |_| {
-        send_cmd(&send_refresh, "scheduler_get_jobs", serde_json::json!({}));
-    };
-
-    let open_add = Arc::clone(&on_open_add);
-    let open_settings = Arc::clone(&on_open_settings);
+    let s_refresh = Arc::clone(&send);
 
     view! {
-        <div class="sched-header">
-            <div class="sched-header-top">
-                <span class="sched-title">{move || tr().sched_title}</span>
-                <span class="sched-job-count">
-                    {move || {
-                        let n = scheduler.get().jobs.len();
-                        let word = if n == 1 { tr().sched_job_singular } else { tr().sched_job_plural };
-                        format!("({} {})", n, word)
-                    }}
+        <div class=format!("{CARD} md:min-h-0")>
+            <div class="flex items-center gap-2">
+                <span class=format!("{CARD_TITLE} flex-1")>
+                    {move || format!("{} \u{00b7} {}", tr().sched_jobs_section, jobs.with(Vec::len))}
                 </span>
-                <div class="sched-ctrl-group">
-                    {move || {
-                        let snap = scheduler.get();
-                        let (label, cls) = scheduler_status_label(tr(), snap.status);
-                        view! {
-                            <span class={format!("sched-badge {}", cls)}>{label}</span>
-                        }
-                    }}
-                    <button
-                        class=move || {
-                            if scheduler.get().status == 1 { "sched-btn sched-btn-stop" }
-                            else { "sched-btn" }
-                        }
-                        on:click=on_toggle.clone()>
-                        {move || if scheduler.get().status == 1 { tr().sched_btn_stop } else { tr().sched_btn_start }}
-                    </button>
-                    <button
-                        class="sched-btn-icon"
-                        title=move || tr().sched_refresh_jobs
-                        on:click=on_refresh.clone()>
-                        "↻"
-                    </button>
-                </div>
-                <div class="sched-toolbar-right">
-                    <button
-                        class="sched-btn-apply"
-                        on:click=move |_| open_add()>
-                        {move || tr().sched_add_job_btn}
-                    </button>
-                    <button
-                        class="sched-btn-icon sched-btn-settings"
-                        on:click=move |_| open_settings()>
-                        {move || tr().sched_settings_btn}
-                    </button>
-                </div>
+                <button class="btn-icon text-text-muted" title=move || tr().sched_refresh_jobs
+                        on:click=move |_| send_cmd(&s_refresh, "scheduler_get_jobs", serde_json::json!({}))>
+                    "\u{21bb}"
+                </button>
             </div>
-            <div class="sched-log-row">
+            <div class="flex flex-col gap-2 md:flex-1 md:min-h-0 md:overflow-y-auto [overscroll-behavior:contain]">
                 {move || {
-                    // Show only the latest line here; the full log lives in the
-                    // scrollable panel below the jobs table.
-                    scheduler.get().log
-                        .lines()
-                        .rev()
-                        .find(|l| !l.trim().is_empty())
-                        .unwrap_or("")
-                        .to_string()
+                    let tr = tr();
+                    let list = jobs.get();
+                    if list.is_empty() {
+                        return view! {
+                            <div class="py-8 px-4 text-center text-sm text-text-faint">{tr.sched_no_jobs}</div>
+                        }.into_any();
+                    }
+                    list.into_iter()
+                        .enumerate()
+                        .map(|(i, job)| job_card(i, job, tr, Arc::clone(&send)))
+                        .collect::<Vec<_>>()
+                        .into_any()
                 }}
             </div>
         </div>
     }
 }
 
-#[component]
-pub fn SchedulerJobsSection(
-    #[prop(into)] scheduler: Signal<SchedulerSnapshot>,
-    #[prop(into)] send: SendCmd,
-    #[prop(into)] lang: RwSignal<Lang>,
-) -> impl IntoView {
-    let tr = move || t(lang.get());
+/// First non-empty value among `keys` — KStars' formatted time, else ISO
+/// ("--" when unset).
+fn job_time(job: &Value, keys: [&str; 2]) -> Option<String> {
+    keys.iter()
+        .filter_map(|k| job[*k].as_str())
+        .find(|s| !s.is_empty() && *s != "--")
+        .map(str::to_string)
+}
+
+fn job_card(i: usize, job: Value, tr: &'static Translations, send: SendCmd) -> impl IntoView {
+    let name = job["name"].as_str().unwrap_or("?").to_string();
+    // targetRA / targetDEC are J2000 (ra0 / dec0), RA in hours.
+    let coords = format!(
+        "{} {}",
+        fmt_ra(job["targetRA"].as_f64().unwrap_or(0.0) * 15.0),
+        fmt_dec(job["targetDEC"].as_f64().unwrap_or(0.0)),
+    );
+    let state = job["state"].as_i64().unwrap_or(0);
+    let (state_label, state_cls) = job_state_label(tr, state);
+    let stage = if state == 3 { job_stage_label(tr, job["stage"].as_i64().unwrap_or(0)) } else { "" };
+    let alt = job["altitude"].as_f64().unwrap_or(0.0);
+    let alt_txt = job["altitudeFormatted"].as_str().filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{alt:.0}\u{00b0}"));
+    let alt_cls = if alt >= 30.0 { "text-state-ok" } else if alt >= 20.0 { "text-state-warn" } else { "text-state-err" };
+    let window = match (job_time(&job, ["startupFormatted", "startupTime"]), job_time(&job, ["endFormatted", "completionTime"])) {
+        (None, None) => None,
+        (a, b) => Some(format!("{} \u{2192} {}", a.as_deref().unwrap_or("\u{2014}"), b.as_deref().unwrap_or("\u{2014}"))),
+    };
+    let done = job["completedCount"].as_i64().unwrap_or(0);
+    let total = job["sequenceCount"].as_i64().unwrap_or(0);
+    let pct = if total > 0 { (done * 100 / total).clamp(0, 100) } else { 0 };
+
+    let on_remove = move |_| {
+        send_cmd(&send, "scheduler_remove_jobs", serde_json::json!({ "index": i }));
+        let s = Arc::clone(&send);
+        wasm_bindgen_futures::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(400).await;
+            send_cmd(&s, "scheduler_get_jobs", serde_json::json!({}));
+        });
+    };
 
     view! {
-        {move || {
-            let snap = scheduler.get();
-            let send_ref2 = Arc::clone(&send);
-            view! {
-                <div class="sched-table-wrap">
-                    {if snap.jobs.is_empty() {
-                        view! {
-                            <div class="sched-empty">
-                                {move || tr().sched_no_jobs}
-                            </div>
-                        }
-                            .into_any()
-                    } else {
-                        view! {
-                            <table class="sched-table">
-                                <thead>
-                                    <tr>
-                                        <th>{move || tr().sched_col_name}</th>
-                                        <th>{move || tr().sched_col_coords}</th>
-                                        <th>{move || tr().sched_col_state}</th>
-                                        <th>{move || tr().sched_col_alt}</th>
-                                        <th>{move || tr().sched_col_progress}</th>
-                                        <th class="sched-col-start">{move || tr().sched_col_start}</th>
-                                        <th class="sched-col-end">{move || tr().sched_col_end}</th>
-                                        <th></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {snap.jobs
-                                        .into_iter()
-                                        .enumerate()
-                                        .map(|(i, job)| {
-                                            let name = job["name"].as_str().unwrap_or("?").to_string();
-                                            let ra_h = job["targetRA"].as_f64().unwrap_or(0.0);
-                                            let dec_d = job["targetDEC"].as_f64().unwrap_or(0.0);
-                                            let state = job["state"].as_i64().unwrap_or(0);
-                                            let stage = job["stage"].as_i64().unwrap_or(0);
-                                            let alt_val = job["altitude"].as_f64().unwrap_or(0.0);
-                                            let alt_str = job["altitudeFormatted"]
-                                                .as_str()
-                                                .map(|s| s.to_string())
-                                                .unwrap_or_else(|| format!("{:.0}°", alt_val));
-                                            let done = job["completedCount"].as_i64().unwrap_or(0);
-                                            let total = job["sequenceCount"].as_i64().unwrap_or(0);
-                                            let start_s = job["startupFormatted"]
-                                                .as_str()
-                                                .or_else(|| job["startupTime"].as_str())
-                                                .unwrap_or("—")
-                                                .to_string();
-                                            let end_s = job["endFormatted"]
-                                                .as_str()
-                                                .or_else(|| job["completionTime"].as_str())
-                                                .unwrap_or("—")
-                                                .to_string();
-                                            let (state_label, state_cls) = job_state_label(tr(), state);
-                                            let stage_label =
-                                                if state == 3 { job_stage_label(tr(), stage) } else { "" };
-                                            let alt_cls = if alt_val >= 30.0 {
-                                                "sched-alt-good"
-                                            } else if alt_val >= 20.0 {
-                                                "sched-alt-warn"
-                                            } else {
-                                                "sched-alt-bad"
-                                            };
-                                            let pct = if total > 0 {
-                                                (done * 100 / total).min(100)
-                                            } else {
-                                                0
-                                            };
-                                            let send_rm = Arc::clone(&send_ref2);
-                                            view! {
-                                                <tr>
-                                                    <td class="sched-cell-name">{name}</td>
-                                                    <td class="sched-cell-coords">
-                                                        {format!(
-                                                            "{:.2}h {}{:.1}°",
-                                                            ra_h,
-                                                            if dec_d < 0.0 { "" } else { "+" },
-                                                            dec_d
-                                                        )}
-                                                    </td>
-                                                    <td class={state_cls}>
-                                                        {state_label}
-                                                        {(!stage_label.is_empty())
-                                                            .then(|| view! {
-                                                                <span class="sched-stage-sub">{"∙ "}{stage_label}</span>
-                                                            })}
-                                                    </td>
-                                                    <td class={alt_cls}>{alt_str}</td>
-                                                    <td>
-                                                        <div class="sched-progress-wrap">
-                                                            <div
-                                                                class="sched-progress-bar"
-                                                                style={format!("width:{}%", pct)}
-                                                            ></div>
-                                                            <span class="sched-progress-text">
-                                                                {format!("{}/{}", done, total)}
-                                                            </span>
-                                                        </div>
-                                                    </td>
-                                                    <td class="sched-col-start sched-cell-time">{start_s}</td>
-                                                    <td class="sched-col-end sched-cell-time">{end_s}</td>
-                                                    <td class="sched-cell-remove">
-                                                        <button
-                                                            class="sched-remove-btn"
-                                                            title=move || tr().sched_remove_job
-                                                            on:click=move |_| {
-                                                                send_cmd(
-                                                                    &send_rm,
-                                                                    "scheduler_remove_jobs",
-                                                                    serde_json::json!({ "index": i }),
-                                                                );
-                                                                let sr = Arc::clone(&send_rm);
-                                                                wasm_bindgen_futures::spawn_local(async move {
-                                                                    gloo_timers::future::TimeoutFuture::new(400).await;
-                                                                    send_cmd(
-                                                                        &sr,
-                                                                        "scheduler_get_jobs",
-                                                                        serde_json::json!({}),
-                                                                    );
-                                                                });
-                                                            }>
-                                                            "×"
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()}
-                                </tbody>
-                            </table>
-                        }
-                            .into_any()
-                    }}
+        <div class=if state == 3 {
+                 "rounded-lg border border-accent-cyan-dim bg-bg-elev-2 p-3 flex flex-col gap-1.5"
+             } else {
+                 "rounded-lg border border-border-base bg-bg-elev-2 p-3 flex flex-col gap-1.5"
+             }>
+            <div class="flex items-center gap-2 min-w-0">
+                <span class="shrink-0 font-mono text-xs text-text-faint">{format!("#{}", i + 1)}</span>
+                <span class="flex-1 min-w-0 truncate font-semibold text-text-blue-bright">{name}</span>
+                <span class=format!("shrink-0 text-sm {state_cls}")>
+                    {state_label}
+                    {(!stage.is_empty()).then(|| view! { <span class="text-text-muted">{format!(" \u{00b7} {stage}")}</span> })}
+                </span>
+                <button class="btn-icon shrink-0 -mr-1 text-text-muted" title=tr.sched_remove_job on:click=on_remove>
+                    "\u{2716}"
+                </button>
+            </div>
+            <div class="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-xs text-text-muted">
+                <span>{coords}</span>
+                <span class=alt_cls>{format!("Alt {alt_txt}")}</span>
+                {window.map(|w| view! { <span>{w}</span> })}
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="flex-1 h-1.5 rounded-full bg-border-strong overflow-hidden">
+                    <div class="h-full rounded-full bg-accent-cyan" style=format!("width:{pct}%")></div>
                 </div>
-            }
-        }}
+                <span class="shrink-0 font-mono text-xs text-text-muted">{format!("{done}/{total}")}</span>
+            </div>
+        </div>
     }
 }

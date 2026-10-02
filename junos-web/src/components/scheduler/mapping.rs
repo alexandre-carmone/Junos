@@ -1,4 +1,5 @@
-//! Scheduler tab: maps a job's startup/completion conditions to form fields.
+//! Scheduler tab: maps a job's completion condition to KStars' form fields
+//! (the start condition and constraints come from `form::JobOptions`).
 
 pub fn resolve_completion_condition(
     condition: &str,
@@ -17,13 +18,5 @@ pub fn resolve_completion_condition(
         "loop" => (false, false, 1, true, false, String::new()),
         "at" => (false, false, 1, false, true, completion_at),
         _ => (true, false, 1, false, false, String::new()),
-    }
-}
-
-pub fn resolve_startup_condition(condition: &str, startup_at: String) -> (bool, bool, String) {
-    if condition == "at" {
-        (false, true, startup_at)
-    } else {
-        (true, false, String::new())
     }
 }

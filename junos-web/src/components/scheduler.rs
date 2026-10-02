@@ -1,9 +1,15 @@
-//! Ekos Scheduler tab — view the job queue, start/stop the scheduler,
-//! remove jobs, and add new jobs with a visual sequence builder.
+//! Ekos Scheduler tab.
+//!
+//! Layout (phone-first, like Focus / Mosaic): a header (status · settings),
+//! the job cards and the live log — one scrolling column on phones, jobs |
+//! log from `md` — and a pinned footer with Add job and Start / Stop. Add job,
+//! Settings and the startup/shutdown queue editor open as [`sheet`]s: bottom
+//! sheets on phones, centered panels on md+.
 //!
 //! Inbound:  `new_scheduler_state`, `scheduler_get_jobs`,
 //!           `scheduler_get_all_settings`
-//! Outbound: `scheduler_start_job`, `scheduler_remove_jobs`,
+//! Outbound: `scheduler_start_job` (a toggle: KStars stops only a RUNNING
+//!           scheduler, else starts it), `scheduler_remove_jobs`,
 //!           `scheduler_set_all_settings` + `scheduler_add_jobs`,
 //!           `scheduler_save_sequence_file`
 //! HTTP:     `/api/taskqueue/*` (startup/shutdown queue editor)
@@ -13,7 +19,6 @@ use std::sync::Arc;
 use leptos::prelude::*;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
-use web_sys::MouseEvent;
 
 mod labels;
 mod mapping;
@@ -23,26 +28,30 @@ mod view_add_job;
 mod view_jobs;
 mod view_log;
 mod view_queue_editor;
-mod view_scripts;
 mod view_settings;
 
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot, SchedulerSnapshot};
-use crate::components::sequence_editor::{SeqFrame, build_esq_xml};
-use crate::dso_catalog::DsoCatalogData;
+use crate::components::form::FOOTER;
+use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{Lang, t};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
-use crate::SchedulerPrefillCtx;
-use labels::{dec_to_dms, ra_to_hms, sanitize_name};
-use mapping::{resolve_completion_condition, resolve_startup_condition};
+use crate::{SchedulerPrefillCtx, Tab};
+use labels::scheduler_status_label;
 use queue_api::QueueList;
 use queue_model::QueueSlot;
-use view_add_job::SchedulerAddJobSection;
-use view_jobs::{SchedulerJobsSection, SchedulerToolbar};
-use view_log::SchedulerLogSection;
+use view_add_job::{AddJobForm, AddJobSheet};
+use view_jobs::SchedulerJobs;
+use view_log::SchedulerLog;
 use view_queue_editor::SchedulerQueueEditor;
-use view_scripts::SchedulerScriptsSection;
-use view_settings::SchedulerSettingsSection;
+use view_settings::{SchedulerSettings, SchedulerSettingsSheet};
+
+/// KStars' `SchedulerState` (ekos.h): RUNNING, and the states a toggle
+/// shouldn't interrupt (STARTUP, SHUTDOWN, LOADING).
+const RUNNING: i64 = 2;
+fn is_transitional(status: i64) -> bool {
+    matches!(status, 1 | 4 | 6)
+}
 
 #[component]
 pub fn SchedulerTab(
@@ -54,53 +63,65 @@ pub fn SchedulerTab(
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
 
-    // ── Overlay state ───────────────────────────────────────────────────────
+    // Split the snapshot so a log line doesn't rebuild the job cards.
+    let status = Memo::new(move |_| scheduler.with(|s| s.status));
+    let jobs = Memo::new(move |_| scheduler.with(|s| s.jobs.clone()));
+    let log = Memo::new(move |_| scheduler.with(|s| s.log.clone()));
+    let home_dir = Signal::derive(move || scheduler.with(|s| s.home_dir.clone()));
+    let latest = move || log.with(|l| l.lines().rev().find(|x| !x.trim().is_empty()).unwrap_or("").to_string());
+
+    // ── Sheets ──────────────────────────────────────────────────────────────
     let add_open      = RwSignal::new(false);
     let settings_open = RwSignal::new(false);
-    // Startup/shutdown queue editor, stacked over the settings overlay.
+    // Startup/shutdown queue editor, stacked over the settings sheet.
     let queue_editor  = RwSignal::new(Option::<QueueSlot>::None);
 
-    // Escape closes whichever overlay is open — the queue editor first, so it
-    // doesn't also dismiss the settings overlay underneath.
+    // Escape closes the top sheet — the queue editor first, so it doesn't
+    // also dismiss the settings underneath.
     {
         let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
             move |e: web_sys::KeyboardEvent| {
-                if e.key() == "Escape" {
-                    if queue_editor.get_untracked().is_some() {
-                        queue_editor.set(None);
-                        return;
-                    }
-                    if add_open.get_untracked()      { add_open.set(false); }
-                    if settings_open.get_untracked() { settings_open.set(false); }
+                if e.key() != "Escape" { return; }
+                if queue_editor.get_untracked().is_some() {
+                    queue_editor.set(None);
+                } else {
+                    add_open.set(false);
+                    settings_open.set(false);
                 }
             },
         );
         if let Some(win) = web_sys::window() {
-            let _ = win.add_event_listener_with_callback(
-                "keydown",
-                cb.as_ref().unchecked_ref(),
-            );
+            let _ = win.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
         }
         cb.forget();
     }
 
-    let on_open_add: Arc<dyn Fn() + Send + Sync> =
-        Arc::new(move || add_open.set(true));
-    let on_open_settings: Arc<dyn Fn() + Send + Sync> =
-        Arc::new(move || settings_open.set(true));
+    // ── Add-job form; the Sky's "Add to Scheduler" fills it and opens it ────
+    let form = AddJobForm::new();
+    let prefill_ctx = use_context::<SchedulerPrefillCtx>();
+    Effect::new(move |_| {
+        let Some(pctx) = prefill_ctx else { return };
+        let Some((name, ra_deg, dec_deg)) = pctx.0.get() else { return };
+        form.set_target(name, ra_deg, dec_deg);
+        add_open.set(true);
+        pctx.0.set(None);  // consume
+    });
 
-    let dso_catalog = use_context::<RwSignal<Option<std::sync::Arc<DsoCatalogData>>>>();
-
-    // ── Observatory scripts ─────────────────────────────────────────────────
-    let startup_enabled  = RwSignal::new(false);
-    let pre_startup      = RwSignal::new(String::new());
-    let post_startup     = RwSignal::new(String::new());
-    let shutdown_enabled = RwSignal::new(false);
-    let pre_shutdown     = RwSignal::new(String::new());
-    let post_shutdown    = RwSignal::new(String::new());
+    // ── Settings, seeded once from KStars ───────────────────────────────────
+    let settings = SchedulerSettings::new();
+    let seeded = RwSignal::new(false);
+    Effect::new(move |_| {
+        if seeded.get_untracked() { return; }
+        scheduler.with(|s| {
+            if s.settings.is_object() {
+                settings.seed(&s.settings);
+                seeded.set(true);
+            }
+        });
+    });
 
     // Collections junos-server manages (`/api/taskqueue/list`), refreshed each
-    // time the settings overlay opens; the editor re-lists on its own too.
+    // time the settings sheet opens; the editor re-lists on its own too.
     let queue_list = RwSignal::new(Option::<QueueList>::None);
     Effect::new(move |_| {
         if !settings_open.get() { return; }
@@ -110,438 +131,109 @@ pub fn SchedulerTab(
             }
         });
     });
-    let on_edit_queue: Arc<dyn Fn(QueueSlot) + Send + Sync> =
-        Arc::new(move |slot| queue_editor.set(Some(slot)));
-    let on_close_queue: Arc<dyn Fn() + Send + Sync> =
-        Arc::new(move || queue_editor.set(None));
+    let on_edit_queue = Callback::new(move |slot| queue_editor.set(Some(slot)));
+    let on_close_queue: Arc<dyn Fn() + Send + Sync> = Arc::new(move || queue_editor.set(None));
 
-    // ── Global scheduler settings ───────────────────────────────────────────
-    let greedy         = RwSignal::new(false);
-    let remember_prog  = RwSignal::new(true);
-    let reschedule_err = RwSignal::new(false);
+    let send_toggle = Arc::clone(&send);
+    let on_toggle = move |_| send_cmd(&send_toggle, "scheduler_start_job", serde_json::json!({}));
 
-    // Pre-populate from KStars settings once they arrive
-    let settings_populated = RwSignal::new(false);
-    Effect::new(move |_| {
-        if settings_populated.get_untracked() { return; }
-        let s = scheduler.get().settings;
-        if !s.is_object() { return; }
-        if let Some(v) = s["schedulerStartupEnabled"].as_bool()           { startup_enabled.set(v); }
-        if let Some(v) = s["schedulerPreStartupScript"].as_str()          { pre_startup.set(v.to_string()); }
-        if let Some(v) = s["schedulerPostStartupScript"].as_str()         { post_startup.set(v.to_string()); }
-        if let Some(v) = s["schedulerShutdownEnabled"].as_bool()          { shutdown_enabled.set(v); }
-        if let Some(v) = s["schedulerPreShutdownScript"].as_str()         { pre_shutdown.set(v.to_string()); }
-        if let Some(v) = s["schedulerPostShutdownScript"].as_str()        { post_shutdown.set(v.to_string()); }
-        if let Some(v) = s["kcfg_GreedyScheduling"].as_bool()            { greedy.set(v); }
-        if let Some(v) = s["kcfg_RememberJobProgress"].as_bool()         { remember_prog.set(v); }
-        if let Some(v) = s["errorHandlingRescheduleErrorsCB"].as_bool()   { reschedule_err.set(v); }
-        settings_populated.set(true);
-    });
-
-    // ── Add-job form state ──────────────────────────────────────────────────
-    let f_target_name = RwSignal::new(String::new());
-    let f_ra_h        = RwSignal::new(String::new());
-    let f_dec_deg     = RwSignal::new(String::new());
-    let f_use_alt     = RwSignal::new(true);
-    let f_min_alt     = RwSignal::new("30".to_string());
-    let f_use_moon    = RwSignal::new(false);
-    let f_min_moon    = RwSignal::new("0".to_string());
-    let f_use_moon_alt = RwSignal::new(false);
-    let f_moon_max_alt = RwSignal::new("90".to_string());
-    let f_twilight    = RwSignal::new(true);
-    let f_horizon     = RwSignal::new(true);
-    let f_pa          = RwSignal::new("0".to_string());
-    let search_result = RwSignal::new(Option::<String>::None);
-    let form_error    = RwSignal::new(Option::<String>::None);
-
-    // Pre-fill from sky right-click "Add to Scheduler" action.
-    let prefill_ctx = use_context::<SchedulerPrefillCtx>();
-    Effect::new(move |_| {
-        let Some(pctx) = prefill_ctx else { return };
-        let Some((name, ra_deg, dec_deg)) = pctx.0.get() else { return };
-        let ra_h = ra_deg / 15.0;
-        f_target_name.set(name);
-        f_ra_h.set(format!("{:.6}", ra_h));
-        f_dec_deg.set(format!("{:.6}", dec_deg));
-        pctx.0.set(None);  // consume
-    });
-
-    // Derived HMS/DMS hint shown after RA/Dec are populated
-    let coords_hint = Signal::derive(move || {
-        let ra  = f_ra_h.get().parse::<f64>().ok()?;
-        let dec = f_dec_deg.get().parse::<f64>().ok()?;
-        if ra < 0.0 || ra > 24.0 { return None; }
-        if dec < -90.0 || dec > 90.0 { return None; }
-        Some(format!("{} / {}", ra_to_hms(ra), dec_to_dms(dec)))
-    });
-
-    // Per-job step pipeline (default: Track + Guide)
-    let step_track = RwSignal::new(true);
-    let step_focus = RwSignal::new(false);
-    let step_align = RwSignal::new(false);
-    let step_guide = RwSignal::new(true);
-
-    // Per-job startup condition: "asap" | "at"
-    let startup_cond = RwSignal::new("asap".to_string());
-    let startup_at   = RwSignal::new(String::new());
-
-    // Per-job completion condition: "sequence" | "repeat" | "loop" | "at"
-    let completion_cond  = RwSignal::new("sequence".to_string());
-    let completion_count = RwSignal::new("1".to_string());
-    let completion_at    = RwSignal::new(String::new());
-
-    // Sequence frames — start with one default Light row
-    let seq_frames: RwSignal<Vec<SeqFrame>> = RwSignal::new(vec![SeqFrame::default()]);
-    // Destination folder for captured .fits; defaults from CaptureDirCtx.
-    let seq_fits_dir: RwSignal<String> = RwSignal::new(String::new());
-
-    // ── Catalog lookup ──────────────────────────────────────────────────────
-    let on_catalog_search = {
-        let f_target_name2 = f_target_name;
-        let f_ra_h2        = f_ra_h;
-        let f_dec_deg2     = f_dec_deg;
-        let search_result2 = search_result;
-        move || {
-            let name = f_target_name2.get_untracked().to_lowercase();
-            let found = dso_catalog.and_then(|sig| {
-                sig.get_untracked().and_then(|cat| {
-                    cat.dsos.iter().find(|e| e.name.to_lowercase().contains(&name)).map(|e| {
-                        let ra_h = e.ra_deg as f64 / 15.0;
-                        let dec  = e.dec_deg as f64;
-                        (e.name.clone(), ra_h, dec)
-                    })
-                })
-            });
-            match found {
-                Some((name, ra_h, dec)) => {
-                    f_ra_h2.set(format!("{:.4}", ra_h));
-                    f_dec_deg2.set(format!("{:.4}", dec));
-                    search_result2.set(Some(format!(
-                        "{} → RA {:.3}h  Dec {:.2}°", name, ra_h, dec
-                    )));
-                }
-                None => {
-                    search_result2.set(Some(t(lang.get_untracked()).sched_not_found.to_string()));
-                }
-            }
-        }
-    };
-    let on_catalog_search: Arc<dyn Fn() + Send + Sync> = Arc::new(on_catalog_search);
-
-    // ── Apply observatory scripts ───────────────────────────────────────────
-    let send_for_scripts = Arc::clone(&send);
-    let on_apply_scripts = move || {
-        send_cmd(&send_for_scripts, "scheduler_set_all_settings", serde_json::json!({
-            "schedulerStartupEnabled":    startup_enabled.get_untracked(),
-            "schedulerPreStartupScript":  pre_startup.get_untracked(),
-            "schedulerPostStartupScript": post_startup.get_untracked(),
-            "schedulerShutdownEnabled":   shutdown_enabled.get_untracked(),
-            "schedulerPreShutdownScript": pre_shutdown.get_untracked(),
-            "schedulerPostShutdownScript":post_shutdown.get_untracked(),
-        }));
-    };
-    let on_apply_scripts: Arc<dyn Fn() + Send + Sync> = Arc::new(on_apply_scripts);
-
-    // ── Clear form ──────────────────────────────────────────────────────────
-    let on_clear_form = move || {
-        f_target_name.set(String::new());
-        f_ra_h.set(String::new());
-        f_dec_deg.set(String::new());
-        f_use_alt.set(true);
-        f_min_alt.set("30".to_string());
-        f_use_moon.set(false);
-        f_min_moon.set("0".to_string());
-        f_use_moon_alt.set(false);
-        f_moon_max_alt.set("90".to_string());
-        f_twilight.set(true);
-        f_horizon.set(true);
-        f_pa.set("0".to_string());
-        search_result.set(None);
-        form_error.set(None);
-        step_track.set(true);
-        step_focus.set(false);
-        step_align.set(false);
-        step_guide.set(true);
-        startup_cond.set("asap".to_string());
-        startup_at.set(String::new());
-        completion_cond.set("sequence".to_string());
-        completion_count.set("1".to_string());
-        completion_at.set(String::new());
-        seq_frames.set(vec![SeqFrame::default()]);
-    };
-    let on_clear_form: Arc<dyn Fn() + Send + Sync> = Arc::new(on_clear_form);
-
-    // ── Submit new job ──────────────────────────────────────────────────────
-    let send_for_add = Arc::clone(&send);
-    let on_add_job = move || {
-        let name      = f_target_name.get_untracked();
-        let home      = scheduler.get_untracked().home_dir;
-        let frames_raw = seq_frames.get_untracked();
-
-        // Validate RA/Dec
-        let ra_f = match f_ra_h.get_untracked().parse::<f64>() {
-            Ok(v) if (0.0..=24.0).contains(&v) => v,
-            _ => {
-                form_error.set(Some(t(lang.get_untracked()).sched_err_ra.to_string()));
-                return;
-            }
-        };
-        let dec_f = match f_dec_deg.get_untracked().parse::<f64>() {
-            Ok(v) if (-90.0..=90.0).contains(&v) => v,
-            _ => {
-                form_error.set(Some(t(lang.get_untracked()).sched_err_dec.to_string()));
-                return;
-            }
-        };
-
-        let frames: Vec<SeqFrame> = frames_raw.iter()
-            .filter(|f| f.duration_secs().is_some())
-            .cloned().collect();
-
-        if frames.is_empty() {
-            form_error.set(Some(t(lang.get_untracked()).sched_err_frames.to_string()));
-            return;
-        }
-
-        // ADU flats: KStars skips the calibration for a target ≤ 0 and aborts
-        // the capture on non-FITS/XISF encodings (cameraprocess.cpp) — catch
-        // both here rather than mid-run.
-        if frames.iter().any(|f| f.is_adu_flat() && f.flat_adu_target().is_none()) {
-            form_error.set(Some(t(lang.get_untracked()).sched_err_flat_adu.to_string()));
-            return;
-        }
-        if frames.iter().any(|f| f.is_adu_flat() && !matches!(f.encoding.as_str(), "" | "FITS" | "XISF")) {
-            form_error.set(Some(t(lang.get_untracked()).sched_err_flat_encoding.to_string()));
-            return;
-        }
-
-        form_error.set(None);
-
-        let safe_name = sanitize_name(if name.is_empty() { "sequence" } else { &name });
-
-        // Bake the sanitized name straight into the capture folder path rather
-        // than deriving the subfolder from the object name (%t) at runtime.
-        // KStars would otherwise build the subfolder from the job's target name;
-        // joining it into the path keeps all frames under one predictable
-        // directory. (Mirrors the mosaic import path in `mosaic_tab.rs`.)
-        let fits_root = seq_fits_dir.get_untracked();
-        let fits_root = fits_root.trim().trim_end_matches('/');
-        let seq_fits_path = if fits_root.is_empty() {
-            safe_name.clone()
-        } else {
-            format!("{}/{}", fits_root, safe_name)
-        };
-        let xml = build_esq_xml("", &seq_fits_path, &frames, false);
-        let rel_path  = format!(".junos-sequences/{}.esq", safe_name);
-        let abs_path  = if home.is_empty() {
-            format!(".junos-sequences/{}.esq", safe_name)
-        } else {
-            format!("{}/.junos-sequences/{}.esq", home, safe_name)
-        };
-
-        let (seq_r, rep_r, rep_lim, loop_r, until_r, until_val) =
-            resolve_completion_condition(
-                completion_cond.get_untracked().as_str(),
-                completion_count.get_untracked(),
-                completion_at.get_untracked(),
-            );
-
-        let (asap_r, start_time_r, start_time_val) =
-            resolve_startup_condition(startup_cond.get_untracked().as_str(), startup_at.get_untracked());
-
-        // 1. Save the ESQ file to the KStars machine
-        send_cmd(&send_for_add, "scheduler_save_sequence_file",
-            serde_json::json!({"path": rel_path, "filedata": xml}));
-
-        // 2. Pre-fill the scheduler form (KStars processes msgs in order)
-        send_cmd(&send_for_add, "scheduler_set_all_settings", serde_json::json!({
-            "nameEdit":          name,
-            "raBox":             format!("{:.6}", ra_f),
-            "decBox":            format!("{:.6}", dec_f),
-            "sequenceEdit":      abs_path,
-            "schedulerAltitude":              f_use_alt.get_untracked(),
-            "schedulerAltitudeValue":         f_min_alt.get_untracked().parse::<f64>().unwrap_or(30.0),
-            "schedulerMoonSeparation":        f_use_moon.get_untracked(),
-            "schedulerMoonSeparationValue":   f_min_moon.get_untracked().parse::<f64>().unwrap_or(0.0),
-            "schedulerMoonAltitude":          f_use_moon_alt.get_untracked(),
-            "schedulerMoonAltitudeMaxValue":  f_moon_max_alt.get_untracked().parse::<f64>().unwrap_or(90.0),
-            "schedulerTwilight":              f_twilight.get_untracked(),
-            "schedulerHorizon":               f_horizon.get_untracked(),
-            "positionAngleSpin":              f_pa.get_untracked().parse::<f64>().unwrap_or(0.0),
-            "schedulerTrackStep": step_track.get_untracked(),
-            "schedulerFocusStep": step_focus.get_untracked(),
-            "schedulerAlignStep": step_align.get_untracked(),
-            "schedulerGuideStep": step_guide.get_untracked(),
-            "asapConditionR":        asap_r,
-            "startupTimeConditionR": start_time_r,
-            "startupTimeEdit":       start_time_val,
-            "schedulerCompleteSequences":    seq_r,
-            "schedulerRepeatSequences":      rep_r,
-            "schedulerRepeatSequencesLimit": rep_lim,
-            "schedulerUntilTerminated":      loop_r,
-            "schedulerUntil":                until_r,
-            "schedulerUntilValue":           until_val,
-        }));
-
-        // 3. Add job
-        send_cmd(&send_for_add, "scheduler_add_jobs", serde_json::json!({}));
-
-        // Auto-close the overlay once the job has been submitted.
-        add_open.set(false);
-
-        // 4. Refresh job list
-        let s = Arc::clone(&send_for_add);
-        wasm_bindgen_futures::spawn_local(async move {
-            gloo_timers::future::TimeoutFuture::new(800).await;
-            send_cmd(&s, "scheduler_get_jobs", serde_json::json!({}));
-        });
-    };
-    let on_add_job: Arc<dyn Fn() + Send + Sync> = Arc::new(on_add_job);
-
-    let send_for_queue = Arc::clone(&send);
+    let send_add = Arc::clone(&send);
+    let send_settings = Arc::clone(&send);
+    let send_queue = Arc::clone(&send);
 
     view! {
-        <div class="sched-root">
-            <SchedulerToolbar
-                scheduler=scheduler
-                send=Arc::clone(&send)
-                lang=lang
-                on_open_add=Arc::clone(&on_open_add)
-                on_open_settings=Arc::clone(&on_open_settings)
-            />
-
-            // ── Body: jobs list + live scheduler log ─────────────────────────
-            <div class="sched-body">
-                <SchedulerJobsSection scheduler=scheduler send=Arc::clone(&send) lang=lang />
-                <SchedulerLogSection scheduler=scheduler lang=lang />
+        <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
+            // Header
+            <div class="shrink-0 flex items-center gap-2 min-h-[48px] px-3 md:pl-4 md:pr-6 pb-1.5 \
+                        pt-[max(0.375rem,env(safe-area-inset-top))] border-b border-border-base bg-bg-elev-1">
+                <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Scheduler)></span>
+                <span class="min-w-0 truncate font-semibold text-text-blue-bright">{move || tr().tab_scheduler}</span>
+                <span class=move || format!("{} ml-auto shrink-0", scheduler_status_label(tr(), status.get()).1)>
+                    {move || scheduler_status_label(tr(), status.get()).0}
+                </span>
+                <button class="btn-icon shrink-0 text-text-muted" title=move || tr().sched_settings_btn
+                        on:click=move |_| settings_open.set(true)>
+                    <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
+                </button>
             </div>
 
-            // ── Add-job overlay ──────────────────────────────────────────────
-            <Show when=move || add_open.get()>
-                <div
-                    class="fixed inset-0 md:right-[64px] z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
-                    on:click=move |_| add_open.set(false)
-                >
-                    <div
-                        class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col"
-                        on:click=|ev: MouseEvent| ev.stop_propagation()
-                    >
-                        <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
-                            <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
-                                {move || tr().sched_add_job_section}
-                            </h2>
-                            <button
-                                class="btn btn-ghost"
-                                on:click=move |_| add_open.set(false)
-                            >{move || tr().imaging_close}</button>
-                        </div>
-                        <div class="flex-1 min-h-0 overflow-y-auto p-sp-4">
-                            <SchedulerAddJobSection
-                                lang=lang
-                                camera=camera
-                                filter_wheel=filter_wheel
-                                f_target_name=f_target_name
-                                f_ra_h=f_ra_h
-                                f_dec_deg=f_dec_deg
-                                f_use_alt=f_use_alt
-                                f_min_alt=f_min_alt
-                                f_use_moon=f_use_moon
-                                f_min_moon=f_min_moon
-                                f_use_moon_alt=f_use_moon_alt
-                                f_moon_max_alt=f_moon_max_alt
-                                f_twilight=f_twilight
-                                f_horizon=f_horizon
-                                f_pa=f_pa
-                                search_result=search_result
-                                form_error=form_error
-                                step_track=step_track
-                                step_focus=step_focus
-                                step_align=step_align
-                                step_guide=step_guide
-                                startup_cond=startup_cond
-                                startup_at=startup_at
-                                completion_cond=completion_cond
-                                completion_count=completion_count
-                                completion_at=completion_at
-                                seq_frames=seq_frames
-                                seq_fits_dir=seq_fits_dir
-                                coords_hint=coords_hint
-                                on_catalog_search=Arc::clone(&on_catalog_search)
-                                on_add_job=Arc::clone(&on_add_job)
-                                on_clear_form=Arc::clone(&on_clear_form)
-                            />
-                        </div>
-                    </div>
-                </div>
-            </Show>
+            // Body — one scrolling column on phones; jobs | log on md+, each
+            // scrolling on its own.
+            <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] flex flex-col gap-3 p-3 \
+                        md:pl-4 md:pr-6 md:overflow-hidden md:grid md:grid-cols-[minmax(0,1fr)_320px] \
+                        lg:grid-cols-[minmax(0,1fr)_400px] md:grid-rows-[minmax(0,1fr)]">
+                <SchedulerJobs jobs=jobs send=Arc::clone(&send) lang=lang />
+                <SchedulerLog log=log lang=lang />
+            </div>
 
-            // ── Settings overlay (scheduler toggles + observatory scripts) ──
-            <Show when=move || settings_open.get()>
-                <div
-                    class="fixed inset-0 md:right-[64px] z-50 bg-[rgba(2,4,10,0.88)] backdrop-blur-sm flex items-stretch justify-center p-sp-4 max-[759px]:p-sp-2"
-                    on:click=move |_| settings_open.set(false)
-                >
-                    <div
-                        class="w-full max-w-[980px] bg-bg border border-border-base rounded-[4px] shadow-[0_24px_80px_rgba(0,0,0,0.45)] overflow-hidden flex flex-col"
-                        on:click=|ev: MouseEvent| ev.stop_propagation()
-                    >
-                        <div class="flex items-center justify-between gap-sp-3 py-sp-3 px-sp-4 border-b border-border-base bg-[rgba(10,12,20,0.8)]">
-                            <h2 class="text-text-blue text-sm uppercase tracking-[0.08em] m-0">
-                                {move || tr().sched_settings_btn}
-                            </h2>
-                            <button
-                                class="btn btn-ghost"
-                                on:click=move |_| settings_open.set(false)
-                            >{move || tr().imaging_close}</button>
-                        </div>
-                        <div class="flex-1 min-h-0 overflow-y-auto p-sp-4 flex flex-col gap-sp-4">
-                            <SchedulerSettingsSection
-                                lang=lang
-                                send=Arc::clone(&send)
-                                greedy=greedy
-                                remember_prog=remember_prog
-                                reschedule_err=reschedule_err
-                            />
-                            <SchedulerScriptsSection
-                                lang=lang
-                                startup_enabled=startup_enabled
-                                pre_startup=pre_startup
-                                post_startup=post_startup
-                                shutdown_enabled=shutdown_enabled
-                                pre_shutdown=pre_shutdown
-                                post_shutdown=post_shutdown
-                                queue_list=queue_list
-                                on_apply_scripts=Arc::clone(&on_apply_scripts)
-                                on_edit_queue=Arc::clone(&on_edit_queue)
-                            />
-                        </div>
-                    </div>
-                </div>
-            </Show>
-
-            // ── Startup/shutdown queue editor (over the settings overlay) ───
-            {
-                let send = send_for_queue;
-                move || queue_editor.get().map(|slot| {
-                    let (path, enabled) = match slot {
-                        QueueSlot::PreStartup   => (pre_startup, startup_enabled),
-                        QueueSlot::PostStartup  => (post_startup, startup_enabled),
-                        QueueSlot::PreShutdown  => (pre_shutdown, shutdown_enabled),
-                        QueueSlot::PostShutdown => (post_shutdown, shutdown_enabled),
-                    };
-                    view! {
-                        <SchedulerQueueEditor
-                            lang=lang
-                            send=Arc::clone(&send)
-                            queue_slot=slot
-                            list=queue_list
-                            path=path
-                            enabled=enabled
-                            on_close=Arc::clone(&on_close_queue)
-                        />
+            // Footer: latest log line (md+), Add job, Start / Stop.
+            <div class=format!("{FOOTER} md:pl-4 md:pr-6")>
+                <span class="max-md:hidden flex-1 min-w-0 truncate font-mono text-xs text-text-muted" title=latest>
+                    {latest}
+                </span>
+                <button class="btn btn-ghost h-11 px-4 max-md:flex-1" on:click=move |_| add_open.set(true)>
+                    {move || format!("+ {}", tr().sched_add_job_btn)}
+                </button>
+                <button
+                    class=move || if status.get() == RUNNING {
+                        "btn btn-danger h-11 px-5 font-semibold max-md:flex-1"
+                    } else {
+                        "btn btn-primary h-11 px-5 font-semibold max-md:flex-1"
                     }
-                })
-            }
+                    disabled=move || is_transitional(status.get())
+                    on:click=on_toggle>
+                    {move || if status.get() == RUNNING { tr().sched_btn_stop } else { tr().sched_btn_start }}
+                </button>
+            </div>
+
+            <Show when=move || add_open.get()>
+                {sheet(move || tr().sched_add_job_btn, move || add_open.set(false), view! {
+                    <AddJobSheet form=form camera=camera filter_wheel=filter_wheel home_dir=home_dir
+                                 send=Arc::clone(&send_add) lang=lang open=add_open />
+                })}
+            </Show>
+            <Show when=move || settings_open.get()>
+                {sheet(move || tr().sched_settings_btn, move || settings_open.set(false), view! {
+                    <SchedulerSettingsSheet settings=settings queue_list=queue_list send=Arc::clone(&send_settings)
+                                            lang=lang open=settings_open on_edit_queue=on_edit_queue />
+                })}
+            </Show>
+            {move || queue_editor.get().map(|slot| {
+                let (path, enabled) = settings.slot(slot);
+                view! {
+                    <SchedulerQueueEditor lang=lang send=Arc::clone(&send_queue) queue_slot=slot list=queue_list
+                                          path=path enabled=enabled on_close=Arc::clone(&on_close_queue) />
+                }
+            })}
+        </div>
+    }
+}
+
+/// A sheet over the dimmed tab: bottom sheet on phones, centered panel on
+/// md+. `body` brings its own scroll area and footer. Each sheet is one layer,
+/// so a later one (the queue editor) dims and blocks the one under it.
+fn sheet(
+    title: impl Fn() -> &'static str + Send + 'static,
+    on_close: impl Fn() + Clone + Send + 'static,
+    body: impl IntoView,
+) -> impl IntoView {
+    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let close_backdrop = on_close.clone();
+    view! {
+        <div class="absolute inset-0 z-[70]">
+            <div class="absolute inset-0 bg-[rgba(2,4,10,0.6)]" on:click=move |_| close_backdrop()></div>
+            <div class="panel absolute inset-x-0 bottom-0 max-h-[calc(100%-3.5rem)] rounded-b-none \
+                        flex flex-col overflow-hidden \
+                        md:inset-x-auto md:left-1/2 md:-translate-x-1/2 md:bottom-auto md:top-6 \
+                        md:max-h-[calc(100%-3rem)] md:w-[min(760px,calc(100%-3rem))] md:rounded-lg">
+                <div class="shrink-0 flex items-center gap-2 pl-4 pr-2 py-1.5 border-b border-border-base">
+                    <span class="flex-1 min-w-0 truncate font-semibold text-text-blue">{move || title()}</span>
+                    <button class="btn-icon" title=move || t(lang.get()).info_close on:click=move |_| on_close()>
+                        "\u{2716}"
+                    </button>
+                </div>
+                {body}
+            </div>
         </div>
     }
 }

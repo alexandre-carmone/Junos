@@ -20,23 +20,15 @@ use leptos::prelude::*;
 
 use crate::astro;
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
+use crate::components::form::{CARD, CARD_TITLE, FOOTER, JobOptions, LABEL, NUM, ROW};
 use crate::components::sequence_editor::{SeqFrame, SequenceEditor, build_esq_xml, fmt_duration};
 use crate::components::sky::{fmt_dec, fmt_ra, mosaic_span_am};
 use crate::components::tab_wheel_icons::tab_icon;
-use crate::dom::{event_target_checked, event_target_value};
+use crate::dom::event_target_value;
 use crate::i18n::{Lang, t};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 use crate::{ActiveTabCtx, MosaicPlannerCtx, Tab};
-
-const CARD: &str = "panel p-3 flex flex-col gap-2";
-const CARD_TITLE: &str = "text-xs uppercase tracking-[0.06em] font-semibold text-text-muted";
-const ROW: &str = "flex items-center gap-2 min-h-[44px] md:min-h-9";
-const LABEL: &str = "min-w-0 truncate text-sm text-text-blue";
-const NUM: &str = "input input--sm font-mono w-[64px] shrink-0 text-right max-md:h-9";
-const SELECT: &str = "input input--sm w-[170px] shrink-0 max-md:h-9";
-const CHIP: &str = "chip h-9 md:h-7 px-3 justify-center cursor-pointer";
-const CHECK: &str = "w-5 h-5 min-h-0 shrink-0 accent-accent-cyan";
 
 fn sanitize_name(name: &str) -> String {
     name.chars()
@@ -95,30 +87,10 @@ pub fn MosaicTab(
     // KStars puts each tile's folder under.
     let seq_fits_dir: RwSignal<String> = RwSignal::new(String::new());
 
-    // ── Startup flags ──────────────────────────────────────────────────────
-    let step_track = RwSignal::new(true);
-    let step_focus = RwSignal::new(false);
-    let step_align = RwSignal::new(false);
-    let step_guide = RwSignal::new(true);
-
-    // ── Per-job scheduler options ──────────────────────────────────────────
-    // Start: "asap" | "at"
-    let startup_cond = RwSignal::new("asap".to_string());
-    let startup_at   = RwSignal::new(String::new());
-    // Completion: "sequence" | "repeat" | "loop"
+    // Steps, start / completion and constraints, copied into every tile job.
     // KStars' FramingAssistant::importMosaic only honors FinishSequence /
-    // FinishRepeat / FinishLoop — no FinishAt — so we don't expose that option.
-    let completion_cond  = RwSignal::new("sequence".to_string());
-    let completion_count = RwSignal::new("1".to_string());
-    // Constraints
-    let use_alt      = RwSignal::new(true);
-    let min_alt      = RwSignal::new("30".to_string());
-    let use_moon     = RwSignal::new(false);
-    let min_moon     = RwSignal::new("0".to_string());
-    let use_moon_alt = RwSignal::new(false);
-    let moon_max_alt = RwSignal::new("90".to_string());
-    let twilight     = RwSignal::new(true);
-    let horizon      = RwSignal::new(true);
+    // FinishRepeat / FinishLoop — no FinishAt — so the view hides that option.
+    let opts = JobOptions::new();
 
     let form_error: RwSignal<Option<String>> = RwSignal::new(None);
 
@@ -237,14 +209,8 @@ pub fn MosaicTab(
         send_cmd(&send_s, "scheduler_save_sequence_file",
             serde_json::json!({"path": rel_path, "filedata": xml}));
 
-        // Resolve start-condition & completion-condition fields.
-        let (asap_r, start_time_r, start_time_val) = if startup_cond.get_untracked() == "at" {
-            (false, true, startup_at.get_untracked())
-        } else {
-            (true, false, String::new())
-        };
-        let (cc_literal, cc_arg) = match completion_cond.get_untracked().as_str() {
-            "repeat" => ("FinishRepeat", completion_count.get_untracked()),
+        let (cc_literal, cc_arg) = match opts.complete_cond.get_untracked().as_str() {
+            "repeat" => ("FinishRepeat", opts.complete_count.get_untracked()),
             "loop"   => ("FinishLoop",   "1".to_string()),
             _        => ("FinishSequence", "1".to_string()),
         };
@@ -252,19 +218,7 @@ pub fn MosaicTab(
         // Pre-load fields not accepted by `scheduler_import_mosaic` directly:
         // start condition + altitude/moon constraints land in the form first,
         // then importMosaic snapshots them into each tile job.
-        send_cmd(&send_s, "scheduler_set_all_settings", serde_json::json!({
-            "asapConditionR":        asap_r,
-            "startupTimeConditionR": start_time_r,
-            "startupTimeEdit":       start_time_val,
-            "schedulerAltitude":              use_alt.get_untracked(),
-            "schedulerAltitudeValue":         min_alt.get_untracked().parse::<f64>().unwrap_or(30.0),
-            "schedulerMoonSeparation":        use_moon.get_untracked(),
-            "schedulerMoonSeparationValue":   min_moon.get_untracked().parse::<f64>().unwrap_or(0.0),
-            "schedulerMoonAltitude":          use_moon_alt.get_untracked(),
-            "schedulerMoonAltitudeMaxValue":  moon_max_alt.get_untracked().parse::<f64>().unwrap_or(90.0),
-            "schedulerTwilight":              twilight.get_untracked(),
-            "schedulerHorizon":               horizon.get_untracked(),
-        }));
+        send_cmd(&send_s, "scheduler_set_all_settings", opts.settings_json());
 
         // Hand KStars the bare base directory; the `<safe_name>-Part_<N>` leaf
         // comes from the `%T` placeholder baked into the sequence above.
@@ -273,10 +227,10 @@ pub fn MosaicTab(
             "sequence": abs_path,
             "target":   safe_name,
             "directory": import_base,
-            "track":    step_track.get_untracked(),
-            "focus":    step_focus.get_untracked(),
-            "align":    step_align.get_untracked(),
-            "guide":    step_guide.get_untracked(),
+            "track":    opts.track.get_untracked(),
+            "focus":    opts.focus.get_untracked(),
+            "align":    opts.align.get_untracked(),
+            "guide":    opts.guide.get_untracked(),
             "completionCondition":    cc_literal,
             "completionConditionArg": cc_arg,
         }));
@@ -409,70 +363,22 @@ pub fn MosaicTab(
                             <span class=CARD_TITLE>{move || tr().mosaic_capture_seq}</span>
                             <SequenceEditor frames=seq_frames fits_dir=seq_fits_dir camera=camera filter_wheel=filter_wheel />
                             <span class=format!("{CARD_TITLE} pt-1")>{move || tr().sched_steps_legend}</span>
-                            <div class="flex flex-wrap gap-1.5">
-                                {toggle_chip(step_track, move || tr().mosaic_step_track)}
-                                {toggle_chip(step_focus, move || tr().mosaic_step_focus)}
-                                {toggle_chip(step_align, move || tr().mosaic_step_align)}
-                                {toggle_chip(step_guide, move || tr().mosaic_step_guide)}
-                            </div>
+                            {opts.steps_view(lang)}
                         </div>
 
                         // Scheduler options, copied into every tile job.
                         <div class=CARD>
                             <span class=CARD_TITLE>{move || tr().mosaic_scheduler_opts}</span>
-                            {setting_row(move || tr().sched_start_when, view! {
-                                <select class=SELECT on:change=move |ev| startup_cond.set(event_target_value(&ev))>
-                                    <option value="asap" selected=move || startup_cond.get() == "asap">
-                                        {move || tr().sched_cond_asap}
-                                    </option>
-                                    <option value="at" selected=move || startup_cond.get() == "at">
-                                        {move || tr().sched_cond_at_time}
-                                    </option>
-                                </select>
-                            })}
-                            <Show when=move || startup_cond.get() == "at">
-                                <input type="datetime-local" class="input w-full min-w-0 font-mono"
-                                       prop:value=move || startup_at.get()
-                                       on:input=move |ev| startup_at.set(event_target_value(&ev)) />
-                            </Show>
-                            {setting_row(move || tr().sched_complete_when, view! {
-                                <select class=SELECT on:change=move |ev| completion_cond.set(event_target_value(&ev))>
-                                    <option value="sequence" selected=move || completion_cond.get() == "sequence">
-                                        {move || tr().sched_cond_seq}
-                                    </option>
-                                    <option value="repeat" selected=move || completion_cond.get() == "repeat">
-                                        {move || tr().sched_cond_repeat}
-                                    </option>
-                                    <option value="loop" selected=move || completion_cond.get() == "loop">
-                                        {move || tr().sched_cond_loop}
-                                    </option>
-                                </select>
-                            })}
-                            <Show when=move || completion_cond.get() == "repeat">
-                                <div class=format!("{ROW} justify-end")>
-                                    <input type="number" min="1" step="1" inputmode="numeric" class=NUM
-                                           prop:value=move || completion_count.get()
-                                           on:input=move |ev| completion_count.set(event_target_value(&ev)) />
-                                    <span class="text-sm text-text-muted">{move || tr().sched_times_unit}</span>
-                                </div>
-                            </Show>
-
+                            {opts.conditions_view(lang, false)}
                             <span class=format!("{CARD_TITLE} pt-1")>{move || tr().sched_constraints_legend}</span>
-                            {constraint_row(use_alt,      min_alt,      move || tr().sched_min_alt,      "90")}
-                            {constraint_row(use_moon,     min_moon,     move || tr().sched_moon_sep,     "180")}
-                            {constraint_row(use_moon_alt, moon_max_alt, move || tr().sched_moon_max_alt, "90")}
-                            <div class="flex flex-wrap gap-1.5 pt-1">
-                                {toggle_chip(twilight, move || tr().sched_twilight)}
-                                {toggle_chip(horizon, move || tr().sched_horizon)}
-                            </div>
+                            {opts.constraints_view(lang)}
                         </div>
                     </div>
                 </div>
             </div>
 
             // Footer: summary (or the last error) and the send button.
-            <div class="shrink-0 flex items-center gap-3 px-3 md:pl-4 md:pr-6 pt-2 \
-                        pb-[max(0.5rem,env(safe-area-inset-bottom))] border-t border-border-base bg-bg-elev-1">
+            <div class=format!("{FOOTER} md:pl-4 md:pr-6")>
                 <div class="flex-1 min-w-0 text-sm leading-snug">
                     {move || match form_error.get() {
                         Some(e) => view! { <span class="text-state-err">{e}</span> }.into_any(),
@@ -485,19 +391,6 @@ pub fn MosaicTab(
                     {move || tr().mosaic_send_scheduler}
                 </button>
             </div>
-        </div>
-    }
-}
-
-/// One row: label left, control right.
-fn setting_row(
-    label: impl Fn() -> &'static str + Send + 'static,
-    control: impl IntoView,
-) -> impl IntoView {
-    view! {
-        <div class=ROW>
-            <span class=format!("{LABEL} flex-1")>{move || label()}</span>
-            {control}
         </div>
     }
 }
@@ -541,42 +434,6 @@ fn slider_row(
                    on:input=set />
             <span class="w-3 text-sm text-text-muted">{unit}</span>
         </div>
-    }
-}
-
-/// A checkbox-gated degree value (min altitude, moon separation / altitude).
-fn constraint_row(
-    on: RwSignal<bool>,
-    value: RwSignal<String>,
-    label: impl Fn() -> &'static str + Send + 'static,
-    max: &'static str,
-) -> impl IntoView {
-    view! {
-        <div class=ROW>
-            <label class="flex-1 min-w-0 flex items-center gap-3 cursor-pointer">
-                <input type="checkbox" class=CHECK
-                       prop:checked=move || on.get()
-                       on:change=move |ev| on.set(event_target_checked(&ev)) />
-                <span class=LABEL>{move || label()}</span>
-            </label>
-            <input type="number" min="0" max=max step="1" inputmode="numeric" class=NUM
-                   prop:disabled=move || !on.get()
-                   prop:value=move || value.get()
-                   on:input=move |ev| value.set(event_target_value(&ev)) />
-            <span class="w-3 text-sm text-text-muted">"\u{00b0}"</span>
-        </div>
-    }
-}
-
-/// A pill that toggles a bool (startup steps, twilight / horizon).
-fn toggle_chip(on: RwSignal<bool>, label: impl Fn() -> &'static str + Send + 'static) -> impl IntoView {
-    view! {
-        <button type="button"
-                class=move || if on.get() { format!("{CHIP} btn--active") } else { CHIP.to_string() }
-                aria-pressed=move || on.get().to_string()
-                on:click=move |_| on.update(|v| *v = !*v)>
-            {move || label()}
-        </button>
     }
 }
 
