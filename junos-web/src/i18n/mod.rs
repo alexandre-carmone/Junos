@@ -185,7 +185,7 @@ translations! {
     mount_solve_rotator_control,
     // Plate-solve process overlay (Mount tab)
     mount_solve_process, mount_solve_timeline, mount_solve_log, mount_solve_no_log,
-    mount_solve_download,
+    mount_solve_download, mount_settings,
     // Guide tab — new actions (refresh, bulk-save, log export)
     guide_refresh_settings, guide_save_calibration, guide_export_log,
     // Guide tab — redesigned layout

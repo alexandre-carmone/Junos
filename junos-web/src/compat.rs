@@ -10,7 +10,7 @@ use crate::ws::{
     PolarVectorData,
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct MountSnapshot {
     pub device_name: Option<String>,
     pub connected: bool,

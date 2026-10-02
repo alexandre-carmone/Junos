@@ -378,7 +378,10 @@ impl DeviceStore {
                             ms.target = v.to_string();
                         }
                     }
-                    if let Some(v) = payload["meridianFlipStatus"].as_str() {
+                    // `meridianFlipStatus` is the MeridianFlipMountState enum
+                    // (a number); the readable line is `meridianFlipText`
+                    // (manager.cpp:2837).
+                    if let Some(v) = payload["meridianFlipText"].as_str() {
                         ms.meridian_flip_status = v.to_string();
                     }
                     if let Some(v) = payload["autoParkCountdown"].as_str() {
