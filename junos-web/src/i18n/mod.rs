@@ -114,6 +114,7 @@ translations! {
     imaging_expand_all, imaging_actions, imaging_cooling, imaging_exposure, imaging_frame, imaging_gain_iso, imaging_filter, imaging_target,
     imaging_job_temperature, imaging_target_c, imaging_set, imaging_sequence_queue, imaging_add_job, imaging_empty_queue, imaging_remove_job,
     imaging_one_shot, imaging_add_exposure, imaging_send_sequence, imaging_sequence_editor, imaging_job_detail, imaging_close, imaging_view_fullres,
+    imaging_frames, imaging_remaining, imaging_editor, imaging_load, imaging_save, imaging_start, imaging_stop,
     field_exposure_s,
     field_frame_type, field_count, field_delay_s, field_bin_x, field_bin_y, field_format, field_encoding, field_gain,
     field_offset, field_iso, field_filter, field_filter_none, field_target_name, field_directory, field_enforce_temp, field_job_temp_c, seq_dest_folder, seq_duplicate, seq_delete, seq_move_up, seq_move_down, seq_more, seq_binning, seq_total, seq_frame_unit, seq_frames_unit, pa_enabled_label,

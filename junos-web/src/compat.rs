@@ -60,7 +60,6 @@ pub struct CaptureSnapshot {
     pub seq_total: Option<i64>,
     pub seq_current: Option<i64>,
     pub progress: Option<f64>,
-    pub seq_remaining_time: String,
     pub overall_remaining_time: String,
     pub exposure_left: Option<f64>,
     pub exposure_total: Option<f64>,
@@ -236,7 +235,6 @@ pub fn derive_capture(store: &DeviceStore) -> Signal<CaptureSnapshot> {
             seq_total: s.seq_total,
             seq_current: s.seq_current,
             progress: s.progress,
-            seq_remaining_time: s.seq_remaining_time,
             overall_remaining_time: s.overall_remaining_time,
             exposure_left: s.exposure_left,
             exposure_total: s.exposure_total,
@@ -449,11 +447,10 @@ pub fn derive_service_busy(
         moving.then_some("mount")
     });
 
-    // `status_is_active` is the same predicate the Imaging tab uses to pulse
-    // its status pill, so the interlock and the visible "camera is working"
-    // indicator cannot drift apart.
+    // `status_is_active` also drives the Imaging tab's Start / Stop, so the
+    // interlock and what that tab shows cannot drift apart.
     let camera_busy = Signal::derive(move || {
-        crate::components::imaging::styles::status_is_active(&capture.get().status)
+        crate::components::imaging::status_is_active(&capture.get().status)
             .then_some("camera")
     });
 
