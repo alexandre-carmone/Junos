@@ -6,19 +6,20 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 
-use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
+use crate::compat::{CameraSnapshot, FilterWheelSnapshot, SiteSnapshot};
 use crate::components::coord_input::{
     degrees_to_dms_string, dms_string_to_degrees, hms_string_to_hours, hours_to_hms_string,
     parse_canonical, CoordInput, CoordMode,
 };
 use crate::components::form::{JobOptions, CARD, CARD_TITLE, FOOTER, LABEL, NUM, ROW};
-use crate::components::sequence_editor::{build_esq_xml, SeqFrame, SequenceEditor};
+use crate::components::sequence_editor::{build_esq_xml, fmt_duration, SeqFrame, SequenceEditor};
 use crate::dom::event_target_value;
 use crate::dso_catalog::DsoCatalogData;
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 
+use super::altitude::{self, altitude, altitude_chart, hhmm, samples, Night};
 use super::labels::sanitize_name;
 use super::mapping::resolve_completion_condition;
 
@@ -80,9 +81,104 @@ fn sexagesimal_ok(s: &str) -> bool {
     m < 60 && sec < 60
 }
 
+/// The target as J2000 degrees, once the coordinates are valid. 0h / 0°
+/// counts as none: that's what `CoordInput` holds while its fields are empty.
+fn target_deg(ra: &str, dec: &str) -> Option<(f64, f64)> {
+    let (h, d) = (hms_string_to_hours(ra), dms_string_to_degrees(dec));
+    let ok = sexagesimal_ok(ra) && sexagesimal_ok(dec) && (0.0..24.0).contains(&h) && (-90.0..=90.0).contains(&d)
+        && (h, d) != (0.0, 0.0);
+    ok.then_some((h * 15.0, d))
+}
+
+/// A `datetime-local` value as Unix ms.
+fn local_ms(s: &str) -> Option<f64> {
+    Some(js_sys::Date::new(&s.into()).get_time()).filter(|t| t.is_finite())
+}
+
+const PLAN_STEP_MS: f64 = 300_000.0;
+
+/// Tonight's altitude of the target with this job's session on it. The
+/// session is an estimate: ASAP starts once the target clears the minimum
+/// altitude (from dusk when the twilight constraint is on), and it lasts the
+/// sequence's exposures × repeats — delays, slews, focus and align aside.
+fn altitude_card(f: AddJobForm, site: Signal<SiteSnapshot>, lang: RwSignal<Lang>) -> impl IntoView {
+    move || {
+        let tr = t(lang.get());
+        let Some((ra, dec)) = target_deg(&f.ra.get(), &f.dec.get()) else {
+            return view! {
+                <div class=CARD>
+                    <span class=CARD_TITLE>{tr.sched_alt_title}</span>
+                    <span class="text-sm text-text-faint">{tr.sched_alt_hint}</span>
+                </div>
+            }.into_any();
+        };
+        let site = site.get();
+        let night = Night::tonight(&site);
+        let alt = |t: f64| altitude(ra, dec, t, &site);
+        let o = f.opts;
+        let min_alt = if o.use_alt.get() { o.min_alt.get().trim().parse::<f64>().ok() } else { None };
+
+        let asap = o.start_cond.get() != "at";
+        let start = if asap {
+            let from = js_sys::Date::now().max(if o.twilight.get() { night.dusk.unwrap_or(night.start) } else { night.start });
+            samples(from, night.end, PLAN_STEP_MS).find(|t| min_alt.is_none_or(|m| alt(*t) >= m))
+        } else {
+            local_ms(&o.start_at.get())
+        };
+        let secs: f64 = f.frames.with(|fs| fs.iter().filter_map(SeqFrame::duration_secs).sum());
+        let session = start.and_then(|a| {
+            let b = match o.complete_cond.get().as_str() {
+                "loop" => night.dawn.unwrap_or(night.end),
+                "at" => local_ms(&o.complete_at.get())?,
+                "repeat" => a + secs * 1000.0 * o.complete_count.get().trim().parse::<f64>().unwrap_or(1.0).max(1.0),
+                _ => a + secs * 1000.0,
+            };
+            (b > a).then_some((a, b))
+        });
+
+        let warn = |s: String| view! { <span class="text-state-warn">{format!("\u{26a0} {s}")}</span> };
+        let no_slot = (asap && start.is_none()).then(|| min_alt.map(|m| warn(format!("{} {m:.0}\u{00b0}", tr.sched_alt_no_slot))));
+        let below = session.and_then(|(a, b)| {
+            let m = min_alt?;
+            let t = samples(a, b, PLAN_STEP_MS).find(|t| alt(*t) < m)?;
+            Some(warn(format!("{} {m:.0}\u{00b0} \u{00b7} {}", tr.sched_alt_below, hhmm(t))))
+        });
+        let past_dawn = session.and_then(|(_, b)| {
+            let dawn = night.dawn.filter(|d| b > *d)?;
+            Some(warn(format!("{} \u{00b7} {}", tr.sched_alt_dawn, hhmm(dawn))))
+        });
+        let session_line = session.map(|(a, b)| view! {
+            <span class="text-text">
+                <span class="text-accent-cyan">"\u{25ac} "</span>
+                {format!("{} ({:.0}\u{00b0}) \u{2192} {} ({:.0}\u{00b0}) \u{00b7} \u{2248}{}",
+                         hhmm(a), alt(a), hhmm(b), alt(b), fmt_duration((b - a) / 1000.0))}
+            </span>
+        });
+        let peak = samples(night.start, night.end, PLAN_STEP_MS)
+            .map(|t| (t, alt(t)))
+            .max_by(|p, q| p.1.total_cmp(&q.1))
+            .map(|(t, a)| format!("{} {a:.0}\u{00b0} \u{00b7} {}", tr.sched_alt_peak, hhmm(t)));
+
+        let track = altitude::Track { ra_deg: ra, dec_deg: dec, window: session, label: None };
+        view! {
+            <div class=CARD>
+                {altitude_chart(night, site.clone(), vec![track], min_alt, tr)}
+                <div class="flex flex-col gap-1 font-mono text-xs text-text-muted">
+                    {session_line}
+                    <span>{peak}</span>
+                    {no_slot}
+                    {below}
+                    {past_dawn}
+                </div>
+            </div>
+        }.into_any()
+    }
+}
+
 #[component]
 pub fn AddJobSheet(
     form: AddJobForm,
+    #[prop(into)] site: Signal<SiteSnapshot>,
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
     #[prop(into)] home_dir: Signal<String>,
@@ -254,6 +350,9 @@ pub fn AddJobSheet(
                             <span class="w-3 text-sm text-text-muted">"\u{00b0}"</span>
                         </div>
                     </div>
+
+                    // Where the target is tonight, and this job's session on it.
+                    {altitude_card(f, site, lang)}
 
                     // When to run, when it's done, and where it may run.
                     <div class=CARD>

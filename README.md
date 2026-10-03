@@ -39,7 +39,9 @@ order:
 - **Guide** — start/stop guiding on any backend (Internal, PHD2, LinGuider),
   with a drift timeline, a target scatter plot, and the full settings pane.
 - **Scheduler** — the job queue, plus a visual job builder that writes the
-  `.esq` sequence file for you.
+  `.esq` sequence file for you. An altitude-tonight chart shows each target's
+  height over the night and whether a long session stays above your minimum
+  altitude.
 - **Mosaic** — plan a mosaic (grid, overlap, position angle) and **Send to
   Scheduler** to import every tile as a job. Its center can be picked on the
   sky map.

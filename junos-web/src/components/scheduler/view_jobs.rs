@@ -1,16 +1,19 @@
-//! Scheduler tab: the job list, one card per job.
+//! Scheduler tab: the job list — tonight's altitude of every job, then one
+//! card per job.
 
 use std::sync::Arc;
 
 use leptos::prelude::*;
 use serde_json::Value;
 
+use crate::compat::SiteSnapshot;
 use crate::components::form::{CARD, CARD_TITLE};
 use crate::components::sky::{fmt_dec, fmt_ra};
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 
+use super::altitude::{altitude_chart, Night, Track};
 use super::labels::{job_stage_label, job_state_label};
 
 /// `jobs` is the `scheduler_get_jobs` list (`SchedulerJob::toJson`). The
@@ -18,6 +21,7 @@ use super::labels::{job_stage_label, job_state_label};
 #[component]
 pub fn SchedulerJobs(
     #[prop(into)] jobs: Signal<Vec<Value>>,
+    #[prop(into)] site: Signal<SiteSnapshot>,
     #[prop(into)] send: SendCmd,
     lang: RwSignal<Lang>,
 ) -> impl IntoView {
@@ -35,6 +39,14 @@ pub fn SchedulerJobs(
                     "\u{21bb}"
                 </button>
             </div>
+            {move || {
+                let list = jobs.get();
+                (!list.is_empty()).then(|| {
+                    let site = site.get();
+                    let tracks = list.iter().enumerate().map(|(i, j)| job_track(i, j)).collect();
+                    view! { <div class="shrink-0">{altitude_chart(Night::tonight(&site), site, tracks, None, tr())}</div> }
+                })
+            }}
             <div class="flex flex-col gap-2 md:flex-1 md:min-h-0 md:overflow-y-auto [overscroll-behavior:contain]">
                 {move || {
                     let tr = tr();
@@ -64,6 +76,21 @@ fn job_time(job: &Value, keys: [&str; 2]) -> Option<String> {
         .map(str::to_string)
 }
 
+/// KStars' ISO time as Unix ms; `None` for "--".
+fn job_ms(job: &Value, key: &str) -> Option<f64> {
+    job[key].as_str().map(js_sys::Date::parse).filter(|t| t.is_finite())
+}
+
+/// The job's curve, with KStars' planned startup → stop as its window.
+fn job_track(i: usize, job: &Value) -> Track {
+    Track {
+        ra_deg: job["targetRA"].as_f64().unwrap_or(0.0) * 15.0,
+        dec_deg: job["targetDEC"].as_f64().unwrap_or(0.0),
+        window: job_ms(job, "startupTime").zip(job_ms(job, "stopTime")),
+        label: Some(format!("#{}", i + 1)),
+    }
+}
+
 fn job_card(i: usize, job: Value, tr: &'static Translations, send: SendCmd) -> impl IntoView {
     let name = job["name"].as_str().unwrap_or("?").to_string();
     // targetRA / targetDEC are J2000 (ra0 / dec0), RA in hours.
@@ -80,7 +107,7 @@ fn job_card(i: usize, job: Value, tr: &'static Translations, send: SendCmd) -> i
         .map(str::to_string)
         .unwrap_or_else(|| format!("{alt:.0}\u{00b0}"));
     let alt_cls = if alt >= 30.0 { "text-state-ok" } else if alt >= 20.0 { "text-state-warn" } else { "text-state-err" };
-    let window = match (job_time(&job, ["startupFormatted", "startupTime"]), job_time(&job, ["endFormatted", "completionTime"])) {
+    let window = match (job_time(&job, ["startupFormatted", "startupTime"]), job_time(&job, ["endFormatted", "stopTime"])) {
         (None, None) => None,
         (a, b) => Some(format!("{} \u{2192} {}", a.as_deref().unwrap_or("\u{2014}"), b.as_deref().unwrap_or("\u{2014}"))),
     };

@@ -20,6 +20,7 @@ use leptos::prelude::*;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
+mod altitude;
 mod labels;
 mod mapping;
 mod queue_api;
@@ -30,7 +31,7 @@ mod view_log;
 mod view_queue_editor;
 mod view_settings;
 
-use crate::compat::{CameraSnapshot, FilterWheelSnapshot, SchedulerSnapshot};
+use crate::compat::{CameraSnapshot, FilterWheelSnapshot, SchedulerSnapshot, SiteSnapshot};
 use crate::components::form::{sheet, FOOTER};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{Lang, t};
@@ -56,6 +57,7 @@ fn is_transitional(status: i64) -> bool {
 #[component]
 pub fn SchedulerTab(
     #[prop(into)] scheduler: Signal<SchedulerSnapshot>,
+    #[prop(into)] site: Signal<SiteSnapshot>,
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
     #[prop(into)] send: SendCmd,
@@ -163,7 +165,7 @@ pub fn SchedulerTab(
             <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] flex flex-col gap-3 p-3 \
                         md:pl-4 md:pr-6 md:overflow-hidden md:grid md:grid-cols-[minmax(0,1fr)_320px] \
                         lg:grid-cols-[minmax(0,1fr)_400px] md:grid-rows-[minmax(0,1fr)]">
-                <SchedulerJobs jobs=jobs send=Arc::clone(&send) lang=lang />
+                <SchedulerJobs jobs=jobs site=site send=Arc::clone(&send) lang=lang />
                 <SchedulerLog log=log lang=lang />
             </div>
 
@@ -189,7 +191,7 @@ pub fn SchedulerTab(
 
             <Show when=move || add_open.get()>
                 {sheet(move || tr().sched_add_job_btn, move || add_open.set(false), view! {
-                    <AddJobSheet form=form camera=camera filter_wheel=filter_wheel home_dir=home_dir
+                    <AddJobSheet form=form site=site camera=camera filter_wheel=filter_wheel home_dir=home_dir
                                  send=Arc::clone(&send_add) lang=lang open=add_open />
                 })}
             </Show>

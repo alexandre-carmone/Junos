@@ -8,7 +8,7 @@
 
 mod actions;
 mod calib;
-mod clock;
+pub(crate) mod clock;
 mod controls;
 pub(crate) mod dso_index;
 mod dso_render;

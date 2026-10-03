@@ -156,6 +156,8 @@ translations! {
     sched_err_frames, sched_err_flat_adu, sched_err_flat_encoding,
     // Scheduler tab — redesigned add-job sheet
     sched_err_name, sched_conditions_legend, sky_add_scheduler, sky_create_mosaic, sky_scheduler_jobs,
+    // Scheduler tab — altitude tonight chart
+    sched_alt_title, sched_alt_hint, sched_alt_peak, sched_alt_below, sched_alt_dawn, sched_alt_no_slot, sched_alt_moon,
     apps_section, apps_kstars, apps_phd2, apps_launch, apps_stop, apps_running, apps_stopped,
     // Files tab v2 — browser controls, file actions, livestacker extras.
     files_sort_name, files_sort_date, files_sort_size, files_sort_asc, files_sort_desc, files_filter_all,
