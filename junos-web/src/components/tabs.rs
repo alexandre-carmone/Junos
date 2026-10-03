@@ -161,7 +161,8 @@ pub fn TabContent(
         <Show when=scheduler_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <SchedulerTab scheduler=scheduler_snapshot site=site camera=camera filter_wheel=filter_wheel
-                              online=store.online file_reply=store.file_reply send=Arc::clone(&send_scheduler) />
+                              online=store.online file_reply=store.file_reply devices=store.devices
+                              indi_properties=store.indi_properties send=Arc::clone(&send_scheduler) />
             </div>
         </Show>
         // Kept mounted too: a Pick on Sky round trip leaves this tab, and its

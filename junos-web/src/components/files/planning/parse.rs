@@ -137,6 +137,9 @@ pub(crate) struct Queue {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct QueueTask {
+    /// Only set in KStars' queue format, where a custom INDI step has no
+    /// template id to name it.
+    pub name: String,
     pub template_id: String,
     pub device: String,
     /// `(name, value)` in file order.
@@ -342,15 +345,23 @@ fn value_str(v: &Value) -> String {
     }
 }
 
+/// A task collection (`tasks`) or a queue in KStars' own format (`items`,
+/// each wrapping its `task`) — the Scheduler editor writes the latter once a
+/// queue holds a custom INDI step.
 pub(crate) fn parse_queue(text: &str) -> Result<Queue, String> {
     let doc: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-    let tasks = doc["tasks"].as_array().ok_or("no \"tasks\" array")?;
+    let tasks: Vec<&Value> = match (doc["tasks"].as_array(), doc["items"].as_array()) {
+        (Some(tasks), _) => tasks.iter().collect(),
+        (None, Some(items)) => items.iter().map(|item| &item["task"]).collect(),
+        (None, None) => return Err("no \"tasks\" or \"items\" array".to_string()),
+    };
     Ok(Queue {
         title: value_str(&doc["name"]),
         description: value_str(&doc["description"]),
         tasks: tasks
-            .iter()
+            .into_iter()
             .map(|t| QueueTask {
+                name: value_str(&t["name"]),
                 template_id: value_str(&t["template_id"]),
                 device: value_str(&t["device"]),
                 params: t["parameters"]
@@ -489,5 +500,11 @@ mod tests {
         assert_eq!(q.tasks[0].params, [("wait_timeout".to_string(), "60".to_string())]);
         assert_eq!(q.tasks[1].params[0], ("script_path".to_string(), "/s/roof.sh".to_string()));
         assert!(parse_queue("{}").is_err());
+
+        let q = parse_queue(r#"{"name":"Post","items":[{"id":"junos-1","task":{"name":"Set Dome · DOME_SHUTTER.SHUTTER_OPEN = On",
+            "template_id":"","device":"Dome","parameters":{},"actions":[{"type":"SET"}]}}]}"#).unwrap();
+        assert_eq!(q.tasks.len(), 1);
+        assert_eq!(q.tasks[0].device, "Dome");
+        assert!(q.tasks[0].name.starts_with("Set Dome"));
     }
 }

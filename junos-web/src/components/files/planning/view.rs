@@ -235,6 +235,8 @@ fn task_row(i: usize, t: QueueTask, tr: &'static Translations) -> impl IntoView 
         .then(|| t.params.iter().find(|(k, _)| k == "script_path").map(|(_, v)| v.clone()).unwrap_or_default());
     let title = match &script {
         Some(_) => tr.sched_q_step_script.to_string(),
+        // A custom INDI step (queue format) is named, not templated.
+        None if t.template_id.is_empty() && !t.name.is_empty() => t.name.clone(),
         None if step_label(tr, &t.template_id) == tr.sched_q_step_unknown => t.template_id.clone(),
         None => step_label(tr, &t.template_id).to_string(),
     };

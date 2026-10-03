@@ -1,25 +1,15 @@
-//! Scheduler tab: the settings sheet — scheduler options, applied at once,
-//! and the startup / shutdown procedures, applied with one button.
-//!
-//! Each procedure slot holds the absolute path of a KStars task-queue
-//! collection (`.json`, not a shell script — see `queue_model.rs`). The
-//! picker lists the collections junos-server manages; Edit… opens the queue
-//! editor.
+//! Scheduler tab: the settings sheet — scheduler options, applied at once —
+//! and [`SchedulerSettings`], which also holds the startup / shutdown
+//! procedure slots the Startup & shutdown sub-tab (`view_procedures.rs`) edits.
 
 use leptos::prelude::*;
 use serde_json::Value;
 
-use super::queue_api::QueueList;
 use super::queue_model::QueueSlot;
-use super::view_queue_editor::slot_title;
-use crate::components::form::{check_row, CARD, CARD_TITLE, FOOTER, LABEL};
-use crate::dom::event_target_value;
+use crate::components::form::{check_row, CARD, CARD_TITLE, LABEL};
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
-
-const PATH_PLACEHOLDER: &str = "~/.local/share/kstars/taskqueue/collections/….json";
-const FIELD: &str = "input input--sm w-full min-w-0 max-md:h-9";
 
 /// Scheduler-wide settings, seeded once from `scheduler_get_all_settings`.
 #[derive(Clone, Copy)]
@@ -74,27 +64,15 @@ impl SchedulerSettings {
             QueueSlot::PostShutdown => (self.post_shutdown, self.shutdown_enabled),
         }
     }
-
-    fn procedures_json(&self) -> Value {
-        serde_json::json!({
-            "schedulerStartupEnabled":     self.startup_enabled.get_untracked(),
-            "schedulerPreStartupScript":   self.pre_startup.get_untracked(),
-            "schedulerPostStartupScript":  self.post_startup.get_untracked(),
-            "schedulerShutdownEnabled":    self.shutdown_enabled.get_untracked(),
-            "schedulerPreShutdownScript":  self.pre_shutdown.get_untracked(),
-            "schedulerPostShutdownScript": self.post_shutdown.get_untracked(),
-        })
-    }
 }
 
 #[component]
 pub fn SchedulerSettingsSheet(
     settings: SchedulerSettings,
-    queue_list: RwSignal<Option<QueueList>>,
     #[prop(into)] send: SendCmd,
     lang: RwSignal<Lang>,
-    open: RwSignal<bool>,
-    on_edit_queue: Callback<QueueSlot>,
+    /// Close the sheet and show the Startup & shutdown sub-tab.
+    on_open_procedures: Callback<()>,
 ) -> impl IntoView {
     let tr = move || t(lang.get());
     let st = settings;
@@ -108,12 +86,6 @@ pub fn SchedulerSettingsSheet(
             send_cmd(&send, "scheduler_set_all_settings", Value::Object(m));
         }
     };
-    let send_apply = send.clone();
-    let on_apply = move |_| {
-        send_cmd(&send_apply, "scheduler_set_all_settings", st.procedures_json());
-        open.set(false);
-    };
-    let slot = move |s: QueueSlot| slot_row(s, st.slot(s).0, queue_list, lang, on_edit_queue);
 
     view! {
         <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 flex flex-col gap-3">
@@ -123,66 +95,11 @@ pub fn SchedulerSettingsSheet(
                 {check_row(st.remember_progress, move || tr().sched_remember_progress, option("kcfg_RememberJobProgress"))}
                 {check_row(st.reschedule_errors, move || tr().sched_reschedule_error, option("errorHandlingRescheduleErrorsCB"))}
             </div>
-            <div class=CARD>
-                <span class=CARD_TITLE>{move || tr().sched_startup_legend}</span>
-                {check_row(st.startup_enabled, move || tr().sched_enable_startup, |_| {})}
-                {slot(QueueSlot::PreStartup)}
-                {slot(QueueSlot::PostStartup)}
-            </div>
-            <div class=CARD>
-                <span class=CARD_TITLE>{move || tr().sched_shutdown_legend}</span>
-                {check_row(st.shutdown_enabled, move || tr().sched_enable_shutdown, |_| {})}
-                {slot(QueueSlot::PreShutdown)}
-                {slot(QueueSlot::PostShutdown)}
-            </div>
-        </div>
-        <div class=FOOTER>
-            <button class="btn btn-primary h-11 px-5 ml-auto" on:click=on_apply>
-                {move || tr().sched_apply_scripts}
+            <button type="button" class="panel w-full p-3 flex items-center gap-2 min-h-[44px] text-left cursor-pointer"
+                    on:click=move |_| on_open_procedures.run(())>
+                <span class=format!("{LABEL} flex-1")>{move || tr().sched_proc_open}</span>
+                <span class="text-accent-cyan">"\u{203a}"</span>
             </button>
-        </div>
-    }
-}
-
-/// One procedure slot: a picker over the managed queues and Edit…; a path
-/// field only for a path the picker doesn't know (picking "custom" clears it).
-fn slot_row(
-    slot: QueueSlot,
-    path: RwSignal<String>,
-    queue_list: RwSignal<Option<QueueList>>,
-    lang: RwSignal<Lang>,
-    on_edit: Callback<QueueSlot>,
-) -> impl IntoView {
-    let tr = move || t(lang.get());
-    let custom = move || {
-        path.with(|p| queue_list.with(|l| l.as_ref().is_none_or(|l| l.queues.iter().all(|q| q.path != p.trim()))))
-    };
-    view! {
-        <div class="flex flex-col gap-1.5 pt-1">
-            <div class="flex items-center gap-2">
-                <span class=format!("{LABEL} flex-1")>{move || slot_title(tr(), slot)}</span>
-                <button class="btn btn--sm btn-ghost shrink-0 max-md:h-9" on:click=move |_| on_edit.run(slot)>
-                    {move || tr().sched_q_edit}
-                </button>
-            </div>
-            <select class=FIELD on:change=move |ev| path.set(event_target_value(&ev))>
-                <option value="" prop:selected=custom>{move || tr().sched_q_custom_path}</option>
-                {move || queue_list.get().map(|l| l.queues).unwrap_or_default().into_iter().map(|q| {
-                    let label = match &q.title {
-                        Some(title) if !title.is_empty() => format!("{title} ({}.json)", q.name),
-                        _ => format!("{}.json", q.name),
-                    };
-                    let value = q.path.clone();
-                    view! {
-                        <option value=q.path prop:selected=move || path.with(|p| p.trim() == value)>{label}</option>
-                    }
-                }).collect::<Vec<_>>()}
-            </select>
-            <Show when=custom>
-                <input class=format!("{FIELD} font-mono") placeholder=PATH_PLACEHOLDER
-                       prop:value=move || path.get()
-                       on:input=move |ev| path.set(event_target_value(&ev)) />
-            </Show>
         </div>
     }
 }

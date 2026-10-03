@@ -41,7 +41,8 @@ order:
 - **Scheduler** — the job queue, plus a visual job builder that writes the
   `.esq` sequence file for you. An altitude-tonight chart shows each target's
   height over the night and whether a long session stays above your minimum
-  altitude.
+  altitude. A **Startup & shutdown** sub-tab designs what runs before and
+  after the night (see [below](#startup--shutdown-procedures)).
 - **Mosaic** — plan a mosaic (grid, overlap, position angle) and **Send to
   Scheduler** to import every tile as a job. Its center can be picked on the
   sky map.
@@ -163,6 +164,29 @@ just clean        # cargo clean + rm junos-web/dist
 5. Click **Start** in Ekos. The top status strip should flip to
    **Ekos online**, and the mount-anchored FOV reticle should appear on the
    sky view.
+
+## Startup & shutdown procedures
+
+**Scheduler › Startup & shutdown** shows the night as a timeline of KStars'
+four procedure slots. Tap one to design its queue, then **Save & assign**:
+
+| Slot | Runs | Can use |
+|---|---|---|
+| Before Ekos starts | before INDI is up | waits, scripts |
+| Once devices are connected | after Ekos starts | everything |
+| Before Ekos stops | at the end of the night | everything |
+| After Ekos stops | after INDI is down | waits, scripts |
+
+Steps are KStars' built-in ones (park / unpark mount, dome and dust cap,
+cool / warm the camera, wait), **custom INDI steps** — set any property of any
+device, or wait until one reaches a value — and **shell scripts**, edited in
+place with ready-made snippets (web hook, phone notification, wait for a
+file…). Scripts run on the KStars host as the KStars user, and must exit 0.
+
+Queues are saved under KStars' task-queue folder (`--taskqueue-dir`). A queue
+of built-in steps and scripts is a plain KStars collection. One with a custom
+INDI step uses KStars' own queue format instead. In that format, a built-in
+step whose device isn't connected stops the queue rather than being skipped.
 
 ## Browser access & TLS
 

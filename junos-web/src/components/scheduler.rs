@@ -1,10 +1,12 @@
 //! Ekos Scheduler tab.
 //!
 //! Layout (phone-first, like Focus / Mosaic): a header (status · save ·
-//! settings), the job cards and the live log — one scrolling column on phones,
-//! jobs | log from `md` — and a pinned footer with Add job and Start / Stop.
-//! Add job, Save schedule, Settings and the startup/shutdown queue editor open
-//! as `form::sheet`s: bottom sheets on phones, centered panels on md+.
+//! settings) and two sub-tabs. **Jobs**: the job cards and the live log — one
+//! scrolling column on phones, jobs | log from `md` — and a pinned footer with
+//! Add job and Start / Stop. **Startup & shutdown** (`view_procedures.rs`):
+//! the four procedure slots as a night timeline, each opening the queue editor.
+//! Add job, Save schedule and Settings open as `form::sheet`s: bottom sheets
+//! on phones, centered panels on md+.
 //!
 //! Inbound:  `new_scheduler_state`, `scheduler_get_jobs`,
 //!           `scheduler_get_all_settings`, `scheduler_save_file`
@@ -15,6 +17,7 @@
 //! HTTP:     `/api/taskqueue/*` (startup/shutdown queue editor),
 //!           `/api/planning/list` (Save schedule)
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use leptos::prelude::*;
@@ -26,29 +29,32 @@ mod labels;
 mod mapping;
 mod queue_api;
 mod queue_model;
+mod queue_native;
+mod queue_snippets;
 mod view_add_job;
+mod view_indi_step;
 mod view_jobs;
 mod view_log;
+mod view_procedures;
 mod view_queue_editor;
 mod view_save;
 mod view_settings;
 
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot, SchedulerSnapshot, SiteSnapshot};
-use crate::components::form::{sheet, FOOTER};
+use crate::components::form::{sheet, CHIP, FOOTER};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{Lang, t};
-use crate::ws::{FileReply, SendCmd};
+use crate::ws::{DeviceInfo, FileReply, IndiProperty, SendCmd};
 use crate::ws_helpers::send_cmd;
 use crate::{SchedulerPrefillCtx, Tab};
 use labels::scheduler_status_label;
 // Files › Planning shows task queues with the editor's labels.
 pub(crate) use labels::{param_label, step_label};
 use queue_api::QueueList;
-use queue_model::QueueSlot;
 use view_add_job::{AddJobForm, AddJobSheet};
 use view_jobs::SchedulerJobs;
 use view_log::SchedulerLog;
-use view_queue_editor::SchedulerQueueEditor;
+use view_procedures::SchedulerProcedures;
 use view_save::{SaveScheduleSheet, SAVE_ICON};
 use view_settings::{SchedulerSettings, SchedulerSettingsSheet};
 
@@ -59,6 +65,12 @@ fn is_transitional(status: i64) -> bool {
     matches!(status, 1 | 4 | 6)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SubTab {
+    Jobs,
+    Procedures,
+}
+
 #[component]
 pub fn SchedulerTab(
     #[prop(into)] scheduler: Signal<SchedulerSnapshot>,
@@ -67,6 +79,9 @@ pub fn SchedulerTab(
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
     #[prop(into)] online: Signal<bool>,
     file_reply: RwSignal<Option<FileReply>>,
+    /// Suggestions for the queue editor's custom INDI steps.
+    devices: RwSignal<Vec<DeviceInfo>>,
+    indi_properties: RwSignal<HashMap<String, Vec<IndiProperty>>>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -80,26 +95,21 @@ pub fn SchedulerTab(
     // KStars' log is newest first.
     let latest = move || log.with(|l| l.lines().find(|x| !x.trim().is_empty()).unwrap_or("").to_string());
 
+    let sub = RwSignal::new(SubTab::Jobs);
+
     // ── Sheets ──────────────────────────────────────────────────────────────
     let add_open      = RwSignal::new(false);
     let save_open     = RwSignal::new(false);
     let settings_open = RwSignal::new(false);
-    // Startup/shutdown queue editor, stacked over the settings sheet.
-    let queue_editor  = RwSignal::new(Option::<QueueSlot>::None);
 
-    // Escape closes the top sheet — the queue editor first, so it doesn't
-    // also dismiss the settings underneath.
+    // Escape closes the open sheet.
     {
         let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
             move |e: web_sys::KeyboardEvent| {
                 if e.key() != "Escape" { return; }
-                if queue_editor.get_untracked().is_some() {
-                    queue_editor.set(None);
-                } else {
-                    add_open.set(false);
-                    save_open.set(false);
-                    settings_open.set(false);
-                }
+                add_open.set(false);
+                save_open.set(false);
+                settings_open.set(false);
             },
         );
         if let Some(win) = web_sys::window() {
@@ -144,19 +154,21 @@ pub fn SchedulerTab(
         }
     });
 
-    // Collections junos-server manages (`/api/taskqueue/list`), refreshed each
-    // time the settings sheet opens; the editor re-lists on its own too.
+    // Queues junos-server manages (`/api/taskqueue/list`), refreshed each time
+    // the Startup & shutdown sub-tab opens; the editor re-lists on its own too.
     let queue_list = RwSignal::new(Option::<QueueList>::None);
-    Effect::new(move |_| {
-        if !settings_open.get() { return; }
-        wasm_bindgen_futures::spawn_local(async move {
-            if let Ok(list) = queue_api::fetch_list().await {
-                queue_list.set(Some(list));
-            }
-        });
+    let on_open_procedures = Callback::new(move |()| {
+        settings_open.set(false);
+        sub.set(SubTab::Procedures);
     });
-    let on_edit_queue = Callback::new(move |slot| queue_editor.set(Some(slot)));
-    let on_close_queue: Arc<dyn Fn() + Send + Sync> = Arc::new(move || queue_editor.set(None));
+    let sub_tab = move |tab: SubTab, label: fn(&'static crate::i18n::Translations) -> &'static str| view! {
+        <button type="button" role="tab"
+                class=move || if sub.get() == tab { format!("{CHIP} btn--active") } else { CHIP.to_string() }
+                aria-selected=move || (sub.get() == tab).to_string()
+                on:click=move |_| sub.set(tab)>
+            {move || label(tr())}
+        </button>
+    };
 
     let send_toggle = Arc::clone(&send);
     let on_toggle = move |_| send_cmd(&send_toggle, "scheduler_start_job", serde_json::json!({}));
@@ -165,7 +177,7 @@ pub fn SchedulerTab(
     let send_save = Arc::clone(&send);
     let can_save = move || online.get() && jobs.with(|j| !j.is_empty());
     let send_settings = Arc::clone(&send);
-    let send_queue = Arc::clone(&send);
+    let send_procedures = Arc::clone(&send);
 
     view! {
         <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
@@ -187,6 +199,19 @@ pub fn SchedulerTab(
                 </button>
             </div>
 
+            // Sub-tabs
+            <div role="tablist" class="shrink-0 grid grid-cols-2 gap-1.5 px-3 py-1.5 md:flex md:pl-4 md:pr-6 \
+                                       border-b border-border-base bg-bg-elev-1">
+                {sub_tab(SubTab::Jobs, |tr| tr.sched_jobs_section)}
+                {sub_tab(SubTab::Procedures, |tr| tr.sched_sub_procedures)}
+            </div>
+
+            <Show when=move || sub.get() == SubTab::Procedures>
+                <SchedulerProcedures lang=lang send=Arc::clone(&send_procedures) settings=settings
+                                     queue_list=queue_list devices=devices indi_properties=indi_properties />
+            </Show>
+
+            <Show when=move || sub.get() == SubTab::Jobs>
             // Body — one scrolling column on phones; jobs | log on md+, each
             // scrolling on its own.
             <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] flex flex-col gap-3 p-3 \
@@ -211,10 +236,11 @@ pub fn SchedulerTab(
                         "btn btn-primary h-11 px-5 font-semibold max-md:flex-1"
                     }
                     disabled=move || is_transitional(status.get())
-                    on:click=on_toggle>
+                    on:click=on_toggle.clone()>
                     {move || if status.get() == RUNNING { tr().sched_btn_stop } else { tr().sched_btn_start }}
                 </button>
             </div>
+            </Show>
 
             <Show when=move || add_open.get()>
                 {sheet(move || tr().sched_add_job_btn, move || add_open.set(false), view! {
@@ -230,17 +256,10 @@ pub fn SchedulerTab(
             </Show>
             <Show when=move || settings_open.get()>
                 {sheet(move || tr().sched_settings_btn, move || settings_open.set(false), view! {
-                    <SchedulerSettingsSheet settings=settings queue_list=queue_list send=Arc::clone(&send_settings)
-                                            lang=lang open=settings_open on_edit_queue=on_edit_queue />
+                    <SchedulerSettingsSheet settings=settings send=Arc::clone(&send_settings)
+                                            lang=lang on_open_procedures=on_open_procedures />
                 })}
             </Show>
-            {move || queue_editor.get().map(|slot| {
-                let (path, enabled) = settings.slot(slot);
-                view! {
-                    <SchedulerQueueEditor lang=lang send=Arc::clone(&send_queue) queue_slot=slot list=queue_list
-                                          path=path enabled=enabled on_close=Arc::clone(&on_close_queue) />
-                }
-            })}
         </div>
     }
 }

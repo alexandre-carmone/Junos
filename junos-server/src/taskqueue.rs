@@ -3,8 +3,8 @@
 //!
 //! Endpoints:
 //!
-//! - `GET    /api/taskqueue/list`         — managed collections + scripts.
-//! - `GET    /api/taskqueue/queue/:name`  — one collection's JSON.
+//! - `GET    /api/taskqueue/list`         — managed queues + scripts.
+//! - `GET    /api/taskqueue/queue/:name`  — one queue's JSON.
 //! - `PUT    /api/taskqueue/queue/:name`  — body `{content, overwrite}`.
 //! - `DELETE /api/taskqueue/queue/:name`
 //! - `GET    /api/taskqueue/script/:name` — one shell script's text.
@@ -19,8 +19,11 @@
 //!
 //! Files live under `Config::resolved_taskqueue_dir()`: `collections/<name>.json`
 //! (the directory KStars' own Collections dialog lists) and `scripts/<name>.sh`.
-//! As with the WS relay, the Ekos semantics (templates, parameter ranges) live
-//! in the client; the server only checks a collection has its `tasks` array.
+//! A queue that holds custom INDI steps is written in KStars' own queue format
+//! instead (an `items` array, actions spelled out — `QueueManager::fromJson`);
+//! `loadQueue` reads both. As with the WS relay, the Ekos semantics (templates,
+//! parameter ranges) live in the client; the server only checks for one of the
+//! two arrays.
 //!
 //! Names come straight off the wire and are joined onto real paths, so only a
 //! slug shape is accepted and the server appends the extension itself — no
@@ -80,14 +83,18 @@ fn check_name(name: &str) -> Result<(), ApiErr> {
     }
 }
 
-/// A collection is what `QueueManager::loadQueue` routes to
-/// `loadCollectionFromJson`: an object carrying a `tasks` array.
+/// What `QueueManager::loadQueue` can run: an object carrying a `tasks` array
+/// (a collection) or an `items` array (its own queue format).
 fn validate_queue(content: &Value) -> Result<(), String> {
-    let obj = content.as_object().ok_or("queue must be a JSON object")?;
-    match obj.get("tasks") {
-        Some(Value::Array(_)) => Ok(()),
-        _ => Err("queue must have a \"tasks\" array".to_string()),
-    }
+    content.as_object().ok_or("queue must be a JSON object")?;
+    step_count(content)
+        .map(|_| ())
+        .ok_or_else(|| "queue must have a \"tasks\" or \"items\" array".to_string())
+}
+
+/// Number of steps in either format.
+fn step_count(doc: &Value) -> Option<usize> {
+    doc["tasks"].as_array().or_else(|| doc["items"].as_array()).map(Vec::len)
 }
 
 /// KStars starts the script with `QProcess::start(path)` — no shell, no
@@ -175,8 +182,8 @@ struct QueueEntry {
     path: String,
     /// The collection's `name` field — what KStars' Collections dialog shows.
     title: Option<String>,
-    /// Task count, or `None` when the file isn't a `tasks` collection
-    /// (e.g. an `items` queue saved by KStars' queue viewer).
+    /// Step count, or `None` when the file is neither a `tasks` collection
+    /// nor an `items` queue.
     tasks: Option<usize>,
 }
 
@@ -200,7 +207,7 @@ pub async fn list(State(state): State<AppState>) -> Json<Value> {
                 name,
                 path: path.to_string_lossy().into_owned(),
                 title: doc.as_ref().and_then(|d| d["name"].as_str()).map(str::to_string),
-                tasks: doc.as_ref().and_then(|d| d["tasks"].as_array()).map(Vec::len),
+                tasks: doc.as_ref().and_then(step_count),
             }
         })
         .collect();
@@ -378,13 +385,14 @@ mod tests {
     }
 
     #[test]
-    fn queue_needs_tasks_array() {
+    fn queue_needs_tasks_or_items_array() {
         assert!(validate_queue(&json!({"name": "q", "tasks": []})).is_ok());
+        assert!(validate_queue(&json!({"name": "q", "items": []})).is_ok());
         assert!(validate_queue(&json!({"name": "q"})).is_err());
         assert!(validate_queue(&json!({"tasks": {}})).is_err());
+        assert!(validate_queue(&json!({"items": "x"})).is_err());
         assert!(validate_queue(&json!([])).is_err());
-        // An `items` queue (KStars' queue-viewer format) isn't what we write.
-        assert!(validate_queue(&json!({"items": []})).is_err());
+        assert_eq!(step_count(&json!({"items": [{}, {}]})), Some(2));
     }
 
     #[cfg(unix)]

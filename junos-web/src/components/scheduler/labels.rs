@@ -1,6 +1,7 @@
 //! Scheduler tab: turns KStars' numeric state and stage codes, and task-queue
 //! template ids, into labels.
 
+use super::queue_native::{Cond, IndiKind};
 use crate::i18n::Translations;
 
 /// Label and badge class for the scheduler state.
@@ -95,6 +96,45 @@ pub fn param_label(tr: &'static Translations, name: &str) -> &'static str {
         "ramp_threshold"     => tr.sched_q_p_ramp_threshold,
         "max_wait_time"      => tr.sched_q_p_max_wait_time,
         "delay_seconds"      => tr.sched_q_p_delay_seconds,
+        "retries"            => tr.sched_q_p_retries,
+        "margin"             => tr.sched_q_p_margin,
         _                    => tr.sched_q_p_timeout,
+    }
+}
+
+pub fn kind_label(tr: &'static Translations, kind: IndiKind) -> &'static str {
+    match kind {
+        IndiKind::Number => tr.sched_q_kind_number,
+        IndiKind::Text   => tr.sched_q_kind_text,
+        IndiKind::Switch => tr.sched_q_kind_switch,
+        IndiKind::Light  => tr.sched_q_kind_light,
+        IndiKind::State  => tr.sched_q_kind_state,
+    }
+}
+
+pub fn cond_label(tr: &'static Translations, cond: Cond) -> &'static str {
+    match cond {
+        Cond::Eq         => tr.sched_q_cond_eq,
+        Cond::Ne         => tr.sched_q_cond_ne,
+        Cond::Gt         => tr.sched_q_cond_gt,
+        Cond::Lt         => tr.sched_q_cond_lt,
+        Cond::Ge         => tr.sched_q_cond_ge,
+        Cond::Le         => tr.sched_q_cond_le,
+        Cond::Within     => tr.sched_q_cond_within,
+        Cond::Contains   => tr.sched_q_cond_contains,
+        Cond::StartsWith => tr.sched_q_cond_starts,
+    }
+}
+
+/// A [`super::queue_snippets::SNIPPETS`] key as the user reads it.
+pub fn snippet_label(tr: &'static Translations, key: &str) -> &'static str {
+    match key {
+        "wait"      => tr.sched_q_snip_wait,
+        "webhook"   => tr.sched_q_snip_webhook,
+        "notify"    => tr.sched_q_snip_notify,
+        "indi"      => tr.sched_q_snip_indi,
+        "wait_file" => tr.sched_q_snip_wait_file,
+        "log"       => tr.sched_q_snip_log,
+        _           => tr.sched_q_snip_ping,
     }
 }
