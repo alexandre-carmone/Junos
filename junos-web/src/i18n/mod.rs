@@ -254,6 +254,7 @@ translations! {
     sched_q_grp_cap, sched_q_grp_camera, sched_q_grp_indi, sched_q_grp_other, sched_q_step_indi_set,
     sched_q_step_indi_wait, sched_q_indi_set, sched_q_indi_wait, sched_q_indi_device, sched_q_indi_property,
     sched_q_indi_element, sched_q_indi_kind, sched_q_indi_value, sched_q_indi_wait_done, sched_q_indi_offline,
+    sched_q_indi_pick, sched_q_indi_choice, sched_q_indi_now, sched_q_indi_press, sched_q_indi_turns_on, sched_q_indi_type_names, sched_q_indi_from_device,
     sched_q_kind_number, sched_q_kind_text, sched_q_kind_switch, sched_q_kind_light, sched_q_kind_state,
     sched_q_cond_eq, sched_q_cond_ne, sched_q_cond_gt, sched_q_cond_lt, sched_q_cond_ge, sched_q_cond_le,
     sched_q_cond_within, sched_q_cond_contains, sched_q_cond_starts, sched_q_on_fail, sched_q_fail_next,

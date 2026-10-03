@@ -431,7 +431,7 @@ pub fn SchedulerQueueEditor(
     let source = IndiSource {
         devices,
         props: indi_properties,
-        send: Arc::clone(&send),
+        send: StoredValue::new(Arc::clone(&send)),
         asked: StoredValue::new(Vec::new()),
     };
 
@@ -868,10 +868,7 @@ pub fn SchedulerQueueEditor(
                         <For
                             each=move || rows.get()
                             key=|r| r.key
-                            children={
-                                let source = source.clone();
-                                move |row: StepRow| step_card(row, rows, lang, scripts_dir, source.clone(), native)
-                            }
+                            children=move |row: StepRow| step_card(row, rows, lang, scripts_dir, source, native)
                         />
                     </div>
                     <Show when=move || rows.with(Vec::is_empty)>

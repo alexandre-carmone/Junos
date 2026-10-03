@@ -179,7 +179,9 @@ four procedure slots. Tap one to design its queue, then **Save & assign**:
 
 Steps are KStars' built-in ones (park / unpark mount, dome and dust cap,
 cool / warm the camera, wait), **custom INDI steps** — set any property of any
-device, or wait until one reaches a value — and **shell scripts**, edited in
+device, or wait until one reaches a value, picked from the device's own
+property list with a form that fits it (a number with its range, a text, a
+list of options, a button, On / Off) — and **shell scripts**, edited in
 place with ready-made snippets (web hook, phone notification, wait for a
 file…). Scripts run on the KStars host as the KStars user, and must exit 0.
 
