@@ -16,9 +16,40 @@ pub struct HudData {
     pub c_az:           f64,
     pub mount_ra_h:     Option<f64>,
     pub mount_dec_deg:  Option<f64>,
-    pub rotation_deg:   Option<f64>,
+    pub frame:          Option<HudFrame>,
     pub cursor_altaz:   Option<(f64, f64)>,
     pub cursor_radec:   Option<(f64, f64)>,
+}
+
+/// Where the camera frame shown in the HUD comes from (`Date::now()` ms).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FrameOrigin {
+    Solved(f64),
+    Saved(f64),
+    Nominal,
+}
+
+/// The camera frame the FOV boxes draw, measured or nominal.
+#[derive(Clone, Debug)]
+pub struct HudFrame {
+    pub fov_arcmin:     (f64, f64),
+    pub pa_deg:         Option<f64>,
+    pub origin:         FrameOrigin,
+    /// Scope focal × CCD_INFO frame, to flag a measured frame that disagrees.
+    pub nominal_arcmin: Option<(f64, f64)>,
+}
+
+/// Measured / nominal width outside this band → the mismatch warning.
+const MISMATCH_TOLERANCE: f64 = 0.10;
+
+/// "21:43" for today's solves, "2026-10-01" for saved ones (local time).
+fn fmt_origin_time(ms: f64, with_date: bool) -> String {
+    let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms));
+    if with_date {
+        format!("{:04}-{:02}-{:02}", d.get_full_year(), d.get_month() + 1, d.get_date())
+    } else {
+        format!("{:02}:{:02}", d.get_hours(), d.get_minutes())
+    }
 }
 
 #[component]
@@ -53,10 +84,32 @@ pub fn SkyHud(
             _ => tr.overlay_mount_none.to_string(),
         }
     };
-    let line_rotation = move || {
+    let line_frame = move || {
         let h = hud.get();
         let tr = t(lang.get());
-        h.rotation_deg.map(|r| format!("{}: {:.1}°", tr.overlay_camera_angle, r))
+        let f = h.frame?;
+        let (w, ht) = f.fov_arcmin;
+        let pa = f.pa_deg.map(|pa| format!(" · PA {pa:.1}°")).unwrap_or_default();
+        let origin = match f.origin {
+            FrameOrigin::Solved(ms) => format!("{} {}", tr.overlay_frame_solved, fmt_origin_time(ms, false)),
+            FrameOrigin::Saved(ms) => format!("{} {}", tr.overlay_frame_saved, fmt_origin_time(ms, true)),
+            FrameOrigin::Nominal => tr.overlay_frame_nominal.to_string(),
+        };
+        Some(format!("{}: {w:.0}'×{ht:.0}'{pa} ({origin})", tr.overlay_frame))
+    };
+    let line_mismatch = move || {
+        let h = hud.get();
+        let tr = t(lang.get());
+        let f = h.frame?;
+        let (nw, nh) = f.nominal_arcmin?;
+        if f.origin == FrameOrigin::Nominal || nw <= 0.0 {
+            return None;
+        }
+        let ratio = f.fov_arcmin.0 / nw;
+        ((ratio - 1.0).abs() > MISMATCH_TOLERANCE).then(|| format!(
+            "×{ratio:.2} vs {} {nw:.0}'×{nh:.0}' — {}",
+            tr.overlay_frame_nominal, tr.overlay_frame_mismatch,
+        ))
     };
     let line_cursor = move || {
         let h = hud.get();
@@ -84,7 +137,8 @@ pub fn SkyHud(
             // Phones: no hover cursor, and the centre is what you see.
             <div class="max-md:hidden">{line_center}</div>
             <div>{line_mount}</div>
-            { move || line_rotation().map(|s| view! { <div>{s}</div> }) }
+            { move || line_frame().map(|s| view! { <div>{s}</div> }) }
+            { move || line_mismatch().map(|s| view! { <div class="text-state-warn">{s}</div> }) }
             { move || line_cursor().map(|s| view! { <div class="max-md:hidden">{s}</div> }) }
         </div>
     }

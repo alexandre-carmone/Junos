@@ -14,5 +14,6 @@ pub mod scheduler_jobs;
 pub mod slew_trail;
 pub mod solar_system;
 pub mod solve_marker;
+pub mod solved_image;
 pub mod stars;
 pub mod zenith;

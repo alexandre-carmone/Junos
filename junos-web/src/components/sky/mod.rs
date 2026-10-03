@@ -7,6 +7,7 @@
 //! Falls back to all-Canvas2D rendering when WebGPU is unavailable.
 
 mod actions;
+mod calib;
 mod clock;
 mod controls;
 pub(crate) mod dso_index;
@@ -54,7 +55,7 @@ pub(crate) use actions::{fmt_dec, fmt_ra};
 pub(crate) use framing::mosaic_span_am;
 use render::{HitItem, MosaicPlanRender, MosaicTileRender, SchedulerJobRender};
 use render::layer::{Catalogs, Frame};
-use render::params::{LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
+use render::params::{LayerToggles, OverlayState, PipelineMode, SceneParams, SolvedImage, ViewParams};
 use render::pipeline::RenderPipeline;
 use search::SkySearch;
 use time_bar::TimeBar;
@@ -79,6 +80,8 @@ pub struct SkyToggles {
     pub zenith:             RwSignal<bool>,
     pub solar_system:       RwSignal<bool>,
     pub solve_marker:       RwSignal<bool>,
+    pub solved_image:       RwSignal<bool>,
+    pub solved_image_opacity: RwSignal<f64>,
     pub slew_trail:         RwSignal<bool>,
     pub dso_galaxy:         RwSignal<bool>,
     pub dso_open_cluster:   RwSignal<bool>,
@@ -110,6 +113,7 @@ impl SkyToggles {
             fov_on: self.fov.get(),
             dso_on: self.dso.get(),
             scheduler_jobs_on: self.scheduler_jobs.get(),
+            solved_image_on: self.solved_image.get(),
         }
     }
 
@@ -125,6 +129,41 @@ impl SkyToggles {
             gal: self.dso_galaxy_cluster.get(),
         }
     }
+}
+
+/// Width × height (deg) of the last solved frame: KStars' effective FOV when
+/// the solution carried it, else `pix` — arcsec per *binned* pixel — times the
+/// binned sensor size (native `CCD_MAX_X/Y` over the current `CCD_BINNING`).
+fn solve_fov_deg(sv: &SolveSnapshot, cam: &CameraSnapshot) -> Option<(f64, f64)> {
+    if let Some((w, h)) = sv.fov_arcmin {
+        return Some((w / 60.0, h / 60.0));
+    }
+    let pix = sv.pixscale_arcsec?;
+    let bin = cam.bin_x.unwrap_or(1).max(1) as f64;
+    let side = |px: u32| pix * px as f64 / bin / 3600.0;
+    Some((side(cam.sensor_width?), side(cam.sensor_height?)))
+}
+
+/// Focal length the FOV reticle (and mosaic / scheduler frames) use. Once a
+/// frame has been measured it is back-computed from that field, so a wrong
+/// scope focal or CCD_INFO self-corrects — KStars' effective focal length
+/// (align_fov.cpp:89). The measured frame (`calib`: KStars' own FOV, this
+/// session's solve or a saved one) comes first: it does not depend on
+/// `CCD_BINNING`, which may have changed since the solve. Else the nominal focal.
+fn reticle_focal_mm(
+    frame: Option<&calib::FrameCalib>,
+    sv: &SolveSnapshot,
+    cam: &CameraSnapshot,
+    nominal: Option<f64>,
+) -> Option<f64> {
+    let from_fov = || {
+        let w = frame?.fov_w_arcmin;
+        astro::focal_from_fov_mm(w / 60.0, cam.sensor_width? as f64, cam.pixel_size_um?)
+    };
+    let from_pix = || {
+        astro::effective_focal_mm(sv.pixscale_arcsec?, cam.pixel_size_um?, cam.bin_x? as f64)
+    };
+    from_fov().or_else(from_pix).or(nominal)
 }
 
 fn local_storage() -> Option<web_sys::Storage> {
@@ -483,6 +522,8 @@ pub fn SkyTab(
         zenith:             persisted("sky_show_zenith", false),
         solar_system:       persisted("sky_show_solar_system", true),
         solve_marker:       persisted("sky_show_solve_marker", true),
+        solved_image:       persisted("sky_show_solved_image", true),
+        solved_image_opacity: persisted("sky_solved_image_opacity", 0.6),
         slew_trail:         persisted("sky_show_slew_trail", true),
         dso_galaxy:         persisted("sky_dso_galaxy", true),
         dso_open_cluster:   persisted("sky_dso_open_cluster", true),
@@ -567,6 +608,89 @@ pub fn SkyTab(
     let render_pipeline: Rc<RefCell<RenderPipeline>> =
         Rc::new(RefCell::new(RenderPipeline::standard()));
 
+    // ── Measured camera frame (calib.rs) ──────────────────────────────────
+    // Each solve's FOV + PA is saved under camera|focal; the FOV boxes use this
+    // session's solve, else the saved one, else the nominal frame.
+    let calib_key = Memo::new(move |_| {
+        let fl = focal_length_mm.get()?;
+        camera.with(|c| calib::calib_key(&c.device, fl))
+    });
+    let session_calib = Memo::new(move |_| {
+        solve.with(|s| match (s.fov_arcmin, s.rotation_deg, s.solved_at_ms) {
+            (Some((w, h)), Some(pa), Some(t)) => Some(calib::FrameCalib {
+                fov_w_arcmin: w,
+                fov_h_arcmin: h,
+                pa_deg: pa,
+                at_ms: t,
+            }),
+            _ => None,
+        })
+    });
+    // The key a solve is filed under is the one current when it arrived, so a
+    // later train switch doesn't relabel it.
+    let solved_frame: RwSignal<Option<(String, calib::FrameCalib)>> = RwSignal::new(None);
+    Effect::new(move |_| {
+        let Some(c) = session_calib.get() else { return };
+        let Some(key) = calib_key.get_untracked() else { return };
+        calib::save(&key, c);
+        solved_frame.set(Some((key, c)));
+    });
+    let frame_calib = Memo::new(move |_| {
+        let key = calib_key.get()?;
+        match solved_frame.get() {
+            Some((k, c)) if k == key => Some((c, calib::CalibSource::Solved)),
+            _ => calib::load(&key).map(|c| (c, calib::CalibSource::Saved)),
+        }
+    });
+
+    // ── Solved image (SolvedImageLayer) ───────────────────────────────────
+    // Load the last solve's Align frame; `solved_image_epoch` wakes the render
+    // Effect once it has decoded. A newer solve supersedes a load in flight.
+    let solved_image: Rc<RefCell<Option<SolvedImage>>> = Rc::new(RefCell::new(None));
+    let solved_image_epoch = RwSignal::new(0u32);
+    {
+        // Memo so solver log lines (which also update `solve`) don't reload it.
+        let placement = Memo::new(move |_| {
+            solve.with(|s| {
+                let frame = s.image.clone()?;
+                let pix = s.pixscale_arcsec.filter(|p| *p > 0.0)?;
+                Some((frame, s.ra_jnow_deg?, s.dec_jnow_deg?, s.rotation_deg?, pix))
+            })
+        });
+        let solved_image = Rc::clone(&solved_image);
+        let load_gen = Rc::new(std::cell::Cell::new(0u32));
+        Effect::new(move |_| {
+            let placed = placement.get();
+            let generation = load_gen.get().wrapping_add(1);
+            load_gen.set(generation);
+            solved_image.borrow_mut().take();
+            solved_image_epoch.update(|v| *v += 1);
+            let Some((frame, ra, dec, pa, pix)) = placed else { return };
+            let Ok(el) = web_sys::HtmlImageElement::new() else { return };
+            let slot = Rc::clone(&solved_image);
+            let gen_now = Rc::clone(&load_gen);
+            let el_cl = el.clone();
+            let onload = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+                if gen_now.get() != generation {
+                    return;
+                }
+                // `pix` is per solver pixel; the frame's resolution is that grid.
+                slot.borrow_mut().replace(SolvedImage {
+                    el: el_cl.clone(),
+                    ra_deg: ra,
+                    dec_deg: dec,
+                    pa_deg: pa,
+                    fov_w_deg: pix * frame.width as f64 / 3600.0,
+                    fov_h_deg: pix * frame.height as f64 / 3600.0,
+                });
+                solved_image_epoch.update(|v| *v += 1);
+            });
+            el.set_onload(Some(onload.as_ref().unchecked_ref()));
+            onload.forget();
+            el.set_src(&frame.url);
+        });
+    }
+
     // ── FOV diagnostics ───────────────────────────────────────────────────
     // Log the inputs and the resulting reticle FOV whenever the camera geometry,
     // the last solve, or the nominal focal length changes (NOT per frame). Lets
@@ -575,21 +699,17 @@ pub fn SkyTab(
         let cam = camera.get();
         let sv = solve.get();
         let nominal_fl = focal_length_mm.get();
-        let eff_fl = match (sv.pixscale_arcsec, cam.pixel_size_um, cam.bin_x) {
-            (Some(px), Some(pum), Some(bin)) => {
-                crate::astro::effective_focal_mm(px, pum, bin as f64)
-            }
-            _ => None,
-        };
-        let fl = eff_fl.or(nominal_fl);
+        let frame = frame_calib.get();
+        let fl = reticle_focal_mm(frame.as_ref().map(|(c, _)| c), &sv, &cam, nominal_fl);
         if let (Some(fl), Some(pum), Some(sw), Some(sh)) =
             (fl, cam.pixel_size_um, cam.sensor_width, cam.sensor_height)
         {
             let fov_w = crate::astro::fov_deg(fl, sw as f64, pum);
             let fov_h = crate::astro::fov_deg(fl, sh as f64, pum);
             debug_log!(
-                "[sky] FOV inputs: fl={:.1}mm (nominal={:?} eff_from_solve={:?}) sensor={}x{}px pixel={:.2}um bin={:?} pixscale={:?}\"/px -> {:.1}'x{:.1}'",
-                fl, nominal_fl, eff_fl, sw, sh, pum, cam.bin_x, sv.pixscale_arcsec,
+                "[sky] FOV inputs: fl={:.1}mm (nominal={:?}) sensor={}x{}px pixel={:.2}um bin={:?} pixscale={:?}\"/px kstars_fov={:?}' frame={:?} solve_fov={:?}deg -> {:.1}'x{:.1}'",
+                fl, nominal_fl, sw, sh, pum, cam.bin_x, sv.pixscale_arcsec,
+                sv.fov_arcmin, frame, solve_fov_deg(&sv, &cam),
                 fov_w * 60.0, fov_h * 60.0
             );
         }
@@ -649,6 +769,7 @@ pub fn SkyTab(
     let hit_items_for_render = Rc::clone(&hit_items);
     let trail_for_render = Rc::clone(&slew_trail);
     let trail_for_sample = Rc::clone(&slew_trail);
+    let solved_image_for_render = Rc::clone(&solved_image);
     let _render_handle = Effect::new(move || {
         // Read all reactive deps to subscribe
         let m = mount.get();
@@ -662,20 +783,14 @@ pub fn SkyTab(
         let layer_toggles = toggles.layer_toggles();
         let dso_filter = toggles.dso_filter();
         let dso_mag = dso_mag_limit.get();
-        // Prefer a focal length back-computed from the last plate solve's
-        // measured pixel scale over the nominal scope focal × CCD_INFO. This
-        // makes the FOV reticle (and mosaic preview / scheduler-job frames,
-        // all of which read this `fl`) self-correct after the first solve
-        // regardless of a wrong scope focal or a wrong/binned CCD_INFO pixel
-        // size — mirroring KStars' effective focal length (align.cpp:1089).
-        // Requires pixscale + native pixel size + binning; else nominal.
+        let _ = solved_image_epoch.get();
+        let solved_image_opacity = toggles.solved_image_opacity.get();
+        // Solve-derived when possible (see `reticle_focal_mm`); the FOV
+        // reticle, mosaic preview and scheduler-job frames all read this `fl`.
         let nominal_fl = focal_length_mm.get();
-        let fl = match (sv.pixscale_arcsec, cam.pixel_size_um, cam.bin_x) {
-            (Some(px), Some(pum), Some(bin)) => {
-                crate::astro::effective_focal_mm(px, pum, bin as f64).or(nominal_fl)
-            }
-            _ => nominal_fl,
-        };
+        let frame = frame_calib.get();
+        let fl = reticle_focal_mm(frame.as_ref().map(|(c, _)| c), &sv, &cam, nominal_fl);
+        let camera_pa = frame.map(|(c, _)| c.pa_deg).or(sv.rotation_deg);
         let follow = follow_mount.get();
         let has_gpu = gpu_ready.get();
         let cur_lang = lang.get();
@@ -810,6 +925,30 @@ pub fn SkyTab(
         };
 
         // ── Push HUD snapshot to the DOM overlay ──────────────────────
+        let nominal_arcmin = match (nominal_fl, cam.pixel_size_um, cam.sensor_width, cam.sensor_height) {
+            (Some(nfl), Some(pum), Some(sw), Some(sh)) => Some((
+                astro::fov_deg(nfl, sw as f64, pum) * 60.0,
+                astro::fov_deg(nfl, sh as f64, pum) * 60.0,
+            )),
+            _ => None,
+        };
+        let hud_frame = match frame {
+            Some((c, src)) => Some(hud::HudFrame {
+                fov_arcmin: (c.fov_w_arcmin, c.fov_h_arcmin),
+                pa_deg: Some(c.pa_deg),
+                origin: match src {
+                    calib::CalibSource::Solved => hud::FrameOrigin::Solved(c.at_ms),
+                    calib::CalibSource::Saved => hud::FrameOrigin::Saved(c.at_ms),
+                },
+                nominal_arcmin,
+            }),
+            None => nominal_arcmin.map(|n| hud::HudFrame {
+                fov_arcmin: n,
+                pa_deg: sv.rotation_deg,
+                origin: hud::FrameOrigin::Nominal,
+                nominal_arcmin: None,
+            }),
+        };
         set_hud_data.set(hud::HudData {
             lst_deg: lst,
             fov,
@@ -817,7 +956,7 @@ pub fn SkyTab(
             c_az,
             mount_ra_h: m.ra_h,
             mount_dec_deg: m.dec_deg,
-            rotation_deg: sv.rotation_deg,
+            frame: hud_frame,
             cursor_altaz,
             cursor_radec,
         });
@@ -902,10 +1041,12 @@ pub fn SkyTab(
             cam_pixel_size_um: cam.pixel_size_um,
             cam_sensor_width:  cam.sensor_width,
             cam_sensor_height: cam.sensor_height,
-            rotation_deg: sv.rotation_deg,
+            rotation_deg: camera_pa,
             solve_ra_jnow_deg: sv.ra_jnow_deg,
             solve_dec_jnow_deg: sv.dec_jnow_deg,
-            solve_pixscale_arcsec: sv.pixscale_arcsec,
+            solve_fov_deg: solve_fov_deg(&sv, &cam),
+            solved_image: solved_image_for_render.borrow().clone(),
+            solved_image_opacity,
             solve_age_ms: sv.solved_at_ms.map(|t| js_sys::Date::now() - t),
             scheduler_jobs: scheduler_jobs_data,
             mosaic_kstars: mosaic_kstars_render,

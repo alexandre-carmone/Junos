@@ -79,6 +79,7 @@ pub struct LayerToggles {
     pub fov_on: bool,
     pub dso_on: bool,
     pub scheduler_jobs_on: bool,
+    pub solved_image_on: bool,
 }
 
 /// Borrowed/cloned subsystem state read by overlay layers (mount, camera,
@@ -98,7 +99,11 @@ pub struct OverlayState {
 
     pub solve_ra_jnow_deg: Option<f64>,
     pub solve_dec_jnow_deg: Option<f64>,
-    pub solve_pixscale_arcsec: Option<f64>,
+    /// Width × height (deg) of the solved frame, from `solve_fov_deg`.
+    pub solve_fov_deg: Option<(f64, f64)>,
+    /// The last solve's Align frame, once its JPEG has loaded.
+    pub solved_image: Option<SolvedImage>,
+    pub solved_image_opacity: f64,
     pub solve_age_ms: Option<f64>,
 
     pub scheduler_jobs: Vec<SchedulerJobRender>,
@@ -113,6 +118,17 @@ pub struct OverlayState {
     pub dso_snr: bool,
     pub dso_gal: bool,
     pub dso_mag: f64,
+}
+
+/// The Align frame of the last solve, placed on the sky (`SolvedImageLayer`).
+#[derive(Clone)]
+pub struct SolvedImage {
+    pub el:        web_sys::HtmlImageElement,
+    pub ra_deg:    f64, // JNow, like the rest of the solve
+    pub dec_deg:   f64,
+    pub pa_deg:    f64,
+    pub fov_w_deg: f64,
+    pub fov_h_deg: f64,
 }
 
 /// Camera PA (° east of north) assumed until a plate solve reports one.

@@ -535,6 +535,17 @@ pub struct AlignStateSample {
     pub status: String,
 }
 
+/// One Align capture as sent on the media socket (uuid `+A`, `Media::upload`,
+/// media.cpp:446-471). `width`/`height` are the solver's (binned) frame from
+/// `metadata.resolution`, not the JPEG's — KStars downscales the JPEG to 960 px
+/// wide but keeps the aspect ratio.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlignFrame {
+    pub url:    String,
+    pub width:  u32,
+    pub height: u32,
+}
+
 /// Latest plate-solve result. Populated from the `solution` payload of
 /// `new_align_state` (kstars/ekos/align/align.cpp:2351). All RA/Dec values are
 /// JNow — KStars uses `m_AlignCoord` which is epoch-of-date.
@@ -543,8 +554,14 @@ pub struct AlignSolutionData {
     pub ra_jnow_deg:      Option<f64>,
     pub dec_jnow_deg:     Option<f64>,
     pub orientation_deg:  Option<f64>, // PA from align.cpp:2364
-    pub pixscale_arcsec:  Option<f64>, // pix from align.cpp:2363
+    pub pixscale_arcsec:  Option<f64>, // pix from align.cpp:2363 — arcsec per *binned* px
+    // `fov` "W' x H'" (align_solver.cpp:988 ← FOVOut, align_fov.cpp:210): KStars'
+    // effective FOV in arcmin, already binning-corrected — unlike `pix`.
+    pub fov_arcmin:       Option<(f64, f64)>,
     pub solved_at_ms:     Option<f64>, // js_sys::Date::now() at receipt
+    /// The Align frame this solution was computed on, or `None` when the solve
+    /// came without one (remote solver, Load & Slew — see `align_frame_pending`).
+    pub image:            Option<AlignFrame>,
     pub status:           Option<String>, // last new_align_state {status} string
     // Progress overlay inputs — all from `new_align_state` (manager.cpp:2500).
     pub log:              String,           // full accumulated solver log text

@@ -36,9 +36,7 @@ impl SkyLayer for SolveMarkerLayer {
             ra,
             dec,
             alpha,
-            f.state.solve_pixscale_arcsec,
-            f.state.cam_sensor_width,
-            f.state.cam_sensor_height,
+            f.state.solve_fov_deg,
             f.state.camera_pa_deg(),
         );
     }
@@ -113,13 +111,7 @@ impl SkyLayer for SolveMarkerLayer {
         ctx.line_to(sx, sy + 16.0);
         ctx.stroke();
 
-        if let (Some(pix), Some(sw), Some(sh)) = (
-            f.state.solve_pixscale_arcsec,
-            f.state.cam_sensor_width,
-            f.state.cam_sensor_height,
-        ) {
-            let fov_w = pix * sw as f64 / 3600.0;
-            let fov_h = pix * sh as f64 / 3600.0;
+        if let Some((fov_w, fov_h)) = f.state.solve_fov_deg {
             let half_w = fov_w / 2.0;
             let half_h = fov_h / 2.0;
             let cos_dec = dec.to_radians().cos().abs().max(0.01);

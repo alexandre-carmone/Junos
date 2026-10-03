@@ -180,6 +180,51 @@ pub fn fov_deg(focal_mm: f64, sensor_px: f64, pixel_um: f64) -> f64 {
     2.0 * (sensor_mm / (2.0 * focal_mm)).atan().to_degrees()
 }
 
+/// Focal length (mm) giving `fov_deg` across `sensor_px` pixels of `pixel_um` —
+/// the exact inverse of [`fov_deg`]. `None` on invalid inputs.
+pub fn focal_from_fov_mm(fov: f64, sensor_px: f64, pixel_um: f64) -> Option<f64> {
+    if fov > 0.0 && fov < 180.0 && sensor_px > 0.0 && pixel_um > 0.0 {
+        let sensor_mm = sensor_px * pixel_um / 1000.0;
+        Some(sensor_mm / (2.0 * (fov / 2.0).to_radians().tan()))
+    } else {
+        None
+    }
+}
+
+/// Sky position (RA, Dec degrees) of a point in a camera frame centred on
+/// (`ra0`, `dec0`) with position angle `pa_deg`: `dx_deg` along the image's
+/// right, `dy_deg` along its top, as tangent-plane offsets (gnomonic inverse,
+/// so it holds near the pole). The image top points `pa_deg` east of north and,
+/// unmirrored, image-right is west at PA 0 — the FOV boxes' handedness and
+/// KStars' own image overlay (auxiliary/fov.cpp:259, no parity flip).
+pub fn frame_point_eq(ra0: f64, dec0: f64, pa_deg: f64, dx_deg: f64, dy_deg: f64) -> (f64, f64) {
+    let (sin_pa, cos_pa) = pa_deg.to_radians().sin_cos();
+    let xi = (-dx_deg * cos_pa + dy_deg * sin_pa).to_radians(); // east
+    let eta = (dx_deg * sin_pa + dy_deg * cos_pa).to_radians(); // north
+    let (sin_d0, cos_d0) = dec0.to_radians().sin_cos();
+    let dec = ((sin_d0 + eta * cos_d0) / (1.0 + xi * xi + eta * eta).sqrt()).asin();
+    let ra = ra0 + xi.atan2(cos_d0 - eta * sin_d0).to_degrees();
+    (ra.rem_euclid(360.0), dec.to_degrees())
+}
+
+/// Inverse of [`frame_point_eq`]: the (right, up) image-axis offsets in degrees
+/// of (`ra`, `dec`) in the frame centred on (`ra0`, `dec0`) at `pa_deg`. `None`
+/// for a point 90° or more from the centre (off the tangent plane).
+pub fn frame_offset_of(ra0: f64, dec0: f64, pa_deg: f64, ra: f64, dec: f64) -> Option<(f64, f64)> {
+    let (sin_d0, cos_d0) = dec0.to_radians().sin_cos();
+    let (sin_d, cos_d) = dec.to_radians().sin_cos();
+    let (sin_da, cos_da) = (ra - ra0).to_radians().sin_cos();
+    let cos_c = sin_d0 * sin_d + cos_d0 * cos_d * cos_da;
+    if cos_c <= 1e-6 {
+        return None;
+    }
+    let xi = (cos_d * sin_da / cos_c).to_degrees(); // east
+    let eta = ((cos_d0 * sin_d - sin_d0 * cos_d * cos_da) / cos_c).to_degrees(); // north
+    // The (right, up) → (east, north) map is a reflection, hence its own inverse.
+    let (sin_pa, cos_pa) = pa_deg.to_radians().sin_cos();
+    Some((-xi * cos_pa + eta * sin_pa, xi * sin_pa + eta * cos_pa))
+}
+
 /// Effective focal length (mm) back-computed from a plate solve's measured pixel
 /// scale. `pixscale_arcsec` is arcsec per **binned** pixel (as reported by the
 /// astrometry solver), `pixel_um` is the native (unbinned) pixel size, and

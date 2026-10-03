@@ -45,6 +45,11 @@ pub struct DeviceStore {
     pub align_settings: RwSignal<serde_json::Value>,
     pub align_solution: RwSignal<AlignSolutionData>,
     pub align_preview_url: RwSignal<Option<String>>,
+    /// Last full Align capture, waiting for its solution. KStars sends the
+    /// frame before solving (align_solver.cpp:473→490); the next
+    /// `new_align_state {solution}` takes it, so a solve that sends no frame
+    /// (remote solver, Load & Slew) never pairs with an older one.
+    pub align_frame_pending: StoredValue<Option<AlignFrame>>,
     pub guide_status: RwSignal<Option<GuideStatusData>>,
     pub guide_settings: RwSignal<serde_json::Value>,
     /// Flattened `{name: value, ...}` map of global KStars `Options::`
@@ -141,6 +146,7 @@ impl DeviceStore {
             align_settings: RwSignal::new(serde_json::Value::Null),
             align_solution: RwSignal::new(AlignSolutionData::default()),
             align_preview_url: RwSignal::new(None),
+            align_frame_pending: StoredValue::new(None),
             guide_status: RwSignal::new(None),
             guide_settings: RwSignal::new(serde_json::Value::Null),
             guide_options: RwSignal::new(serde_json::Value::Null),
@@ -235,6 +241,7 @@ impl DeviceStore {
                     self.align_settings.set(serde_json::Value::Null);
                     self.align_solution.set(AlignSolutionData::default());
                     self.align_preview_url.set(None);
+                    self.align_frame_pending.set_value(None);
                     self.guide_status.set(None);
                     self.guide_preview_url.set(None);
                     // guide_settings / guide_options left intact so the
@@ -1062,6 +1069,7 @@ impl DeviceStore {
                     let de_d = sol.get("de.Degrees").and_then(|x| x.as_f64());
                     let pa = sol.get("PA").and_then(|x| x.as_f64());
                     let pix = sol.get("pix").and_then(|x| x.as_f64());
+                    let fov = sol.get("fov").and_then(|x| x.as_str()).and_then(parse_fov_arcmin);
                     if ra_h.is_some() || de_d.is_some() || pa.is_some() || pix.is_some() {
                         self.align_solution.update(|a| {
                             if let Some(v) = ra_h {
@@ -1076,6 +1084,8 @@ impl DeviceStore {
                             if let Some(v) = pix {
                                 a.pixscale_arcsec = Some(v);
                             }
+                            a.fov_arcmin = fov;
+                            a.image = self.align_frame_pending.try_update_value(Option::take).flatten();
                             a.solved_at_ms = Some(web_sys::js_sys::Date::now());
                         });
                     }
@@ -1273,6 +1283,23 @@ impl DeviceStore {
                             None => self.focus_stars.set(None),
                         }
                     } else if uuid.starts_with("+A") {
+                        // Only `Media::upload` frames carry `view`; polar-align
+                        // refresh/zoom frames (`sendUpdatedFrame`, media.cpp:628)
+                        // are cropped, so they don't stand for a solve.
+                        let meta = &payload["metadata"];
+                        let res = meta["resolution"].as_str().and_then(|r| {
+                            let (w, h) = r.split_once('x')?;
+                            Some((w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?))
+                        });
+                        if let (Some(_), Some((width, height))) = (meta["view"].as_str(), res) {
+                            if width > 0 && height > 0 {
+                                self.align_frame_pending.set_value(Some(AlignFrame {
+                                    url: url.clone(),
+                                    width,
+                                    height,
+                                }));
+                            }
+                        }
                         self.align_preview_url.set(Some(url));
                     } else if uuid.starts_with("+G") {
                         self.guide_preview_url.set(Some(url));
@@ -1396,4 +1423,19 @@ impl DeviceStore {
             _ => {}
         }
     }
+}
+
+/// Parses the align solution's `fov` text, `"62.3' x 41.5'"` (align_fov.cpp:210,
+/// plain `QString::arg` so always a `.` decimal), into (width, height) arcmin —
+/// the same split as KStars' own `Align::syncFOV`. `None` unless both are > 0.
+fn parse_fov_arcmin(s: &str) -> Option<(f64, f64)> {
+    let num = |part: &str| {
+        part.trim()
+            .trim_matches(|c: char| !c.is_ascii_digit() && c != '.')
+            .parse::<f64>()
+            .ok()
+            .filter(|v| *v > 0.0)
+    };
+    let (w, h) = s.split_once('x')?;
+    Some((num(w)?, num(h)?))
 }

@@ -6,7 +6,7 @@
 use leptos::prelude::*;
 
 use crate::ws::{
-    DeviceStore, DustCapParkState, FocusStars, GuideDriftSample, GuideStateSample, HfrSample,
+    AlignFrame, DeviceStore, DustCapParkState, FocusStars, GuideDriftSample, GuideStateSample, HfrSample,
     PolarVectorData,
 };
 
@@ -88,7 +88,9 @@ pub struct SolveSnapshot {
     pub ra_jnow_deg:       Option<f64>,
     pub dec_jnow_deg:      Option<f64>,
     pub pixscale_arcsec:   Option<f64>,
+    pub fov_arcmin:        Option<(f64, f64)>,
     pub solved_at_ms:      Option<f64>,
+    pub image:             Option<AlignFrame>,
     pub status:            Option<String>,
     pub log:               String,
     pub download_progress: Option<String>,
@@ -104,7 +106,9 @@ pub fn derive_solve(store: &DeviceStore) -> Signal<SolveSnapshot> {
             ra_jnow_deg:       a.ra_jnow_deg,
             dec_jnow_deg:      a.dec_jnow_deg,
             pixscale_arcsec:   a.pixscale_arcsec,
+            fov_arcmin:        a.fov_arcmin,
             solved_at_ms:      a.solved_at_ms,
+            image:             a.image,
             status:            a.status,
             log:               a.log,
             download_progress: a.download_progress,

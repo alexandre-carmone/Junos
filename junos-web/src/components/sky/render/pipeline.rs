@@ -19,6 +19,7 @@ use super::layers::scheduler_jobs::SchedulerJobsLayer;
 use super::layers::slew_trail::SlewTrailLayer;
 use super::layers::solar_system::SolarSystemLayer;
 use super::layers::solve_marker::SolveMarkerLayer;
+use super::layers::solved_image::SolvedImageLayer;
 use super::layers::stars::StarsLayer;
 use super::layers::zenith::ZenithLayer;
 
@@ -52,6 +53,8 @@ impl RenderPipeline {
         p.register(Box::new(EclipticLayer));
         // Zenith mark.
         p.register(Box::new(ZenithLayer));
+        // Last solve's Align frame, under the stars and boxes.
+        p.register(Box::new(SolvedImageLayer));
         // Stars (Canvas2D fallback paints the field; in GPU mode this layer
         // only paints labels and feeds the named-star hit list).
         p.register(Box::new(StarsLayer));

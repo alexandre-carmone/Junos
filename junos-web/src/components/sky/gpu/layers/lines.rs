@@ -457,9 +457,7 @@ pub fn build_solve_marker(
     ra_jnow_deg: f64,
     dec_jnow_deg: f64,
     alpha: f32,
-    pixscale_arcsec: Option<f64>,
-    sensor_w: Option<u32>,
-    sensor_h: Option<u32>,
+    fov_deg: Option<(f64, f64)>,
     pa_deg: f64,
 ) {
     let (alt, az) = astro::eq_to_altaz(ra_jnow_deg, dec_jnow_deg, v.lst, v.latitude);
@@ -484,9 +482,7 @@ pub fn build_solve_marker(
     out.push(seg((sx, sy + 4.0),  (sx, sy + 16.0), color, 1.2));
 
     // Translucent FOV rectangle.
-    if let (Some(pix), Some(sw), Some(sh)) = (pixscale_arcsec, sensor_w, sensor_h) {
-        let fov_w = pix * sw as f64 / 3600.0;
-        let fov_h = pix * sh as f64 / 3600.0;
+    if let Some((fov_w, fov_h)) = fov_deg {
         let half_w = fov_w / 2.0;
         let half_h = fov_h / 2.0;
         let cos_dec = dec_jnow_deg.to_radians().cos().abs().max(0.01);

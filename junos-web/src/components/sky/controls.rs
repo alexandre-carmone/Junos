@@ -173,9 +173,24 @@ pub fn SkyControls(
                 <div class=ROW>
                     <LayerChip on=toggles.fov label=|t| t.fov />
                     <LayerChip on=toggles.solve_marker label=|t| t.solve_marker />
+                    <LayerChip on=toggles.solved_image label=|t| t.solved_image />
                     <LayerChip on=toggles.slew_trail label=|t| t.slew_trail />
                     <LayerChip on=toggles.scheduler_jobs label=|t| t.sky_scheduler_jobs />
                 </div>
+                <label class="flex items-center gap-2 text-text-muted">
+                    <span class="whitespace-nowrap">{move || tr().solved_image_opacity}</span>
+                    <input type="range" min="0.1" max="1" step="0.05" class="flex-1 min-w-0 accent-accent-cyan"
+                           prop:disabled=move || !toggles.solved_image.get()
+                           prop:value=move || toggles.solved_image_opacity.get().to_string()
+                           on:input=move |ev| {
+                               if let Ok(v) = event_target_value(&ev).parse::<f64>() {
+                                   toggles.solved_image_opacity.set(v.clamp(0.1, 1.0));
+                               }
+                           } />
+                    <span class="font-mono text-text w-[4ch] text-right">
+                        {move || format!("{:.0}%", toggles.solved_image_opacity.get() * 100.0)}
+                    </span>
+                </label>
 
                 // ── Observer location (collapsed by default) ──────────────
                 <button class="flex items-center justify-between w-full min-h-0 h-9 mt-1 px-0 bg-transparent \
