@@ -18,6 +18,7 @@ fn filter_label(k: FilterKind, tr: &'static Translations) -> &'static str {
         FilterKind::Images => tr.files_filter_images,
         FilterKind::Fits => tr.files_filter_fits,
         FilterKind::Jpg => tr.files_filter_jpg,
+        FilterKind::Planning => tr.plan_title,
         FilterKind::All => tr.files_filter_all,
     }
 }

@@ -101,6 +101,9 @@ pub struct DeviceStore {
     /// sends an empty `{}` payload on close). The web responds via
     /// `dialog_get_response {button: "<label>"}` to unblock KStars.
     pub active_dialog: RwSignal<Option<serde_json::Value>>,
+    /// Last reply to a file load/save the browser asked for (Files › Planning,
+    /// Save schedule). Set on every reply, so the same answer twice still fires.
+    pub file_reply: RwSignal<Option<FileReply>>,
 }
 
 impl DeviceStore {
@@ -167,6 +170,7 @@ impl DeviceStore {
             indi_properties: RwSignal::new(std::collections::HashMap::new()),
             indi_messages: RwSignal::new(std::collections::HashMap::new()),
             active_dialog: RwSignal::new(None),
+            file_reply: RwSignal::new(None),
         }
     }
 
@@ -1340,6 +1344,18 @@ impl DeviceStore {
                     }
                     self.scheduler_jobs.set(arr.clone());
                 }
+            }
+
+            // File commands (message.cpp:683, 1205, 1240): `{result, path}`,
+            // except the save, which answers with the file's text.
+            "scheduler_load_file" | "capture_load_sequence_file" => {
+                self.file_reply.set(Some(FileReply {
+                    cmd: type_str.to_string(),
+                    ok: payload["result"].as_bool().unwrap_or(false),
+                }));
+            }
+            "scheduler_save_file" => {
+                self.file_reply.set(Some(FileReply { cmd: type_str.to_string(), ok: true }));
             }
 
             // Debounced settings reply (message.cpp:623).

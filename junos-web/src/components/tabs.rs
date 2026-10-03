@@ -142,6 +142,8 @@ pub fn TabContent(
                 <FilesTab
                     livestacker_state=store.livestacker_state
                     livestacker_settings=store.livestacker_settings
+                    online=store.online
+                    file_reply=store.file_reply
                     send=Arc::clone(&send_files)
                 />
             </div>
@@ -158,7 +160,8 @@ pub fn TabContent(
         </Show>
         <Show when=scheduler_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
-                <SchedulerTab scheduler=scheduler_snapshot site=site camera=camera filter_wheel=filter_wheel send=Arc::clone(&send_scheduler) />
+                <SchedulerTab scheduler=scheduler_snapshot site=site camera=camera filter_wheel=filter_wheel
+                              online=store.online file_reply=store.file_reply send=Arc::clone(&send_scheduler) />
             </div>
         </Show>
         // Kept mounted too: a Pick on Sky round trip leaves this tab, and its

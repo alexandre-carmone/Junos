@@ -8,7 +8,7 @@ use super::utils::{is_image_ext, join, url_encode};
 
 /// Pass a 2xx through; otherwise the status plus the server's
 /// `{"error": "..."}` reason when it sends one.
-async fn checked(resp: Result<Response, gloo_net::Error>) -> Result<Response, String> {
+pub(super) async fn checked(resp: Result<Response, gloo_net::Error>) -> Result<Response, String> {
     let resp = resp.map_err(|e| e.to_string())?;
     if resp.ok() {
         return Ok(resp);

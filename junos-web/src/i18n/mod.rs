@@ -247,6 +247,15 @@ translations! {
     sched_q_err_shebang, sched_q_err_script_path, sched_q_err_loading, sched_q_err_no_server,
     sched_q_confirm_overwrite_script,
     layers, layer_sky, layer_grids, layer_dso, layer_gear, layer_star_names, layer_con_names, time_live, time_back, time_forward, time_play, time_pause, time_dusk, time_dawn, time_no_night, time_date, time_hour, target_point, center_here,
+    plan_title, plan_group_schedules, plan_group_sequences, plan_group_queues, plan_group_scripts,
+    plan_empty_schedules, plan_empty_sequences, plan_empty_queues, plan_empty_scripts, plan_no_match,
+    plan_schedule, plan_profile, plan_follower, plan_procedures, plan_on, plan_off, plan_at, plan_repeat,
+    plan_frames, plan_tasks, plan_no_tasks, plan_device, plan_source, plan_unreadable, plan_load_schedule,
+    plan_load_sequence, plan_offline, plan_confirm_load_schedule, plan_confirm_load_sequence, plan_sent,
+    plan_loaded_schedule, plan_loaded_sequence, plan_load_failed, plan_no_reply, plan_no_path,
+    plan_confirm_delete_schedule, plan_confirm_delete_sequence, plan_confirm_delete_queue,
+    plan_confirm_delete_script, plan_save_schedule, plan_save_name, plan_save, plan_saving, plan_save_hint,
+    plan_confirm_overwrite, plan_saved, plan_nothing_written, plan_no_home,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

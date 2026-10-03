@@ -45,7 +45,7 @@ const MAX_BYTES: usize = 256 * 1024;
 /// KStars resolves its default slot values by *name* through `KSPaths::locate`
 /// (`scheduler.cpp`), which searches the user data dir first — a file of ours
 /// with one of these names would silently replace the stock procedure.
-const RESERVED_QUEUES: [&str; 2] = ["observatory_startup", "observatory_shutdown"];
+pub(crate) const RESERVED_QUEUES: [&str; 2] = ["observatory_startup", "observatory_shutdown"];
 
 fn collections_dir(state: &AppState) -> PathBuf {
     state.config.resolved_taskqueue_dir().join("collections")

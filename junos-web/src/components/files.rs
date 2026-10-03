@@ -1,19 +1,22 @@
-//! Files tab — browse the captures, view a frame with its FITS header, and
-//! drive KStars' Live Stack.
+//! Files tab — browse the captures, view a frame with its FITS header, drive
+//! KStars' Live Stack, and read the Scheduler's planning files.
 //!
-//! Layout (phone-first, like Imaging): a header (Live Stack · refresh), a
-//! toolbar (path, search, sort, type pills), then the folder rows and the
-//! thumbnail grid, scrolling (`browser.rs`). A tap on a file opens the viewer
-//! (`viewer.rs`), a page over the list; Live Stack opens as a `sheet`
-//! (`livestack.rs`, `settings.rs`). One `frame_zoom` serves both.
+//! Layout (phone-first, like Imaging): a header (Planning · Live Stack ·
+//! refresh), a toolbar (path, search, sort, type pills), then the folder rows
+//! and the thumbnail grid, scrolling (`browser.rs`). A tap on a file opens the
+//! viewer (`viewer.rs`), a page over the list; Planning and Live Stack open as
+//! `sheet`s (`planning/`, `livestack.rs`, `settings.rs`). One `frame_zoom`
+//! serves the viewer and the stack.
 //!
-//! Browsing is HTTP (`/api/files/*`, sandboxed to the server's captures root);
-//! Resolve & Slew and Live Stack go to KStars over the shared WS.
+//! Browsing is HTTP (`/api/files/*`, sandboxed to the server's captures root;
+//! `/api/planning/*` for the planning folders); Resolve & Slew, the loads and
+//! Live Stack go to KStars over the shared WS.
 
 mod actions;
 mod api;
 mod browser;
 mod livestack;
+pub(crate) mod planning;
 mod settings;
 mod types;
 mod utils;
@@ -26,10 +29,11 @@ use crate::components::form::{sheet, CHIP};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::components::zoom::frame_zoom;
 use crate::i18n::{t, Lang};
-use crate::ws::{LiveStackerState, SendCmd};
+use crate::ws::{FileReply, LiveStackerState, SendCmd};
 use crate::{CaptureDirCtx, RevealInFilesCtx, Tab};
 
 use api::{fetch_list, resolve_abs};
+use planning::{planning, PlanFile};
 use types::{DirEntry, FilterKind, ListReply, SortDir, SortKey};
 use utils::{join, REFRESH_ICON};
 
@@ -52,6 +56,10 @@ struct Shared {
     zoom_open: RwSignal<bool>,
     /// Absolute captures root on the host (`CaptureDirCtx`).
     root: RwSignal<String>,
+    /// Ekos running — the loads into KStars need it.
+    online: Signal<bool>,
+    /// KStars' answers to those loads.
+    file_reply: RwSignal<Option<FileReply>>,
 }
 
 impl Shared {
@@ -116,6 +124,8 @@ fn stored(key: &str) -> Option<String> {
 pub fn FilesTab(
     livestacker_state: RwSignal<Option<LiveStackerState>>,
     livestacker_settings: RwSignal<Value>,
+    #[prop(into)] online: Signal<bool>,
+    file_reply: RwSignal<Option<FileReply>>,
     send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -130,12 +140,16 @@ pub fn FilesTab(
         zoom_url: RwSignal::new(None),
         zoom_open: RwSignal::new(false),
         root: use_context::<CaptureDirCtx>().map_or_else(|| RwSignal::new(String::new()), |c| c.0),
+        online,
+        file_reply,
     };
     let sort_key = RwSignal::new(SortKey::from_storage(stored("files_sort")));
     let sort_dir = RwSignal::new(SortDir::from_storage(stored("files_sort_dir")));
     let filter = RwSignal::new(FilterKind::from_storage(stored("files_filter")));
     let search = RwSignal::new(String::new());
     let stack_open = RwSignal::new(false);
+    let plan_open = RwSignal::new(false);
+    let plan_file = RwSignal::new(None::<PlanFile>);
 
     Effect::new(move |_| {
         let pairs = [
@@ -233,6 +247,8 @@ pub fn FilesTab(
         match e.key().as_str() {
             "Escape" if zoomed => s.zoom_open.set(false),
             "Escape" if stack_open.get_untracked() => stack_open.set(false),
+            "Escape" if plan_file.with_untracked(Option::is_some) => plan_file.set(None),
+            "Escape" if plan_open.get_untracked() => plan_open.set(false),
             "Escape" => s.viewer.set(false),
             "ArrowLeft" if s.viewer.get_untracked() && !zoomed => s.step(files, -1),
             "ArrowRight" if s.viewer.get_untracked() && !zoomed => s.step(files, 1),
@@ -243,6 +259,7 @@ pub fn FilesTab(
 
     let stack_state = Memo::new(move |_| livestacker_state.with(|o| o.as_ref().map(|l| l.state.clone()).unwrap_or_default()));
     let send_viewer = StoredValue::new(send.clone());
+    let send_plan = StoredValue::new(send.clone());
     let send_stack = StoredValue::new(send);
 
     view! {
@@ -252,7 +269,11 @@ pub fn FilesTab(
                         pt-[max(0.375rem,env(safe-area-inset-top))] border-b border-border-base bg-bg-elev-1">
                 <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Files)></span>
                 <span class="shrink-0 font-semibold text-text-blue-bright">{move || tr().files_title}</span>
-                <button type="button" class=format!("{CHIP} gap-2 ml-auto shrink-0")
+                <button type="button" class=format!("{CHIP} ml-auto shrink-0")
+                        on:click=move |_| plan_open.set(true)>
+                    {move || tr().plan_title}
+                </button>
+                <button type="button" class=format!("{CHIP} gap-2 shrink-0")
                         on:click=move |_| stack_open.set(true)>
                     <span class=move || format!("w-2 h-2 rounded-full {}", livestack::dot(&stack_state.get()))></span>
                     {move || tr().livestack_title}
@@ -273,6 +294,11 @@ pub fn FilesTab(
 
             <Show when=move || s.viewer.get() && s.selected.with(Option::is_some)>
                 {viewer::viewer(s, files, send_viewer.get_value(), lang)}
+            </Show>
+            <Show when=move || plan_open.get()>
+                {sheet(move || tr().plan_title, move || { plan_open.set(false); plan_file.set(None); }, view! {
+                    {planning(s, plan_file, send_plan.get_value())}
+                })}
             </Show>
             <Show when=move || stack_open.get()>
                 {sheet(move || tr().livestack_title, move || stack_open.set(false), view! {

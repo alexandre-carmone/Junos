@@ -7,6 +7,7 @@ mod dso_tiles;
 mod files;
 mod hub;
 mod kstars_ws;
+mod planning;
 mod proxy;
 mod skysurvey;
 mod starfind;
@@ -49,9 +50,10 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Arc::new(Config::parse());
 
-    if let Ok(home) = std::env::var("HOME") {
-        let seq_dir = std::path::Path::new(&home).join(".junos-sequences");
-        let _ = std::fs::create_dir_all(&seq_dir);
+    // KStars writes the Scheduler tab's sequences and schedules here but
+    // doesn't create folders (`QFile::open`).
+    for dir in [planning::sequences_dir(), planning::schedules_dir()].into_iter().flatten() {
+        let _ = std::fs::create_dir_all(&dir);
     }
 
     info!("Serving frontend from: {}", config.dist_dir);
@@ -113,6 +115,10 @@ async fn main() -> anyhow::Result<()> {
                get(taskqueue::get_queue).put(taskqueue::put_queue).delete(taskqueue::delete_queue))
         .route("/api/taskqueue/script/:name",
                get(taskqueue::get_script).put(taskqueue::put_script))
+        .route("/api/planning/list",   get(planning::list))
+        .route("/api/planning/raw",    get(planning::raw))
+        .route("/api/planning/rename", post(planning::rename))
+        .route("/api/planning/delete", delete(planning::delete))
         .fallback_service(ServeDir::new(&dist_dir).append_index_html_on_directories(true))
         .with_state(state);
 

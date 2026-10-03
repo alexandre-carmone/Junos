@@ -10,13 +10,39 @@
 //!     `elements` array shaped by the caller.
 //!
 //! Plus `extract_indi_number` for reading a named element out of a
-//! `device_property_get`/`set` payload's `numbers` array.
+//! `device_property_get`/`set` payload's `numbers` array, and `file_command`
+//! for the KStars file loads/saves whose answer the caller waits for.
 
-use crate::ws::SendCmd;
+use leptos::prelude::*;
+
+use crate::ws::{FileReply, SendCmd};
 use serde_json::{json, Map, Value};
 
 pub fn send_cmd(send: &SendCmd, ty: &str, payload: Value) {
     send(json!({ "type": ty, "payload": payload }).to_string());
+}
+
+/// Send a file command (`scheduler_load_file`, `scheduler_save_file`,
+/// `capture_load_sequence_file`) and wait up to `timeout_ms` for its answer in
+/// `DeviceStore::file_reply`. `None` when KStars stays silent — Ekos not
+/// started, or a save that wrote nothing.
+pub async fn file_command(
+    send: &SendCmd,
+    reply: RwSignal<Option<FileReply>>,
+    ty: &str,
+    payload: Value,
+    timeout_ms: u32,
+) -> Option<FileReply> {
+    const STEP_MS: u32 = 100;
+    reply.set(None);
+    send_cmd(send, ty, payload);
+    for _ in 0..timeout_ms.div_ceil(STEP_MS) {
+        gloo_timers::future::TimeoutFuture::new(STEP_MS).await;
+        if let Some(r) = reply.try_get_untracked().flatten().filter(|r| r.cmd == ty) {
+            return Some(r);
+        }
+    }
+    None
 }
 
 pub fn dispatch_setting(

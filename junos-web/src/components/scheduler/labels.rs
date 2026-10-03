@@ -1,4 +1,5 @@
-//! Scheduler tab: turns KStars' numeric state and stage codes into labels.
+//! Scheduler tab: turns KStars' numeric state and stage codes, and task-queue
+//! template ids, into labels.
 
 use crate::i18n::Translations;
 
@@ -65,4 +66,35 @@ pub fn sanitize_name(name: &str) -> String {
             }
         })
         .collect()
+}
+
+/// A task-queue template id as the user reads it.
+pub fn step_label(tr: &'static Translations, id: &str) -> &'static str {
+    match id {
+        "dome_unpark"         => tr.sched_q_step_dome_unpark,
+        "dome_park"           => tr.sched_q_step_dome_park,
+        "mount_unpark"        => tr.sched_q_step_mount_unpark,
+        "mount_park"          => tr.sched_q_step_mount_park,
+        "dustcap_unpark"      => tr.sched_q_step_dustcap_unpark,
+        "dustcap_park"        => tr.sched_q_step_dustcap_park,
+        "camera_cool"         => tr.sched_q_step_camera_cool,
+        "camera_warm"         => tr.sched_q_step_camera_warm,
+        "camera_warm_passive" => tr.sched_q_step_camera_warm_passive,
+        "delay"               => tr.sched_q_step_delay,
+        _                     => tr.sched_q_step_unknown,
+    }
+}
+
+/// A task-queue template parameter name as the user reads it.
+pub fn param_label(tr: &'static Translations, name: &str) -> &'static str {
+    match name {
+        "wait_timeout"       => tr.sched_q_p_wait_timeout,
+        "target_temperature" => tr.sched_q_p_target_temperature,
+        "tolerance"          => tr.sched_q_p_tolerance,
+        "ramp_slope"         => tr.sched_q_p_ramp_slope,
+        "ramp_threshold"     => tr.sched_q_p_ramp_threshold,
+        "max_wait_time"      => tr.sched_q_p_max_wait_time,
+        "delay_seconds"      => tr.sched_q_p_delay_seconds,
+        _                    => tr.sched_q_p_timeout,
+    }
 }

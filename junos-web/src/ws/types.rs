@@ -812,6 +812,16 @@ impl IndiProperty {
 /// state-only updates (`{state:"..."}`) and stacking updates with stats. We
 /// merge both into this struct, preserving prior numeric fields when only the
 /// state changes.
+/// KStars' answer to a file command the browser sent: `scheduler_load_file`
+/// and `capture_load_sequence_file` reply `{result, path}`; `scheduler_save_file`
+/// replies with the saved file's text, and nothing at all when it fails.
+#[derive(Debug, Clone)]
+pub struct FileReply {
+    /// The command answered.
+    pub cmd: String,
+    pub ok: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LiveStackerState {
     pub state:          String,

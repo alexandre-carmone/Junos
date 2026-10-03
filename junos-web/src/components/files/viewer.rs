@@ -1,6 +1,8 @@
 //! Files tab: the viewer, one file over the list. Same layout as Imaging: the
 //! frame pinned on phones with the info cards scrolling beneath, frame | cards
-//! from `md`, and a pinned footer (Delete · Download · Resolve & Slew).
+//! from `md`, and a pinned footer (Delete · Download · Resolve & Slew). A
+//! schedule or sequence (a mosaic import writes them here) shows formatted, as
+//! in Files › Planning, with its Load button in place of Resolve & Slew.
 //! ‹ ›, the arrow keys or a swipe on the frame step through the folder's files
 //! in list order; a tap opens the frame full screen.
 
@@ -14,6 +16,7 @@ use crate::ws::SendCmd;
 
 use super::actions;
 use super::api::fetch_meta;
+use super::planning::{actions as plan_actions, api::fetch_text, parse::Kind, view as plan_view};
 use super::types::FileMeta;
 use super::utils::{
     ext_of, format_mtime, format_size, fov_str, is_image_ext, name_of, preview_url, thumb_url, url_encode,
@@ -33,14 +36,28 @@ pub(super) fn viewer(s: Shared, files: Memo<Vec<Item>>, send: SendCmd, lang: RwS
         rel.with(|r| files.with(|f| f.iter().position(|(x, _)| x == r).map(|i| (i, f.len()))))
     });
 
+    let plan_kind = move || rel.with(|r| Kind::from_ext(ext_of(r)));
+
     let meta = RwSignal::new(None::<Result<FileMeta, String>>);
+    // A planning file's text, fetched once its mtime is known (`/raw` is
+    // cached for a minute; the mtime busts it after a re-save).
+    let plan_text = RwSignal::new(None::<Result<String, String>>);
     Effect::new(move |_| {
         let r = rel.get();
         meta.set(None);
+        plan_text.set(None);
         wasm_bindgen_futures::spawn_local(async move {
             let m = fetch_meta(&r).await;
-            if rel.try_get_untracked().as_ref() == Some(&r) {
-                meta.set(Some(m));
+            if rel.try_get_untracked().as_ref() != Some(&r) {
+                return;
+            }
+            let mtime = m.as_ref().ok().map(|m| m.mtime);
+            meta.set(Some(m));
+            if let (Some(mtime), Some(_)) = (mtime, Kind::from_ext(ext_of(&r))) {
+                let text = fetch_text(&format!("/api/files/raw?path={}&v={mtime}", url_encode(&r))).await;
+                if rel.try_get_untracked().as_ref() == Some(&r) {
+                    plan_text.set(Some(text));
+                }
             }
         });
     });
@@ -83,7 +100,13 @@ pub(super) fn viewer(s: Shared, files: Memo<Vec<Item>>, send: SendCmd, lang: RwS
             s.reload();
         });
     };
+    let send_load = send.clone();
     let on_slew = move |_| actions::resolve_and_slew(s.abs(&rel.get_untracked()), &send, s.flash, tr());
+    let on_load = move |_| {
+        if let Some(kind) = plan_kind() {
+            plan_actions::load(kind, s.abs(&rel.get_untracked()), send_load.clone(), s.file_reply, s.flash, tr());
+        }
+    };
 
     view! {
         <div class="absolute inset-0 z-[60] bg-bg text-text flex flex-col overflow-hidden">
@@ -151,6 +174,12 @@ pub(super) fn viewer(s: Shared, files: Memo<Vec<Item>>, send: SendCmd, lang: RwS
                         }.into_any(),
                         Some(Ok(m)) => info_cards(&m, rel.get_untracked(), s, tr()).into_any(),
                     }}
+                    {move || plan_kind().zip(plan_text.get()).map(|(kind, text)| match text {
+                        Ok(body) => plan_view::content(kind, body, tr()).into_any(),
+                        Err(e) => view! {
+                            <div class="panel p-3 text-sm text-state-err break-words">{format!("{}: {e}", tr().files_error)}</div>
+                        }.into_any(),
+                    })}
                 </div>
             </div>
 
@@ -169,6 +198,17 @@ pub(super) fn viewer(s: Shared, files: Memo<Vec<Item>>, send: SendCmd, lang: RwS
                         {move || tr().files_resolve_slew}
                     </button>
                 </Show>
+                {move || plan_kind().and_then(|k| plan_actions::load_label(k, tr())).map(|label| {
+                    let on_load = on_load.clone();
+                    view! {
+                        <button class="btn btn-primary h-11 px-5 font-semibold max-md:flex-1"
+                                disabled=move || !s.online.get()
+                                title=move || if s.online.get() { "" } else { tr().plan_offline }
+                                on:click=on_load>
+                            {label}
+                        </button>
+                    }
+                })}
             </div>
         </div>
     }

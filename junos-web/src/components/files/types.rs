@@ -4,6 +4,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
+use super::planning::parse::Kind;
 use super::utils::{is_fits_ext, is_image_ext, is_jpg_ext};
 
 /// One entry of `GET /api/files/list`.
@@ -85,6 +86,8 @@ pub(super) enum FilterKind {
     Images,
     Fits,
     Jpg,
+    /// Schedules and sequences (a mosaic import writes them here).
+    Planning,
     All,
 }
 
@@ -121,13 +124,14 @@ impl SortDir {
 }
 
 impl FilterKind {
-    pub(super) const ALL: [Self; 4] = [Self::Images, Self::Fits, Self::Jpg, Self::All];
+    pub(super) const ALL: [Self; 5] = [Self::Images, Self::Fits, Self::Jpg, Self::Planning, Self::All];
 
     pub(super) fn from_storage(v: Option<String>) -> Self {
         match v.as_deref() {
             Some("all") => Self::All,
             Some("fits") => Self::Fits,
             Some("jpg") => Self::Jpg,
+            Some("planning") => Self::Planning,
             _ => Self::Images,
         }
     }
@@ -137,6 +141,7 @@ impl FilterKind {
             Self::Images => "images",
             Self::Fits => "fits",
             Self::Jpg => "jpg",
+            Self::Planning => "planning",
             Self::All => "all",
         }
     }
@@ -146,6 +151,7 @@ impl FilterKind {
             Self::Images => is_image_ext(ext),
             Self::Fits => is_fits_ext(ext),
             Self::Jpg => is_jpg_ext(ext),
+            Self::Planning => Kind::from_ext(ext).is_some(),
             Self::All => true,
         }
     }

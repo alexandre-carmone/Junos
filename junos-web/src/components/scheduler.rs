@@ -1,18 +1,19 @@
 //! Ekos Scheduler tab.
 //!
-//! Layout (phone-first, like Focus / Mosaic): a header (status · settings),
-//! the job cards and the live log — one scrolling column on phones, jobs |
-//! log from `md` — and a pinned footer with Add job and Start / Stop. Add job,
-//! Settings and the startup/shutdown queue editor open as `form::sheet`s:
-//! bottom sheets on phones, centered panels on md+.
+//! Layout (phone-first, like Focus / Mosaic): a header (status · save ·
+//! settings), the job cards and the live log — one scrolling column on phones,
+//! jobs | log from `md` — and a pinned footer with Add job and Start / Stop.
+//! Add job, Save schedule, Settings and the startup/shutdown queue editor open
+//! as `form::sheet`s: bottom sheets on phones, centered panels on md+.
 //!
 //! Inbound:  `new_scheduler_state`, `scheduler_get_jobs`,
-//!           `scheduler_get_all_settings`
+//!           `scheduler_get_all_settings`, `scheduler_save_file`
 //! Outbound: `scheduler_start_job` (a toggle: KStars stops only a RUNNING
 //!           scheduler, else starts it), `scheduler_remove_jobs`,
 //!           `scheduler_set_all_settings` + `scheduler_add_jobs`,
-//!           `scheduler_save_sequence_file`
-//! HTTP:     `/api/taskqueue/*` (startup/shutdown queue editor)
+//!           `scheduler_save_sequence_file`, `scheduler_save_file`
+//! HTTP:     `/api/taskqueue/*` (startup/shutdown queue editor),
+//!           `/api/planning/list` (Save schedule)
 
 use std::sync::Arc;
 
@@ -29,22 +30,26 @@ mod view_add_job;
 mod view_jobs;
 mod view_log;
 mod view_queue_editor;
+mod view_save;
 mod view_settings;
 
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot, SchedulerSnapshot, SiteSnapshot};
 use crate::components::form::{sheet, FOOTER};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{Lang, t};
-use crate::ws::SendCmd;
+use crate::ws::{FileReply, SendCmd};
 use crate::ws_helpers::send_cmd;
 use crate::{SchedulerPrefillCtx, Tab};
 use labels::scheduler_status_label;
+// Files › Planning shows task queues with the editor's labels.
+pub(crate) use labels::{param_label, step_label};
 use queue_api::QueueList;
 use queue_model::QueueSlot;
 use view_add_job::{AddJobForm, AddJobSheet};
 use view_jobs::SchedulerJobs;
 use view_log::SchedulerLog;
 use view_queue_editor::SchedulerQueueEditor;
+use view_save::{SaveScheduleSheet, SAVE_ICON};
 use view_settings::{SchedulerSettings, SchedulerSettingsSheet};
 
 /// KStars' `SchedulerState` (ekos.h): RUNNING, and the states a toggle
@@ -60,6 +65,8 @@ pub fn SchedulerTab(
     #[prop(into)] site: Signal<SiteSnapshot>,
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
+    #[prop(into)] online: Signal<bool>,
+    file_reply: RwSignal<Option<FileReply>>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -75,6 +82,7 @@ pub fn SchedulerTab(
 
     // ── Sheets ──────────────────────────────────────────────────────────────
     let add_open      = RwSignal::new(false);
+    let save_open     = RwSignal::new(false);
     let settings_open = RwSignal::new(false);
     // Startup/shutdown queue editor, stacked over the settings sheet.
     let queue_editor  = RwSignal::new(Option::<QueueSlot>::None);
@@ -89,6 +97,7 @@ pub fn SchedulerTab(
                     queue_editor.set(None);
                 } else {
                     add_open.set(false);
+                    save_open.set(false);
                     settings_open.set(false);
                 }
             },
@@ -113,14 +122,26 @@ pub fn SchedulerTab(
     // ── Settings, seeded once from KStars ───────────────────────────────────
     let settings = SchedulerSettings::new();
     let seeded = RwSignal::new(false);
+    // After a schedule load (Files › Planning), the settings KStars held before
+    // it: re-seed from the next ones that differ, which the load brings.
+    let stale = StoredValue::new(None::<serde_json::Value>);
     Effect::new(move |_| {
         if seeded.get_untracked() { return; }
         scheduler.with(|s| {
-            if s.settings.is_object() {
+            if s.settings.is_object() && stale.with_value(|v| v.as_ref() != Some(&s.settings)) {
                 settings.seed(&s.settings);
                 seeded.set(true);
+                stale.set_value(None);
             }
         });
+    });
+    Effect::new(move |first: Option<()>| {
+        let loaded = file_reply.with(|r| r.as_ref().is_some_and(|r| r.cmd == "scheduler_load_file" && r.ok));
+        // Not a reply from before this tab mounted.
+        if first.is_some() && loaded {
+            stale.set_value(Some(scheduler.with_untracked(|s| s.settings.clone())));
+            seeded.set(false);
+        }
     });
 
     // Collections junos-server manages (`/api/taskqueue/list`), refreshed each
@@ -141,6 +162,8 @@ pub fn SchedulerTab(
     let on_toggle = move |_| send_cmd(&send_toggle, "scheduler_start_job", serde_json::json!({}));
 
     let send_add = Arc::clone(&send);
+    let send_save = Arc::clone(&send);
+    let can_save = move || online.get() && jobs.with(|j| !j.is_empty());
     let send_settings = Arc::clone(&send);
     let send_queue = Arc::clone(&send);
 
@@ -154,6 +177,10 @@ pub fn SchedulerTab(
                 <span class=move || format!("{} ml-auto shrink-0", scheduler_status_label(tr(), status.get()).1)>
                     {move || scheduler_status_label(tr(), status.get()).0}
                 </span>
+                <button class="btn-icon shrink-0 text-text-muted" title=move || tr().plan_save_schedule
+                        disabled=move || !can_save() on:click=move |_| save_open.set(true)>
+                    <span class="inline-block w-5 h-5" inner_html=SAVE_ICON></span>
+                </button>
                 <button class="btn-icon shrink-0 text-text-muted" title=move || tr().sched_settings_btn
                         on:click=move |_| settings_open.set(true)>
                     <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
@@ -193,6 +220,12 @@ pub fn SchedulerTab(
                 {sheet(move || tr().sched_add_job_btn, move || add_open.set(false), view! {
                     <AddJobSheet form=form site=site camera=camera filter_wheel=filter_wheel home_dir=home_dir
                                  send=Arc::clone(&send_add) lang=lang open=add_open />
+                })}
+            </Show>
+            <Show when=move || save_open.get()>
+                {sheet(move || tr().plan_save_schedule, move || save_open.set(false), view! {
+                    <SaveScheduleSheet jobs=jobs home_dir=home_dir online=online file_reply=file_reply
+                                       send=Arc::clone(&send_save) lang=lang />
                 })}
             </Show>
             <Show when=move || settings_open.get()>
