@@ -47,6 +47,7 @@ impl SkyLayer for DsoLayer {
                 gal: f.state.dso_gal,
             },
             lang: f.scene.cur_lang,
+            imaged: &f.imaged,
         };
         let mut scratch_text: Vec<TextInstance> = Vec::new();
         dso_render::build(params, None, &mut gpu.dso, &mut scratch_text);
@@ -77,6 +78,7 @@ impl SkyLayer for DsoLayer {
                 gal: f.state.dso_gal,
             },
             lang: f.scene.cur_lang,
+            imaged: &f.imaged,
         };
         let mut scratch_dso = Vec::new();
         dso_render::build(params, Some(atlas), &mut scratch_dso, out);

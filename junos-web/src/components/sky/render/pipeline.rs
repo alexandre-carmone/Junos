@@ -7,9 +7,11 @@ use web_sys::CanvasRenderingContext2d;
 
 use super::super::gpu::FontAtlas;
 use super::layer::{Frame, GpuPrepare, SkyLayer};
+use super::layers::allsky::AllskyLayer;
 use super::layers::center_crosshair::CenterCrosshairLayer;
 use super::layers::constellation_names::ConstellationNamesLayer;
 use super::layers::dso::DsoLayer;
+use super::layers::dso_image::DsoImageLayer;
 use super::layers::fov_reticle::FovReticleLayer;
 use super::layers::grids::{AltAzGridLayer, EclipticLayer, EqGridLayer, MeridianLayer};
 use super::layers::ground::GroundLayer;
@@ -44,7 +46,11 @@ impl RenderPipeline {
     /// fallback-mode visuals stack identically.
     pub fn standard() -> Self {
         let mut p = Self::empty();
-        // Ground first, behind everything else.
+        // Survey imagery under everything: the Milky Way panorama (GPU only)
+        // and the DSO sprites, which in fallback mode paint before the grids.
+        p.register(Box::new(AllskyLayer));
+        p.register(Box::new(DsoImageLayer::default()));
+        // Ground, behind everything else drawn as lines.
         p.register(Box::new(GroundLayer));
         // Line grids (alt-az / meridian / equatorial / ecliptic).
         p.register(Box::new(AltAzGridLayer));
@@ -81,13 +87,15 @@ impl RenderPipeline {
         self.layers.push(layer);
     }
 
-    pub fn gpu_prepare(&self) -> &GpuPrepare {
-        &self.gpu_prepare
+    /// This frame's GPU instance lists, after `run`. The caller sets the
+    /// star/constellation flags on it and hands it to `submit_frame`.
+    pub fn gpu_prepare_mut(&mut self) -> &mut GpuPrepare {
+        &mut self.gpu_prepare
     }
 
     /// Run prepare → draw on every enabled layer.
     ///
-    /// The caller then passes `self.gpu_prepare()` to
+    /// The caller then passes `self.gpu_prepare_mut()` to
     /// `SkyRenderer::submit_frame`.
     pub fn run(
         &mut self,

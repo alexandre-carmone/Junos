@@ -2,9 +2,11 @@
 //! `SkyLayer` impl, migrated incrementally from the legacy free fns in
 //! `super::mod` (`render_*`).
 
+pub mod allsky;
 pub mod center_crosshair;
 pub mod constellation_names;
 pub mod dso;
+pub mod dso_image;
 pub mod fov_reticle;
 pub mod grids;
 pub mod ground;

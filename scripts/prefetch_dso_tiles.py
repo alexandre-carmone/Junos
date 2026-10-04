@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = []
+# dependencies = ["pillow>=10"]
 # ///
 """Pre-download one hips2fits survey cutout per DSO so the Framing Assistant
 works without internet.
@@ -15,11 +15,25 @@ Assistant uses a tile when it covers the requested mosaic and otherwise falls
 back to the live `/api/skysurvey` proxy.
 
 Usage:
-    uv run scripts/prefetch_dso_tiles.py                  # all 7960 objects
+    uv run scripts/prefetch_dso_tiles.py                  # all 7960 objects (+ thumbnails)
     uv run scripts/prefetch_dso_tiles.py --status         # coverage report, no downloads
     uv run scripts/prefetch_dso_tiles.py --limit 50       # smoke test
     uv run scripts/prefetch_dso_tiles.py --workers 8
     uv run scripts/prefetch_dso_tiles.py --only M31,M42,"NGC 7000"
+    uv run scripts/prefetch_dso_tiles.py --thumbs         # (re)build thumbs/ from the tiles on disk
+    uv run scripts/prefetch_dso_tiles.py --allsky         # fetch the Milky Way panorama (allsky.jpg)
+
+Besides the full-size tiles the Framing Assistant composites, the planetarium
+draws two things from this cache:
+
+  * `thumbs/<slug>.jpg` — a THUMB_PX square per tile, written by `--thumbs`
+    (and automatically at the end of a fetch run). The sky draws these as
+    additive sprites at each object's true size and orientation, so the
+    thumbnail bakes in what the shader would otherwise need: the sky
+    background level is subtracted and the edges fade to black.
+  * `allsky.jpg` / `allsky_small.jpg` — one equirectangular (plate carrée)
+    J2000 panorama of the whole sky, the Milky Way background. Fetched by
+    `--allsky` from ALLSKY_HIPS.
 
 Resumable: an object whose tile is already on disk and non-empty is skipped, so
 re-running after an interruption costs nothing. The index is rewritten from
@@ -34,6 +48,8 @@ everything at the current TILE_PX.
 Output layout (under --out, default `.cache/dso_tiles/`):
     index.json         [{ name, path, ra, dec, fov }, …]  ra/dec J2000 deg
     <slug>.jpg         one cutout per object
+    thumbs/<slug>.jpg  THUMB_PX square sprite of the same cutout
+    allsky.jpg         ALLSKY_W × ALLSKY_W/2 Milky Way panorama (+ allsky_small.jpg)
 """
 
 from __future__ import annotations
@@ -84,6 +100,32 @@ SIZE_MARGIN = 2.0
 # and stays inside the server's 10 deg hips2fits clamp.
 FOV_MIN_DEG = 1.0
 FOV_MAX_DEG = 20.0
+
+# ── planetarium sprites (thumbs/) ────────────────────────────────────────────
+THUMB_DIR = "thumbs"
+THUMB_PX = 512
+THUMB_QUALITY = 85
+# Luminance percentile taken as the tile's sky background; everything at or
+# below it becomes black so the sprite adds nothing where there is no object.
+THUMB_BLACK_PCT = 0.10
+# Radial fade: full image out to this fraction of the half-side, black at the
+# edge, so adjacent sprites overlap without visible squares.
+THUMB_VIGNETTE_START = 0.72
+
+# ── all-sky Milky Way panorama ───────────────────────────────────────────────
+# Mellinger's optical panorama is the usual planetarium backdrop; DSS2 colour
+# ("CDS/P/DSS2/color") works too but is noisier and shows plate seams at
+# this scale.
+ALLSKY_HIPS = "CDS/P/Mellinger/color"
+ALLSKY_FILE = "allsky.jpg"
+ALLSKY_SMALL_FILE = "allsky_small.jpg"
+ALLSKY_W = 4096          # height is always ALLSKY_W / 2 (plate carrée)
+ALLSKY_SMALL_W = 2048    # phones / adapters with a 2048 px texture limit
+# Orientation of the delivered image — the sky shader relies on this:
+#   plate carrée centred on RA 0h / Dec 0°, north up, east LEFT (the sky as
+#   seen from inside), so RA increases leftward from the centre column:
+#   u = 0.5 - ra/360 (wrapping), v = (90 - dec)/180.
+ALLSKY_CENTER_RA = 0.0
 
 KIND_NAMES = [
     "Galaxy", "OpenCluster", "GlobularCluster", "Nebula",
@@ -201,6 +243,124 @@ def human_bytes(n: float) -> str:
     return f"{n:,.1f} TB"
 
 
+# ── thumbnails ───────────────────────────────────────────────────────────────
+
+_vignette_cache: dict[int, "Image.Image"] = {}
+
+
+def vignette_mask(px: int) -> "Image.Image":
+    """`L` mask: 255 inside THUMB_VIGNETTE_START, smoothly down to 0 at the
+    inscribed circle's edge. Built once per size — the same for every tile."""
+    from PIL import Image
+    if px in _vignette_cache:
+        return _vignette_cache[px]
+    half = px / 2.0
+    start = THUMB_VIGNETTE_START
+    data = bytearray(px * px)
+    i = 0
+    for y in range(px):
+        dy = (y + 0.5 - half) / half
+        for x in range(px):
+            dx = (x + 0.5 - half) / half
+            r = (dx * dx + dy * dy) ** 0.5
+            t = (r - start) / (1.0 - start)
+            if t <= 0.0:
+                v = 255
+            elif t >= 1.0:
+                v = 0
+            else:
+                # smoothstep — no visible ring where the fade starts
+                v = int(round(255.0 * (1.0 - t * t * (3.0 - 2.0 * t))))
+            data[i] = v
+            i += 1
+    mask = Image.frombytes("L", (px, px), bytes(data))
+    _vignette_cache[px] = mask
+    return mask
+
+
+def make_thumb(src: str, dst: str) -> bool:
+    """Write the planetarium sprite for one tile. False if the JPEG is unreadable."""
+    from PIL import Image
+    try:
+        with Image.open(src) as im:
+            im = im.convert("RGB")
+            im = im.resize((THUMB_PX, THUMB_PX), Image.LANCZOS)
+    except (OSError, ValueError) as e:
+        print(f"    thumb: cannot read {src}: {e}", file=sys.stderr)
+        return False
+
+    # Black level: the sky background of a DSS cutout is a grey of 20-50/255.
+    # Drawn additively that would add a grey disc around every object, so
+    # take a low luminance percentile as the floor and stretch from there.
+    hist = im.convert("L").histogram()
+    total = sum(hist)
+    target = total * THUMB_BLACK_PCT
+    acc = 0
+    floor = 0
+    for v, n in enumerate(hist):
+        acc += n
+        if acc >= target:
+            floor = v
+            break
+    floor = min(floor, 200)
+    if floor > 0:
+        scale = 255.0 / (255.0 - floor)
+        lut = [max(0, min(255, int(round((v - floor) * scale)))) for v in range(256)]
+        im = im.point(lut * 3)
+
+    black = Image.new("RGB", (THUMB_PX, THUMB_PX), (0, 0, 0))
+    out = Image.composite(im, black, vignette_mask(THUMB_PX))
+    tmp = dst + ".part"
+    out.save(tmp, "JPEG", quality=THUMB_QUALITY, optimize=True)
+    os.replace(tmp, dst)
+    return True
+
+
+# ── all-sky panorama ─────────────────────────────────────────────────────────
+
+def allsky_url(base: str, width: int) -> str:
+    q = urllib.parse.urlencode({
+        "hips": ALLSKY_HIPS,
+        "width": width,
+        "height": width // 2,
+        "fov": "360",
+        "projection": "CAR",
+        "coordsys": "icrs",
+        "ra": f"{ALLSKY_CENTER_RA:.1f}",
+        "dec": "0.0",
+        "format": "jpg",
+    })
+    return f"{base}?{q}"
+
+
+def fetch_allsky(out_dir: str, width: int, timeout: float, retries: int, delay: float) -> bool:
+    """Download `allsky.jpg` at `width` px and derive `allsky_small.jpg` from it."""
+    from PIL import Image
+    data = None
+    for i, base in enumerate(HIPS2FITS_MIRRORS):
+        data = fetch_one(allsky_url(base, width), timeout, retries, delay)
+        if data is not None:
+            break
+        if i + 1 < len(HIPS2FITS_MIRRORS):
+            print(f"    mirror {base} failed, trying next", file=sys.stderr)
+    if data is None:
+        return False
+    big = os.path.join(out_dir, ALLSKY_FILE)
+    tmp = big + ".part"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, big)
+    with Image.open(big) as im:
+        w, h = im.size
+        print(f"allsky: {w}x{h} → {big}")
+        small = im.convert("RGB").resize((ALLSKY_SMALL_W, ALLSKY_SMALL_W // 2), Image.LANCZOS)
+        small_path = os.path.join(out_dir, ALLSKY_SMALL_FILE)
+        small.save(small_path + ".part", "JPEG", quality=88, optimize=True)
+        os.replace(small_path + ".part", small_path)
+        print(f"allsky: {ALLSKY_SMALL_W}x{ALLSKY_SMALL_W // 2} → {small_path}")
+    return True
+
+
 # ── download ─────────────────────────────────────────────────────────────────
 
 def tile_url(base: str, ra: float, dec: float, fov: float) -> str:
@@ -266,7 +426,15 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="refetch tiles that already exist")
     ap.add_argument("--index-only", action="store_true", help="rebuild index.json from files on disk, download nothing")
     ap.add_argument("--status", action="store_true", help="report cache coverage and exit, downloading nothing")
+    ap.add_argument("--thumbs", action="store_true", help="build thumbs/ for the tiles on disk, download nothing")
+    ap.add_argument("--allsky", action="store_true", help="fetch the Milky Way panorama (allsky.jpg), nothing else")
+    ap.add_argument("--allsky-px", type=int, default=ALLSKY_W, help=f"panorama width in px (default: {ALLSKY_W})")
     args = ap.parse_args()
+
+    if args.allsky:
+        os.makedirs(args.out, exist_ok=True)
+        ok = fetch_allsky(args.out, args.allsky_px, args.timeout, args.retries, args.delay)
+        return 0 if ok else 1
 
     objects = read_dso_bin(DSO_BIN)
     print(f"catalog: {len(objects)} objects from {DSO_BIN}")
@@ -301,6 +469,40 @@ def main() -> int:
     def have(entry: dict) -> bool:
         p = tile_path(entry)
         return os.path.exists(p) and os.path.getsize(p) > 1024
+
+    thumb_dir = os.path.join(args.out, THUMB_DIR)
+
+    def thumb_path(entry: dict) -> str:
+        return os.path.join(thumb_dir, f"{entry['slug']}.jpg")
+
+    def have_thumb(entry: dict) -> bool:
+        p = thumb_path(entry)
+        return os.path.exists(p) and os.path.getsize(p) > 256
+
+    def write_thumbs(force: bool) -> int:
+        """Build every missing sprite from the tiles on disk. Returns how many were written."""
+        todo_t = [e for e in planned if have(e) and (force or not have_thumb(e))]
+        if not todo_t:
+            return 0
+        os.makedirs(thumb_dir, exist_ok=True)
+        print(f"thumbs: {len(todo_t)} to build → {thumb_dir}")
+        n_done = 0
+        t_lock = threading.Lock()
+        t_start = time.time()
+
+        def one(entry: dict) -> None:
+            nonlocal n_done
+            make_thumb(tile_path(entry), thumb_path(entry))
+            with t_lock:
+                n_done += 1
+                n = n_done
+            if n % 200 == 0 or n == len(todo_t):
+                rate = n / max(time.time() - t_start, 1e-6)
+                print(f"  thumbs [{n}/{len(todo_t)}] {rate:.0f}/s")
+
+        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+            list(pool.map(one, todo_t))
+        return len(todo_t)
 
     def write_index() -> int:
         index = [
@@ -348,6 +550,17 @@ def main() -> int:
             flag = "" if dim == f"{TILE_PX}x{TILE_PX}" else f"  (not current TILE_PX={TILE_PX}; --force to refetch)"
             print(f"  {dim:>11}: {count:,}{flag}")
 
+        n_thumbs = sum(1 for e in present if have_thumb(e))
+        print(f"thumbs:  {n_thumbs:,} / {n_have:,}"
+              + ("" if n_thumbs == n_have else "  (run --thumbs)"))
+        for name in (ALLSKY_FILE, ALLSKY_SMALL_FILE):
+            p = os.path.join(args.out, name)
+            if os.path.exists(p):
+                d = jpeg_dims(p)
+                print(f"allsky:  {name} {d[0]}x{d[1]}" if d else f"allsky:  {name} unreadable")
+            else:
+                print(f"allsky:  {name} absent (run --allsky)")
+
         # A stale index is invisible to the server, which trusts it verbatim.
         idx_path = os.path.join(args.out, "index.json")
         try:
@@ -359,6 +572,11 @@ def main() -> int:
             print(f"index:   absent — run --index-only ({n_have:,} tiles on disk are unused without it)")
         return 0
 
+    if args.thumbs:
+        n = write_thumbs(args.force)
+        print(f"thumbs: {n} written, {sum(1 for e in planned if have_thumb(e)):,} on disk")
+        return 0
+
     if args.index_only:
         print(f"index.json rebuilt: {write_index()} tiles")
         return 0
@@ -368,6 +586,7 @@ def main() -> int:
     print(f"to fetch: {len(todo)}  (already on disk: {skipped})")
     if not todo:
         print(f"index.json: {write_index()} tiles")
+        write_thumbs(False)
         return 0
 
     print(f"~{human_bytes(len(todo) * mean_bytes)} estimated, "
@@ -412,6 +631,7 @@ def main() -> int:
 
     total = write_index()
     print(f"\nindex.json: {total} tiles in {args.out}")
+    write_thumbs(False)
     if failed:
         print(f"{len(failed)} failed (re-run to retry): {', '.join(failed[:10])}"
               + (" …" if len(failed) > 10 else ""), file=sys.stderr)

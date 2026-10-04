@@ -80,6 +80,8 @@ pub struct LayerToggles {
     pub dso_on: bool,
     pub scheduler_jobs_on: bool,
     pub solved_image_on: bool,
+    pub dso_images_on: bool,
+    pub milky_way_on: bool,
 }
 
 /// Borrowed/cloned subsystem state read by overlay layers (mount, camera,
@@ -105,6 +107,10 @@ pub struct OverlayState {
     pub solved_image: Option<SolvedImage>,
     pub solved_image_opacity: f64,
     pub solve_age_ms: Option<f64>,
+
+    /// Gain applied to the DSO sprites (1.0 = the survey as is).
+    pub dso_images_brightness: f64,
+    pub milky_way_opacity: f64,
 
     pub scheduler_jobs: Vec<SchedulerJobRender>,
     pub mosaic_kstars: Option<MosaicPlanRender>,

@@ -99,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/skysurvey",   get(skysurvey::skysurvey))
         .route("/api/dso_tiles/index.json", get(dso_tiles::index))
         .route("/api/dso_tiles/:name",      get(dso_tiles::tile))
+        .route("/api/dso_tiles/thumbs/:name", get(dso_tiles::thumb))
         .route("/message/ekos", get(kstars_ws::message_handler))
         .route("/media/ekos", get(kstars_ws::media_handler))
         .route("/api/files/list",     get(files::list))

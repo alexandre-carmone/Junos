@@ -9,8 +9,10 @@ use wgpu::util::DeviceExt;
 
 pub mod layers;
 pub mod text;
+pub mod texture_upload;
 
 pub use layers::dso::DsoInstance;
+pub use layers::dso_image::SpriteRequest;
 pub use layers::lines::{LineSegment, LineView};
 pub use text::{FontAtlas, TextInstance};
 
@@ -62,6 +64,10 @@ pub struct SkyRenderer {
     lines: layers::lines::LineLayer,
     dso:   layers::dso::DsoLayer,
     text:  Option<text::TextLayer>,
+    // Both image layers need a scratch <canvas> to build mip chains; without
+    // a document they are simply absent and the sky draws as before.
+    dso_images: Option<layers::dso_image::DsoImageLayer>,
+    allsky:     Option<layers::allsky::AllskyLayer>,
 
     star_count: u32,
     line_count: u32,
@@ -70,7 +76,13 @@ pub struct SkyRenderer {
 }
 
 impl SkyRenderer {
-    pub async fn init(canvas: HtmlCanvasElement, star_data: Vec<[f32; 4]>, line_data: Vec<[u32; 2]>) -> Option<Self> {
+    /// `is_mobile` picks smaller image textures (see `DsoImageLayer::new`).
+    pub async fn init(
+        canvas: HtmlCanvasElement,
+        star_data: Vec<[f32; 4]>,
+        line_data: Vec<[u32; 2]>,
+        is_mobile: bool,
+    ) -> Option<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
             ..Default::default()
@@ -405,6 +417,8 @@ impl SkyRenderer {
         // Text layer is optional: if atlas baking fails (no document, no
         // canvas, etc.) we degrade gracefully — labels remain on Canvas2D.
         let text = text::TextLayer::new(&device, &queue, format, &uniform_buf);
+        let dso_images = layers::dso_image::DsoImageLayer::new(&device, format, &uniform_buf, is_mobile);
+        let allsky = layers::allsky::AllskyLayer::new(&device, format, &uniform_buf);
 
         Some(Self {
             device,
@@ -423,6 +437,8 @@ impl SkyRenderer {
             lines,
             dso,
             text,
+            dso_images,
+            allsky,
             star_count,
             line_count,
             width,
@@ -456,6 +472,11 @@ impl SkyRenderer {
         self.text.as_ref().map(|t| &t.atlas)
     }
 
+    /// How many DSO sprites can be resident at once (0 without the layer).
+    pub fn sprite_capacity(&self) -> usize {
+        self.dso_images.as_ref().map_or(0, |l| l.capacity_layers())
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
@@ -477,6 +498,19 @@ impl SkyRenderer {
         self.upload_lines(&prep.lines);
         self.upload_dso(&prep.dso);
         self.upload_text(&prep.text);
+        if let Some(layer) = self.dso_images.as_mut() {
+            layer.upload(&self.device, &self.queue, &self.uniform_buf, &prep.sprites);
+        }
+        if let Some(layer) = self.allsky.as_mut() {
+            layer.upload(
+                &self.device,
+                &self.queue,
+                &self.uniform_buf,
+                prep.allsky.as_ref(),
+                prep.show_milky_way,
+                prep.milky_way_opacity,
+            );
+        }
         self.render_inner(uniforms, prep.show_stars, prep.show_constellations);
     }
 
@@ -551,6 +585,16 @@ impl SkyRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            // Imagery first: the Milky Way panorama replaces the clear colour
+            // where it is loaded, then the DSO sprites add onto it. Everything
+            // after composites over them.
+            if let Some(layer) = self.allsky.as_ref() {
+                layer.draw(&mut rp);
+            }
+            if let Some(layer) = self.dso_images.as_ref() {
+                layer.draw(&mut rp);
+            }
 
             // Generic line layer (horizon, grids, meridian, ecliptic,
             // crosshairs, slew trail, zenith). Drawn before constellations

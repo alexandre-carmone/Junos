@@ -10,6 +10,7 @@ mod actions;
 mod calib;
 pub(crate) mod clock;
 mod controls;
+pub(crate) mod dso_images;
 pub(crate) mod dso_index;
 mod dso_render;
 mod dso_shape;
@@ -92,6 +93,10 @@ pub struct SkyToggles {
     pub dso_galaxy_cluster: RwSignal<bool>,
     pub dso_mag_limit:      RwSignal<f64>,
     pub scheduler_jobs:     RwSignal<bool>,
+    pub dso_images:         RwSignal<bool>,
+    pub dso_images_brightness: RwSignal<f64>,
+    pub milky_way:          RwSignal<bool>,
+    pub milky_way_opacity:  RwSignal<f64>,
 }
 
 impl SkyToggles {
@@ -114,6 +119,8 @@ impl SkyToggles {
             dso_on: self.dso.get(),
             scheduler_jobs_on: self.scheduler_jobs.get(),
             solved_image_on: self.solved_image.get(),
+            dso_images_on: self.dso_images.get(),
+            milky_way_on: self.milky_way.get(),
         }
     }
 
@@ -534,6 +541,10 @@ pub fn SkyTab(
         dso_galaxy_cluster: persisted("sky_dso_galaxy_cluster", true),
         dso_mag_limit:      persisted("sky_dso_mag_limit", 11.0),
         scheduler_jobs:     persisted("sky_show_scheduler_jobs", true),
+        dso_images:         persisted("sky_show_dso_images", true),
+        dso_images_brightness: persisted("sky_dso_images_brightness", 1.0),
+        milky_way:          persisted("sky_show_milky_way", true),
+        milky_way_opacity:  persisted("sky_milky_way_opacity", 0.6),
     };
     let dso_mag_limit = toggles.dso_mag_limit;
 
@@ -691,6 +702,16 @@ pub fn SkyTab(
         });
     }
 
+    // ── Survey imagery (DsoImageLayer / AllskyLayer) ──────────────────────
+    // Decoded sprites and the Milky Way panorama; `dso_images_epoch` wakes the
+    // render Effect when a load lands. The tile index arrives from the server
+    // once, through `DsoTilesCtx`.
+    let dso_images_epoch = RwSignal::new(0u32);
+    let dso_images: Rc<RefCell<dso_images::DsoImageCache>> = Rc::new(RefCell::new(
+        dso_images::DsoImageCache::new(dso_images_epoch, mobile_profile.is_mobile),
+    ));
+    let dso_tiles_ctx = use_context::<crate::DsoTilesCtx>().map(|c| c.0);
+
     // ── FOV diagnostics ───────────────────────────────────────────────────
     // Log the inputs and the resulting reticle FOV whenever the camera geometry,
     // the last solve, or the nominal focal length changes (NOT per frame). Lets
@@ -743,6 +764,7 @@ pub fn SkyTab(
 
     // ── GPU init ───────────────────────────────────────────────────────────
     let gpu_for_init = Rc::clone(&gpu_renderer);
+    let is_mobile_for_gpu = mobile_profile.is_mobile;
     Effect::new(move || {
         let Some(gpu_canvas) = gpu_canvas_ref.get() else { return; };
         let Some(cat) = catalog_sig.get() else { return; };
@@ -753,7 +775,9 @@ pub fn SkyTab(
         let line_data = cat.packed_line_buffer();
         let gpu_canvas_el: HtmlCanvasElement = gpu_canvas.clone().into();
         wasm_bindgen_futures::spawn_local(async move {
-            if let Some(renderer) = SkyRenderer::init(gpu_canvas_el, star_data, line_data).await {
+            if let Some(renderer) =
+                SkyRenderer::init(gpu_canvas_el, star_data, line_data, is_mobile_for_gpu).await
+            {
                 *gpu.borrow_mut() = Some(renderer);
                 set_gpu_ready.set(true);
             }
@@ -770,6 +794,7 @@ pub fn SkyTab(
     let trail_for_render = Rc::clone(&slew_trail);
     let trail_for_sample = Rc::clone(&slew_trail);
     let solved_image_for_render = Rc::clone(&solved_image);
+    let dso_images_for_render = Rc::clone(&dso_images);
     let _render_handle = Effect::new(move || {
         // Read all reactive deps to subscribe
         let m = mount.get();
@@ -785,6 +810,14 @@ pub fn SkyTab(
         let dso_mag = dso_mag_limit.get();
         let _ = solved_image_epoch.get();
         let solved_image_opacity = toggles.solved_image_opacity.get();
+        let _ = dso_images_epoch.get();
+        let dso_images_brightness = toggles.dso_images_brightness.get();
+        let milky_way_opacity = toggles.milky_way_opacity.get();
+        // The tile index lands once; subscribing here redraws when it does.
+        let dso_tiles = dso_tiles_ctx.and_then(|c| c.get());
+        if let Ok(mut cache) = dso_images_for_render.try_borrow_mut() {
+            cache.set_index(dso_tiles);
+        }
         // Solve-derived when possible (see `reticle_focal_mm`); the FOV
         // reticle, mosaic preview and scheduler-job frames all read this `fl`.
         let nominal_fl = focal_length_mm.get();
@@ -1048,6 +1081,8 @@ pub fn SkyTab(
             solved_image: solved_image_for_render.borrow().clone(),
             solved_image_opacity,
             solve_age_ms: sv.solved_at_ms.map(|t| js_sys::Date::now() - t),
+            dso_images_brightness,
+            milky_way_opacity,
             scheduler_jobs: scheduler_jobs_data,
             mosaic_kstars: mosaic_kstars_render,
             mosaic_plan:   mosaic_plan_render,
@@ -1061,6 +1096,11 @@ pub fn SkyTab(
             dso: dso_cat.as_ref(),
             dso_index: dso_idx.as_deref(),
         };
+        let sprite_capacity = if has_gpu {
+            gpu_for_render.try_borrow().ok().and_then(|o| o.as_ref().map(|r| r.sprite_capacity())).unwrap_or(0)
+        } else {
+            0
+        };
         let mut frame = Frame {
             view: &view,
             scene: &scene,
@@ -1070,6 +1110,9 @@ pub fn SkyTab(
             catalogs: &catalogs,
             hit_items: &mut hits,
             slew_trail: trail_slice,
+            dso_images: Some(&dso_images_for_render),
+            imaged: Vec::new(),
+            sprite_capacity,
         };
         if has_gpu {
             if let (Some(uniforms), Ok(mut pipe), Ok(mut opt)) = (
@@ -1079,14 +1122,10 @@ pub fn SkyTab(
             ) {
                 if let Some(renderer) = opt.as_mut() {
                     pipe.run(&mut frame, &ctx, renderer.font_atlas());
-                    let prep = render::layer::GpuPrepare {
-                        lines: pipe.gpu_prepare().lines.clone(),
-                        dso: pipe.gpu_prepare().dso.clone(),
-                        text: pipe.gpu_prepare().text.clone(),
-                        show_stars: layer_toggles.stars_on,
-                        show_constellations: layer_toggles.const_on,
-                    };
-                    renderer.submit_frame(&prep, &uniforms);
+                    let prep = pipe.gpu_prepare_mut();
+                    prep.show_stars = layer_toggles.stars_on;
+                    prep.show_constellations = layer_toggles.const_on;
+                    renderer.submit_frame(prep, &uniforms);
                 }
             }
         } else if let Ok(mut pipe) = pipeline_for_render.try_borrow_mut() {

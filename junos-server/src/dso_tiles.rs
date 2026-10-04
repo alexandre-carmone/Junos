@@ -1,9 +1,12 @@
 //! Offline DSO tile cache for the browser's Framing Assistant.
 //!
 //! `GET /api/dso_tiles/index.json` lists the pre-downloaded survey cutouts;
-//! `GET /api/dso_tiles/<file>.jpg` serves one. The directory is populated
-//! ahead of time by `uv run scripts/prefetch_dso_tiles.py` and is *not* part
-//! of the repo — it holds ~10 GB of JPEGs.
+//! `GET /api/dso_tiles/<file>.jpg` serves one, and
+//! `GET /api/dso_tiles/thumbs/<file>.jpg` its planetarium sprite (the same
+//! cutout at 512 px, background-subtracted and vignetted). The directory is
+//! populated ahead of time by `uv run scripts/prefetch_dso_tiles.py` and is
+//! *not* part of the repo — it holds ~10 GB of JPEGs. The same route also
+//! serves the all-sky Milky Way panorama (`allsky.jpg`, `allsky_small.jpg`).
 //!
 //! This is what lets framing work with no internet: the client stamps every
 //! cached tile that overlaps the zone it wants to draw, and leaves the rest
@@ -52,13 +55,31 @@ pub async fn tile(
     Ok((StatusCode::OK, headers, Bytes::from(bytes)).into_response())
 }
 
+/// Serve one planetarium sprite (`thumbs/<slug>.jpg`) by file name.
+pub async fn thumb(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Response, StatusCode> {
+    if !is_safe_tile_name(&name) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let path = state.config.resolved_dso_tile_dir().join("thumbs").join(&name);
+    let bytes = std::fs::read(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, "image/jpeg".parse().unwrap());
+    headers.insert(header::CACHE_CONTROL, "private, max-age=86400".parse().unwrap());
+    Ok((StatusCode::OK, headers, Bytes::from(bytes)).into_response())
+}
+
 /// `<slug>.jpg` where slug is the `[a-z0-9]+` form written by
-/// `scripts/prefetch_dso_tiles.py::slug()`.
+/// `scripts/prefetch_dso_tiles.py::slug()`, plus `_` for the script's two
+/// panorama files. No separators or dots, so no traversal is possible.
 fn is_safe_tile_name(name: &str) -> bool {
     let Some(stem) = name.strip_suffix(".jpg") else { return false };
     !stem.is_empty()
         && stem.len() <= 64
-        && stem.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && stem.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
 #[cfg(test)]
@@ -69,6 +90,13 @@ mod tests {
     fn accepts_prefetch_slugs() {
         assert!(is_safe_tile_name("m31.jpg"));
         assert!(is_safe_tile_name("ngc7000.jpg"));
+    }
+
+    #[test]
+    fn accepts_the_allsky_panoramas() {
+        // Served through the tile route; the name check must let them through.
+        assert!(is_safe_tile_name("allsky.jpg"));
+        assert!(is_safe_tile_name("allsky_small.jpg"));
     }
 
     #[test]

@@ -29,6 +29,9 @@ pub struct DsoBuildParams<'a> {
     pub is_mobile:   bool,
     pub kind_filter: KindFilter,
     pub lang:        Lang,
+    /// Sorted catalog indices drawn as images this frame — no outline for
+    /// these, only the label.
+    pub imaged:      &'a [u32],
 }
 
 #[derive(Copy, Clone)]
@@ -154,20 +157,22 @@ pub fn build(
         );
 
         let color = kind_color(dso.kind);
-        out_dso.push(DsoInstance {
-            pos_x: sx as f32,
-            pos_y: sy as f32,
-            half_w: shape.half_w as f32,
-            half_h: shape.half_h as f32,
-            cos_rot: shape.cos_rot as f32,
-            sin_rot: shape.sin_rot as f32,
-            kind: kind_to_u32(dso.kind),
-            _pad0: 0,
-            color_r: color[0],
-            color_g: color[1],
-            color_b: color[2],
-            color_a: color[3],
-        });
+        if p.imaged.binary_search(&(di as u32)).is_err() {
+            out_dso.push(DsoInstance {
+                pos_x: sx as f32,
+                pos_y: sy as f32,
+                half_w: shape.half_w as f32,
+                half_h: shape.half_h as f32,
+                cos_rot: shape.cos_rot as f32,
+                sin_rot: shape.sin_rot as f32,
+                kind: kind_to_u32(dso.kind),
+                _pad0: 0,
+                color_r: color[0],
+                color_g: color[1],
+                color_b: color[2],
+                color_a: color[3],
+            });
+        }
 
         // Label. Mobile gates and FOV gates match render_dso.
         let label_fov_gate = if p.is_mobile { 25.0 } else { 50.0 };

@@ -83,7 +83,22 @@ pub fn SkyControls(
                     <LayerChip on=toggles.constellations label=|t| t.constellations />
                     <LayerChip on=toggles.con_names label=|t| t.layer_con_names />
                     <LayerChip on=toggles.solar_system label=|t| t.solar_system />
+                    <LayerChip on=toggles.milky_way label=|t| t.layer_milky_way />
                 </div>
+                <label class="flex items-center gap-2 text-text-muted">
+                    <span class="whitespace-nowrap">{move || tr().layer_milky_way_opacity}</span>
+                    <input type="range" min="0.1" max="1" step="0.05" class="flex-1 min-w-0 accent-accent-cyan"
+                           prop:disabled=move || !toggles.milky_way.get()
+                           prop:value=move || toggles.milky_way_opacity.get().to_string()
+                           on:input=move |ev| {
+                               if let Ok(v) = event_target_value(&ev).parse::<f64>() {
+                                   toggles.milky_way_opacity.set(v.clamp(0.1, 1.0));
+                               }
+                           } />
+                    <span class="font-mono text-text w-[4ch] text-right">
+                        {move || format!("{:.0}%", toggles.milky_way_opacity.get() * 100.0)}
+                    </span>
+                </label>
 
                 <div class=GROUP>{move || tr().layer_grids}</div>
                 <div class=ROW>
@@ -97,6 +112,7 @@ pub fn SkyControls(
                 <div class=GROUP>{move || tr().layer_dso}</div>
                 <div class=ROW>
                     <LayerChip on=toggles.dso label=|t| t.all_dso />
+                    <LayerChip on=toggles.dso_images label=|t| t.layer_dso_images />
                     <LayerChip on=toggles.dso_galaxy label=|t| t.galaxies>
                         <svg width="14" height="10">
                             <ellipse cx="7" cy="5" rx="6" ry="2.5"
@@ -166,6 +182,20 @@ pub fn SkyControls(
                            } />
                     <span class="font-mono text-text w-[4ch] text-right">
                         {move || format!("{:.1}", toggles.dso_mag_limit.get())}
+                    </span>
+                </label>
+                <label class="flex items-center gap-2 text-text-muted">
+                    <span class="whitespace-nowrap">{move || tr().layer_dso_images_brightness}</span>
+                    <input type="range" min="0.2" max="1.5" step="0.05" class="flex-1 min-w-0 accent-accent-cyan"
+                           prop:disabled=move || !(toggles.dso.get() && toggles.dso_images.get())
+                           prop:value=move || toggles.dso_images_brightness.get().to_string()
+                           on:input=move |ev| {
+                               if let Ok(v) = event_target_value(&ev).parse::<f64>() {
+                                   toggles.dso_images_brightness.set(v.clamp(0.2, 1.5));
+                               }
+                           } />
+                    <span class="font-mono text-text w-[4ch] text-right">
+                        {move || format!("{:.0}%", toggles.dso_images_brightness.get() * 100.0)}
                     </span>
                 </label>
 

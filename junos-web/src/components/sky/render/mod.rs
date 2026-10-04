@@ -477,13 +477,15 @@ pub(super) fn render_dso(
         let angle = shape.sin_rot.atan2(shape.cos_rot);
 
         // When `dso_on_gpu` is set, the GPU DsoLayer renders the symbol —
-        // skip the Canvas2D outline entirely.
+        // skip the Canvas2D outline entirely. An object whose survey image
+        // is drawn this frame (`DsoImageLayer`) gets no outline either.
         //
         // Every symbol is drawn in the object's own frame: origin at its
         // centre, +x along the major axis. `half_w`/`half_h` are the true
         // angular semi-axes in px, so the outline traces the object's real
         // extent and orientation rather than a fixed-size glyph.
-        if !f.mode.is_gpu() {
+        let has_image = f.imaged.binary_search(&(di as u32)).is_ok();
+        if !f.mode.is_gpu() && !has_image {
             let (a, b) = (shape.half_w, shape.half_h);
             ctx.save();
             ctx.translate(sx, sy).unwrap();

@@ -6,17 +6,19 @@
 //! whether a layer's GPU prepare or its Canvas2D fallback is the source of
 //! truth this frame.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
-use web_sys::CanvasRenderingContext2d;
+use web_sys::{CanvasRenderingContext2d, HtmlImageElement};
 
 use crate::catalog::CatalogData;
 use crate::dso_catalog::DsoCatalogData;
 
+use super::super::dso_images::DsoImageCache;
 use super::super::dso_index::DsoIndex;
 use super::super::gpu::layers::dso::DsoInstance;
 use super::super::gpu::layers::lines::{LineSegment, LineView};
-use super::super::gpu::{FontAtlas, TextInstance};
+use super::super::gpu::{FontAtlas, SpriteRequest, TextInstance};
 use super::{HitItem, LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
 
 /// Borrowed catalog handles. Layers don't own catalog state — they read it.
@@ -33,6 +35,12 @@ pub struct GpuPrepare {
     pub lines: Vec<LineSegment>,
     pub dso: Vec<DsoInstance>,
     pub text: Vec<TextInstance>,
+    /// DSO image sprites wanted this frame (`DsoImageLayer`).
+    pub sprites: Vec<SpriteRequest>,
+    /// The decoded Milky Way panorama, once it is (`AllskyLayer`).
+    pub allsky: Option<HtmlImageElement>,
+    pub show_milky_way: bool,
+    pub milky_way_opacity: f32,
     /// GPU-only star draw flag (whether to dispatch the star compute pass).
     pub show_stars: bool,
     /// GPU-only constellation-line draw flag.
@@ -47,6 +55,10 @@ impl GpuPrepare {
             lines: Vec::with_capacity(2048),
             dso: Vec::with_capacity(512),
             text: Vec::with_capacity(256),
+            sprites: Vec::with_capacity(64),
+            allsky: None,
+            show_milky_way: false,
+            milky_way_opacity: 0.0,
             show_stars: false,
             show_constellations: false,
         }
@@ -56,6 +68,10 @@ impl GpuPrepare {
         self.lines.clear();
         self.dso.clear();
         self.text.clear();
+        self.sprites.clear();
+        self.allsky = None;
+        self.show_milky_way = false;
+        self.milky_way_opacity = 0.0;
         self.show_stars = false;
         self.show_constellations = false;
     }
@@ -79,6 +95,14 @@ pub struct Frame<'a> {
     pub hit_items: &'a mut Vec<HitItem>,
     /// Slew trail samples (JD, RA deg, Dec deg) for the trail layer.
     pub slew_trail: &'a [(f64, f64, f64)],
+    /// Survey images (DSO sprites, Milky Way); `None` without a tile cache.
+    pub dso_images: Option<&'a RefCell<DsoImageCache>>,
+    /// Catalog indices whose image is drawn this frame, sorted — the symbol
+    /// layers skip the outline for these. Filled by `DsoImageLayer::prepare`.
+    pub imaged: Vec<u32>,
+    /// How many sprites the renderer can hold (0 in Canvas2D mode means
+    /// "no limit beyond the cache").
+    pub sprite_capacity: usize,
 }
 
 /// Equirectangular projection: equatorial plate-carrée → screen px.

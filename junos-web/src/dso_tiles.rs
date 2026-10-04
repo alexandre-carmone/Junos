@@ -12,6 +12,7 @@
 //! get an empty list from `find_overlapping` and the Framing Assistant draws
 //! a black (uncovered) preview.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -35,16 +36,49 @@ impl DsoTile {
     pub fn url(&self) -> String {
         format!("/api/dso_tiles/{}", self.path)
     }
+
+    /// URL of the planetarium sprite: the same cutout at 512 px, with the sky
+    /// background subtracted and the edges faded to black (`--thumbs`).
+    pub fn thumb_url(&self) -> String {
+        format!("/api/dso_tiles/thumbs/{}", self.path)
+    }
 }
+
+/// The all-sky Milky Way panoramas written by `--allsky`: plate carrée, J2000,
+/// centred on RA 0h, north up, east left (see the prefetch script's
+/// `ALLSKY_CENTER_RA` note). The full one is 4096 px wide, the small one 2048.
+pub const ALLSKY_URL: &str = "/api/dso_tiles/allsky.jpg";
+pub const ALLSKY_SMALL_URL: &str = "/api/dso_tiles/allsky_small.jpg";
 
 pub struct DsoTileIndex {
     pub tiles: Vec<DsoTile>,
+    by_name: HashMap<String, usize>,
 }
 
 impl DsoTileIndex {
     pub fn from_json(json: &str) -> Option<Arc<Self>> {
         let tiles: Vec<DsoTile> = serde_json::from_str(json).ok()?;
-        Some(Arc::new(DsoTileIndex { tiles }))
+        Some(Arc::new(Self::new(tiles)))
+    }
+
+    fn new(tiles: Vec<DsoTile>) -> Self {
+        let by_name = tiles
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.name.clone(), i))
+            .collect();
+        DsoTileIndex { tiles, by_name }
+    }
+
+    /// The tile cut around a catalog object, by its `dso.bin` name ("M31",
+    /// "NGC 7000") — the prefetch script keys tiles by the same string.
+    pub fn by_name(&self, name: &str) -> Option<&DsoTile> {
+        self.index_of(name).map(|i| &self.tiles[i])
+    }
+
+    /// Position in `tiles` of the object's tile, for callers that memoise.
+    pub fn index_of(&self, name: &str) -> Option<usize> {
+        self.by_name.get(name).copied()
     }
 
     /// Every cached tile whose square plausibly intersects a square field of
@@ -104,7 +138,7 @@ mod tests {
     use super::*;
 
     fn idx(tiles: Vec<DsoTile>) -> DsoTileIndex {
-        DsoTileIndex { tiles }
+        DsoTileIndex::new(tiles)
     }
 
     fn tile(name: &str, ra: f64, dec: f64, fov: f64) -> DsoTile {
@@ -156,6 +190,14 @@ mod tests {
             .map(|n| tile(&format!("t{n}"), 10.68, 41.26, 1.0))
             .collect();
         assert_eq!(idx(tiles).find_overlapping(10.68, 41.26, 1.0).len(), MAX_COMPOSITE_TILES);
+    }
+
+    #[test]
+    fn looks_a_tile_up_by_catalog_name() {
+        let i = idx(vec![tile("M31", 10.68, 41.26, 3.0), tile("NGC 7000", 314.7, 44.3, 4.0)]);
+        assert_eq!(i.by_name("NGC 7000").map(|t| t.path.as_str()), Some("NGC 7000.jpg"));
+        assert!(i.by_name("M42").is_none());
+        assert_eq!(i.by_name("M31").unwrap().thumb_url(), "/api/dso_tiles/thumbs/M31.jpg");
     }
 
     #[test]

@@ -119,10 +119,10 @@ Leptos 0.7 CSR. Entry point `main.rs` → `App()` → tab wheel + active tab. Mo
 
 The most fully-featured surface. Treat as stable — make targeted edits when adding overlays or interactions; don't rewrite. Layout (phone-first): a top bar (search · follow-mount · layers), a bottom stack (HUD above the time bar), and two sheets that are bottom sheets on phones and floating panels on md+ (layers panel, target card), all kept `md:right-[72px]` clear of the desktop tab strip. Structure:
 
-- `mod.rs` — `SkyTab` component, canvas/GPU setup, event loop, gestures, localStorage persistence (`sky_center_alt`, `sky_center_az`, `sky_fov_radius`, `sky_follow_mount`, plus one `persisted(key, default)` signal per render toggle and `sky_dso_mag_limit`). Gestures: click/tap → Mosaic pick-on-sky if armed, else the target card for the object under the pointer (`hit_test`); right-click / 500 ms long-press → the target card at the pressed point (snapped to an object); drag pans (and only then stops following the mount); pinch/wheel zooms. Touch handlers `preventDefault`, so taps are detected in `on_touchend`, not via mouse events.
+- `mod.rs` — `SkyTab` component, canvas/GPU setup, event loop, gestures, localStorage persistence (`sky_center_alt`, `sky_center_az`, `sky_fov_radius`, `sky_follow_mount`, plus one `persisted(key, default)` signal per render toggle and `sky_dso_mag_limit`). Also owns the `DsoImageCache` (`dso_images.rs`) handed to every `Frame`. Gestures: click/tap → Mosaic pick-on-sky if armed, else the target card for the object under the pointer (`hit_test`); right-click / 500 ms long-press → the target card at the pressed point (snapped to an object); drag pans (and only then stops following the mount); pinch/wheel zooms. Touch handlers `preventDefault`, so taps are detected in `on_touchend`, not via mouse events.
 - `clock.rs` — `SkyClock`, the sky's single time source (`sim = base + elapsed × rate`): everything that projects the sky reads `clock.jd()`, never `astro::now_jd()`. Also the local-time helpers (`night_hour`: HH:MM within the noon→noon night; `on_date`) and `night_twilights` (astronomical dusk/dawn, sun −18°).
 - `time_bar.rs` — the time bar: ‹ › step (1m/10m/1h/1d), ▶▶ time-lapse at one step per second, Now, date and hour pickers, dusk/dawn jumps. Amber border whenever the sky isn't live. Time is never persisted.
-- `render/` — Canvas2D overlay (`mod.rs`, `layer.rs`, `params.rs`, `pipeline.rs` + one module per layer in `render/layers/`: stars, dso, grids, ground, zenith, constellation_names, center_crosshair, mount_crosshair, fov_reticle, solve_marker, slew_trail, solar_system, mosaic, scheduler_jobs). Draws grid, horizon, constellations (falls back from GPU), DSO labels, `render_center_fov()` and `render_mount_fov()` — the two FOV rectangles. Both call `astro::fov_deg` with `RenderParams.{fl, cam_pixel_size_um, cam_sensor_width, cam_sensor_height, rotation_deg, mount_ra_h, mount_dec_deg}`.
+- `render/` — Canvas2D overlay (`mod.rs`, `layer.rs`, `params.rs`, `pipeline.rs` + one module per layer in `render/layers/`: allsky, dso_image, stars, dso, grids, ground, zenith, constellation_names, center_crosshair, mount_crosshair, fov_reticle, solve_marker, slew_trail, solar_system, mosaic, scheduler_jobs). GPU draw order is fixed in `gpu/mod.rs::render_inner`: clear → allsky → dso_image → lines → dso symbols → constellations → stars → text. Draws grid, horizon, constellations (falls back from GPU), DSO labels, `render_center_fov()` and `render_mount_fov()` — the two FOV rectangles. Both call `astro::fov_deg` with `RenderParams.{fl, cam_pixel_size_um, cam_sensor_width, cam_sensor_height, rotation_deg, mount_ra_h, mount_dec_deg}`.
 - `controls.rs` — layers panel: one `LayerChip` per toggle in `SkyToggles` (grouped Sky / Grids / Deep sky / Equipment), the DSO mag slider, and the observer location.
 - `search.rs` — catalog object search (in the top bar).
 - `actions.rs` — the target card (`SkyTarget`): object or sky-position info (JNow, J2000, Alt/Az at the displayed time) and five actions: Center, `mount_goto_rade`, goto-then-`align_solve`, Framing assistant (`FramingCtx`), Add to Scheduler (`SchedulerPrefillCtx`), the last two pre-filled with the object name. Reads `ServiceBusyCtx` (to disable Goto / Goto & Align while a device is busy), `SchedulerPrefillCtx` and `FramingCtx` from the crate root — these newtypes live in `main.rs` and must be provided. `MosaicPlannerCtx` (also in `main.rs`) drives the Pick-on-Sky flow that hands a center off to the Mosaic tab.
@@ -181,17 +181,19 @@ JSON `{"type": "...", "payload": {...}}` over WebSocket. Authoritative reference
 
 In Leptos `view! {}`, style with Tailwind utilities in `class="…"`, and use `class:foo=move || cond` for state toggles. Inline `style=` is reserved for values that genuinely change per render — and even then prefer setting a CSS custom property consumed by a utility or token (see how `tab_wheel.rs` passes `--tw-rot`, `--tw-bx`, `--tw-cr`) rather than restating full property strings. Canvas2D paint strings (`ctx.fillStyle = …` in `sky/render/`) are *not* DOM CSS — leave them inline.
 
-## Offline DSO tiles (Framing Assistant)
+## Offline DSO tiles (Framing Assistant, sky imagery)
 
 The Framing Assistant previews a target **entirely from a local tile cache** —
 pre-downloaded hips2fits cutouts, one per catalog object. It never hits the
-network. Generate the cache with:
+network. The same cache feeds the planetarium's imagery (below). Generate it with:
 
 ```bash
 uv run scripts/prefetch_dso_tiles.py            # all 7960 objects, hours
 uv run scripts/prefetch_dso_tiles.py --status   # coverage report, no downloads
 uv run scripts/prefetch_dso_tiles.py --limit 50 # smoke test
 uv run scripts/prefetch_dso_tiles.py --index-only  # rebuild index.json from disk
+uv run scripts/prefetch_dso_tiles.py --thumbs   # sprites (thumbs/) from the tiles on disk
+uv run scripts/prefetch_dso_tiles.py --allsky   # Milky Way panorama (allsky.jpg + allsky_small.jpg)
 ```
 
 Output goes to `.cache/dso_tiles/` (gitignored — **not** `junos-web/public/`,
@@ -201,9 +203,30 @@ the script's `--out` flag or `DSO_TILE_DIR` — note `--dso-tile-dir` is the
 regardless of size, so changing `TILE_PX` leaves a resolution mix — `--status`
 shows it, `--force` refetches.
 
-`junos-server/src/dso_tiles.rs` serves the directory at `/api/dso_tiles/*`.
-The cache is **optional** — a missing directory serves an empty index, and an
-uncovered zone just previews as the mosaic grid over black.
+`junos-server/src/dso_tiles.rs` serves the directory at `/api/dso_tiles/*`
+(`index.json`, `<slug>.jpg`, `thumbs/<slug>.jpg`, `allsky.jpg`, `allsky_small.jpg`;
+names are `[a-z0-9_]+.jpg` only). The cache is **optional** — a missing
+directory serves an empty index, an uncovered zone just previews as the mosaic
+grid over black, and the sky draws symbols only.
+
+**Sky imagery.** `--thumbs` (Pillow, also run at the end of a fetch) writes a
+512 px copy of each tile with the sky background subtracted and a circular fade
+to black, and `--allsky` fetches one plate-carrée J2000 panorama
+(`CDS/P/Mellinger/color`, centred on RA 0h, north up, **east left**:
+`u = 0.5 − RA/360`). Both are drawn inside the WebGPU render pass, before the
+lines and stars: `gpu/layers/allsky.rs` (full-screen triangle, per-pixel inverse
+projection + inverse precession in `shaders/allsky.wgsl`) then
+`gpu/layers/dso_image.rs` (additive sprites from a mipmapped `texture_2d_array`,
+LRU slots, ≤ 2 uploads per frame). `components/sky/dso_images.rs` owns the
+decoded `<img>`s (bounded, loads bump an epoch signal); `render/layers/dso_image.rs`
+culls like `dso_render::build`, keeps objects with a tile whose sprite is ≥ 10 px,
+rotates them to sky north (`dso_shape::probe`) and lists them in `Frame.imaged`
+so the symbol layers skip their outline. `gpu/texture_upload.rs` builds the mip
+chains by canvas halving + `copyExternalImageToTexture` — that call **panics the
+wasm module on any validation error**, so keep its preconditions (decoded image,
+exact canvas size, `MipUploader::USAGE`). Canvas2D fallback: sprites via
+`lighter`, no Milky Way. Toggles: `sky_show_dso_images`, `sky_dso_images_brightness`,
+`sky_show_milky_way`, `sky_milky_way_opacity`.
 
 Preview compositing lives in `junos-web/src/dso_tiles.rs::find_overlapping` +
 `components/sky/framing.rs::load_preview`: every cached tile overlapping the

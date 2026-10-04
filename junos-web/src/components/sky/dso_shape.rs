@@ -26,7 +26,7 @@ const MIN_HALF_PX: f64 = 3.0;
 /// Below this the axis ratio is invisible, so skip the rotation math.
 const ROT_MIN_HALF_PX: f64 = 4.0;
 /// Offset used to probe the local north/east directions on screen.
-const PROBE_DEG: f64 = 0.05;
+pub(crate) const PROBE_DEG: f64 = 0.05;
 
 /// Angular size (arcmin, full axis) → screen semi-axis in px.
 fn arcmin_to_half_px(size_arcmin: f64, fov: f64, scale: f64) -> f64 {
@@ -137,7 +137,7 @@ pub fn dso_shape(
 /// Project a point slightly offset from the object and return the normalized
 /// screen direction from the object toward it. `None` when the probe falls
 /// outside the projection (object right at the cull edge).
-fn probe(
+pub(crate) fn probe(
     ra_deg: f64,
     dec_deg: f64,
     sx: f64,
