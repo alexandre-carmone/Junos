@@ -108,35 +108,61 @@ pub(super) fn render_fallback_stars(
 ) {
     let Some(cat) = cat else { return };
 
+    let lst_rad = f.scene.lst.to_radians();
+    // J2000 star → (sx, sy) on screen, or None when below the horizon or off it.
+    let to_screen = |ra_deg: f32, dec_deg: f32| -> Option<(f64, f64)> {
+        let jnow = J2000::new(ra_deg as f64, dec_deg as f64).to_jnow(f.scene.jd);
+        let ha = lst_rad - jnow.ra_deg.to_radians();
+        let dec = jnow.dec_deg.to_radians();
+        let sin_dec = dec.sin();
+        let cos_dec = dec.cos();
+        let sin_alt = sin_dec * f.scene.sin_lat + cos_dec * f.scene.cos_lat * ha.cos();
+        let alt_rad = sin_alt.asin();
+        let alt = alt_rad.to_degrees();
+        if alt < -5.0 {
+            return None;
+        }
+        let cos_az =
+            (sin_dec - alt_rad.sin() * f.scene.sin_lat) / (alt_rad.cos() * f.scene.cos_lat);
+        let mut az = cos_az.clamp(-1.0, 1.0).acos().to_degrees();
+        if ha.sin() > 0.0 {
+            az = 360.0 - az;
+        }
+        let (sx, sy) = project(alt, az)?;
+        (sx > -50.0 && sx < f.view.wf + 50.0 && sy > -50.0 && sy < f.view.hf + 50.0)
+            .then_some((sx, sy))
+    };
+
     let mut idx_screen: Vec<Option<(f64, f64, f32, f32)>> = vec![None; cat.stars.len()];
     if f.toggles.stars_on || f.toggles.const_on {
-        let lst_rad = f.scene.lst.to_radians();
         for (i, star) in cat.stars.iter().enumerate() {
             if f.toggles.stars_on && star.mag > f.scene.mag_limit {
                 continue;
             }
-            let jnow = J2000::new(star.ra_deg as f64, star.dec_deg as f64).to_jnow(f.scene.jd);
-            let ha = lst_rad - jnow.ra_deg.to_radians();
-            let dec = jnow.dec_deg.to_radians();
-            let sin_dec = dec.sin();
-            let cos_dec = dec.cos();
-            let sin_alt = sin_dec * f.scene.sin_lat + cos_dec * f.scene.cos_lat * ha.cos();
-            let alt_rad = sin_alt.asin();
-            let alt = alt_rad.to_degrees();
-            if alt < -5.0 {
+            if let Some((sx, sy)) = to_screen(star.ra_deg, star.dec_deg) {
+                idx_screen[i] = Some((sx, sy, star.mag, star.bv));
+            }
+        }
+    }
+    // Deep (Tycho-2) stars: no constellation lines or names, drawn first so
+    // the brighter base stars land on top.
+    let mut deep_screen: Vec<Option<(f64, f64, f32, f32)>> = Vec::new();
+    if f.toggles.stars_on && !f.catalogs.deep_stars.is_empty() {
+        // The tiles are 5° wide, a deep-zoomed view under 1°: skip what is
+        // beyond the projection's reach before paying for the precession.
+        let (c_ra, c_dec) = astro::altaz_to_eq(f.view.c_alt, f.view.c_az, f.scene.lst, f.scene.latitude);
+        let c = JNow::new(c_ra, c_dec).to_j2000(f.scene.jd);
+        let (c_sin, c_cos) = c.dec_deg.to_radians().sin_cos();
+        let cos_reach = (f.view.fov * 1.5).min(180.0).to_radians().cos();
+        for &[ra, dec, mag, bv] in f.catalogs.deep_stars {
+            if mag > f.scene.mag_limit {
                 continue;
             }
-            let cos_az =
-                (sin_dec - alt_rad.sin() * f.scene.sin_lat) / (alt_rad.cos() * f.scene.cos_lat);
-            let mut az = cos_az.clamp(-1.0, 1.0).acos().to_degrees();
-            if ha.sin() > 0.0 {
-                az = 360.0 - az;
+            let (d_sin, d_cos) = (dec as f64).to_radians().sin_cos();
+            if c_sin * d_sin + c_cos * d_cos * (ra as f64 - c.ra_deg).to_radians().cos() < cos_reach {
+                continue;
             }
-            if let Some((sx, sy)) = project(alt, az) {
-                if sx > -50.0 && sx < f.view.wf + 50.0 && sy > -50.0 && sy < f.view.hf + 50.0 {
-                    idx_screen[i] = Some((sx, sy, star.mag, star.bv));
-                }
-            }
+            deep_screen.push(to_screen(ra, dec).map(|(sx, sy)| (sx, sy, mag, bv)));
         }
     }
 
@@ -160,11 +186,15 @@ pub(super) fn render_fallback_stars(
     if f.toggles.stars_on {
         // Scale star size with screen: reference = 1000 CSS pixels (min dimension)
         let screen_scale = (f.view.wf.min(f.view.hf) / 1000.0).clamp(0.4, 1.5);
-        for screen in &idx_screen {
+        // Size and brightness follow the magnitude relative to the limit, as
+        // in render.wgsl: zoomed in deep, the faintest stars draw like mag 6.5.
+        let mag_shift = (f.scene.mag_limit - 6.5).max(0.0);
+        for screen in deep_screen.iter().chain(&idx_screen) {
             if let Some((sx, sy, mag, bv)) = screen {
-                let radius = ((STAR_SIZE_BASE - *mag as f64 * STAR_SIZE_MAG_SCALE) * screen_scale)
+                let mag = *mag - mag_shift;
+                let radius = ((STAR_SIZE_BASE - mag as f64 * STAR_SIZE_MAG_SCALE) * screen_scale)
                     .max(STAR_SIZE_MIN);
-                let t = ((*mag + 2.0) / 8.5).clamp(0.0, 1.0);
+                let t = ((mag + 2.0) / 8.5).clamp(0.0, 1.0);
                 let brightness = 1.0 - t * 0.69;
                 let (r, g, b) = bv_to_rgb(*bv);
                 let ri = (r * brightness * 255.0) as u8;

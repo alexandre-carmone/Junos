@@ -15,8 +15,9 @@
     <link data-trunk rel="css" href="styles/responsive.css"/>
     <!-- Trunk replaces this with the built WASM entry point -->
     <link data-trunk rel="rust" data-wasm-opt="z" />
-    <!-- Static binary catalogs served at /junos.bin and /dso.bin -->
+    <!-- Static binary catalogs served at /junos.bin, /tycho.bin and /dso.bin -->
     <link data-trunk rel="copy-file" href="public/junos.bin"/>
+    <link data-trunk rel="copy-file" href="public/tycho.bin"/>
     <link data-trunk rel="copy-file" href="public/dso.bin"/>
 </head>
 <body>

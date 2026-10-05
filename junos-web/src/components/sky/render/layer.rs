@@ -24,6 +24,9 @@ use super::{HitItem, LayerToggles, OverlayState, PipelineMode, SceneParams, View
 /// Borrowed catalog handles. Layers don't own catalog state — they read it.
 pub struct Catalogs<'a> {
     pub stars: Option<&'a Arc<CatalogData>>,
+    /// Tycho-2 stars of the tiles around the view, `[ra, dec, mag, bv]`;
+    /// empty unless zoomed in past `junos.bin` (`deep_stars::DeepStarField`).
+    pub deep_stars: &'a [[f32; 4]],
     pub dso: Option<&'a Arc<DsoCatalogData>>,
     pub dso_index: Option<&'a DsoIndex>,
 }

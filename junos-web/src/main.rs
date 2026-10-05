@@ -22,6 +22,7 @@ mod dso_catalog;
 mod dso_tiles;
 mod ephemeris;
 mod i18n;
+mod star_tiles;
 mod ws;
 mod ws_helpers;
 

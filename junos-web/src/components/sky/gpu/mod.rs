@@ -2,6 +2,9 @@
 //!
 //! Two compute passes project stars and compact visible indices, then
 //! `draw_indirect` renders only the visible stars and constellation lines.
+//! The deep (Tycho-2) stars around the view run through the same pipelines
+//! with their own buffers (`DeepStarBuffers`), re-uploaded when the view
+//! crosses into other tiles.
 
 use bytemuck::{Pod, Zeroable};
 use web_sys::HtmlCanvasElement;
@@ -41,6 +44,24 @@ pub struct Uniforms {
     pub theta_rad: f32,
 }
 
+// ── Deep (Tycho-2) stars ────────────────────────────────────────────────────
+
+/// GPU side of the deep star layer: the stars of the tiles around the view,
+/// in the base catalog's `[ra, dec, mag, bv]` layout. Buffers grow to the
+/// largest upload seen and are reused; the bind groups are rebuilt on each
+/// upload because the catalog binding is sized to the star count — the
+/// compute pass bounds itself by `arrayLength`.
+struct DeepStarBuffers {
+    count: u32,
+    capacity: u32,
+    catalog: Option<wgpu::Buffer>,
+    projected: Option<wgpu::Buffer>,
+    visible_ids: Option<wgpu::Buffer>,
+    indirect: wgpu::Buffer,
+    compute_bg: Option<wgpu::BindGroup>,
+    render_bg: Option<wgpu::BindGroup>,
+}
+
 // ── SkyRenderer ─────────────────────────────────────────────────────────────
 
 pub struct SkyRenderer {
@@ -60,6 +81,12 @@ pub struct SkyRenderer {
 
     compute_bg: wgpu::BindGroup,
     render_bg: wgpu::BindGroup,
+    // Kept to bind the deep star buffers into the same pipelines.
+    compute_bgl: wgpu::BindGroupLayout,
+    render_bgl: wgpu::BindGroupLayout,
+    line_src_buf: wgpu::Buffer,
+    visible_line_ids_buf: wgpu::Buffer,
+    deep: DeepStarBuffers,
 
     lines: layers::lines::LineLayer,
     dso:   layers::dso::DsoLayer,
@@ -231,6 +258,15 @@ impl SkyRenderer {
             label: Some("visible_line_ids"),
             size: (line_count as u64) * 4,
             usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        let deep_indirect_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("deep_star_indirect"),
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -434,6 +470,20 @@ impl SkyRenderer {
             line_pipeline,
             compute_bg,
             render_bg,
+            compute_bgl,
+            render_bgl,
+            line_src_buf,
+            visible_line_ids_buf,
+            deep: DeepStarBuffers {
+                count: 0,
+                capacity: 0,
+                catalog: None,
+                projected: None,
+                visible_ids: None,
+                indirect: deep_indirect_buf,
+                compute_bg: None,
+                render_bg: None,
+            },
             lines,
             dso,
             text,
@@ -451,6 +501,76 @@ impl SkyRenderer {
     pub fn upload_lines(&mut self, segments: &[LineSegment]) {
         self.lines
             .upload(&self.device, &self.queue, &self.uniform_buf, segments);
+    }
+
+    /// Replace the deep (Tycho-2) stars — those of the tiles around the view,
+    /// `[ra, dec, mag, bv]` like the base catalog. Empty clears the layer.
+    pub fn upload_deep_stars(&mut self, stars: &[[f32; 4]]) {
+        let count = stars.len() as u32;
+        self.deep.count = count;
+        if count == 0 {
+            return;
+        }
+        if count > self.deep.capacity {
+            let cap = count.next_power_of_two().max(1 << 16);
+            let storage = |label: &str, size: u64, extra: wgpu::BufferUsages| {
+                self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size,
+                    usage: wgpu::BufferUsages::STORAGE | extra,
+                    mapped_at_creation: false,
+                })
+            };
+            let catalog = storage("deep_star_catalog", cap as u64 * 16, wgpu::BufferUsages::COPY_DST);
+            let projected = storage("deep_projected", cap as u64 * 16, wgpu::BufferUsages::empty());
+            let visible_ids = storage("deep_visible_star_ids", cap as u64 * 4, wgpu::BufferUsages::empty());
+            self.deep.catalog = Some(catalog);
+            self.deep.projected = Some(projected);
+            self.deep.visible_ids = Some(visible_ids);
+            self.deep.capacity = cap;
+        }
+        let (Some(catalog), Some(projected), Some(visible_ids)) =
+            (&self.deep.catalog, &self.deep.projected, &self.deep.visible_ids)
+        else {
+            return;
+        };
+        self.queue.write_buffer(catalog, 0, bytemuck::cast_slice(stars));
+
+        let catalog_binding = || {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: catalog,
+                offset: 0,
+                size: wgpu::BufferSize::new(count as u64 * 16),
+            })
+        };
+        self.deep.compute_bg = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("deep_compute_bg"),
+            layout: &self.compute_bgl,
+            entries: &[
+                bg_entry(0, &self.uniform_buf),
+                wgpu::BindGroupEntry { binding: 1, resource: catalog_binding() },
+                bg_entry(2, projected),
+                bg_entry(3, &self.deep.indirect),
+                bg_entry(4, visible_ids),
+                // Lines are the base catalog's: `compact_lines` never runs
+                // on the deep stars, but the layout wants the bindings.
+                bg_entry(5, &self.line_src_buf),
+                bg_entry(6, &self.line_indirect_buf),
+                bg_entry(7, &self.visible_line_ids_buf),
+            ],
+        }));
+        self.deep.render_bg = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("deep_render_bg"),
+            layout: &self.render_bgl,
+            entries: &[
+                bg_entry(0, &self.uniform_buf),
+                bg_entry(1, projected),
+                bg_entry(2, visible_ids),
+                bg_entry(3, &self.line_src_buf),
+                bg_entry(4, &self.visible_line_ids_buf),
+                wgpu::BindGroupEntry { binding: 5, resource: catalog_binding() },
+            ],
+        }));
     }
 
     /// Upload the per-frame DSO symbol instances. Empty slice clears.
@@ -527,6 +647,14 @@ impl SkyRenderer {
             .write_buffer(&self.star_indirect_buf, 0, bytemuck::cast_slice(&[4u32, 0, 0, 0]));
         self.queue
             .write_buffer(&self.line_indirect_buf, 0, bytemuck::cast_slice(&[2u32, 0, 0, 0]));
+        let deep_bgs = match (&self.deep.compute_bg, &self.deep.render_bg) {
+            (Some(c), Some(r)) if show_stars && self.deep.count > 0 => Some((c, r)),
+            _ => None,
+        };
+        if deep_bgs.is_some() {
+            self.queue
+                .write_buffer(&self.deep.indirect, 0, bytemuck::cast_slice(&[4u32, 0, 0, 0]));
+        }
 
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
@@ -551,6 +679,10 @@ impl SkyRenderer {
             cp.set_pipeline(&self.project_pipeline);
             cp.set_bind_group(0, &self.compute_bg, &[]);
             cp.dispatch_workgroups((self.star_count + 63) / 64, 1, 1);
+            if let Some((deep_compute_bg, _)) = deep_bgs {
+                cp.set_bind_group(0, deep_compute_bg, &[]);
+                cp.dispatch_workgroups((self.deep.count + 63) / 64, 1, 1);
+            }
         }
 
         // ── Compute pass 2: compact visible line indices ─────────────────────
@@ -614,6 +746,12 @@ impl SkyRenderer {
 
             if show_stars {
                 rp.set_pipeline(&self.star_pipeline);
+                // Deep stars first: the brighter base stars draw over them.
+                if let Some((_, deep_render_bg)) = deep_bgs {
+                    rp.set_bind_group(0, deep_render_bg, &[]);
+                    rp.draw_indirect(&self.deep.indirect, 0);
+                    rp.set_bind_group(0, &self.render_bg, &[]);
+                }
                 rp.draw_indirect(&self.star_indirect_buf, 0);
             }
 

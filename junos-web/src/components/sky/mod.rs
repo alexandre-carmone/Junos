@@ -10,6 +10,7 @@ mod actions;
 mod calib;
 pub(crate) mod clock;
 mod controls;
+mod deep_stars;
 pub(crate) mod dso_images;
 pub(crate) mod dso_index;
 mod dso_render;
@@ -43,6 +44,8 @@ use crate::{ActiveTabCtx, Tab};
 use crate::astro;
 use crate::catalog::CatalogData;
 use crate::dso_catalog::DsoCatalogData;
+use crate::star_tiles::{fetch_deep_stars, DeepStarCatalog};
+use self::deep_stars::{DeepStarField, DEEP_FROM_MAG};
 use self::gpu::{LineView, SkyRenderer, Uniforms};
 use crate::i18n::{Lang, t};
 
@@ -138,6 +141,16 @@ impl SkyToggles {
             dn: self.dso_dark_nebula.get(),
         }
     }
+}
+
+/// Faintest star magnitude drawn at a field radius `fov` (deg). Wide fields
+/// keep the naked-eye sky (3.5 at 90°, ~5.5 at 20°); below 20° it deepens by
+/// 4 magnitudes per tenfold zoom — through `junos.bin` (complete to ~10, at
+/// ~3°) into the Tycho-2 layer (~11.5 at a 1° radius), capped at 12.5.
+fn star_mag_limit(fov: f64) -> f32 {
+    let naked_eye = (6.5 - 3.0 * (fov / 180.0).sqrt()).clamp(3.5, 6.5);
+    let zoom = 4.0 * (20.0 / fov).log10().max(0.0);
+    (naked_eye + zoom).min(12.5) as f32
 }
 
 /// Width × height (deg) of the last solved frame: KStars' effective FOV when
@@ -767,6 +780,27 @@ pub fn SkyTab(
         });
     }
 
+    // ── Deep stars (Tycho-2) ──────────────────────────────────────────────
+    // `tycho.bin` (13 MB) is fetched the first time the view zooms in past
+    // `junos.bin`'s depth; the render Effect then keeps `deep_field` on the
+    // tiles around the view. A missing file just leaves the base catalog.
+    let deep_cat_sig = RwSignal::new(None::<Arc<DeepStarCatalog>>);
+    let deep_requested = StoredValue::new(false);
+    Effect::new(move || {
+        if deep_requested.get_value() || star_mag_limit(fov_radius.get()) <= DEEP_FROM_MAG {
+            return;
+        }
+        deep_requested.set_value(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Some(cat) = fetch_deep_stars().await {
+                deep_cat_sig.set(Some(cat));
+            }
+        });
+    });
+    let deep_field: Rc<RefCell<DeepStarField>> = Rc::new(RefCell::new(DeepStarField::default()));
+    // Generation of `deep_field` the GPU holds; 0 = nothing uploaded.
+    let deep_uploaded: Rc<std::cell::Cell<u64>> = Rc::new(std::cell::Cell::new(0));
+
     // ── GPU init ───────────────────────────────────────────────────────────
     let gpu_for_init = Rc::clone(&gpu_renderer);
     let is_mobile_for_gpu = mobile_profile.is_mobile;
@@ -800,6 +834,8 @@ pub fn SkyTab(
     let trail_for_sample = Rc::clone(&slew_trail);
     let solved_image_for_render = Rc::clone(&solved_image);
     let dso_images_for_render = Rc::clone(&dso_images);
+    let deep_field_for_render = Rc::clone(&deep_field);
+    let deep_uploaded_for_render = Rc::clone(&deep_uploaded);
     let _render_handle = Effect::new(move || {
         // Read all reactive deps to subscribe
         let m = mount.get();
@@ -842,6 +878,8 @@ pub fn SkyTab(
         let mosaic_target_name = planner.params.target.get();
 
         let cat = catalog_sig.get_untracked();
+        // Subscribed: the first deep-zoomed frame redraws once tycho.bin lands.
+        let deep_cat = deep_cat_sig.get();
         let dso_cat = dso_catalog_sig.get_untracked();
         let dso_idx = dso_index_sig.get_untracked();
 
@@ -907,9 +945,22 @@ pub fn SkyTab(
         let scale = hf.min(wf) / 2.0;
         let sin_lat = s.latitude.to_radians().sin();
         let cos_lat = s.latitude.to_radians().cos();
-        // Smooth magnitude limit: fewer stars when zoomed out, more when zoomed in.
-        // fov=180° → mag 3.5, fov=90° → mag 4.5, fov=30° → mag 5.5, fov=5° → mag 6.5
-        let mag_limit: f32 = (6.5 - 3.0 * (fov / 180.0).sqrt()).clamp(3.5, 6.5) as f32;
+        let mag_limit = star_mag_limit(fov);
+
+        // Tycho-2 tiles within the projection's reach (`astro::project`
+        // stops at 1.5 × the field radius), plus one tile row of margin.
+        let mut deep = deep_field_for_render.borrow_mut();
+        {
+            let (c_ra, c_dec) = astro::altaz_to_eq(c_alt, c_az, lst, s.latitude);
+            let c_j2000 = crate::coords::JNow::new(c_ra, c_dec).to_j2000(jd);
+            deep.update(
+                deep_cat.as_deref(),
+                layer_toggles.stars_on && mag_limit > DEEP_FROM_MAG,
+                c_j2000.ra_deg,
+                c_j2000.dec_deg,
+                fov * 1.5 + 0.5,
+            );
+        }
 
         let mut gpu_uniforms: Option<Uniforms> = None;
         // ── GPU prep (uniforms + renderer resize) ──────────────────────
@@ -1098,6 +1149,7 @@ pub fn SkyTab(
         let mode = PipelineMode::from_has_gpu(has_gpu);
         let catalogs = Catalogs {
             stars: cat.as_ref(),
+            deep_stars: deep.stars(),
             dso: dso_cat.as_ref(),
             dso_index: dso_idx.as_deref(),
         };
@@ -1126,6 +1178,10 @@ pub fn SkyTab(
                 gpu_for_render.try_borrow_mut(),
             ) {
                 if let Some(renderer) = opt.as_mut() {
+                    if deep_uploaded_for_render.get() != deep.generation() {
+                        renderer.upload_deep_stars(deep.stars());
+                        deep_uploaded_for_render.set(deep.generation());
+                    }
                     pipe.run(&mut frame, &ctx, renderer.font_atlas());
                     let prep = pipe.gpu_prepare_mut();
                     prep.show_stars = layer_toggles.stars_on;

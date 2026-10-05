@@ -94,7 +94,10 @@ fn vs_star(
     let star = projected[star_idx];
     let sx = star.x;
     let sy = star.y;
-    let mag = star.z;
+    // Size and brightness follow the magnitude relative to the limit: zoomed
+    // in to mag 12, a mag 12 star draws like a mag 6.5 one does in a wide
+    // field, and the brighter ones stand out from it.
+    let mag = star.z - max(u.mag_limit - 6.5, 0.0);
 
     let catalog_entry = star_catalog[star_idx];
     let bv = catalog_entry.w;
