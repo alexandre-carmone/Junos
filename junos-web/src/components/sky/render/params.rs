@@ -123,6 +123,7 @@ pub struct OverlayState {
     pub dso_pn: bool,
     pub dso_snr: bool,
     pub dso_gal: bool,
+    pub dso_dn: bool,
     pub dso_mag: f64,
 }
 

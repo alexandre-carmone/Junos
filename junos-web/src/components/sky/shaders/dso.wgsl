@@ -148,6 +148,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 keep = phase < 0.33;
             }
         }
+        // 8: DarkNebula — dashed square outline, three dashes per side.
+        case 8u: {
+            if (abs(d_sq - 1.0) < w_d && abs_x < 1.05 && abs_y < 1.05) {
+                // Position along whichever side this fragment is on.
+                let t = select(in.uv.x, in.uv.y, abs_x > abs_y);
+                keep = fract((t + 1.0) * 1.5) < 0.6;
+            }
+        }
         // 7: filled disc (used by solar-system bodies). Extra fade at the
         // edge so the rim doesn't alias against the sky background.
         case 7u, default: {

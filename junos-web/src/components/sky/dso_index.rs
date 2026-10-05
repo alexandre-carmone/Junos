@@ -46,6 +46,10 @@ impl DsoIndex {
     /// `cap_radius_deg` (plus one cell half-diagonal) of the J2000 view
     /// centre. The caller still applies the per-object great-circle gate; this
     /// only prunes whole buckets.
+    ///
+    /// Sorted, i.e. in catalog order — Messier first, then by `vis_mag` — so
+    /// the label declutter (`dso_render::LabelBoxes`) keeps the brighter of two
+    /// objects whose labels would collide.
     pub fn visible_indices(
         &self,
         view_ra_deg: f64,
@@ -87,16 +91,13 @@ impl DsoIndex {
                 out.extend_from_slice(cell);
             }
         }
+        out.sort_unstable();
         out
     }
 
     fn all_indices(&self) -> Vec<u32> {
         let total: usize = self.cells.iter().map(|c| c.len()).sum();
-        let mut out = Vec::with_capacity(total);
-        for cell in &self.cells {
-            out.extend_from_slice(cell);
-        }
-        out
+        (0..total as u32).collect()
     }
 }
 

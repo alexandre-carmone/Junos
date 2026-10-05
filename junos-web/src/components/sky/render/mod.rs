@@ -24,6 +24,7 @@ use crate::ephemeris;
 use crate::i18n::{constellation_name, t};
 
 use super::dso_index::DsoIndex;
+use super::dso_render::LabelBoxes;
 use super::dso_shape::dso_shape;
 
 use super::utils::bv_to_rgb;
@@ -408,6 +409,7 @@ pub(super) fn render_dso(
         Some(v) => Box::new(v.iter().map(|i| *i as usize)),
         None => Box::new(0..dsos.len()),
     };
+    let mut labels = LabelBoxes::default();
 
     for di in iter_indices {
         let Some(dso) = dsos.get(di) else { continue };
@@ -419,11 +421,12 @@ pub(super) fn render_dso(
             DsoType::PlanetaryNebula => f.state.dso_pn,
             DsoType::SupernovaRemnant => f.state.dso_snr,
             DsoType::GalaxyCluster => f.state.dso_gal,
+            DsoType::DarkNebula => f.state.dso_dn,
         };
         if !type_ok {
             continue;
         }
-        if (dso.mag as f64) > f.state.dso_mag {
+        if (dso.vis_mag as f64) > f.state.dso_mag {
             continue;
         }
 
@@ -549,6 +552,13 @@ pub(super) fn render_dso(
                     ctx.set_stroke_style_str("rgba(60,220,100,0.75)");
                     ctx.stroke_rect(-a, -b, a * 2.0, b * 2.0);
                 }
+                DsoType::DarkNebula => {
+                    ctx.set_stroke_style_str("rgba(190,160,130,0.75)");
+                    ctx.set_line_dash(&js_sys::Array::of2(&4.0_f64.into(), &3.0_f64.into()))
+                        .unwrap();
+                    ctx.stroke_rect(-a, -b, a * 2.0, b * 2.0);
+                    ctx.set_line_dash(&js_sys::Array::new()).unwrap();
+                }
             }
             ctx.restore();
         }
@@ -565,7 +575,7 @@ pub(super) fn render_dso(
                 radius: r.clamp(8.0, 40.0),
                 kind: HitKind::Dso(dso.kind),
                 name: label.clone(),
-                mag: Some(dso.mag),
+                mag: dso.known_mag(),
                 ra_jnow_deg: dso_jnow.ra_deg,
                 dec_jnow_deg: dso_jnow.dec_deg,
                 size_arcmin: Some(dso.size_arcmin as f64),
@@ -577,20 +587,27 @@ pub(super) fn render_dso(
         // tighten the FOV gate; this drops fillText calls per frame when many
         // faint DSOs cluster near the centre at moderate zoom.
         let label_fov_gate = if f.scene.is_mobile { 25.0 } else { 50.0 };
-        let label_mag_ok = !f.scene.is_mobile || (dso.mag as f64) <= f.state.dso_mag - 1.5;
-        if f.toggles.names_on && f.view.fov < label_fov_gate && label_mag_ok && !f.mode.is_gpu() {
+        let label_mag_ok = !f.scene.is_mobile || (dso.vis_mag as f64) <= f.state.dso_mag - 1.5;
+        let lx = sx + r.min(40.0) + 3.0;
+        if f.toggles.names_on
+            && f.view.fov < label_fov_gate
+            && label_mag_ok
+            && !f.mode.is_gpu()
+            && labels.place(&label, lx, sy + 4.0)
+        {
             ctx.set_fill_style_str(match dso.kind {
                 DsoType::Galaxy => "rgba(0,200,220,0.85)",
                 DsoType::OpenCluster => "rgba(255,220,50,0.85)",
                 DsoType::GlobularCluster => "rgba(255,160,60,0.85)",
                 DsoType::PlanetaryNebula => "rgba(0,230,180,0.85)",
                 DsoType::GalaxyCluster => "rgba(220,100,220,0.85)",
+                DsoType::DarkNebula => "rgba(190,160,130,0.85)",
                 _ => "rgba(60,220,100,0.85)",
             });
             ctx.set_text_align("left");
             // Offset capped like the GPU label path: a label pushed out to the
             // edge of a large object reads as unattached.
-            let _ = ctx.fill_text(&label, sx + r.min(40.0) + 3.0, sy + 4.0);
+            let _ = ctx.fill_text(&label, lx, sy + 4.0);
         }
     }
 }

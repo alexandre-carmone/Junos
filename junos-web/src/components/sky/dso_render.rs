@@ -43,6 +43,7 @@ pub struct KindFilter {
     pub pn:  bool,
     pub snr: bool,
     pub gal: bool,
+    pub dn:  bool,
 }
 
 impl KindFilter {
@@ -55,7 +56,32 @@ impl KindFilter {
             DsoType::PlanetaryNebula  => self.pn,
             DsoType::SupernovaRemnant => self.snr,
             DsoType::GalaxyCluster    => self.gal,
+            DsoType::DarkNebula       => self.dn,
         }
+    }
+}
+
+/// Greedy label declutter for one frame: a DSO label is skipped when its box
+/// overlaps one already placed. Objects come in catalog order (Messier, then
+/// by `vis_mag`), so of two nested objects — Ou 4 inside Sh2-129, B 33 on
+/// IC 434 — the brighter keeps its label; the other is still one tap away.
+#[derive(Default)]
+pub struct LabelBoxes(Vec<[f64; 4]>);
+
+impl LabelBoxes {
+    /// Both label paths draw 12 px monospace: ~0.6 em per character.
+    const CHAR_W: f64 = 7.2;
+    const H: f64 = 12.0;
+
+    /// Claim the box of `text` drawn with its baseline-left at (x, y);
+    /// `false` (and nothing claimed) when it would overlap a placed label.
+    pub fn place(&mut self, text: &str, x: f64, y: f64) -> bool {
+        let b = [x, y - Self::H, x + text.chars().count() as f64 * Self::CHAR_W, y];
+        let clear = self.0.iter().all(|p| b[2] <= p[0] || p[2] <= b[0] || b[3] <= p[1] || p[3] <= b[1]);
+        if clear {
+            self.0.push(b);
+        }
+        clear
     }
 }
 
@@ -68,6 +94,8 @@ fn kind_to_u32(k: DsoType) -> u32 {
         DsoType::PlanetaryNebula  => 4,
         DsoType::SupernovaRemnant => 5,
         DsoType::GalaxyCluster    => 6,
+        // 7 is the solar-system disc (`solar_render`).
+        DsoType::DarkNebula       => 8,
     }
 }
 
@@ -78,6 +106,7 @@ fn kind_color(k: DsoType) -> [f32; 4] {
         DsoType::GlobularCluster  => [1.0, 160.0/255.0,  60.0/255.0, 0.85],
         DsoType::PlanetaryNebula  => [0.0, 230.0/255.0, 180.0/255.0, 0.90],
         DsoType::GalaxyCluster    => [220.0/255.0, 100.0/255.0, 220.0/255.0, 0.80],
+        DsoType::DarkNebula       => [190.0/255.0, 160.0/255.0, 130.0/255.0, 0.80],
         DsoType::Nebula | DsoType::SupernovaRemnant
                                   => [60.0/255.0, 220.0/255.0, 100.0/255.0, 0.80],
     }
@@ -115,11 +144,12 @@ pub fn build(
 
     let sin_lat = v.latitude.to_radians().sin();
     let cos_lat = v.latitude.to_radians().cos();
+    let mut labels = LabelBoxes::default();
 
     for di in iter_indices {
         let Some(dso) = dsos.get(di) else { continue };
         if !p.kind_filter.allows(dso.kind) { continue; }
-        if (dso.mag as f64) > p.mag_limit { continue; }
+        if (dso.vis_mag as f64) > p.mag_limit { continue; }
 
         let d_ra_rad = (dso.ra_deg as f64).to_radians();
         let d_dec_rad = (dso.dec_deg as f64).to_radians();
@@ -176,21 +206,17 @@ pub fn build(
 
         // Label. Mobile gates and FOV gates match render_dso.
         let label_fov_gate = if p.is_mobile { 25.0 } else { 50.0 };
-        let label_mag_ok = !p.is_mobile || (dso.mag as f64) <= p.mag_limit - 1.5;
+        let label_mag_ok = !p.is_mobile || (dso.vis_mag as f64) <= p.mag_limit - 1.5;
         if p.names_on && v.fov < label_fov_gate && label_mag_ok {
             if let Some(atlas) = atlas {
                 let label = dso.display_label(p.lang);
                 // Cap the offset: large objects draw at true extent, and a
                 // label pushed out to their edge reads as unattached.
-                let off = shape.half_w.min(40.0) as f32;
-                atlas.push_text(
-                    out_text,
-                    &label,
-                    sx as f32 + off + 3.0,
-                    sy as f32 - 5.0,
-                    12.0,
-                    color,
-                );
+                let lx = sx + shape.half_w.min(40.0) + 3.0;
+                // push_text anchors the glyph top; the box is the line's.
+                if labels.place(&label, lx, sy + 8.0) {
+                    atlas.push_text(out_text, &label, lx as f32, sy as f32 - 5.0, 12.0, color);
+                }
             }
         }
     }

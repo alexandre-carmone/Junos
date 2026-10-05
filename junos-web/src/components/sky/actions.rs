@@ -252,6 +252,7 @@ fn kind_label_for(kind: &HitKind, lang: Lang) -> &'static str {
             DsoType::PlanetaryNebula  => s.kind_planetary,
             DsoType::SupernovaRemnant => s.kind_snr,
             DsoType::GalaxyCluster    => s.kind_galaxy_cluster,
+            DsoType::DarkNebula       => s.kind_dark_nebula,
         },
     }
 }

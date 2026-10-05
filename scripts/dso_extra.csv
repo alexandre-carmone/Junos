@@ -1,0 +1,209 @@
+# Hand-curated additions to dso.bin, read by gen_dso_catalog.py.
+#
+# One row per object, ';'-separated:
+#   name     designation as displayed ("Sh2-129", "ACO 1656", "3C 273").
+#            When a catalog already holds it, the row only adds to it.
+#   resolve  for an object no catalog holds: a SIMBAD identifier resolved
+#            by CDS Sesame ("NAME Hoag's Object", "SNR G116.9+00.2"),
+#            or "ra dec" in J2000 degrees.
+#   kind     Galaxy, OpenCluster, GlobularCluster, Nebula, DarkNebula,
+#            PlanetaryNebula, SupernovaRemnant, GalaxyCluster; empty keeps
+#            the catalog's (or SIMBAD's object type).
+#   size     arcmin: "60", "60x10" (major x minor) or "60x10@45" (+ PA, deg
+#            east of north); empty keeps the catalog's / SIMBAD's.
+#   mag      visual magnitude; empty = the catalog's, else unknown.
+#   en, fr   common names, '|'-separated; listed first, so the first one is
+#            what the sky labels show. A leading '=' replaces the names the
+#            catalogs gave instead ("=Horsehead Nebula").
+#   ids      other designations to search by, '|'-separated.
+#
+# Naming a designation here also keeps it when its catalog's cut would drop
+# it (LDN opacity, LBN brightness, Abell distance class).
+name;resolve;kind;size;mag;en;fr;ids
+
+# ── Sharpless HII regions ────────────────────────────────────────────────────
+Sh2-27;;;;;Zeta Ophiuchi Nebula;Nébuleuse de Zêta Ophiuchi;
+Sh2-82;;;;;Little Cocoon Nebula;Nébuleuse du Petit Cocon;
+Sh2-101;;;;;Tulip Nebula;Nébuleuse de la Tulipe;
+Sh2-103;;SupernovaRemnant;;;Cygnus Loop;Boucle du Cygne;
+Sh2-106;;;;;Celestial Snow Angel|Snow Angel Nebula;Nébuleuse de l'Ange des neiges;
+Sh2-108;;;;;Gamma Cygni Nebula|Sadr Region;Nébuleuse de Gamma Cygni;IC 1318
+Sh2-114;;;;;Flying Dragon Nebula;Nébuleuse du Dragon volant;
+Sh2-119;;;;;Clamshell Nebula;Nébuleuse de la Palourde;
+Sh2-129;;;;;Flying Bat Nebula;Nébuleuse de la Chauve-Souris;
+Sh2-132;;;;;Lion Nebula;Nébuleuse du Lion;
+Sh2-136;;;;;Ghost Nebula;Nébuleuse du Fantôme;
+Sh2-155;;;;;Cave Nebula;Nébuleuse de la Caverne;
+Sh2-157;;;;;Lobster Claw Nebula;Nébuleuse de la Pince de Homard;
+Sh2-170;;;;;Little Rosette Nebula;Nébuleuse de la Petite Rosette;
+Sh2-185;;;;;Gamma Cassiopeiae Nebula;Nébuleuse de Gamma Cassiopeiae;
+Sh2-240;;SupernovaRemnant;;;Spaghetti Nebula|Simeis 147;Nébuleuse Spaghetti;Simeis 147
+Sh2-261;;;;;Lower's Nebula;Nébuleuse de Lower;
+Sh2-264;;;;;Lambda Orionis Ring|Angelfish Nebula;Anneau de Lambda Orionis|Nébuleuse du Poisson-ange;
+Sh2-276;;;;;Barnard's Loop;Boucle de Barnard;
+Sh2-308;;;;;Dolphin Head Nebula;Nébuleuse de la Tête de Dauphin;
+
+# ── Reflection, bright and dark nebulae ──────────────────────────────────────
+vdB 141;;;;;Ghost Nebula;Nébuleuse du Fantôme;
+LBN 437;;;;;Gecko Nebula;Nébuleuse du Gecko;
+LBN 777;;;;;Baby Eagle Nebula;Nébuleuse du Bébé Aigle;
+B 33;;;;;Horsehead Nebula;Nébuleuse de la Tête de Cheval;
+B 59;;;;;Pipe Nebula (stem);Nébuleuse de la Pipe (tuyau);
+B 72;;;;;Snake Nebula;Nébuleuse du Serpent;
+B 78;;;;;Pipe Nebula;Nébuleuse de la Pipe;
+B 86;;;;;Ink Spot Nebula;Nébuleuse de la Tache d'encre;
+B 87;;;;;Parrot's Head Nebula;Nébuleuse de la Tête de Perroquet;
+B 142;;;;;Barnard's E Nebula|E Nebula;Nébuleuse E de Barnard;
+B 143;;;;;Barnard's E Nebula|E Nebula;Nébuleuse E de Barnard;
+B 150;;;;;Seahorse Nebula;Nébuleuse de l'Hippocampe;
+LDN 1235;;;;;Shark Nebula;Nébuleuse du Requin;
+LDN 1622;;;;;Boogeyman Nebula;Nébuleuse du Croque-mitaine;
+Caldwell 99;;;420x300;;Coalsack Nebula;Sac de Charbon;
+
+# ── Planetary nebulae ────────────────────────────────────────────────────────
+Abell 21;;;;;Medusa Nebula;Nébuleuse de la Méduse;
+Abell 33;;;;;Diamond Ring Nebula;Nébuleuse de la Bague de diamant;
+
+# ── NGC / IC objects OpenNGC leaves unnamed ──────────────────────────────────
+NGC 281;;;;;Pacman Nebula;Nébuleuse Pac-Man;
+IC 1805;;;;;Heart Nebula;Nébuleuse du Cœur;
+IC 1848;;;;;Soul Nebula;Nébuleuse de l'Âme;
+IC 410;;;;;Tadpoles Nebula;Nébuleuse des Têtards;
+IC 405;;;;;Flaming Star Nebula;Nébuleuse de l'Étoile flamboyante;
+IC 417;;;;;Spider Nebula;Nébuleuse de l'Araignée;
+NGC 1931;;;;;Fly Nebula;Nébuleuse de la Mouche;
+NGC 7380;;;;;Wizard Nebula;Nébuleuse du Sorcier;
+NGC 7635;;;;;Bubble Nebula;Nébuleuse de la Bulle;
+IC 5146;;;;;Cocoon Nebula;Nébuleuse du Cocon;
+NGC 6888;;;;;Crescent Nebula;Nébuleuse du Croissant;
+NGC 2359;;;;;Thor's Helmet;Casque de Thor;
+IC 2177;;;;;Seagull Nebula;Nébuleuse de la Mouette;
+NGC 2174;;;;;Monkey Head Nebula;Nébuleuse de la Tête de Singe;
+NGC 2238;;;;;;Nébuleuse de la Rosette;
+IC 443;;;;;Jellyfish Nebula;Nébuleuse de la Méduse;
+IC 1396;;;;;Elephant's Trunk Nebula;Nébuleuse de la Trompe d'éléphant;
+NGC 7023;;;;;Iris Nebula;Nébuleuse de l'Iris;
+IC 63;;;;;Ghost of Cassiopeia;Fantôme de Cassiopée;
+NGC 1333;;;;;Embryo Nebula;Nébuleuse de l'Embryon;
+NGC 1491;;;;;Fossil Footprint Nebula;Nébuleuse de l'Empreinte fossile;
+NGC 1579;;;;;Northern Trifid Nebula;Trifide du Nord;
+NGC 1788;;;;;Cosmic Bat Nebula;Nébuleuse de la Chauve-souris cosmique;
+NGC 1909;;;;;;Nébuleuse de la Tête de Sorcière;
+NGC 1977;;;;;;Nébuleuse de l'Homme qui court;
+NGC 2024;;;;;Flame Nebula;Nébuleuse de la Flamme;
+IC 434;;;;;=Horsehead Nebula;Nébuleuse de la Tête de Cheval;
+NGC 2264;;;;;Christmas Tree Cluster|Cone Nebula;Amas de l'Arbre de Noël|Nébuleuse du Cône;
+NGC 2261;;;;;Hubble's Variable Nebula;Nébuleuse variable de Hubble;
+NGC 2736;;;;;;Nébuleuse du Crayon;
+NGC 6960;;;;;;Dentelles du Cygne;
+NGC 6992;;;;;;Dentelles du Cygne;
+IC 4628;;;;;Prawn Nebula;Nébuleuse de la Crevette;
+NGC 6334;;;;;Cat's Paw Nebula;Nébuleuse de la Patte de Chat;
+NGC 6357;;;;;War and Peace Nebula;Nébuleuse Guerre et Paix;
+NGC 6188;;;;;Dragons of Ara;Dragons de l'Autel;
+IC 4592;;;;;Blue Horsehead Nebula;Nébuleuse de la Tête de Cheval bleue;
+IC 4604;;;;;Rho Ophiuchi Nebula;Nébuleuse de Rho Ophiuchi;
+IC 1795;;;;;Fish Head Nebula;Nébuleuse de la Tête de Poisson;
+IC 2944;;;;;Running Chicken Nebula;Nébuleuse du Poulet qui court;
+NGC 3576;;;;;Statue of Liberty Nebula;Nébuleuse de la Statue de la Liberté;
+NGC 3324;;;;;Gabriela Mistral Nebula;Nébuleuse Gabriela Mistral;
+
+# ── Star clusters ────────────────────────────────────────────────────────────
+M45;;;;;;Pléiades;Melotte 22
+Melotte 20;;;;;Alpha Persei Cluster;Amas d'Alpha Persei;
+Melotte 25;;;;;;Hyades;
+Melotte 111;;;;;;Amas de la Chevelure de Bérénice;
+Collinder 399;;;;;Coathanger;Cintre|Amas de Brocchi;
+Collinder 69;;;;;Lambda Orionis Cluster;Amas de Lambda Orionis;
+Collinder 70;;;;;Orion's Belt Cluster;Amas du Baudrier d'Orion;
+Caldwell 14;;;;;;Double amas de Persée;
+Stock 2;;;;;Muscleman Cluster;Amas de l'Homme musclé;
+Stock 23;;;;;Pazmino's Cluster;Amas de Pazmino;
+Stephenson 1;;;;;Delta Lyrae Cluster;Amas de Delta Lyrae;
+Mayall II;NAME Mayall II;GlobularCluster;0.6;13.7;G1;;G1
+
+# ── Galaxy groups and clusters ───────────────────────────────────────────────
+HCG 92;;;;;;Quintette de Stephan;
+HCG 79;;;;;;Sextette de Seyfert;
+HCG 57;;;;;Copeland Septet;Septette de Copeland;
+ACO 426;;;;;Perseus Cluster;Amas de Persée;
+ACO 1656;;;;;Coma Cluster;Amas de Coma;
+ACO 2151;;;;;Hercules Cluster;Amas de galaxies d'Hercule;
+ACO 1367;;;;;Leo Cluster;Amas du Lion;
+ACO 1060;;;;;Hydra Cluster;Amas de l'Hydre;
+ACO 2065;;;;;Corona Borealis Cluster;Amas de la Couronne boréale;
+ACO 3526;;;;;Centaurus Cluster;Amas du Centaure;
+ACO 3627;;;;;Norma Cluster;Amas de la Règle;
+ACO 2744;;;;;Pandora's Cluster;Amas de Pandore;
+ACO 2218;;;;;;;
+ACO 1689;;;;;;;
+ACO 370;;;;;;;
+Virgo Cluster;NAME Virgo Cluster;GalaxyCluster;480;;;;Amas de la Vierge
+Abell S373;NAME Fornax Cluster;GalaxyCluster;240;;Fornax Cluster;Amas du Fourneau;ACO S373
+1E 0657-56;NAME Bullet Cluster;GalaxyCluster;2;;Bullet Cluster;Amas de la Balle;
+
+# ── Peculiar and dwarf galaxies ──────────────────────────────────────────────
+Arp 148;;;;;Mayall's Object;Objet de Mayall;
+Arp 188;;;;;Tadpole Galaxy;Galaxie du Têtard;
+PGC 54559;NAME Hoag's Object;Galaxy;0.8;;Hoag's Object;Objet de Hoag;
+ESO 350-40;ESO 350-40;Galaxy;1.1;;Cartwheel Galaxy;Galaxie de la Roue de chariot;
+UGC 2885;UGC 2885;Galaxy;;;Rubin's Galaxy;Galaxie de Rubin;
+Malin 1;Malin 1;Galaxy;;;;;
+UGC 4305;;;;;Holmberg II;Holmberg II;
+UGC 10822;UGC 10822;Galaxy;35x24@89;10.9;Draco Dwarf Galaxy;Galaxie naine du Dragon;
+UGC 9749;UGC 9749;Galaxy;30x19@50;10.6;Ursa Minor Dwarf Galaxy;Galaxie naine de la Petite Ourse;
+UGC 6253;UGC 6253;Galaxy;12x11;12.6;Leo II Dwarf Galaxy;Galaxie naine Leo II;
+UGC 5364;UGC 5364;Galaxy;5x3;12.9;Leo A;Leo A;
+UGC 12613;UGC 12613;Galaxy;5x3;12.6;Pegasus Dwarf Irregular Galaxy;Galaxie naine irrégulière de Pégase;
+DDO 210;DDO 210;Galaxy;2.2x1.1;14.0;Aquarius Dwarf Galaxy;Galaxie naine du Verseau;
+ESO 245-7;ESO 245-7;Galaxy;4.9x4.1;13.1;Phoenix Dwarf Galaxy;Galaxie naine du Phénix;
+ESO 594-4;ESO 594-4;Galaxy;2.9x2.1;15.0;Sagittarius Dwarf Irregular Galaxy;Galaxie naine irrégulière du Sagittaire;
+PGC 88608;NAME Sextans dSph;Galaxy;30x12;12.0;Sextans Dwarf Galaxy;Galaxie naine du Sextant;
+PGC 19441;NAME Carina dSph;Galaxy;23x16;11.3;Carina Dwarf Galaxy;Galaxie naine de la Carène;
+Maffei 1;Maffei 1;Galaxy;23x17;11.4;Maffei 1;;UGCA 34
+Maffei 2;Maffei 2;Galaxy;5.8x1.6;14.8;Maffei 2;;UGCA 39
+Dwingeloo 1;Dwingeloo 1;Galaxy;4.2x2.0;;;;
+
+# ── Quasars and blazars ──────────────────────────────────────────────────────
+3C 273;3C 273;Galaxy;0.5;12.9;;;
+QSO 2237+0305;NAME Einstein Cross;Galaxy;0.5;;Einstein Cross|Huchra's Lens;Croix d'Einstein;Q2237+030
+QSO 0957+561;QSO B0957+561A;Galaxy;0.2;;Twin Quasar;Quasar jumeau;
+Markarian 421;Mrk 421;Galaxy;0.5;13.3;;;Mrk 421
+Markarian 501;Mrk 501;Galaxy;0.5;13.8;;;Mrk 501
+BL Lacertae;BL Lac;Galaxy;0.3;14.5;;;
+OJ 287;OJ 287;Galaxy;0.2;15.0;;;
+
+# ── Rare planetary and protoplanetary nebulae ────────────────────────────────
+Ou 4;NAME PN Ou 4;Nebula;60;;Squid Nebula;Nébuleuse du Calmar;Outters 4
+HD 44179;NAME Red Rectangle;PlanetaryNebula;0.3;;Red Rectangle Nebula;Nébuleuse du Rectangle rouge;
+CRL 2688;NAME Egg Nebula;PlanetaryNebula;0.3;;Egg Nebula;Nébuleuse de l'Œuf;
+CRL 618;CRL 618;PlanetaryNebula;0.2;;Westbrook Nebula;Nébuleuse de Westbrook;
+OH 231.8+4.2;NAME Rotten Egg Nebula;PlanetaryNebula;0.5;;Calabash Nebula|Rotten Egg Nebula;Nébuleuse de la Calebasse|Nébuleuse de l'Œuf pourri;
+IRAS 12419-5414;NAME Boomerang Nebula;PlanetaryNebula;0.2;;Boomerang Nebula;Nébuleuse du Boomerang;
+IRAS 09371+1212;NAME Frosty Leo Nebula;PlanetaryNebula;0.4;;Frosty Leo Nebula;Nébuleuse Frosty Leo;
+IRAS 18059-3211;NAME Gomez's Hamburger;PlanetaryNebula;0.2;;Gomez's Hamburger;Hamburger de Gomez;
+Minkowski 2-9;PN M 2-9;PlanetaryNebula;0.6;;Minkowski's Butterfly|Twin Jet Nebula;Papillon de Minkowski;
+Menzel 3;PN Mz 3;PlanetaryNebula;0.4;;Ant Nebula;Nébuleuse de la Fourmi;Mz 3
+Henize 2-104;Hen 2-104;PlanetaryNebula;1.0;;Southern Crab Nebula;Nébuleuse du Crabe austral;Hen 2-104
+Jones-Emberson 1;PN JnEr 1;PlanetaryNebula;6.6;;Headphone Nebula;Nébuleuse du Casque audio;JnEr 1
+Jones 1;PN Jn 1;PlanetaryNebula;5.5;;;;Jn 1
+HFG 1;PN HFG 1;PlanetaryNebula;10;;;;Heckathorn-Fesen-Gull 1
+Kronberger 61;PN Kn 61;PlanetaryNebula;1.7;;Soccer Ball Nebula;Nébuleuse du Ballon de football;Kn 61
+PN G75.5+1.7;NAME Soap Bubble Nebula;PlanetaryNebula;4.3;;Soap Bubble Nebula;Nébuleuse de la Bulle de savon;
+Shapley 1;PN Sp 1;PlanetaryNebula;1.2;;Fine Ring Nebula;Nébuleuse de l'Anneau fin;Sp 1
+
+# ── Supernova remnants ───────────────────────────────────────────────────────
+SNR G263.9-3.3;SNR G263.9-03.3;SupernovaRemnant;480;;Vela Supernova Remnant;Rémanent de la supernova des Voiles;
+Gum 12;127.5 -43.0;Nebula;2160;;Gum Nebula;Nébuleuse de Gum;
+CTB 1;SNR G116.9+00.2;SupernovaRemnant;34;;;;
+HB 3;SNR G132.7+01.3;SupernovaRemnant;80;;;;
+HB 9;SNR G160.9+02.6;SupernovaRemnant;140x120;;;;
+HB 21;SNR G089.0+04.7;SupernovaRemnant;120x90;;;;
+W50;SNR G039.7-02.0;SupernovaRemnant;120x60;;Manatee Nebula;Nébuleuse du Lamantin;
+SNR G65.3+5.7;SNR G065.3+05.7;SupernovaRemnant;310x240;;;;
+SNR G205.5+0.5;SNR G205.5+00.5;SupernovaRemnant;220;;Monoceros Loop;Boucle de la Licorne;
+SNR G260.4-3.4;SNR G260.4-03.4;SupernovaRemnant;60x50;;Puppis A;Puppis A;
+3C 461;SNR G111.7-02.1;SupernovaRemnant;5;;Cassiopeia A;Cassiopée A;
+3C 10;SNR G120.1+01.4;SupernovaRemnant;8;;Tycho's Supernova Remnant;Rémanent de la supernova de Tycho;
+SNR G4.5+6.8;SNR G004.5+06.8;SupernovaRemnant;3;;Kepler's Supernova Remnant;Rémanent de la supernova de Kepler;
+SNR G327.6+14.6;SNR G327.6+14.6;SupernovaRemnant;30;;SN 1006;SN 1006;

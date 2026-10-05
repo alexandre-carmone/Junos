@@ -58,13 +58,15 @@ pub fn search_objects(
     }
 
     for dso in dsos {
-        // Score the designation plus every common name, keep the best. A DSO
-        // must only surface once — otherwise "orion" would list M42 twice,
-        // one row per alias.
+        // Score the designation plus every common name and alternate
+        // designation ("Sh2-117" finds NGC 7000), keep the best. A DSO must
+        // only surface once — otherwise "orion" would list M42 twice, one row
+        // per alias.
         let mut best: Option<i64> = None;
         let candidates = std::iter::once(dso.name.as_str())
             .chain(dso.common_names.iter().map(String::as_str))
-            .chain(dso.fr_names.iter().map(String::as_str));
+            .chain(dso.fr_names.iter().map(String::as_str))
+            .chain(dso.ids.iter().map(String::as_str));
         for cand in candidates {
             let (n_spaced, n_compact) = normalize(cand);
             if let Some(s) = score(&matcher, &q_spaced, &q_compact, &n_spaced, &n_compact) {

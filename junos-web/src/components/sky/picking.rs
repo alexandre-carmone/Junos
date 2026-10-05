@@ -138,9 +138,10 @@ fn push_dsos(
             DsoType::PlanetaryNebula  => filter.pn,
             DsoType::SupernovaRemnant => filter.snr,
             DsoType::GalaxyCluster    => filter.gal,
+            DsoType::DarkNebula       => filter.dn,
         };
         if !allowed { continue; }
-        if (dso.mag as f64) > mag_limit { continue; }
+        if (dso.vis_mag as f64) > mag_limit { continue; }
 
         let d_ra_rad = (dso.ra_deg as f64).to_radians();
         let d_dec_rad = (dso.dec_deg as f64).to_radians();
@@ -184,7 +185,7 @@ fn push_dsos(
             radius: shape.half_w.clamp(8.0, 40.0),
             kind: HitKind::Dso(dso.kind),
             name: dso.display_label(lang),
-            mag: Some(dso.mag),
+            mag: dso.known_mag(),
             ra_jnow_deg: dso_jnow.ra_deg,
             dec_jnow_deg: dso_jnow.dec_deg,
             size_arcmin: Some(dso.size_arcmin as f64),

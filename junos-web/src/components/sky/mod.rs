@@ -91,6 +91,7 @@ pub struct SkyToggles {
     pub dso_planetary:      RwSignal<bool>,
     pub dso_snr:            RwSignal<bool>,
     pub dso_galaxy_cluster: RwSignal<bool>,
+    pub dso_dark_nebula:    RwSignal<bool>,
     pub dso_mag_limit:      RwSignal<f64>,
     pub scheduler_jobs:     RwSignal<bool>,
     pub dso_images:         RwSignal<bool>,
@@ -134,6 +135,7 @@ impl SkyToggles {
             pn: self.dso_planetary.get(),
             snr: self.dso_snr.get(),
             gal: self.dso_galaxy_cluster.get(),
+            dn: self.dso_dark_nebula.get(),
         }
     }
 }
@@ -541,6 +543,7 @@ pub fn SkyTab(
         dso_planetary:      persisted("sky_dso_planetary", true),
         dso_snr:            persisted("sky_dso_snr", true),
         dso_galaxy_cluster: persisted("sky_dso_galaxy_cluster", true),
+        dso_dark_nebula:    persisted("sky_dso_dark_nebula", true),
         dso_mag_limit:      persisted("sky_dso_mag_limit", 11.0),
         scheduler_jobs:     persisted("sky_show_scheduler_jobs", true),
         dso_images:         persisted("sky_show_dso_images", true),
@@ -1090,7 +1093,7 @@ pub fn SkyTab(
             mosaic_plan:   mosaic_plan_render,
             dso_gx: dso_filter.gx, dso_oc: dso_filter.oc, dso_gc: dso_filter.gc,
             dso_nb: dso_filter.nb, dso_pn: dso_filter.pn, dso_snr: dso_filter.snr,
-            dso_gal: dso_filter.gal, dso_mag,
+            dso_gal: dso_filter.gal, dso_dn: dso_filter.dn, dso_mag,
         };
         let mode = PipelineMode::from_has_gpu(has_gpu);
         let catalogs = Catalogs {

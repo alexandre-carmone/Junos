@@ -95,8 +95,9 @@ impl SkyLayer for DsoImageLayer {
                 DsoType::PlanetaryNebula => f.state.dso_pn,
                 DsoType::SupernovaRemnant => f.state.dso_snr,
                 DsoType::GalaxyCluster => f.state.dso_gal,
+                DsoType::DarkNebula => f.state.dso_dn,
             };
-            if !type_ok || (dso.mag as f64) > f.state.dso_mag {
+            if !type_ok || (dso.vis_mag as f64) > f.state.dso_mag {
                 continue;
             }
             let d_ra_rad = (dso.ra_deg as f64).to_radians();

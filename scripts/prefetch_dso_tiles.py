@@ -15,7 +15,7 @@ Assistant uses a tile when it covers the requested mosaic and otherwise falls
 back to the live `/api/skysurvey` proxy.
 
 Usage:
-    uv run scripts/prefetch_dso_tiles.py                  # all 7960 objects (+ thumbnails)
+    uv run scripts/prefetch_dso_tiles.py                  # every catalog object (+ thumbnails)
     uv run scripts/prefetch_dso_tiles.py --status         # coverage report, no downloads
     uv run scripts/prefetch_dso_tiles.py --limit 50       # smoke test
     uv run scripts/prefetch_dso_tiles.py --workers 8
@@ -129,7 +129,7 @@ ALLSKY_CENTER_RA = 0.0
 
 KIND_NAMES = [
     "Galaxy", "OpenCluster", "GlobularCluster", "Nebula",
-    "PlanetaryNebula", "SupernovaRemnant", "GalaxyCluster",
+    "PlanetaryNebula", "SupernovaRemnant", "GalaxyCluster", "DarkNebula",
 ]
 
 
@@ -137,7 +137,7 @@ KIND_NAMES = [
 # Format mirrors junos-web/src/dso_catalog.rs / gen_dso_catalog.py:
 #   [u32] n_objects
 #   per object: ra,dec,mag,size,size_minor,pa (6×f32), kind(u8),
-#               name_len(u8), name, aliases…, fr_names…
+#               name_len(u8), name, aliases…, fr_names…, ids…
 
 class _Reader:
     def __init__(self, buf: bytes):
@@ -175,6 +175,7 @@ def read_dso_bin(path: str) -> list[dict]:
         name = r.string()
         r.name_list()  # common_names — unused here
         r.name_list()  # fr_names — unused here
+        r.name_list()  # ids — unused here
         objects.append({
             "name": name,
             "ra": ra,

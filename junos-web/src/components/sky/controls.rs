@@ -170,6 +170,13 @@ pub fn SkyControls(
                                     stroke-dasharray="2,3"/>
                         </svg>
                     </LayerChip>
+                    <LayerChip on=toggles.dso_dark_nebula label=|t| t.dark_nebulae>
+                        <svg width="14" height="14">
+                            <rect x="1.5" y="1.5" width="11" height="11"
+                                  fill="none" stroke="rgba(190,160,130,0.85)" stroke-width="1.2"
+                                  stroke-dasharray="4,3"/>
+                        </svg>
+                    </LayerChip>
                 </div>
                 <label class="flex items-center gap-2 text-text-muted">
                     <span class="whitespace-nowrap">{move || tr().mag_limit}</span>

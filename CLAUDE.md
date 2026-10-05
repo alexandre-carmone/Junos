@@ -17,7 +17,7 @@ Two crates:
 
 - `junos-server/`, `junos-web/` — the two workspace crates (see Architecture below).
 - `kstars/` — read-only upstream KStars C++ source, kept as the authoritative reference for the Ekos Live wire format. Never edit; grep heavily.
-- `scripts/` — two generators. `prefetch_dso_tiles.py` is PEP-723 self-contained (`uv run scripts/prefetch_dso_tiles.py`) and writes the offline tile cache; `gen_dso_catalog.py` is plain `python3` and writes `junos-web/public/dso.bin` from `openngc.csv`. There is **no generator for `junos.bin`** — the star catalog is checked in and authoritative. Don't regenerate outputs as part of unrelated code changes.
+- `scripts/` — two generators. `prefetch_dso_tiles.py` is PEP-723 self-contained (`uv run scripts/prefetch_dso_tiles.py`) and writes the offline tile cache; `gen_dso_catalog.py` is plain `python3` and writes `junos-web/public/dso.bin`: OpenNGC (`openngc.csv` + `openngc_addendum.csv`) merged with Sharpless, vdB, Barnard, Lynds, Abell, Hickson, Arp and non-NGC cluster catalogs from VizieR/SIMBAD (cached in `scripts/dso_sources/`, offline unless `--refresh`), one entry per object via SIMBAD cross-ids then position, plus `dso_extra.csv` — the curated EN/FR common names and the exotic objects no catalog has. Add a nickname or an object there, not in code. There is **no generator for `junos.bin`** — the star catalog is checked in and authoritative. Don't regenerate outputs as part of unrelated code changes.
 - `packaging/` — Arch Linux package (`packaging/arch/`), portable tarball (`packaging/portable/`), and CI notes. `.github/workflows/` has `ci.yml` (mirrors `just check`) and `release.yml` (tag-triggered two-arch build).
 - `flake.nix` / `nix/` — Nix dev shell, packages, and the `services.junos-web` NixOS module. Already provided; don't propose adding one.
 
@@ -189,7 +189,7 @@ pre-downloaded hips2fits cutouts, one per catalog object. It never hits the
 network. The same cache feeds the planetarium's imagery (below). Generate it with:
 
 ```bash
-uv run scripts/prefetch_dso_tiles.py            # all 7960 objects, hours
+uv run scripts/prefetch_dso_tiles.py            # every catalog object, hours
 uv run scripts/prefetch_dso_tiles.py --status   # coverage report, no downloads
 uv run scripts/prefetch_dso_tiles.py --limit 50 # smoke test
 uv run scripts/prefetch_dso_tiles.py --index-only  # rebuild index.json from disk
@@ -240,7 +240,7 @@ left in place, unused).
 
 ## Static assets
 
-`junos-web/public/` contains two binary catalogs: `junos.bin` (stars) and `dso.bin` (deep-sky). Trunk copies both into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes.
+`junos-web/public/` contains two binary catalogs: `junos.bin` (stars) and `dso.bin` (deep-sky). Trunk copies both into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes. A `dso.bin` layout change touches three readers (`dso_catalog.rs`, `prefetch_dso_tiles.py`, the generator) and bumps the `?v=` in `fetch_dso_catalog` (no cache headers on static files). Most nebulae have no magnitude (99): the sky culls by `Dso::vis_mag`, a size-based stand-in, never by `mag`.
 
 ## Code style observed in this codebase
 
