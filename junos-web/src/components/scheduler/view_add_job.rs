@@ -244,6 +244,9 @@ pub fn AddJobSheet(
         if frames.is_empty() {
             return fail(tr.sched_err_frames);
         }
+        if frames.iter().any(|fr| !fr.values_ok()) {
+            return fail(tr.seq_err_values);
+        }
         // ADU flats: KStars skips the calibration for a target ≤ 0 and aborts
         // the capture on non-FITS/XISF encodings (cameraprocess.cpp) — catch
         // both here rather than mid-run.
@@ -269,7 +272,7 @@ pub fn AddJobSheet(
         } else {
             format!("{fits_root}/{safe_name}")
         };
-        let xml = build_esq_xml("", &seq_fits_path, &frames, false);
+        let xml = camera.with_untracked(|cam| build_esq_xml("", &seq_fits_path, &frames, false, cam));
         let rel_path = format!(".junos-sequences/{safe_name}.esq");
         let abs_path = if home.is_empty() { rel_path.clone() } else { format!("{home}/{rel_path}") };
 

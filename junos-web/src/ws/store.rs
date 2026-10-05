@@ -605,33 +605,40 @@ impl DeviceStore {
                 {
                     // Switch property — option list comes from element labels
                     // (compact:false). See indicamera.cpp:141 for the canonical
-                    // example: m_CaptureFormats is built from getLabel().
-                    let mut labels: Vec<String> = Vec::new();
-                    if let Some(arr) = payload["switches"].as_array() {
-                        for el in arr {
-                            if let Some(lbl) = el["label"].as_str() {
-                                if !lbl.is_empty() {
-                                    labels.push(lbl.to_string());
-                                    continue;
-                                }
-                            }
-                            // Fallback: switch name (compact-mode payload).
-                            if let Some(n) = el["name"].as_str() {
-                                if !n.is_empty() {
-                                    labels.push(n.to_string());
-                                }
-                            }
-                        }
-                    }
-                    if !labels.is_empty() {
+                    // example: m_CaptureFormats is built from getLabel(). KStars
+                    // matches sequence values against these labels, never names.
+                    let switches: &[serde_json::Value] = payload["switches"].as_array().map_or(&[], Vec::as_slice);
+                    let labels: Vec<String> = switches.iter()
+                        .filter_map(|el| el["label"].as_str().filter(|l| !l.is_empty()))
+                        .map(str::to_string)
+                        .collect();
+                    // Subscription pushes are compact (no labels): keep the labels
+                    // we have rather than swapping in the switch names.
+                    let compact = labels.len() != switches.len();
+                    let names: Vec<String> = switches.iter()
+                        .filter_map(|el| el["name"].as_str().filter(|n| !n.is_empty()))
+                        .map(str::to_string)
+                        .collect();
+                    // ISS_ON is 1 (`switchToJson` sends the raw ISState).
+                    let on = switches.iter().position(|el| el["state"].as_i64() == Some(1));
+                    if !switches.is_empty() {
                         self.camera_status.update(|opt| {
                             let cs = opt.get_or_insert_with(CameraStatusData::default);
-                            match prop {
-                                "CCD_CAPTURE_FORMAT" => cs.capture_format_options = labels,
-                                "CCD_TRANSFER_FORMAT" => cs.transfer_format_options = labels,
-                                "CCD_ISO" => cs.iso_options = labels,
-                                "CCD_FRAME_TYPE" => cs.frame_type_options = labels,
-                                _ => {}
+                            let list = match prop {
+                                "CCD_CAPTURE_FORMAT" => &mut cs.capture_format_options,
+                                "CCD_TRANSFER_FORMAT" => &mut cs.transfer_format_options,
+                                "CCD_ISO" => &mut cs.iso_options,
+                                _ => &mut cs.frame_type_options,
+                            };
+                            if !compact {
+                                *list = labels;
+                            } else if list.len() != switches.len() && !names.is_empty() {
+                                *list = names;
+                            }
+                            if prop == "CCD_CAPTURE_FORMAT" {
+                                if let Some(cur) = on.and_then(|i| list.get(i)).cloned() {
+                                    cs.capture_format = Some(cur);
+                                }
                             }
                         });
                     }

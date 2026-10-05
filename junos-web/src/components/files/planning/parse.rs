@@ -297,11 +297,12 @@ pub(crate) fn parse_schedule(xml: &str) -> Result<Schedule, String> {
 
 // ── .esq ─────────────────────────────────────────────────────────────────────
 
-/// A `<PropertyVector name='…'>`'s first `<OneElement>` under `<Properties>`.
-fn property(job: Node, vector: &str) -> String {
+/// The `<OneElement name='element'>` of a `<PropertyVector name='vector'>`
+/// under `<Properties>`.
+fn property(job: Node, vector: &str, element: &str) -> String {
     child(job, "Properties")
         .and_then(|p| children(p, "PropertyVector").find(|v| v.attribute("name") == Some(vector)))
-        .and_then(|v| child(v, "OneElement"))
+        .and_then(|v| children(v, "OneElement").find(|e| e.attribute("name") == Some(element)))
         .map(|e| own_text(e))
         .unwrap_or_default()
 }
@@ -318,14 +319,16 @@ pub(crate) fn parse_sequence(xml: &str) -> Result<Sequence, String> {
                 format!("{}\u{00d7}{}", axis("X"), axis("Y"))
             });
             let or_legacy = |modern: String, legacy: &str| if modern.is_empty() { text(j, legacy) } else { modern };
+            // Standalone CCD_GAIN / CCD_OFFSET, else CCD_CONTROLS (ZWO and co.).
+            let either = |a: String, b: String| if a.is_empty() { b } else { a };
             SeqRow {
                 frame_type: text(j, "Type"),
                 filter: text(j, "Filter"),
                 exposure: num(j, "Exposure"),
                 count: text(j, "Count").parse().ok(),
                 bin,
-                gain: or_legacy(property(j, "CCD_GAIN"), "Gain"),
-                offset: or_legacy(property(j, "CCD_OFFSET"), "Offset"),
+                gain: or_legacy(either(property(j, "CCD_GAIN", "GAIN"), property(j, "CCD_CONTROLS", "Gain")), "Gain"),
+                offset: or_legacy(either(property(j, "CCD_OFFSET", "OFFSET"), property(j, "CCD_CONTROLS", "Offset")), "Offset"),
                 iso: text(j, "ISOIndex"),
                 target: text(j, "TargetName"),
                 dir: text(j, "FITSDirectory"),
@@ -457,7 +460,7 @@ mod tests {
             bin_y: "2".into(),
             ..SeqFrame::default()
         };
-        let xml = build_esq_xml("NGC 7000", "/data/A&B", &[light], false);
+        let xml = build_esq_xml("NGC 7000", "/data/A&B", &[light], false, &Default::default());
         let s = parse_sequence(&xml).unwrap();
         assert_eq!(s.frames.len(), 1);
         let f = &s.frames[0];

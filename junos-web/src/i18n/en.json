@@ -547,6 +547,8 @@
   "seq_total": "Total",
   "seq_frame_unit": "frame",
   "seq_frames_unit": "frames",
+  "seq_no_change": "No change",
+  "seq_err_values": "Fix the sequence rows marked in red: gain, offset, delay and binning must be numbers ≥ 0.",
   "pa_enabled_label": "Enabled:",
   "pa_pre_start": "Pre-start options",
   "pa_rotation_deg_label": "Rotation °",

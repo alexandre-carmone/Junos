@@ -52,6 +52,9 @@ pub struct CameraStatusData {
     // Combo option lists. Sourced from INDI switch labels — fetched with
     // compact:false because compact mode strips labels.
     pub capture_format_options:  Vec<String>,  // CCD_CAPTURE_FORMAT
+    /// Label of the CCD_CAPTURE_FORMAT switch that is on — what a sequence
+    /// job's `<Format>` falls back to when the row leaves it unset.
+    pub capture_format:          Option<String>,
     pub transfer_format_options: Vec<String>,  // CCD_TRANSFER_FORMAT
     pub iso_options:             Vec<String>,  // CCD_ISO (DSLR only)
     pub frame_type_options:      Vec<String>,  // CCD_FRAME_TYPE (Light/Dark/Bias/Flat)

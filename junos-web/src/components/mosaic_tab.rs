@@ -126,6 +126,9 @@ pub fn MosaicTab(
         let Some((center_ra_deg, center_dec_deg)) = p.center.get_untracked() else {
             return fail(tr.mosaic_err_no_center);
         };
+        if seq_frames.with_untracked(|fs| fs.iter().any(|f| f.duration_secs().is_some() && !f.values_ok())) {
+            return fail(tr.seq_err_values);
+        }
         let valid_frames: Vec<SeqFrame> =
             seq_frames.with_untracked(|fs| fs.iter().filter(|f| f.is_valid()).cloned().collect());
         if valid_frames.is_empty() {
@@ -199,7 +202,7 @@ pub fn MosaicTab(
         // per tile to `<safe_name>-Part_<N>`; the `%T` placeholder then resolves
         // to that job name at capture time. Leaving it empty drops the element,
         // so `%T` would resolve to nothing and every frame lands flat in the base.
-        let xml = build_esq_xml(&safe_name, &import_base, &valid_frames, true);
+        let xml = camera.with_untracked(|cam| build_esq_xml(&safe_name, &import_base, &valid_frames, true, cam));
         if !home.is_empty() {
             send_cmd(&send_s, "file_directory_operation", serde_json::json!({
                 "operation": "create",

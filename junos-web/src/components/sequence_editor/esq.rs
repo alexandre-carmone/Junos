@@ -6,6 +6,8 @@
 
 use std::borrow::Cow;
 
+use crate::compat::CameraSnapshot;
+
 use super::model::SeqFrame;
 
 /// Escape text-node content, so a folder path like `/data/M81 & M82` or an
@@ -24,6 +26,12 @@ fn or<'a>(value: &'a str, fallback: &'a str) -> Cow<'a, str> {
     esc(if value.is_empty() { fallback } else { value })
 }
 
+/// One `<PropertyVector>` with a single number element.
+fn vector(xml: &mut String, name: &str, element: &str, value: f64) {
+    xml.push_str(&format!(
+        "<PropertyVector name='{name}'><OneElement name='{element}'>{value}</OneElement></PropertyVector>\n"));
+}
+
 /// Generate a minimal ESQ XML from a list of sequence frames.
 ///
 /// `fits_dir` is written into every job's `<FITSDirectory>` (KStars parses it
@@ -33,7 +41,17 @@ fn or<'a>(value: &'a str, fallback: &'a str) -> Cow<'a, str> {
 /// subfolder from the `%t` (target name) placeholder. The scheduler flow bakes
 /// the sanitized name straight into `fits_dir` instead, so it passes `false` to
 /// drop the `%t` folder and avoid a doubled-up subfolder.
-pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame], target_folder: bool) -> String {
+///
+/// `camera` resolves what the rows leave to the camera (an unset format) and
+/// what KStars wants as an index (ISO). Numbers are written as parsed, so a
+/// stray space or decimal can't turn into 0 on KStars' side.
+pub fn build_esq_xml(
+    job_name: &str,
+    fits_dir: &str,
+    frames: &[SeqFrame],
+    target_folder: bool,
+    camera: &CameraSnapshot,
+) -> String {
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<SequenceQueue version='2.1'>\n");
     xml.push_str("<GuideDeviation enabled='false'>0</GuideDeviation>\n");
@@ -48,18 +66,34 @@ pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame], target
     let fits_dir = esc(fits_dir);
     for f in frames {
         xml.push_str("<Job>\n");
-        xml.push_str(&format!("<Exposure>{}</Exposure>\n", esc(&f.exposure)));
-        xml.push_str(&format!("<Format>{}</Format>\n<Encoding>{}</Encoding>\n",
-            or(&f.format, "FITS"), or(&f.encoding, "FITS")));
-        xml.push_str(&format!("<Binning><X>{}</X><Y>{}</Y></Binning>\n",
-            or(&f.bin_x, "1"), or(&f.bin_y, "1")));
+        match f.exposure_secs() {
+            Some(secs) => xml.push_str(&format!("<Exposure>{secs}</Exposure>\n")),
+            None => xml.push_str(&format!("<Exposure>{}</Exposure>\n", esc(&f.exposure))),
+        }
+        // <Format> is a CCD_CAPTURE_FORMAT label, which KStars sets on every
+        // frame (`setCaptureFormat` turns all switches off first, so a label
+        // the camera doesn't list leaves none on). Unset → the camera's
+        // current one; unknown too → no element, KStars leaves it alone.
+        let format = Some(f.format.trim()).filter(|v| !v.is_empty())
+            .or(camera.capture_format.as_deref());
+        if let Some(format) = format {
+            xml.push_str(&format!("<Format>{}</Format>\n", esc(format)));
+        }
+        xml.push_str(&format!("<Encoding>{}</Encoding>\n", or(f.encoding.trim(), "FITS")));
+        let bin = |axis: &str| SeqFrame::bin_n(axis).unwrap_or(1);
+        xml.push_str(&format!("<Binning><X>{}</X><Y>{}</Y></Binning>\n", bin(&f.bin_x), bin(&f.bin_y)));
         xml.push_str("<Frame><X>0</X><Y>0</Y><W>0</W><H>0</H></Frame>\n");
+        // KStars looks the name up in the filter wheel's labels (`<Filter>`
+        // absent: the wheel stays where it is).
         if !f.filter.is_empty() {
             xml.push_str(&format!("<Filter>{}</Filter>\n", esc(&f.filter)));
         }
         xml.push_str(&format!("<Type>{}</Type>\n", esc(&f.frame_type)));
-        xml.push_str(&format!("<Count>{}</Count>\n", esc(&f.count)));
-        xml.push_str(&format!("<Delay>{}</Delay>\n", or(&f.delay, "0")));
+        match f.count_n() {
+            Some(n) => xml.push_str(&format!("<Count>{n}</Count>\n")),
+            None => xml.push_str(&format!("<Count>{}</Count>\n", esc(&f.count))),
+        }
+        xml.push_str(&format!("<Delay>{}</Delay>\n", f.delay_secs().unwrap_or(0)));
         if !job_name.is_empty() {
             xml.push_str(&format!("<TargetName>{job_name}</TargetName>\n"));
         }
@@ -88,24 +122,34 @@ pub fn build_esq_xml(job_name: &str, fits_dir: &str, frames: &[SeqFrame], target
         // the suffix value is its zero-padding width. Use 4 → `_0001`, `_0002`, …
         xml.push_str("<PlaceholderSuffix>4</PlaceholderSuffix>\n");
         xml.push_str("<UploadMode>0</UploadMode>\n");
-        if !f.iso.is_empty() {
-            xml.push_str(&format!("<ISOIndex>{}</ISOIndex>\n", esc(&f.iso)));
+        // <ISOIndex> is the position in the camera's CCD_ISO list
+        // (`CameraChip::setISOIndex`), not the ISO itself.
+        if let Some(i) = camera.iso_options.iter().position(|o| *o == f.iso) {
+            xml.push_str(&format!("<ISOIndex>{i}</ISOIndex>\n"));
         }
-        let has_gain = !f.gain.is_empty();
-        let has_offset = !f.offset.is_empty();
-        if has_gain || has_offset {
+        // Gain and offset live in a standalone CCD_GAIN / CCD_OFFSET on some
+        // drivers, in CCD_CONTROLS ("Gain" / "Offset") on others (ZWO…), and
+        // KStars only reads the one the camera has (`cameraGain(propertyMap)`).
+        // Write both: the vector the camera lacks is skipped when the job
+        // applies its properties.
+        let gain = f.gain_value().ok().flatten();
+        let offset = f.offset_value().ok().flatten();
+        if gain.is_some() || offset.is_some() {
             xml.push_str("<Properties>\n");
-            if has_gain {
-                xml.push_str(&format!(
-                    "<PropertyVector name='CCD_GAIN'><OneElement name='GAIN'>{}</OneElement></PropertyVector>\n",
-                    esc(&f.gain)));
+            if let Some(g) = gain {
+                vector(&mut xml, "CCD_GAIN", "GAIN", g);
             }
-            if has_offset {
-                xml.push_str(&format!(
-                    "<PropertyVector name='CCD_OFFSET'><OneElement name='OFFSET'>{}</OneElement></PropertyVector>\n",
-                    esc(&f.offset)));
+            if let Some(o) = offset {
+                vector(&mut xml, "CCD_OFFSET", "OFFSET", o);
             }
-            xml.push_str("</Properties>\n");
+            xml.push_str("<PropertyVector name='CCD_CONTROLS'>");
+            if let Some(g) = gain {
+                xml.push_str(&format!("<OneElement name='Gain'>{g}</OneElement>"));
+            }
+            if let Some(o) = offset {
+                xml.push_str(&format!("<OneElement name='Offset'>{o}</OneElement>"));
+            }
+            xml.push_str("</PropertyVector>\n</Properties>\n");
         } else {
             xml.push_str("<Properties/>\n");
         }

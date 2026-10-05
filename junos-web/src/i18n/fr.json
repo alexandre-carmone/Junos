@@ -637,6 +637,8 @@
   "seq_total": "Total",
   "seq_frame_unit": "pose",
   "seq_frames_unit": "poses",
+  "seq_no_change": "Sans changement",
+  "seq_err_values": "Corrigez les lignes de séquence en rouge : gain, offset, délai et binning doivent être des nombres ≥ 0.",
   "pa_enabled_label": "Activé :",
   "pa_pre_start": "Options avant démarrage",
   "pa_rotation_deg_label": "Rotation °",

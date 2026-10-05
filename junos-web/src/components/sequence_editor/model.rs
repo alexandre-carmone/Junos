@@ -17,8 +17,12 @@ pub struct SeqFrame {
     pub bin_y:      String,
     pub gain:       String,
     pub offset:     String,
+    /// ISO label as the camera lists it (`CCD_ISO`); serialized as its index.
     pub iso:        String,
+    /// `CCD_CAPTURE_FORMAT` label ("Mono", "Raw 16 bit"…) — empty keeps the
+    /// camera's current one.
     pub format:     String,
+    /// `CCD_TRANSFER_FORMAT` label: "FITS", "XISF" or "Native".
     pub encoding:   String,
     /// Flat rows only — KStars' calibration "Flat duration". `true` = ADU:
     /// KStars adapts the exposure until the frame mean reaches `flat_adu`
@@ -41,7 +45,7 @@ impl Default for SeqFrame {
             gain:       "100".into(),
             offset:     String::new(),
             iso:        String::new(),
-            format:     "FITS".into(),
+            format:     String::new(),
             encoding:   "FITS".into(),
             flat_adu_mode:  false,
             flat_adu:       "20000".into(),
@@ -68,9 +72,41 @@ impl SeqFrame {
         Some(self.exposure_secs()? * self.count_n()? as f64)
     }
 
+    /// Gain, `Ok(None)` when left empty (the camera keeps its own).
+    pub fn gain_value(&self) -> Result<Option<f64>, ()> {
+        optional_number(&self.gain)
+    }
+
+    /// Offset, `Ok(None)` when left empty (the camera keeps its own).
+    pub fn offset_value(&self) -> Result<Option<f64>, ()> {
+        optional_number(&self.offset)
+    }
+
+    /// Delay between frames in whole seconds — KStars reads `<Delay>` with
+    /// `toInt`, so "2.5" would silently become 0. Empty means none.
+    pub fn delay_secs(&self) -> Result<u32, ()> {
+        Ok(optional_number(&self.delay)?.map_or(0, |v| v.round() as u32))
+    }
+
+    /// Binning factor of one axis; empty means 1.
+    pub fn bin_n(axis: &str) -> Result<u32, ()> {
+        match axis.trim() {
+            "" => Ok(1),
+            v => v.parse::<u32>().ok().filter(|n| *n >= 1).ok_or(()),
+        }
+    }
+
+    /// Gain, offset, delay and binning are numbers KStars can read. Exposure
+    /// and count are checked by `duration_secs`.
+    pub fn values_ok(&self) -> bool {
+        self.gain_value().is_ok() && self.offset_value().is_ok() && self.delay_secs().is_ok()
+            && Self::bin_n(&self.bin_x).is_ok() && Self::bin_n(&self.bin_y).is_ok()
+    }
+
     /// True when the row can be serialized into a job KStars will accept.
     pub fn is_valid(&self) -> bool {
         self.duration_secs().is_some()
+            && self.values_ok()
             && (!self.is_adu_flat() || self.flat_adu_target().is_some())
     }
 
@@ -101,6 +137,15 @@ impl SeqFrame {
     pub fn bin_label(&self) -> String {
         let axis = |v: &str| if v.trim().is_empty() { "1".to_string() } else { v.trim().to_string() };
         format!("{}\u{00d7}{}", axis(&self.bin_x), axis(&self.bin_y))
+    }
+}
+
+/// A number ≥ 0, `Ok(None)` for an empty field, `Err` for anything else —
+/// KStars would read a stray string as 0 (`QVariant::toDouble`).
+fn optional_number(s: &str) -> Result<Option<f64>, ()> {
+    match s.trim() {
+        "" => Ok(None),
+        v => v.parse::<f64>().ok().filter(|n| n.is_finite() && *n >= 0.0).map(Some).ok_or(()),
     }
 }
 

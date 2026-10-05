@@ -66,10 +66,16 @@ fn text_input(
 /// input while the device hasn't reported any yet (camera not streaming its
 /// switch property). A current value missing from the list is kept as a
 /// disabled placeholder option instead of being silently replaced.
+///
+/// `none` labels a leading entry for the empty value — the job leaves that
+/// setting to the camera. Without it an empty value would show the first
+/// option as picked while the job carries nothing. Fields that always need
+/// a value pass `None`.
 fn choice_input(
     options: impl Fn() -> Vec<String> + Send + Sync + 'static,
     value: impl Fn() -> String + Copy + Send + Sync + 'static,
     set: impl Fn(String) + Copy + Send + Sync + 'static,
+    none: Option<Signal<String>>,
 ) -> impl IntoView {
     // Memo: snapshots update often (temperature, state…); only rebuild the
     // <select> when the option list itself changes.
@@ -91,6 +97,9 @@ fn choice_input(
         // options don't exist yet when the select's own props are applied.
         view! {
             <select class=INPUT on:change=move |ev| set(event_target_value(&ev))>
+                {none.map(|label| view! {
+                    <option value="" prop:selected=move || value().is_empty()>{label}</option>
+                })}
                 {unknown}
                 {opts.into_iter().map(|o| {
                     let (name, label) = (o.clone(), o.clone());
@@ -162,10 +171,12 @@ pub fn JobCard(
         move |v| update_row(frames, idx, |f| f.frame_type = v),
     );
 
+    let no_change = Signal::derive(move || tr().seq_no_change.to_string());
     let filter = move || labeled(move || tr().field_filter, choice_input(
         move || filter_wheel.with(|fw| fw.filter_names.clone()),
         move || frame().filter,
         move |v| update_row(frames, idx, |f| f.filter = v),
+        Some(no_change),
     ));
 
     let exposure = move || labeled(move || tr().field_exposure_s, text_input(
@@ -270,6 +281,11 @@ pub fn JobCard(
         </div>
     };
     let show_iso = move || !camera.with(|c| c.iso_options.is_empty()) || !frame().iso.is_empty();
+    // An unset format is the camera's current one: name it.
+    let format_current = Signal::derive(move || match camera.with(|c| c.capture_format.clone()) {
+        Some(cur) => format!("{} ({cur})", tr().seq_no_change),
+        None => tr().seq_no_change.to_string(),
+    });
     let more = move || view! {
         <details class="group rounded-md border border-border-base">
             <summary class="list-none cursor-pointer flex items-center gap-sp-2 min-h-9 px-sp-2 text-sm select-none [&::-webkit-details-marker]:hidden">
@@ -280,39 +296,42 @@ pub fn JobCard(
             <div class=format!("{GRID_4} px-sp-2 pb-sp-2")>
                 {binning()}
                 {labeled(move || tr().field_gain, text_input(
-                    "numeric",
+                    "decimal",
                     move || frame().gain,
                     move |v| update_row(frames, idx, |f| f.gain = v),
-                    || false,
+                    move || frame().gain_value().is_err(),
                 ))}
                 {labeled(move || tr().field_offset, text_input(
-                    "numeric",
+                    "decimal",
                     move || frame().offset,
                     move |v| update_row(frames, idx, |f| f.offset = v),
-                    || false,
+                    move || frame().offset_value().is_err(),
                 ))}
                 <Show when=show_iso>
                     {labeled(move || tr().field_iso, choice_input(
                         move || camera.with(|c| c.iso_options.clone()),
                         move || frame().iso,
                         move |v| update_row(frames, idx, |f| f.iso = v),
+                        Some(no_change),
                     ))}
                 </Show>
                 {labeled(move || tr().field_format, choice_input(
                     move || camera.with(|c| c.capture_format_options.clone()),
                     move || frame().format,
                     move |v| update_row(frames, idx, |f| f.format = v),
+                    Some(format_current),
                 ))}
                 {labeled(move || tr().field_encoding, choice_input(
                     move || camera.with(|c| c.transfer_format_options.clone()),
                     move || frame().encoding,
                     move |v| update_row(frames, idx, |f| f.encoding = v),
+                    None,
                 ))}
                 {labeled(move || tr().field_delay_s, text_input(
-                    "decimal",
+                    "numeric",
                     move || frame().delay,
                     move |v| update_row(frames, idx, |f| f.delay = v),
-                    || false,
+                    move || frame().delay_secs().is_err(),
                 ))}
             </div>
         </details>

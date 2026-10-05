@@ -189,7 +189,9 @@ pub fn ImagingTab(
     let fits_dir = RwSignal::new(String::new());
     let s_seq = send.clone();
     let on_send_seq = move |_| {
-        let xml = build_esq_xml("", &fits_dir.get_untracked(), &frames.get_untracked(), true);
+        let xml = camera.with_untracked(|cam| {
+            build_esq_xml("", &fits_dir.get_untracked(), &frames.get_untracked(), true, cam)
+        });
         send_cmd(&s_seq, LOAD, json!({ "filedata": xml }));
         refresh_queue_soon(s_seq.clone());
         editor_open.set(false);
