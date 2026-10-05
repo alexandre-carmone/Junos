@@ -97,6 +97,51 @@ pub struct MosaicPlanRender {
 // Fallback CPU rendering (stars + constellation lines + names)
 // ---------------------------------------------------------------------------
 
+/// The sky within the projection's reach (`astro::project` stops at 1.5 ×
+/// the field radius), as a cap around the view centre in J2000 — precession
+/// is a rotation, so the separation is the same in either frame and a star
+/// can be culled before it is precessed.
+struct Reach {
+    ra_deg: f64,
+    dec_deg: f64,
+    sin_dec: f64,
+    cos_dec: f64,
+    radius_deg: f64,
+    cos_radius: f64,
+}
+
+impl Reach {
+    fn new(f: &Frame) -> Self {
+        let (ra, dec) = astro::altaz_to_eq(f.view.c_alt, f.view.c_az, f.scene.lst, f.scene.latitude);
+        let c = JNow::new(ra, dec).to_j2000(f.scene.jd);
+        let (sin_dec, cos_dec) = c.dec_deg.to_radians().sin_cos();
+        let radius_deg = f.view.fov * 1.5;
+        Self {
+            ra_deg: c.ra_deg,
+            dec_deg: c.dec_deg,
+            sin_dec,
+            cos_dec,
+            radius_deg,
+            cos_radius: radius_deg.min(180.0).to_radians().cos(),
+        }
+    }
+
+    /// Whether a J2000 position may land in the projection. The declination
+    /// test alone rules out most of the sky once zoomed in, for one subtraction.
+    fn holds(&self, ra_deg: f32, dec_deg: f32) -> bool {
+        if self.radius_deg >= 180.0 {
+            return true;
+        }
+        let dec = dec_deg as f64;
+        if (dec - self.dec_deg).abs() > self.radius_deg {
+            return false;
+        }
+        let (sin_dec, cos_dec) = dec.to_radians().sin_cos();
+        self.sin_dec * sin_dec + self.cos_dec * cos_dec * (ra_deg as f64 - self.ra_deg).to_radians().cos()
+            >= self.cos_radius
+    }
+}
+
 pub(super) fn render_fallback_stars(
     ctx: &CanvasRenderingContext2d,
     f: &mut Frame,
@@ -133,10 +178,18 @@ pub(super) fn render_fallback_stars(
             .then_some((sx, sy))
     };
 
+    // Zoomed in, the limit takes in nearly all of junos.bin and the Tycho-2
+    // tiles: skip what lies beyond the projection's reach before paying for
+    // the precession.
+    let reach = Reach::new(f);
+
     let mut idx_screen: Vec<Option<(f64, f64, f32, f32)>> = vec![None; cat.stars.len()];
     if f.toggles.stars_on || f.toggles.const_on {
         for (i, star) in cat.stars.iter().enumerate() {
             if f.toggles.stars_on && star.mag > f.scene.mag_limit {
+                continue;
+            }
+            if !reach.holds(star.ra_deg, star.dec_deg) {
                 continue;
             }
             if let Some((sx, sy)) = to_screen(star.ra_deg, star.dec_deg) {
@@ -148,18 +201,8 @@ pub(super) fn render_fallback_stars(
     // the brighter base stars land on top.
     let mut deep_screen: Vec<Option<(f64, f64, f32, f32)>> = Vec::new();
     if f.toggles.stars_on && !f.catalogs.deep_stars.is_empty() {
-        // The tiles are 5° wide, a deep-zoomed view under 1°: skip what is
-        // beyond the projection's reach before paying for the precession.
-        let (c_ra, c_dec) = astro::altaz_to_eq(f.view.c_alt, f.view.c_az, f.scene.lst, f.scene.latitude);
-        let c = JNow::new(c_ra, c_dec).to_j2000(f.scene.jd);
-        let (c_sin, c_cos) = c.dec_deg.to_radians().sin_cos();
-        let cos_reach = (f.view.fov * 1.5).min(180.0).to_radians().cos();
         for &[ra, dec, mag, bv] in f.catalogs.deep_stars {
-            if mag > f.scene.mag_limit {
-                continue;
-            }
-            let (d_sin, d_cos) = (dec as f64).to_radians().sin_cos();
-            if c_sin * d_sin + c_cos * d_cos * (ra as f64 - c.ra_deg).to_radians().cos() < cos_reach {
+            if mag > f.scene.mag_limit || !reach.holds(ra, dec) {
                 continue;
             }
             deep_screen.push(to_screen(ra, dec).map(|(sx, sy)| (sx, sy, mag, bv)));
