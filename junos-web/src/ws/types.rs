@@ -657,9 +657,9 @@ impl IndiRule {
     }
 }
 
-/// Switch/light element state — tolerant of int (ISState), bool, and
-/// string ("On"/"Off") forms (cf. the idiom at store.rs CCD_COOLER arm).
-fn switch_state_from_json(el: &serde_json::Value) -> bool {
+/// Switch/light element state — tolerant of int (ISState, what
+/// `switchToJson` sends), bool, and string ("On"/"Off") forms.
+pub(super) fn switch_state_from_json(el: &serde_json::Value) -> bool {
     el["state"]
         .as_i64()
         .map(|v| v == 1)

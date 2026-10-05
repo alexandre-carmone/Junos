@@ -580,18 +580,10 @@ impl DeviceStore {
                         });
                     }
                 } else if prop == "CCD_COOLER" {
-                    let mut on: Option<bool> = None;
-                    if let Some(arr) = payload["switches"].as_array() {
-                        for el in arr {
-                            let n = el["name"].as_str().unwrap_or("");
-                            let v = el["value"]
-                                .as_bool()
-                                .or_else(|| el["state"].as_str().map(|s| s == "On"));
-                            if n == "COOLER_ON" {
-                                on = v;
-                            }
-                        }
-                    }
+                    // `state` is the raw ISState (1 = on), not a string.
+                    let on = payload["switches"].as_array()
+                        .and_then(|arr| arr.iter().find(|el| el["name"] == "COOLER_ON"))
+                        .map(switch_state_from_json);
                     if on.is_some() {
                         self.camera_status.update(|opt| {
                             let cs = opt.get_or_insert_with(CameraStatusData::default);

@@ -115,7 +115,7 @@ pub fn ImagingTab(
     let live = Memo::new(move |_| capture.with(|c| (c.seq_current, c.seq_total)));
     let device = Memo::new(move |_| camera.with(|c| c.device.clone()));
     let temperature = Memo::new(move |_| camera.with(|c| c.temperature));
-    let cooler_on = Memo::new(move |_| camera.with(|c| c.cooler_on == Some(true)));
+    let cooler_on = Memo::new(move |_| camera.with(|c| c.cooler_on));
     let settings = fields::Settings::new(capture, send.clone());
     // KStars rests on "Image Received" between frames and after a lone
     // preview, so a running queue job counts as busy too.
@@ -163,15 +163,55 @@ pub fn ImagingTab(
 
     // Cooling, straight to the camera's INDI properties.
     let target_temp = RwSignal::new("-10".to_string());
+    // Off and On are separate buttons, so a tap sends that state whatever we
+    // last heard. The pick shows at once and stays until the driver echoes
+    // CCD_COOLER — or for 10 s, after which the driver refused it.
+    let cooler_want = RwSignal::new(None::<bool>);
+    Effect::new(move |_| {
+        if cooler_want.get().is_some() && cooler_want.get() == cooler_on.get() {
+            cooler_want.set(None);
+        }
+    });
+    let cooler_shown = move || cooler_want.get().or(cooler_on.get());
     let s_cool = send.clone();
-    let on_cooler = move |_| {
+    let set_cooler = move |on: bool| {
         let dev = device.get_untracked();
-        let on = !cooler_on.get_untracked();
-        if !dev.is_empty() {
-            send_device_property_set(&s_cool, &dev, "CCD_COOLER", json!([
-                { "name": "COOLER_ON",  "state": i32::from(on) },
-                { "name": "COOLER_OFF", "state": i32::from(!on) },
-            ]));
+        if dev.is_empty() { return; }
+        send_device_property_set(&s_cool, &dev, "CCD_COOLER", json!([
+            { "name": "COOLER_ON",  "state": i32::from(on) },
+            { "name": "COOLER_OFF", "state": i32::from(!on) },
+        ]));
+        cooler_want.set(Some(on));
+        wasm_bindgen_futures::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(10_000).await;
+            if cooler_want.get_untracked() == Some(on) {
+                cooler_want.set(None);
+            }
+        });
+    };
+    let cooler_pill = move |on: bool| {
+        let set = set_cooler.clone();
+        view! {
+            <button type="button"
+                    // One class string: a `class:` toggle beside it is wiped
+                    // whenever the string is rewritten.
+                    class=move || {
+                        let active = if cooler_shown() == Some(on) { " btn--active" } else { "" };
+                        let pending = if cooler_want.get() == Some(on) { " animate-pulse" } else { "" };
+                        format!("{CHIP} gap-2{active}{pending}")
+                    }
+                    aria-pressed=move || (cooler_shown() == Some(on)).to_string()
+                    disabled=move || device.with(String::is_empty)
+                    on:click=move |_| set(on)>
+                {on.then(|| view! {
+                    <span class=move || if cooler_shown() == Some(true) {
+                        "w-2 h-2 rounded-full bg-state-ok"
+                    } else {
+                        "w-2 h-2 rounded-full bg-text-faint"
+                    }></span>
+                })}
+                {move || if on { tr().imaging_cooler_on_val } else { tr().imaging_cooler_off_val }}
+            </button>
         }
     };
     let s_temp = send.clone();
@@ -318,22 +358,15 @@ pub fn ImagingTab(
                         {fields::capture_form(settings, camera, filter_wheel, lang)}
                     </div>
 
-                    // Cooling — for cameras that report a temperature.
-                    <Show when=move || temperature.get().is_some()>
+                    // Cooling — for cameras that report a temperature or a cooler.
+                    <Show when=move || temperature.get().is_some() || cooler_on.get().is_some()>
                         <div class=CARD>
                             <div class="flex items-center gap-2">
                                 <span class=format!("{CARD_TITLE} flex-1")>{move || tr().imaging_cooling}</span>
-                                <button type="button"
-                                        class=move || if cooler_on.get() { format!("{CHIP} gap-2 btn--active") } else { format!("{CHIP} gap-2") }
-                                        aria-pressed=move || cooler_on.get().to_string()
-                                        on:click=on_cooler.clone()>
-                                    <span class=move || if cooler_on.get() {
-                                        "w-2 h-2 rounded-full bg-state-ok"
-                                    } else {
-                                        "w-2 h-2 rounded-full bg-text-faint"
-                                    }></span>
-                                    {move || tr().imaging_cooler}
-                                </button>
+                                <div class="flex gap-1" role="group" aria-label=move || tr().imaging_cooler>
+                                    {cooler_pill(false)}
+                                    {cooler_pill(true)}
+                                </div>
                             </div>
                             <form class="flex items-center gap-2" on:submit=on_set_temp.clone()>
                                 <span class="flex-1 min-w-0 font-mono tabular-nums text-xl text-text-blue-bright">
