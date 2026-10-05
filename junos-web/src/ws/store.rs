@@ -122,6 +122,21 @@ impl DeviceStore {
             .or_else(|| trains.first().cloned())
     }
 
+    /// Whether a `device_property_*` payload from `device` is the capture
+    /// camera's: the Capture train's camera, else the one already seeded, else
+    /// any (trains not known yet).
+    fn is_capture_camera(&self, device: &str) -> bool {
+        self.module_train_untracked("1")
+            .map(|t| t.camera)
+            .filter(|c| !c.is_empty() && c != "--")
+            .or_else(|| {
+                self.camera_status
+                    .with_untracked(|o| o.as_ref().map(|c| c.device.clone()))
+                    .filter(|d| !d.is_empty())
+            })
+            .map_or(true, |c| c == device)
+    }
+
     pub(super) fn new() -> Self {
         Self {
             connected: RwSignal::new(false),
@@ -485,6 +500,28 @@ impl DeviceStore {
                 // named-property whitelist below (which stays untouched).
                 self.upsert_indi_property(payload);
 
+                // KStars pushes every subscribed device to every browser (the
+                // Devices tab subscribes to all of the selected one's
+                // properties), so another camera's CCD_* — the guide camera's
+                // — must not land on the capture camera: its name keys the
+                // sky's measured frame (sky/calib.rs), its geometry the FOV.
+                if prop.starts_with("CCD_") {
+                    let device = payload["device"].as_str().unwrap_or("");
+                    if !self.is_capture_camera(device) {
+                        return;
+                    }
+                    // Name it from any of its properties: a reconnect clears
+                    // `camera_status`, and not every camera has CCD_TEMPERATURE.
+                    let needs_name = self
+                        .camera_status
+                        .with_untracked(|o| o.as_ref().map_or(true, |c| c.device != device));
+                    if !device.is_empty() && needs_name {
+                        self.camera_status.update(|opt| {
+                            opt.get_or_insert_with(CameraStatusData::default).device = device.to_string();
+                        });
+                    }
+                }
+
                 if prop == "CCD_INFO" {
                     let max_x = extract_indi_number(payload, "CCD_MAX_X");
                     let max_y = extract_indi_number(payload, "CCD_MAX_Y");
@@ -570,13 +607,7 @@ impl DeviceStore {
                     let t = extract_indi_number(payload, "CCD_TEMPERATURE_VALUE");
                     if t.is_some() {
                         self.camera_status.update(|opt| {
-                            let cs = opt.get_or_insert_with(CameraStatusData::default);
-                            if let Some(dev) = payload["device"].as_str() {
-                                if !dev.is_empty() {
-                                    cs.device = dev.to_string();
-                                }
-                            }
-                            cs.temperature = t;
+                            opt.get_or_insert_with(CameraStatusData::default).temperature = t;
                         });
                     }
                 } else if prop == "CCD_COOLER" {

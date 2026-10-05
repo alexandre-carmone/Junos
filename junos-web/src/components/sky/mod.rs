@@ -155,8 +155,10 @@ fn solve_fov_deg(sv: &SolveSnapshot, cam: &CameraSnapshot) -> Option<(f64, f64)>
 /// frame has been measured it is back-computed from that field, so a wrong
 /// scope focal or CCD_INFO self-corrects — KStars' effective focal length
 /// (align_fov.cpp:89). The measured frame (`calib`: KStars' own FOV, this
-/// session's solve or a saved one) comes first: it does not depend on
-/// `CCD_BINNING`, which may have changed since the solve. Else the nominal focal.
+/// session's solve or a saved one) comes first, else the nominal focal — the
+/// two frames the HUD reports. Only without a scope focal does the last
+/// solve's pixel scale stand in: it is per pixel at the solve's binning, and
+/// `CCD_BINNING` is the current one, which may have changed since.
 fn reticle_focal_mm(
     frame: Option<&calib::FrameCalib>,
     sv: &SolveSnapshot,
@@ -170,7 +172,7 @@ fn reticle_focal_mm(
     let from_pix = || {
         astro::effective_focal_mm(sv.pixscale_arcsec?, cam.pixel_size_um?, cam.bin_x? as f64)
     };
-    from_fov().or_else(from_pix).or(nominal)
+    from_fov().or(nominal).or_else(from_pix)
 }
 
 fn local_storage() -> Option<web_sys::Storage> {
