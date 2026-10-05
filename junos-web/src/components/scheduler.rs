@@ -50,6 +50,8 @@ use crate::{SchedulerPrefillCtx, Tab};
 use labels::scheduler_status_label;
 // Files › Planning shows task queues with the editor's labels.
 pub(crate) use labels::{param_label, step_label};
+// The Mosaic tab adds its tile jobs with the add-job form's keys.
+pub(crate) use mapping::resolve_completion_condition;
 use queue_api::QueueList;
 use view_add_job::{AddJobForm, AddJobSheet};
 use view_jobs::SchedulerJobs;

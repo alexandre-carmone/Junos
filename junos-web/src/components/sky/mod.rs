@@ -389,7 +389,7 @@ fn derive_kstars_mosaic_plan(mosaic: &MosaicSnapshot, jd: f64) -> Option<MosaicP
     })
 }
 
-fn derive_planner_mosaic_plan(
+pub(crate) fn derive_planner_mosaic_plan(
     planning_on: bool,
     center: Option<(f64, f64)>,
     focal_length_mm: Option<f64>,
@@ -1005,7 +1005,7 @@ pub fn SkyTab(
         // tiles are laid out in a planar grid (arcmin), the entire grid is
         // rotated by PA around the mosaic center, then converted to RA/Dec
         // with a per-tile cos(dec) correction. This way the preview matches
-        // exactly what `scheduler_import_mosaic` will produce in KStars.
+        // exactly the tile jobs the Mosaic tab's Send to Scheduler adds.
         let mosaic_plan_render = derive_planner_mosaic_plan(
             mosaic_planning_on,
             mosaic_center_val,

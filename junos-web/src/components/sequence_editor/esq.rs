@@ -1,8 +1,7 @@
 //! ESQ (KStars capture sequence) XML serializer for `SeqFrame` rows.
 //!
 //! Callers feed the result into KStars via `capture_load_sequence_file`
-//! (Imaging), `scheduler_save_sequence_file` (Scheduler) or
-//! `scheduler_import_mosaic` (Mosaic).
+//! (Imaging) or `scheduler_save_sequence_file` (Scheduler, Mosaic).
 
 use std::borrow::Cow;
 

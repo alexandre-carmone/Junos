@@ -12,7 +12,8 @@
 //!      (`tabs.rs`), so the sequence and options survive the round trip.
 //!   2. Set grid / overlap / PA (previewed live on the sky) and the capture
 //!      sequence shared by every tile.
-//!   3. [Send to Scheduler] saves the ESQ file and imports all tiles as jobs.
+//!   3. [Send to Scheduler] saves the ESQ file and adds one job per tile,
+//!      keeping the jobs already queued.
 
 use std::sync::Arc;
 
@@ -21,8 +22,9 @@ use leptos::prelude::*;
 use crate::astro;
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
 use crate::components::form::{CARD, CARD_TITLE, FOOTER, JobOptions, LABEL, NUM, ROW};
+use crate::components::scheduler::resolve_completion_condition;
 use crate::components::sequence_editor::{SeqFrame, SequenceEditor, build_esq_xml, fmt_duration};
-use crate::components::sky::{fmt_dec, fmt_ra, mosaic_span_am};
+use crate::components::sky::{derive_planner_mosaic_plan, fmt_dec, fmt_ra, mosaic_span_am};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::dom::event_target_value;
 use crate::i18n::{Lang, t};
@@ -34,28 +36,6 @@ fn sanitize_name(name: &str) -> String {
     name.chars()
         .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
         .collect()
-}
-
-/// RA degrees → "HH MM SS.SS" (space-separated, for KStars dmsBox).
-/// Takes degrees, unlike `mount.rs::fmt_hms`, which takes hours.
-fn fmt_ra_hms_from_deg(ra_deg: f64) -> String {
-    let ra_h = ra_deg.rem_euclid(360.0) / 15.0;
-    let h = ra_h.floor() as u32;
-    let rem = (ra_h - h as f64) * 60.0;
-    let m = rem.floor() as u32;
-    let s = (rem - m as f64) * 60.0;
-    format!("{:02} {:02} {:05.2}", h, m, s)
-}
-
-/// Dec degrees → "+DD MM SS.SS" (space-separated, for KStars dmsBox)
-fn fmt_dms(dec_deg: f64) -> String {
-    let sign = if dec_deg < 0.0 { "-" } else { "+" };
-    let a = dec_deg.abs();
-    let d = a.floor() as u32;
-    let rem = (a - d as f64) * 60.0;
-    let m = rem.floor() as u32;
-    let s = (rem - m as f64) * 60.0;
-    format!("{}{:02} {:02} {:05.2}", sign, d, m, s)
 }
 
 /// Arcmin below 1°, degrees above: "52.1′", "2.41°".
@@ -88,8 +68,8 @@ pub fn MosaicTab(
     let seq_fits_dir: RwSignal<String> = RwSignal::new(String::new());
 
     // Steps, start / completion and constraints, copied into every tile job.
-    // KStars' FramingAssistant::importMosaic only honors FinishSequence /
-    // FinishRepeat / FinishLoop — no FinishAt — so the view hides that option.
+    // The view hides "finish at a time": the first tile would hold the mount
+    // until then and the others would never run.
     let opts = JobOptions::new();
 
     let form_error: RwSignal<Option<String>> = RwSignal::new(None);
@@ -134,9 +114,6 @@ pub fn MosaicTab(
         if valid_frames.is_empty() {
             return fail(tr.mosaic_err_no_frames);
         }
-        let Some((fov_w_arcmin, fov_h_arcmin)) = tile_am.get_untracked() else {
-            return fail(tr.mosaic_err_no_fov);
-        };
         let gw  = p.grid_w.get_untracked();
         let gh  = p.grid_h.get_untracked();
         let overlap = p.overlap.get_untracked();
@@ -144,39 +121,17 @@ pub fn MosaicTab(
         let target = p.target.get_untracked();
         let home = home_dir.get_untracked();
 
-        // Build Telescopius-format mosaic CSV for scheduler_import_mosaic.
-        // KStars' parseMosaicCSV reads: Center row sets RA/DEC/PA/FOV/overlap;
-        // tile rows are only counted for grid W×H (Row→W axis, Column→H axis).
-        // p.center is JNow, but KStars' parseMosaicCSV reads the CSV RA/DEC
-        // into RA0/Dec0 (J2000) and precesses it forward again. Convert
-        // JNow→J2000 here so the round-trip lands on the intended position
-        // instead of a doubly-precessed one (~0.4° off in 2026).
+        // Tile centres, laid out like KStars' MosaicTiles::updateTiles — the
+        // same layout the sky previews — around the J2000 centre, since the
+        // job form takes J2000 coordinates (p.center is JNow).
         let jd = astro::now_jd();
         let j2000 = crate::coords::JNow::new(center_ra_deg, center_dec_deg).to_j2000(jd);
-        let center_ra_hms  = fmt_ra_hms_from_deg(j2000.ra_deg);
-        let center_dec_dms = fmt_dms(j2000.dec_deg);
-        let overlap_str = format!("{:.0}%", overlap);
-
-        let mut csv = String::from(
-            "Pane,RA,DEC,Position Angle (East),Pane width (arcmins),Pane height (arcmins),Overlap,Row,Column\n"
-        );
-        csv.push_str(&format!(
-            "Center,{},{},{:.1},{:.2},{:.2},{},0,0\n",
-            center_ra_hms, center_dec_dms, pa, fov_w_arcmin, fov_h_arcmin, overlap_str
-        ));
-        let mut pane_num = 1u32;
-        for row in 0..gh {
-            for col in 0..gw {
-                // Row index maps to mosaic W axis, Column index to H axis.
-                csv.push_str(&format!(
-                    "Panel {},{},{},{:.1},{:.2},{:.2},{},{},{}\n",
-                    pane_num, center_ra_hms, center_dec_dms, pa,
-                    fov_w_arcmin, fov_h_arcmin, overlap_str,
-                    col + 1, row + 1
-                ));
-                pane_num += 1;
-            }
-        }
+        let Some(plan) = camera.with_untracked(|cam| derive_planner_mosaic_plan(
+            true, Some((j2000.ra_deg, j2000.dec_deg)), focal_length_mm.get_untracked(),
+            cam, gw, gh, overlap, pa, &target,
+        )) else {
+            return fail(tr.mosaic_err_no_fov);
+        };
 
         let safe_name = sanitize_name(if target.is_empty() { "mosaic" } else { &target });
         let rel_path  = format!(".junos-sequences/{}.esq", safe_name);
@@ -186,23 +141,18 @@ pub fn MosaicTab(
             format!("{}/.junos-sequences/{}.esq", home, safe_name)
         };
 
-        // Base capture directory (sequence destination → home). Each tile job
-        // KStars generates is named `<safe_name>-Part_<N>`, and the `%T`
-        // placeholder resolves to that job name at capture time, so the frames
-        // land under `<base>/<safe_name>-Part_<N>/...`. We therefore leave the
-        // base bare here (no `safe_name`) and let `%T` supply the per-tile
-        // leaf folder.
-        let import_base = {
+        // One sequence for every tile, capturing under `<base>/<safe_name>`
+        // (base: the sequence destination, else home). Each tile job is named
+        // `<safe_name>-Part_<N>`, and KStars hands the job name to Capture as
+        // the target (`startSingleCapture`), so the `%t` placeholder files each
+        // tile's frames under `<base>/<safe_name>/<safe_name>-Part_<N>/`.
+        let base = {
             let fits = seq_fits_dir.get_untracked();
             let fits = fits.trim();
             if fits.is_empty() { home.clone() } else { fits.to_string() }
         };
-        let import_base = import_base.trim_end_matches('/').to_string();
-        // Emit a non-empty <TargetName> so KStars' createJobSequence rewrites it
-        // per tile to `<safe_name>-Part_<N>`; the `%T` placeholder then resolves
-        // to that job name at capture time. Leaving it empty drops the element,
-        // so `%T` would resolve to nothing and every frame lands flat in the base.
-        let xml = camera.with_untracked(|cam| build_esq_xml(&safe_name, &import_base, &valid_frames, true, cam));
+        let fits_dir = format!("{}/{}", base.trim_end_matches('/'), safe_name);
+        let xml = camera.with_untracked(|cam| build_esq_xml(&safe_name, &fits_dir, &valid_frames, true, cam));
         if !home.is_empty() {
             send_cmd(&send_s, "file_directory_operation", serde_json::json!({
                 "operation": "create",
@@ -212,31 +162,39 @@ pub fn MosaicTab(
         send_cmd(&send_s, "scheduler_save_sequence_file",
             serde_json::json!({"path": rel_path, "filedata": xml}));
 
-        let (cc_literal, cc_arg) = match opts.complete_cond.get_untracked().as_str() {
-            "repeat" => ("FinishRepeat", opts.complete_count.get_untracked()),
-            "loop"   => ("FinishLoop",   "1".to_string()),
-            _        => ("FinishSequence", "1".to_string()),
-        };
-
-        // Pre-load fields not accepted by `scheduler_import_mosaic` directly:
-        // start condition + altitude/moon constraints land in the form first,
-        // then importMosaic snapshots them into each tile job.
-        send_cmd(&send_s, "scheduler_set_all_settings", opts.settings_json());
-
-        // Hand KStars the bare base directory; the `<safe_name>-Part_<N>` leaf
-        // comes from the `%T` placeholder baked into the sequence above.
-        send_cmd(&send_s, "scheduler_import_mosaic", serde_json::json!({
-            "csv":      csv,
-            "sequence": abs_path,
-            "target":   safe_name,
-            "directory": import_base,
-            "track":    opts.track.get_untracked(),
-            "focus":    opts.focus.get_untracked(),
-            "align":    opts.align.get_untracked(),
-            "guide":    opts.guide.get_untracked(),
-            "completionCondition":    cc_literal,
-            "completionConditionArg": cc_arg,
-        }));
+        // One job per tile, the way the Scheduler tab adds one: fill KStars'
+        // job form, then `scheduler_add_jobs`. Not `scheduler_import_mosaic`:
+        // its FramingAssistantUI::createJobs empties the job list first.
+        // KStars inserts each job below the selected one (at the end when
+        // none is) and selects it, so the tiles stay together and in order.
+        let (seq_r, rep_r, rep_lim, loop_r, until_r, until_val) = resolve_completion_condition(
+            opts.complete_cond.get_untracked().as_str(),
+            opts.complete_count.get_untracked(),
+            opts.complete_at.get_untracked(),
+        );
+        // KSUtils::rangePA, as importMosaic stored it.
+        let pa_job = 180.0 - (180.0 - pa).rem_euclid(360.0);
+        for (i, tile) in plan.tiles.iter().enumerate() {
+            send_cmd(&send_s, "scheduler_set_all_settings", opts.settings_json());
+            send_cmd(&send_s, "scheduler_set_all_settings", serde_json::json!({
+                "nameEdit":          format!("{safe_name}-Part_{}", i + 1),
+                "raBox":             format!("{:.6}", tile.ra_deg.rem_euclid(360.0) / 15.0),
+                "decBox":            format!("{:.6}", tile.dec_deg),
+                "sequenceEdit":      abs_path,
+                "positionAngleSpin": pa_job,
+                "schedulerTrackStep": opts.track.get_untracked(),
+                "schedulerFocusStep": opts.focus.get_untracked(),
+                "schedulerAlignStep": opts.align.get_untracked(),
+                "schedulerGuideStep": opts.guide.get_untracked(),
+                "schedulerCompleteSequences":    seq_r,
+                "schedulerRepeatSequences":      rep_r,
+                "schedulerRepeatSequencesLimit": rep_lim,
+                "schedulerUntilTerminated":      loop_r,
+                "schedulerUntil":                until_r,
+                "schedulerUntilValue":           until_val,
+            }));
+            send_cmd(&send_s, "scheduler_add_jobs", serde_json::json!({}));
+        }
 
         form_error.set(None);
         planner.planning.set(false);
@@ -247,10 +205,6 @@ pub fn MosaicTab(
         wasm_bindgen_futures::spawn_local(async move {
             gloo_timers::future::TimeoutFuture::new(1500).await;
             send_cmd(&send_refresh, "scheduler_get_jobs", serde_json::json!({}));
-            // KStars re-emits `new_mosaic_tiles` while processing import; drop
-            // it again once the dust has settled so the planetarium overlay
-            // doesn't come back.
-            mosaic_tiles.set(None);
         });
     };
 
@@ -269,10 +223,8 @@ pub fn MosaicTab(
         }
     };
 
-    // Tile / total field and the equipment they come from. KStars'
-    // parseMosaicCSV ignores the FOV columns we send: its framing assistant
-    // spaces tiles from its own persisted equipment, so show ours to
-    // cross-check, plus the note on how to resync KStars.
+    // Tile / total field and the equipment they come from — the tile jobs
+    // are spaced from this field.
     let fov_info = move || {
         let tr = tr();
         let cam = camera.get();
@@ -292,7 +244,6 @@ pub fn MosaicTab(
                 <span class="font-mono text-xs text-text-muted">
                     {format!("FL {fl:.0} mm \u{00b7} {sw}\u{00d7}{sh} px @ {px:.2} \u{00b5}m")}
                 </span>
-                <span class="text-xs text-text-faint leading-snug">{tr.mosaic_kstars_fov_note}</span>
             </div>
         }.into_any()
     };

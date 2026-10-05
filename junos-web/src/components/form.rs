@@ -195,9 +195,8 @@ impl JobOptions {
     }
 
     /// `scheduler_set_all_settings` payload for the start condition and the
-    /// constraints. They land in KStars' job form, and both
-    /// `scheduler_add_jobs` and `scheduler_import_mosaic` snapshot the form
-    /// into the jobs they create.
+    /// constraints. They land in KStars' job form, and `scheduler_add_jobs`
+    /// snapshots the form into the job it creates.
     pub fn settings_json(&self) -> serde_json::Value {
         let num = |v: RwSignal<String>, default: f64| v.get_untracked().trim().parse::<f64>().unwrap_or(default);
         let at = self.start_cond.get_untracked() == "at";
@@ -230,7 +229,8 @@ impl JobOptions {
     }
 
     /// Start / completion selects. `finish_at` offers KStars' "finish at a
-    /// time" — single jobs only, `importMosaic` has no such condition.
+    /// time" — single jobs only: on a mosaic the first tile would run until
+    /// then and leave none for the others.
     pub fn conditions_view(self, lang: RwSignal<Lang>, finish_at: bool) -> impl IntoView {
         let tr = move || t(lang.get());
         let o = self;
