@@ -1108,6 +1108,7 @@
   "pa_no_frame": "Align frames appear here",
   "pa_meridian_warn": "Meridian crossing likely — reverse the direction, reduce the rotation or point further from the meridian.",
   "pa_step_adjust": "Adjust",
+  "pa_refresh_failed": "Refresh solve failed",
   "fc_section_dust_cap": "Dust cap",
   "fc_no_device": "No dust cap / flat panel detected on this profile",
   "fc_status_unknown": "Unknown",

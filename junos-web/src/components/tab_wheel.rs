@@ -333,10 +333,13 @@ pub fn TabWheel() -> impl IntoView {
     // Container — uses pointer events so hover works on both mouse and touch.
     // Tailwind utilities own static layout/colours; the dynamic transform /
     // opacity for the rotating disc is passed via CSS custom properties
-    // (--tw-rot, --tw-bx) and class toggles.
+    // (--tw-rot, --tw-bx) and class toggles. Hidden while a tab has a sheet
+    // open (`[data-sheet]`, see `form::sheet`): it sits above every tab, and
+    // its knob would cover a short sheet's close button at mid-height.
     view! {
         <div
-            class="absolute right-[-107px] top-1/2 -translate-y-1/2 z-[60] pointer-events-none w-[290px] h-[290px] flex items-center justify-center md:hidden"
+            class="absolute right-[-107px] top-1/2 -translate-y-1/2 z-[60] pointer-events-none w-[290px] h-[290px] flex items-center justify-center md:hidden \
+                   [#junos-app:has([data-sheet])_&]:hidden"
             on:pointerenter=on_pointer_enter
             on:pointerleave=on_pointer_leave
             on:pointerdown=on_pointer_down

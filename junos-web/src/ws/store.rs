@@ -1038,6 +1038,12 @@ impl DeviceStore {
                             az_error: obj.get("azError").and_then(|x| x.as_f64()).unwrap_or(0.0),
                             alt_error: obj.get("altError").and_then(|x| x.as_f64()).unwrap_or(0.0),
                         });
+                        // Sent once per run, after the third solve
+                        // (polaralignmentassistant.cpp:1019): a previous
+                        // run's refresh no longer applies.
+                        p.updated_error = None;
+                        p.updated_az_error = None;
+                        p.updated_alt_error = None;
                     }
                     if let Some(v) = payload.get("updatedError").and_then(|x| x.as_f64()) {
                         p.updated_error = Some(v);

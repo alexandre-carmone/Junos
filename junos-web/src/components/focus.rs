@@ -904,7 +904,7 @@ pub fn FocusTab(
 
             // Settings — bottom sheet on phones, floating panel on md+.
             <Show when=move || settings_open.get()>
-                <div class="absolute inset-0 z-[70] bg-[rgba(2,4,10,0.6)]"
+                <div class="absolute inset-0 z-[70] bg-[rgba(2,4,10,0.6)]" data-sheet=""
                      on:click=move |_| settings_open.set(false)></div>
                 <div class="panel absolute z-[80] inset-x-0 bottom-0 max-h-[80dvh] rounded-b-none \
                             pb-[max(0.75rem,env(safe-area-inset-bottom))] \

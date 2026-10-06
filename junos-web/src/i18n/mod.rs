@@ -197,7 +197,7 @@ translations! {
     // Guide tab — redesigned layout
     guide_btn_start, guide_btn_stop, guide_drift_title, guide_target_title, guide_no_drift, guide_total,
     // Polar align — reset-view button, redesigned tab
-    pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust,
+    pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
     // Flat Cal tab — extra labels not already in fc_* / dc_*
     fc_section_dust_cap, fc_no_device, fc_status_unknown, fc_status_parked,
     fc_status_unparked, fc_status_moving, fc_brightness_label,

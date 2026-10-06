@@ -1198,6 +1198,7 @@
   "pa_no_frame": "Les images d'alignement apparaissent ici",
   "pa_meridian_warn": "Passage au méridien probable — inversez la direction, réduisez la rotation ou pointez plus loin du méridien.",
   "pa_step_adjust": "Réglage",
+  "pa_refresh_failed": "Échec de la résolution",
   "fc_section_dust_cap": "Cache",
   "fc_no_device": "Aucun cache ou panneau détecté pour ce profil",
   "fc_status_unknown": "Inconnu",

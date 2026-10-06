@@ -94,7 +94,7 @@ pub fn toggle_chip(on: RwSignal<bool>, label: impl Fn() -> &'static str + Send +
 /// A sheet over the dimmed tab (Scheduler, Guide): bottom sheet on phones,
 /// centered panel on md+. `body` brings its own scroll area and footer. Each
 /// sheet is one layer, so a later one (the queue editor) dims and blocks the
-/// one under it.
+/// one under it. `data-sheet` hides the tab wheel meanwhile (`tab_wheel.rs`).
 pub fn sheet(
     title: impl Fn() -> &'static str + Send + 'static,
     on_close: impl Fn() + Clone + Send + 'static,
@@ -103,7 +103,7 @@ pub fn sheet(
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let close_backdrop = on_close.clone();
     view! {
-        <div class="absolute inset-0 z-[70]">
+        <div class="absolute inset-0 z-[70]" data-sheet="">
             <div class="absolute inset-0 bg-[rgba(2,4,10,0.6)]" on:click=move |_| close_backdrop()></div>
             <div class="panel absolute inset-x-0 bottom-0 max-h-[calc(100%-3.5rem)] rounded-b-none \
                         flex flex-col overflow-hidden \

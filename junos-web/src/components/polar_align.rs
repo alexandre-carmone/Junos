@@ -442,23 +442,26 @@ pub fn PolarAlignTab(
     };
 
     // ── Adjust: live errors ──────────────────────────────────────────────
-    // The refresh errors once a valid one has come in, else the original
-    // three-point solve. KStars sends only the scalars; the ↑↓←→ mapping lives
-    // in its desktop widget (polaralignmentassistant.cpp:307-351).
+    // The three-point solve measures the error once (`vector`), then every
+    // refresh frame sends `updatedError*`, -1 when it failed to solve. Like
+    // KStars' own Orig./Updated fields, the original stays beside the refresh
+    // so a failed solve reads as a failure, not as the original coming back.
+    // KStars sends only the scalars; the ↑↓←→ mapping lives in its desktop
+    // widget (polaralignmentassistant.cpp:307-351).
     let readout = move || {
         let tr = tr();
-        let (total, az, alt, original) = polar.with(|p| {
-            let v = p.vector.as_ref();
-            match p.updated_error.filter(|e| e.is_finite() && *e >= 0.0) {
-                Some(e) => (Some(e), p.updated_az_error, p.updated_alt_error, v.map(|v| v.error)),
-                None => (v.map(|v| v.error), v.map(|v| v.az_error), v.map(|v| v.alt_error), None),
-            }
+        let (original, refresh) = polar.with(|p| {
+            let original = p.vector.as_ref()
+                .filter(|v| v.error.is_finite() && v.error >= 0.0)
+                .map(|v| (v.error, v.az_error, v.alt_error));
+            // None: no refresh yet. Some(None): the last refresh failed.
+            let refresh = p.updated_error.map(|e| (e.is_finite() && e >= 0.0).then(|| (
+                e,
+                p.updated_az_error.unwrap_or(f64::NAN),
+                p.updated_alt_error.unwrap_or(f64::NAN),
+            )));
+            (original, refresh)
         });
-        let total = total.filter(|t| t.is_finite() && *t >= 0.0);
-        let (az, alt) = match total {
-            Some(_) => (az.unwrap_or(f64::NAN), alt.unwrap_or(f64::NAN)),
-            None => (f64::NAN, f64::NAN),
-        };
         let axis = |err: f64, pos, neg| -> (String, &'static str) {
             if !err.is_finite() {
                 return ("—".into(), "text-text-muted");
@@ -469,22 +472,46 @@ pub fn PolarAlignTab(
                 None => (format!("\u{2713} {v}"), "text-state-ok"),
             }
         };
+        let total_txt = |t: f64| if t.is_finite() { format_deg_as_dms_small(t) } else { "—".into() };
+
+        // The big tiles: the latest refresh, else the original.
+        let (total, az, alt) = match refresh {
+            Some(r) => r,
+            None => original,
+        }.unwrap_or((f64::NAN, f64::NAN, f64::NAN));
         let (az_txt, az_cls) = axis(az, "←", "→");
         let (alt_txt, alt_cls) = axis(alt, "↓", "↑");
-        let total_cls = quality_cls(total.unwrap_or(f64::NAN));
-        let total_txt = total.map(format_deg_as_dms_small).unwrap_or_else(|| "—".into());
+        let total_cls = quality_cls(total);
+        let heading = if refresh.is_some() { tr.pa_updated } else { tr.pa_original };
+        let failed = matches!(refresh, Some(None));
+        // Once refreshing, the original below for comparison (and as a ring
+        // on the bullseye).
+        let compare = original.filter(|_| refresh.is_some());
         view! {
+            <div class="flex items-baseline justify-between gap-2 -mb-1">
+                <span class="shrink-0 text-xs uppercase tracking-[0.06em] text-text-muted">{heading}</span>
+                {failed.then(|| view! {
+                    <span class="min-w-0 truncate text-xs text-state-err">
+                        {format!("\u{2716} {}", tr.pa_refresh_failed)}
+                    </span>
+                })}
+            </div>
             <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
                 <div class="flex flex-col gap-2 min-w-0">
-                    {tile(tr.pa_total, total_txt, total_cls)}
+                    {tile(tr.pa_total, total_txt(total), total_cls)}
                     {tile(tr.pa_az_error, az_txt, az_cls)}
                     {tile(tr.pa_alt_error, alt_txt, alt_cls)}
                 </div>
-                {bullseye(az, alt, total_cls)}
+                {bullseye(az, alt, total_cls, compare.map(|(_, az, alt)| (az, alt)))}
             </div>
-            {original.map(|o| view! {
-                <div class="text-xs text-text-muted font-mono">
-                    {format!("{} {}", tr.pa_original, format_deg_as_dms_small(o))}
+            {compare.map(|(t, az, alt)| view! {
+                <div class="flex flex-col gap-1">
+                    <span class="text-xs uppercase tracking-[0.06em] text-text-muted">{tr.pa_original}</span>
+                    <div class="grid grid-cols-3 gap-1.5">
+                        {mini_tile(tr.pa_total, total_txt(t))}
+                        {mini_tile(tr.pa_az_error, axis(az, "←", "→").0)}
+                        {mini_tile(tr.pa_alt_error, axis(alt, "↓", "↑").0)}
+                    </div>
                 </div>
             })}
         }
@@ -630,7 +657,7 @@ pub fn PolarAlignTab(
 
             // Settings — bottom sheet on phones, floating panel on md+.
             <Show when=move || settings_open.get()>
-                <div class="absolute inset-0 z-[70] bg-[rgba(2,4,10,0.6)]"
+                <div class="absolute inset-0 z-[70] bg-[rgba(2,4,10,0.6)]" data-sheet=""
                      on:click=move |_| settings_open.set(false)></div>
                 <div class="panel absolute z-[80] inset-x-0 bottom-0 max-h-[80dvh] rounded-b-none \
                             pb-[max(0.75rem,env(safe-area-inset-bottom))] \
@@ -746,18 +773,38 @@ fn tile(label: &'static str, value: String, value_cls: &'static str) -> impl Int
     }
 }
 
+/// The original error under the refresh tiles: label above, mono value below.
+fn mini_tile(label: &'static str, value: String) -> impl IntoView {
+    view! {
+        <div class="min-w-0 rounded-md border border-border-base px-2 py-1 flex flex-col">
+            <span class="text-xs text-text-muted truncate">{label}</span>
+            <span class="font-mono text-sm text-text-dim whitespace-nowrap">{value}</span>
+        </div>
+    }
+}
+
 /// Error bullseye. The dot sits at (az, −alt), so following the arrows walks
 /// it to the center. Square-root radius so both 1′ and 15′ stay readable:
 /// rings at 1′, 5′ and 15′, the rim is 30′ (larger errors pin to it).
-fn bullseye(az_deg: f64, alt_deg: f64, dot_cls: &'static str) -> impl IntoView {
+/// `original`, while refreshing, is drawn as a hollow ring where it started.
+fn bullseye(
+    az_deg: f64,
+    alt_deg: f64,
+    dot_cls: &'static str,
+    original: Option<(f64, f64)>,
+) -> impl IntoView {
     const R: f64 = 54.0;
     let radius = |arcmin: f64| R * (arcmin / 30.0).sqrt();
-    let e = az_deg.hypot(alt_deg) * 60.0; // arcmin
-    let dot = e.is_finite().then(|| {
-        if e <= 0.0 { return (0.0, 0.0); }
-        let r = radius(e.min(30.0)) / e;
-        (r * az_deg * 60.0, -r * alt_deg * 60.0)
-    });
+    let place = |az: f64, alt: f64| {
+        let e = az.hypot(alt) * 60.0; // arcmin
+        e.is_finite().then(|| {
+            if e <= 0.0 { return (0.0, 0.0); }
+            let r = radius(e.min(30.0)) / e;
+            (r * az * 60.0, -r * alt * 60.0)
+        })
+    };
+    let dot = place(az_deg, alt_deg);
+    let ring = original.and_then(|(az, alt)| place(az, alt));
     view! {
         <svg viewBox="-60 -60 120 120" class="w-[120px] h-[120px] shrink-0">
             {[1.0, 5.0, 15.0, 30.0].map(|m| view! {
@@ -767,6 +814,10 @@ fn bullseye(az_deg: f64, alt_deg: f64, dot_cls: &'static str) -> impl IntoView {
             <line x1="-58" y1="0" x2="58" y2="0" stroke="var(--border-strong)" stroke-width="0.6"/>
             <line x1="0" y1="-58" x2="0" y2="58" stroke="var(--border-strong)" stroke-width="0.6"/>
             <circle r="1.6" fill="var(--text-muted)"/>
+            {ring.map(|(x, y)| view! {
+                <circle cx=format!("{x:.1}") cy=format!("{y:.1}") r="4.5"
+                        fill="none" stroke="var(--text-muted)" stroke-width="1.2"/>
+            })}
             {dot.map(|(x, y)| view! {
                 <circle cx=format!("{x:.1}") cy=format!("{y:.1}") r="4.5"
                         fill="currentColor" class=dot_cls/>
