@@ -246,7 +246,7 @@ pub fn SchedulerTab(
 
             <Show when=move || add_open.get()>
                 {sheet(move || tr().sched_add_job_btn, move || add_open.set(false), view! {
-                    <AddJobSheet form=form site=site camera=camera filter_wheel=filter_wheel home_dir=home_dir
+                    <AddJobSheet form=form site=site camera=camera filter_wheel=filter_wheel jobs=jobs home_dir=home_dir
                                  send=Arc::clone(&send_add) lang=lang open=add_open />
                 })}
             </Show>

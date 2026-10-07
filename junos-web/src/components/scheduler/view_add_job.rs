@@ -5,21 +5,23 @@
 use std::sync::Arc;
 
 use leptos::prelude::*;
+use serde_json::Value;
 
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot, SiteSnapshot};
 use crate::components::coord_input::{
     degrees_to_dms_string, dms_string_to_degrees, hms_string_to_hours, hours_to_hms_string,
     parse_canonical, CoordInput, CoordMode,
 };
-use crate::components::form::{JobOptions, CARD, CARD_TITLE, FOOTER, LABEL, NUM, ROW};
+use crate::components::form::{JobOptions, CARD, CARD_TITLE, FOOTER, LABEL, NUM, ROW, SELECT};
 use crate::components::sequence_editor::{build_esq_xml, fmt_duration, SeqFrame, SequenceEditor};
+use crate::components::sky::clock;
 use crate::dom::event_target_value;
 use crate::dso_catalog::DsoCatalogData;
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 
-use super::altitude::{self, altitude, altitude_chart, hhmm, samples, Night};
+use super::altitude::{self, altitude, altitude_chart, hhmm, job_ms, samples, Night};
 use super::labels::sanitize_name;
 use super::mapping::resolve_completion_condition;
 
@@ -40,6 +42,12 @@ pub struct AddJobForm {
     pub frames: RwSignal<Vec<SeqFrame>>,
     /// Capture folder; defaults from CaptureDirCtx and is kept by `reset`.
     pub fits_dir: RwSignal<String>,
+    /// Where the altitude card's session starts — `""` (the job that ends
+    /// last, else the start condition), `"auto"`, `"time"` or a job index.
+    /// Only an indication: it's never sent to KStars.
+    pub alt_ref: RwSignal<String>,
+    /// "HH:MM" tonight, for `alt_ref == "time"`.
+    pub alt_ref_time: RwSignal<String>,
 }
 
 impl AddJobForm {
@@ -54,6 +62,8 @@ impl AddJobForm {
             opts: JobOptions::new(),
             frames: RwSignal::new(vec![SeqFrame::default()]),
             fits_dir: RwSignal::new(String::new()),
+            alt_ref: RwSignal::new(String::new()),
+            alt_ref_time: RwSignal::new(String::new()),
         }
     }
 
@@ -66,6 +76,8 @@ impl AddJobForm {
         self.error.set(None);
         self.opts.reset();
         self.frames.set(vec![SeqFrame::default()]);
+        self.alt_ref.set(String::new());
+        self.alt_ref_time.set(String::new());
     }
 
     pub fn set_target(&self, name: String, ra_deg: f64, dec_deg: f64) {
@@ -97,33 +109,76 @@ fn local_ms(s: &str) -> Option<f64> {
 
 const PLAN_STEP_MS: f64 = 300_000.0;
 
+/// The altitude card's reference: the effective `alt_ref` — `""` resolves to
+/// the job that ends last, else `"auto"` — and its instant, if any.
+fn reference(sel: &str, time: &str, jobs: &[Value], site: &SiteSnapshot) -> (String, Option<f64>) {
+    let job_end = |i: usize| jobs.get(i).and_then(|j| job_ms(j, "stopTime"));
+    match sel {
+        "auto" => ("auto".into(), None),
+        // "HH:MM" within tonight's noon → noon night: 01:30 is after midnight.
+        "time" => {
+            let mut hm = time.split(':').map(|s| s.parse::<u32>().ok());
+            let at = hm.next().flatten().zip(hm.next().flatten());
+            ("time".into(), at.map(|(h, m)| clock::night_hour(Night::tonight(site).start, h, m)))
+        }
+        i => match i.parse().ok().and_then(|i| Some((i, job_end(i)?))) {
+            Some((i, t)) => (i.to_string(), Some(t)),
+            None => (0..jobs.len())
+                .filter_map(|i| Some((i, job_end(i)?)))
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .map_or(("auto".into(), None), |(i, t)| (i.to_string(), Some(t))),
+        },
+    }
+}
+
+/// What the altitude card draws, recomputed only when an input changes.
+#[derive(Clone, PartialEq)]
+struct Plan {
+    ra: f64,
+    dec: f64,
+    night: Night,
+    min_alt: Option<f64>,
+    /// The session's start: the reference, else the start condition's estimate.
+    start: Option<f64>,
+    session: Option<(f64, f64)>,
+    /// ASAP without a reference, and nothing tonight clears the minimum altitude.
+    no_slot: bool,
+}
+
 /// Tonight's altitude of the target with this job's session on it. The
 /// session is an estimate: ASAP starts once the target clears the minimum
 /// altitude (from dusk when the twilight constraint is on), and it lasts the
 /// sequence's exposures × repeats — delays, slews, focus and align aside.
-fn altitude_card(f: AddJobForm, site: Signal<SiteSnapshot>, lang: RwSignal<Lang>) -> impl IntoView {
-    move || {
-        let tr = t(lang.get());
-        let Some((ra, dec)) = target_deg(&f.ra.get(), &f.dec.get()) else {
-            return view! {
-                <div class=CARD>
-                    <span class=CARD_TITLE>{tr.sched_alt_title}</span>
-                    <span class="text-sm text-text-faint">{tr.sched_alt_hint}</span>
-                </div>
-            }.into_any();
-        };
+/// A reference — the end of a job already scheduled, or an hour — moves its
+/// start there instead, as an indication only: the job keeps its start
+/// condition.
+fn altitude_card(
+    f: AddJobForm,
+    site: Signal<SiteSnapshot>,
+    jobs: Signal<Vec<Value>>,
+    lang: RwSignal<Lang>,
+) -> impl IntoView {
+    let refr = Memo::new(move |_| {
+        let (sel, time) = (f.alt_ref.get(), f.alt_ref_time.get());
+        jobs.with(|js| site.with(|s| reference(&sel, &time, js, s)))
+    });
+    let plan = Memo::new(move |_| {
+        let (ra, dec) = target_deg(&f.ra.get(), &f.dec.get())?;
         let site = site.get();
-        let night = Night::tonight(&site);
+        let reference = refr.with(|r| r.1);
+        let night = reference.map_or_else(|| Night::tonight(&site), |t| Night::containing(t, &site));
         let alt = |t: f64| altitude(ra, dec, t, &site);
         let o = f.opts;
         let min_alt = if o.use_alt.get() { o.min_alt.get().trim().parse::<f64>().ok() } else { None };
 
         let asap = o.start_cond.get() != "at";
-        let start = if asap {
-            let from = js_sys::Date::now().max(if o.twilight.get() { night.dusk.unwrap_or(night.start) } else { night.start });
-            samples(from, night.end, PLAN_STEP_MS).find(|t| min_alt.is_none_or(|m| alt(*t) >= m))
-        } else {
-            local_ms(&o.start_at.get())
+        let start = match reference {
+            Some(t) => Some(t),
+            None if asap => {
+                let from = js_sys::Date::now().max(if o.twilight.get() { night.dusk.unwrap_or(night.start) } else { night.start });
+                samples(from, night.end, PLAN_STEP_MS).find(|t| min_alt.is_none_or(|m| alt(*t) >= m))
+            }
+            None => local_ms(&o.start_at.get()),
         };
         let secs: f64 = f.frames.with(|fs| fs.iter().filter_map(SeqFrame::duration_secs).sum());
         let session = start.and_then(|a| {
@@ -135,41 +190,112 @@ fn altitude_card(f: AddJobForm, site: Signal<SiteSnapshot>, lang: RwSignal<Lang>
             };
             (b > a).then_some((a, b))
         });
+        Some(Plan { ra, dec, night, min_alt, start, session, no_slot: reference.is_none() && asap && start.is_none() })
+    });
+    let has_target = Memo::new(move |_| plan.with(Option::is_some));
 
+    let chart = move || plan.get().map(|p| {
+        let track = altitude::Track { ra_deg: p.ra, dec_deg: p.dec, window: p.session, label: None };
+        altitude_chart(p.night, site.get(), vec![track], p.min_alt, t(lang.get()))
+    });
+
+    let lines = move || plan.get().map(|p| {
+        let tr = t(lang.get());
+        let site = site.get();
+        let alt = |t: f64| altitude(p.ra, p.dec, t, &site);
         let warn = |s: String| view! { <span class="text-state-warn">{format!("\u{26a0} {s}")}</span> };
-        let no_slot = (asap && start.is_none()).then(|| min_alt.map(|m| warn(format!("{} {m:.0}\u{00b0}", tr.sched_alt_no_slot))));
-        let below = session.and_then(|(a, b)| {
-            let m = min_alt?;
+        let no_slot = p.no_slot.then(|| p.min_alt.map(|m| warn(format!("{} {m:.0}\u{00b0}", tr.sched_alt_no_slot))));
+        let below = p.session.and_then(|(a, b)| {
+            let m = p.min_alt?;
             let t = samples(a, b, PLAN_STEP_MS).find(|t| alt(*t) < m)?;
             Some(warn(format!("{} {m:.0}\u{00b0} \u{00b7} {}", tr.sched_alt_below, hhmm(t))))
         });
-        let past_dawn = session.and_then(|(_, b)| {
-            let dawn = night.dawn.filter(|d| b > *d)?;
+        let past_dawn = p.session.and_then(|(_, b)| {
+            let dawn = p.night.dawn.filter(|d| b > *d)?;
             Some(warn(format!("{} \u{00b7} {}", tr.sched_alt_dawn, hhmm(dawn))))
         });
-        let session_line = session.map(|(a, b)| view! {
-            <span class="text-text">
-                <span class="text-accent-cyan">"\u{25ac} "</span>
-                {format!("{} ({:.0}\u{00b0}) \u{2192} {} ({:.0}\u{00b0}) \u{00b7} \u{2248}{}",
-                         hhmm(a), alt(a), hhmm(b), alt(b), fmt_duration((b - a) / 1000.0))}
-            </span>
+        // The session, or only its start while the sequence has no frames.
+        let session = match (p.session, p.start) {
+            (Some((a, b)), _) => Some(format!("{} ({:.0}\u{00b0}) \u{2192} {} ({:.0}\u{00b0}) \u{00b7} \u{2248}{}",
+                                              hhmm(a), alt(a), hhmm(b), alt(b), fmt_duration((b - a) / 1000.0))),
+            (None, Some(a)) => Some(format!("{} ({:.0}\u{00b0})", hhmm(a), alt(a))),
+            _ => None,
+        };
+        let session_line = session.map(|s| view! {
+            <span class="text-text"><span class="text-accent-cyan">"\u{25ac} "</span>{s}</span>
         });
-        let peak = samples(night.start, night.end, PLAN_STEP_MS)
+        let peak = samples(p.night.start, p.night.end, PLAN_STEP_MS)
             .map(|t| (t, alt(t)))
-            .max_by(|p, q| p.1.total_cmp(&q.1))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(t, a)| format!("{} {a:.0}\u{00b0} \u{00b7} {}", tr.sched_alt_peak, hhmm(t)));
+        view! {
+            {session_line}
+            <span>{peak}</span>
+            {no_slot}
+            {below}
+            {past_dawn}
+        }
+    });
 
-        let track = altitude::Track { ra_deg: ra, dec_deg: dec, window: session, label: None };
+    // The end of each job, the start condition, or an hour.
+    let options = move || {
+        let tr = t(lang.get());
+        let cur = refr.with(|r| r.0.clone());
+        let mut items: Vec<(String, String, bool)> = jobs.with(|js| js.iter().enumerate().map(|(i, j)| {
+            let end = job_ms(j, "stopTime");
+            // The time first: a phone's select cuts the label's end.
+            let label = format!("{} \u{00b7} {} #{} {}", end.map_or_else(|| "\u{2014}".to_string(), hhmm),
+                                tr.sched_alt_ref_end, i + 1, j["name"].as_str().unwrap_or("?"));
+            (i.to_string(), label, end.is_some())
+        }).collect());
+        items.push(("auto".into(), tr.sched_alt_ref_auto.into(), true));
+        items.push(("time".into(), tr.sched_alt_ref_time.into(), true));
+        items.into_iter().map(|(value, label, enabled)| {
+            let selected = value == cur;
+            view! { <option value=value prop:selected=selected disabled=!enabled>{label}</option> }
+        }).collect::<Vec<_>>()
+    };
+    // An hour picked for the first time starts where the session did.
+    let on_ref = move |ev: web_sys::Event| {
+        let v = event_target_value(&ev);
+        if v == "time" && f.alt_ref_time.with_untracked(String::is_empty) {
+            if let Some(t) = plan.with_untracked(|p| p.as_ref().and_then(|p| p.start.or(p.night.dusk))) {
+                f.alt_ref_time.set(hhmm(t));
+            }
+        }
+        f.alt_ref.set(v);
+    };
+
+    // Only the target appearing or going rebuilds the card: the picker stays
+    // put while the chart redraws, so the time input keeps the focus.
+    move || {
+        if !has_target.get() {
+            let tr = t(lang.get());
+            return view! {
+                <div class=CARD>
+                    <span class=CARD_TITLE>{tr.sched_alt_title}</span>
+                    <span class="text-sm text-text-faint">{tr.sched_alt_hint}</span>
+                </div>
+            }.into_any();
+        }
         view! {
             <div class=CARD>
-                {altitude_chart(night, site.clone(), vec![track], min_alt, tr)}
-                <div class="flex flex-col gap-1 font-mono text-xs text-text-muted">
-                    {session_line}
-                    <span>{peak}</span>
-                    {no_slot}
-                    {below}
-                    {past_dawn}
+                {chart}
+                <div class=ROW>
+                    <span class=format!("{LABEL} flex-1")>{move || t(lang.get()).sched_alt_ref}</span>
+                    <select class=SELECT on:change=on_ref>{options}</select>
                 </div>
+                <Show when=move || refr.with(|r| r.0 == "time")>
+                    <div class=format!("{ROW} justify-end")>
+                        <input type="time" class="input input--sm font-mono w-[150px] shrink-0 max-md:h-9"
+                               prop:value=move || f.alt_ref_time.get()
+                               on:input=move |ev| f.alt_ref_time.set(event_target_value(&ev)) />
+                    </div>
+                </Show>
+                <Show when=move || refr.with(|r| r.0 != "auto")>
+                    <span class="text-xs text-text-faint">{move || t(lang.get()).sched_alt_ref_note}</span>
+                </Show>
+                <div class="flex flex-col gap-1 font-mono text-xs text-text-muted">{lines}</div>
             </div>
         }.into_any()
     }
@@ -181,6 +307,8 @@ pub fn AddJobSheet(
     #[prop(into)] site: Signal<SiteSnapshot>,
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
+    /// The jobs already scheduled, whose ends the altitude card can start from.
+    #[prop(into)] jobs: Signal<Vec<Value>>,
     #[prop(into)] home_dir: Signal<String>,
     #[prop(into)] send: SendCmd,
     lang: RwSignal<Lang>,
@@ -355,7 +483,7 @@ pub fn AddJobSheet(
                     </div>
 
                     // Where the target is tonight, and this job's session on it.
-                    {altitude_card(f, site, lang)}
+                    {altitude_card(f, site, jobs, lang)}
 
                     // When to run, when it's done, and where it may run.
                     <div class=CARD>

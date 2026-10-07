@@ -13,7 +13,7 @@ use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 
-use super::altitude::{altitude_chart, Night, Track};
+use super::altitude::{altitude_chart, job_ms, Night, Track};
 use super::labels::{job_stage_label, job_state_label};
 
 /// `jobs` is the `scheduler_get_jobs` list (`SchedulerJob::toJson`). The
@@ -74,11 +74,6 @@ fn job_time(job: &Value, keys: [&str; 2]) -> Option<String> {
         .filter_map(|k| job[*k].as_str())
         .find(|s| !s.is_empty() && *s != "--")
         .map(str::to_string)
-}
-
-/// KStars' ISO time as Unix ms; `None` for "--".
-fn job_ms(job: &Value, key: &str) -> Option<f64> {
-    job[key].as_str().map(js_sys::Date::parse).filter(|t| t.is_finite())
 }
 
 /// The job's curve, with KStars' planned startup → stop as its window.

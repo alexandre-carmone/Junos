@@ -28,7 +28,7 @@ const H: f64 = 100.0;
 const ALT_LO: f64 = -10.0;
 
 /// Tonight's plot span and astronomical dusk / dawn, Unix ms.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Night {
     pub start: f64,
     pub end: f64,
@@ -37,10 +37,19 @@ pub struct Night {
 }
 
 impl Night {
-    /// The coming night — or the current one until 06:00. Dusk − 1 h → dawn
-    /// + 1 h like KStars; 18:00 → 06:00 when the sun never reaches −18°.
+    /// The coming night — or the current one until 06:00.
     pub fn tonight(site: &SiteSnapshot) -> Self {
-        let noon = clock::night_start(js_sys::Date::now() + 6.0 * HOUR_MS);
+        Self::of(clock::night_start(js_sys::Date::now() + 6.0 * HOUR_MS), site)
+    }
+
+    /// The night (noon → noon) that `ms` falls in.
+    pub fn containing(ms: f64, site: &SiteSnapshot) -> Self {
+        Self::of(clock::night_start(ms), site)
+    }
+
+    /// Dusk − 1 h → dawn + 1 h like KStars; 18:00 → 06:00 when the sun never
+    /// reaches −18°.
+    fn of(noon: f64, site: &SiteSnapshot) -> Self {
         let (dusk, dawn) = clock::night_twilights(noon, site.latitude, site.longitude);
         Self {
             start: dusk.map_or(noon + 6.0 * HOUR_MS, |t| t - HOUR_MS),
@@ -80,6 +89,11 @@ fn moon_altitude(ms: f64, site: &SiteSnapshot) -> f64 {
 pub fn hhmm(ms: f64) -> String {
     let d = js_sys::Date::new(&ms.into());
     format!("{:02}:{:02}", d.get_hours(), d.get_minutes())
+}
+
+/// A `scheduler_get_jobs` time (KStars' local ISO) as Unix ms; `None` for "--".
+pub fn job_ms(job: &serde_json::Value, key: &str) -> Option<f64> {
+    job[key].as_str().map(js_sys::Date::parse).filter(|t| t.is_finite())
 }
 
 /// One curve: a J2000 target, its capture window (Unix ms) when known, and a
