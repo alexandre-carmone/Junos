@@ -207,6 +207,17 @@ the script's `--out` flag or `DSO_TILE_DIR` — note `--dso-tile-dir` is the
 regardless of size, so changing `TILE_PX` leaves a resolution mix — `--status`
 shows it, `--force` refetches.
 
+Tiles are DSS2 except for nebulae (`is_nebula`: `NEBULA_KINDS`, plus the
+clusters OpenNGC files as "Cl+N", recognised by their Sh2/LBN id): from `LARGE_NEBULA_ARCMIN`
+(10′) up they come from NSNS (`simg.de/P/NSNS/DR0_2/hbr8`, narrowband, northern
+sky, CC BY-NC-SA) when a transparent-pixel PNG probe shows it covers the whole
+tile; below, the best-framing Hubble image on AstroPix (scraped HTML — no API —
+whose AVM block places it) is warped onto the DSS2 tile, and the sprite is that
+image alone over a tighter field, which the index gives as `thumb_fov` (the sky
+sizes sprites by `DsoTile::thumb_side`). `sources.json` records what each tile
+holds, so a plain fetch run upgrades a DSS2 cache in place; lookups are cached
+in `nasa/`.
+
 `junos-server/src/dso_tiles.rs` serves the directory at `/api/dso_tiles/*`
 (`index.json`, `<slug>.jpg`, `thumbs/<slug>.jpg`, `allsky.jpg`, `allsky_small.jpg`;
 names are `[a-z0-9_]+.jpg` only). The cache is **optional** — a missing

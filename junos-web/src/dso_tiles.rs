@@ -29,6 +29,10 @@ pub struct DsoTile {
     pub dec: f64,
     /// Angular side of the square tile, degrees.
     pub fov: f64,
+    /// Angular side of the planetarium sprite when it covers less than the
+    /// tile — a small nebula drawn from a Hubble image. Absent: `fov`.
+    #[serde(default)]
+    pub thumb_fov: Option<f64>,
 }
 
 impl DsoTile {
@@ -41,6 +45,11 @@ impl DsoTile {
     /// background subtracted and the edges faded to black (`--thumbs`).
     pub fn thumb_url(&self) -> String {
         format!("/api/dso_tiles/thumbs/{}", self.path)
+    }
+
+    /// Angular side of that sprite, degrees.
+    pub fn thumb_side(&self) -> f64 {
+        self.thumb_fov.unwrap_or(self.fov)
     }
 }
 
@@ -142,7 +151,7 @@ mod tests {
     }
 
     fn tile(name: &str, ra: f64, dec: f64, fov: f64) -> DsoTile {
-        DsoTile { name: name.into(), path: format!("{name}.jpg"), ra, dec, fov }
+        DsoTile { name: name.into(), path: format!("{name}.jpg"), ra, dec, fov, thumb_fov: None }
     }
 
     fn names(tiles: Vec<&DsoTile>) -> Vec<&str> {
@@ -198,6 +207,17 @@ mod tests {
         assert_eq!(i.by_name("NGC 7000").map(|t| t.path.as_str()), Some("NGC 7000.jpg"));
         assert!(i.by_name("M42").is_none());
         assert_eq!(i.by_name("M31").unwrap().thumb_url(), "/api/dso_tiles/thumbs/M31.jpg");
+    }
+
+    #[test]
+    fn sprite_side_defaults_to_the_tile() {
+        let i = DsoTileIndex::from_json(
+            r#"[{"name":"M57","path":"m57.jpg","ra":283.4,"dec":33.0,"fov":1.0,"thumb_fov":0.0417},
+                {"name":"M31","path":"m31.jpg","ra":10.68,"dec":41.26,"fov":6.0}]"#,
+        )
+        .unwrap();
+        assert_eq!(i.by_name("M57").unwrap().thumb_side(), 0.0417);
+        assert_eq!(i.by_name("M31").unwrap().thumb_side(), 6.0);
     }
 
     #[test]

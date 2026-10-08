@@ -110,7 +110,7 @@ impl SkyLayer for DsoImageLayer {
             // Only objects with a tile can be drawn; checked before the
             // trigonometry since most faint catalog entries have none.
             let Some(tile) = cache.tile_for(di as u32, &dso.name) else { continue };
-            let half_px = tile.fov / (2.0 * view.fov) * scale;
+            let half_px = tile.thumb_side() / (2.0 * view.fov) * scale;
             if half_px < MIN_HALF_PX {
                 continue;
             }

@@ -35,8 +35,16 @@ draws two things from this cache:
     J2000 panorama of the whole sky, the Milky Way background. Fetched by
     `--allsky` from ALLSKY_HIPS.
 
-Resumable: an object whose tile is already on disk and non-empty is skipped, so
-re-running after an interruption costs nothing. The index is rewritten from
+Nebulae are not all DSS2 (`is_nebula`): one of LARGE_NEBULA_ARCMIN or more
+is cut from NSNS_HIPS, a narrowband survey, when it covers the whole tile; a
+smaller one gets the best-framing Hubble image on AstroPix warped onto its DSS2
+tile, and a sprite made from that image alone over a tighter field (the index's
+`thumb_fov`). `sources.json` records what each tile holds, so a later run
+upgrades an existing DSS2 cache in place and only redoes what changed; the
+AstroPix lookups, including the misses, are cached under `nasa/`.
+
+Resumable: an object whose tile is already on disk, non-empty and from the
+right source is skipped, so re-running after an interruption costs nothing. The index is rewritten from
 whatever is on disk at the end of every run (and periodically during it), so a
 partial run still yields a usable index.
 
@@ -46,16 +54,22 @@ the cache down by dimension so that stays visible; `--force` refetches
 everything at the current TILE_PX.
 
 Output layout (under --out, default `.cache/dso_tiles/`):
-    index.json         [{ name, path, ra, dec, fov }, …]  ra/dec J2000 deg
+    index.json         [{ name, path, ra, dec, fov, thumb_fov? }, …]  ra/dec J2000 deg
     <slug>.jpg         one cutout per object
     thumbs/<slug>.jpg  THUMB_PX square sprite of the same cutout
+    sources.json       { slug: { base, nsns?, nasa? } } for the tiles that aren't plain DSS2
+    nasa/<slug>.json   AstroPix lookup: AVM coordinates, credit, licence ({"id": null}: none)
+    nasa/<slug>.jpg    the Hubble image as downloaded
     allsky.jpg         ALLSKY_W × ALLSKY_W/2 Milky Way panorama (+ allsky_small.jpg)
 """
 
 from __future__ import annotations
 
 import argparse
+import html
+import io
 import json
+import math
 import os
 import re
 import struct
@@ -132,6 +146,33 @@ KIND_NAMES = [
     "PlanetaryNebula", "SupernovaRemnant", "GalaxyCluster", "DarkNebula",
 ]
 
+# ── nebula sources ───────────────────────────────────────────────────────────
+# Nebulae get better pictures than DSS2's plates. From LARGE_NEBULA_ARCMIN up
+# the tile comes from the Northern Sky Narrowband Survey (H-alpha + continuum,
+# stars partly subtracted, ~6"/px, CC BY-NC-SA) wherever it covers the whole
+# tile; below, a Hubble image found on AstroPix — whose pages carry each
+# image's AVM sky coordinates — is warped onto the DSS2 tile. Everything else,
+# and any nebula neither source covers, stays DSS2. What each tile holds is
+# recorded in SOURCES_FILE so a re-run only redoes what changed.
+NEBULA_KINDS = {"Nebula", "PlanetaryNebula", "SupernovaRemnant"}
+LARGE_NEBULA_ARCMIN = 10.0
+NSNS_HIPS = "simg.de/P/NSNS/DR0_2/hbr8"
+NSNS_ARCSEC_PX = 6.4        # HiPS order 6 × 512 px tiles: finer tiles add nothing
+NSNS_PROBE_PX = 256         # PNG coverage probe — transparent where NSNS has no data
+SOURCES_FILE = "sources.json"
+
+ASTROPIX = "https://www.astropix.org"
+NASA_DIR = "nasa"           # <slug>.jpg (the image as downloaded) + <slug>.json (AVM)
+# AstroPix tags every search result: keep Hubble visible-light observations,
+# drop composites with other missions and illustrations.
+NASA_REQUIRE = {"hubble", "observation", "optical", "image_coordinate_complete"}
+NASA_REJECT = {"collage", "mission_graphics", "multi-mission", "x-ray", "radio", "single_channel"}
+NASA_MAX_CANDIDATES = 10    # image pages read per object
+NASA_MAX_PX = 6000          # never download the multi-hundred-MB originals
+# A Hubble picture only shows in the planetarium if the sprite is not the whole
+# ≥ FOV_MIN_DEG tile, so these objects get a tighter one (index `thumb_fov`).
+NASA_THUMB_FOV_MIN = 2.0 / 60.0
+
 
 # ── dso.bin reader ───────────────────────────────────────────────────────────
 # Format mirrors junos-web/src/dso_catalog.rs / gen_dso_catalog.py:
@@ -175,7 +216,7 @@ def read_dso_bin(path: str) -> list[dict]:
         name = r.string()
         r.name_list()  # common_names — unused here
         r.name_list()  # fr_names — unused here
-        r.name_list()  # ids — unused here
+        ids = r.name_list()
         objects.append({
             "name": name,
             "ra": ra,
@@ -183,6 +224,9 @@ def read_dso_bin(path: str) -> list[dict]:
             "mag": mag,
             "size_arcmin": size,
             "kind": KIND_NAMES[kind] if kind < len(KIND_NAMES) else "?",
+            # OpenNGC's "Cl+N" (M42, IC 1805, IC 1396…) is typed as a cluster,
+            # but keeps the Sharpless / LBN designation of its nebula.
+            "nebulous": any(i.startswith(("Sh2-", "LBN ")) for i in ids),
         })
     if r.pos != len(r.buf):
         print(f"warning: {len(r.buf) - r.pos} trailing bytes in dso.bin", file=sys.stderr)
@@ -197,6 +241,78 @@ def tile_fov_deg(size_arcmin: float) -> float:
         return FOV_MIN_DEG
     fov = size_arcmin / 60.0 * SIZE_MARGIN
     return min(max(fov, FOV_MIN_DEG), FOV_MAX_DEG)
+
+
+def is_nebula(entry: dict) -> bool:
+    return entry["kind"] in NEBULA_KINDS or (entry["kind"] == "OpenCluster" and entry["nebulous"])
+
+
+def wants_nsns(entry: dict) -> bool:
+    return is_nebula(entry) and entry["size_arcmin"] >= LARGE_NEBULA_ARCMIN
+
+
+def wants_nasa(entry: dict) -> bool:
+    return is_nebula(entry) and 0 < entry["size_arcmin"] < LARGE_NEBULA_ARCMIN
+
+
+def nsns_px(fov: float) -> int:
+    """NSNS tile side: twice the survey's sampling, within [1024, TILE_PX]."""
+    return min(TILE_PX, max(1024, round(fov * 3600.0 / NSNS_ARCSEC_PX * 2)))
+
+
+def nasa_thumb_fov(entry: dict) -> float:
+    return min(entry["fov"], max(entry["size_arcmin"] / 60.0 * SIZE_MARGIN, NASA_THUMB_FOV_MIN))
+
+
+# ── sky geometry (gnomonic / AVM) ────────────────────────────────────────────
+
+def gnomonic(ra: float, dec: float, ra0: float, dec0: float) -> tuple[float, float]:
+    """(ra, dec) → standard coordinates (xi east, eta north) about (ra0, dec0), all degrees."""
+    a, d, a0, d0 = map(math.radians, (ra, dec, ra0, dec0))
+    cos_c = math.sin(d0) * math.sin(d) + math.cos(d0) * math.cos(d) * math.cos(a - a0)
+    xi = math.cos(d) * math.sin(a - a0) / cos_c
+    eta = (math.cos(d0) * math.sin(d) - math.sin(d0) * math.cos(d) * math.cos(a - a0)) / cos_c
+    return math.degrees(xi), math.degrees(eta)
+
+
+def inv_gnomonic(xi: float, eta: float, ra0: float, dec0: float) -> tuple[float, float]:
+    x, y, d0 = math.radians(xi), math.radians(eta), math.radians(dec0)
+    rho = math.hypot(x, y)
+    if rho == 0.0:
+        return ra0, dec0
+    c = math.atan(rho)
+    dec = math.asin(math.cos(c) * math.sin(d0) + y * math.sin(c) * math.cos(d0) / rho)
+    ra = ra0 + math.degrees(math.atan2(x * math.sin(c),
+                                       rho * math.cos(d0) * math.cos(c) - y * math.sin(d0) * math.sin(c)))
+    return ra % 360.0, math.degrees(dec)
+
+
+class AvmWcs:
+    """The TAN WCS an AVM block describes, for an image of `width` × `height`.
+
+    AVM follows FITS: ReferencePixel is 1-based with the origin at the bottom
+    left, at ReferenceDimension's scale. `sky_to_pix` returns PIL coordinates
+    (top-left origin, pixel centres at +0.5) in the image actually in hand.
+    """
+
+    def __init__(self, avm: dict, width: int, height: int):
+        self.ra0, self.dec0 = avm["ReferenceValue"]
+        self.ref_w, self.ref_h = avm["ReferenceDimension"]
+        self.px0, self.py0 = avm["ReferencePixel"]
+        c1, c2 = avm["Scale"]
+        rot = math.radians(avm["Rotation"])
+        # CROTA2 convention → CD matrix, then its inverse.
+        cd = (c1 * math.cos(rot), -c2 * math.sin(rot), c1 * math.sin(rot), c2 * math.cos(rot))
+        det = cd[0] * cd[3] - cd[1] * cd[2]
+        self.inv = (cd[3] / det, -cd[1] / det, -cd[2] / det, cd[0] / det)
+        self.k = width / self.ref_w
+        self.deg_px = abs(c1) / self.k
+
+    def sky_to_pix(self, ra: float, dec: float) -> tuple[float, float]:
+        xi, eta = gnomonic(ra, dec, self.ra0, self.dec0)
+        px = self.px0 + self.inv[0] * xi + self.inv[1] * eta
+        py = self.py0 + self.inv[2] * xi + self.inv[3] * eta
+        return (px - 0.5) * self.k, (self.ref_h - (py - 0.5)) * self.k
 
 
 def slug(name: str) -> str:
@@ -244,6 +360,82 @@ def human_bytes(n: float) -> str:
     return f"{n:,.1f} TB"
 
 
+# ── Hubble overlay ───────────────────────────────────────────────────────────
+
+def edge_mask(size: tuple[int, int]) -> "Image.Image":
+    """`L` alpha for a press image: opaque inside, fading to 0 over the outer
+    ~10 % so its frame doesn't show. Its black sky is not masked out — press
+    images clip the sky to black right up to the object, and holes there read
+    as a ragged ring; `overlay_avm` matches the sky level instead."""
+    from PIL import Image, ImageDraw, ImageFilter
+    w, h = size
+    k = min(1.0, 256 / max(w, h))
+    sw, sh = max(1, round(w * k)), max(1, round(h * k))
+    r = max(1, round(min(sw, sh) * 0.05))
+    m = Image.new("L", (sw, sh), 0)
+    ImageDraw.Draw(m).rectangle((r, r, sw - 1 - r, sh - 1 - r), fill=255)
+    return m.filter(ImageFilter.GaussianBlur(r / 2)).resize(size, Image.BILINEAR)
+
+
+def sky_level(im: "Image.Image") -> list[int]:
+    """Per-channel background: the THUMB_BLACK_PCT luminance percentile."""
+    hist = im.histogram()
+    out = []
+    for ch in range(3):
+        h = hist[ch * 256:(ch + 1) * 256]
+        target, acc, level = sum(h) * THUMB_BLACK_PCT, 0, 0
+        for v, cnt in enumerate(h):
+            acc += cnt
+            if acc >= target:
+                level = v
+                break
+        out.append(min(level, 200))
+    return out
+
+
+def overlay_avm(base: "Image.Image", ra0: float, dec0: float, fov: float,
+                src: "Image.Image", avm: dict) -> "Image.Image":
+    """Warp `src` (with its AVM WCS) onto `base`, a north-up east-left TAN
+    square of side `fov` degrees centred on (ra0, dec0).
+
+    The press image's sky level is mapped onto the base's (DSS2's sky is grey,
+    a press image's near black) before it replaces the base inside its
+    footprint; on a black base its sky simply goes to black.
+    """
+    from PIL import Image
+    n = base.width
+    s_t = fov / n
+    wcs = AvmWcs(avm, src.width, src.height)
+    # Bring the source near the target sampling first: the affine warp does
+    # not filter, and a Hubble frame can be 20x finer than a tile.
+    if wcs.deg_px < s_t / 1.5:
+        f = s_t / wcs.deg_px
+        src = src.resize((max(1, round(src.width / f)), max(1, round(src.height / f))), Image.LANCZOS)
+        wcs = AvmWcs(avm, src.width, src.height)
+
+    lut = []
+    for to, frm in zip(sky_level(base), sky_level(src)):
+        lut += [round(to + max(0, v - frm) * (255 - to) / (255 - frm)) for v in range(256)]
+    rgba = src.point(lut)
+    rgba.putalpha(edge_mask(src.size))
+
+    # Base pixel → sky → source pixel. A press image spans a few arcminutes,
+    # so the map is affine to well under a pixel: fit it on three points.
+    def to_src(x: float, y: float) -> tuple[float, float]:
+        ra, dec = inv_gnomonic(-(x - n / 2) * s_t, -(y - n / 2) * s_t, ra0, dec0)
+        return wcs.sky_to_pix(ra, dec)
+
+    c, d = n / 2, n / 8
+    x0, y0 = to_src(c, c)
+    x1, y1 = to_src(c + d, c)
+    x2, y2 = to_src(c, c + d)
+    a, b = (x1 - x0) / d, (x2 - x0) / d
+    e, f = (y1 - y0) / d, (y2 - y0) / d
+    warped = rgba.transform((n, n), Image.AFFINE, (a, b, x0 - a * c - b * c, e, f, y0 - e * c - f * c),
+                            resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0))
+    return Image.composite(warped.convert("RGB"), base, warped.getchannel("A"))
+
+
 # ── thumbnails ───────────────────────────────────────────────────────────────
 
 _vignette_cache: dict[int, "Image.Image"] = {}
@@ -279,13 +471,24 @@ def vignette_mask(px: int) -> "Image.Image":
     return mask
 
 
-def make_thumb(src: str, dst: str) -> bool:
-    """Write the planetarium sprite for one tile. False if the JPEG is unreadable."""
+def make_thumb(src: str, dst: str, nasa: tuple | None = None) -> bool:
+    """Write the planetarium sprite for one tile. False if the JPEG is unreadable.
+
+    `nasa` = (ra, dec, thumb fov, image path, avm): the sprite is then the
+    Hubble image alone, over black, covering only the thumb fov around the
+    object — DSS2's bloated glow around a small nebula would ring it.
+    """
     from PIL import Image
     try:
-        with Image.open(src) as im:
-            im = im.convert("RGB")
-            im = im.resize((THUMB_PX, THUMB_PX), Image.LANCZOS)
+        if nasa:
+            ra, dec, thumb_fov, img_path, avm = nasa
+            src = img_path
+            with Image.open(img_path) as hs:
+                im = overlay_avm(Image.new("RGB", (THUMB_PX, THUMB_PX)), ra, dec, thumb_fov,
+                                 hs.convert("RGB"), avm)
+        else:
+            with Image.open(src) as im:
+                im = im.convert("RGB").resize((THUMB_PX, THUMB_PX), Image.LANCZOS)
     except (OSError, ValueError) as e:
         print(f"    thumb: cannot read {src}: {e}", file=sys.stderr)
         return False
@@ -364,22 +567,24 @@ def fetch_allsky(out_dir: str, width: int, timeout: float, retries: int, delay: 
 
 # ── download ─────────────────────────────────────────────────────────────────
 
-def tile_url(base: str, ra: float, dec: float, fov: float) -> str:
+def tile_url(base: str, ra: float, dec: float, fov: float,
+             hips: str = HIPS, px: int = TILE_PX, fmt: str = "jpg") -> str:
     q = urllib.parse.urlencode({
-        "hips": HIPS,
-        "width": TILE_PX,
-        "height": TILE_PX,
+        "hips": hips,
+        "width": px,
+        "height": px,
         "fov": f"{fov:.6f}",
         "projection": "TAN",
         "coordsys": "icrs",
         "ra": f"{ra:.6f}",
         "dec": f"{dec:.6f}",
-        "format": "jpg",
+        "format": fmt,
     })
     return f"{base}?{q}"
 
 
-def fetch_one(url: str, timeout: float, retries: int, delay: float) -> bytes | None:
+def fetch_one(url: str, timeout: float, retries: int, delay: float,
+              min_bytes: int = 1024) -> bytes | None:
     """GET one URL with bounded retries. Returns None once the budget is spent."""
     for attempt in range(retries + 1):
 
@@ -390,7 +595,7 @@ def fetch_one(url: str, timeout: float, retries: int, delay: float) -> bytes | N
                 if resp.status != 200:
                     raise urllib.error.HTTPError(url, resp.status, "bad status", resp.headers, None)
                 data = resp.read()
-            if len(data) < 1024:
+            if len(data) < min_bytes:
                 raise ValueError(f"suspiciously small response ({len(data)} bytes)")
             return data
         except Exception as e:  # noqa: BLE001 — any failure is retryable here
@@ -403,16 +608,198 @@ def fetch_one(url: str, timeout: float, retries: int, delay: float) -> bytes | N
 
 
 def fetch(ra: float, dec: float, fov: float,
-          timeout: float, retries: int, delay: float) -> bytes | None:
+          timeout: float, retries: int, delay: float,
+          hips: str = HIPS, px: int = TILE_PX, fmt: str = "jpg", min_bytes: int = 1024) -> bytes | None:
     """Try each mirror in turn; a tile only counts as failed once every mirror
     has spent its retry budget."""
     for i, base in enumerate(HIPS2FITS_MIRRORS):
-        data = fetch_one(tile_url(base, ra, dec, fov), timeout, retries, delay)
+        data = fetch_one(tile_url(base, ra, dec, fov, hips, px, fmt), timeout, retries, delay, min_bytes)
         if data is not None:
             return data
         if i + 1 < len(HIPS2FITS_MIRRORS):
             print(f"    mirror {base} failed, trying next", file=sys.stderr)
     return None
+
+
+def nsns_covered(ra: float, dec: float, fov: float,
+                 timeout: float, retries: int, delay: float) -> bool | None:
+    """Whether NSNS has data over the whole tile (None: could not tell).
+
+    hips2fits paints uncovered sky white in a JPEG — indistinguishable from a
+    saturated core — but transparent in a PNG, so a small PNG decides."""
+    from PIL import Image
+    data = fetch(ra, dec, fov, timeout, retries, delay,
+                 hips=NSNS_HIPS, px=NSNS_PROBE_PX, fmt="png", min_bytes=64)
+    if data is None:
+        return None
+    with Image.open(io.BytesIO(data)) as im:
+        if "A" not in im.getbands():
+            return True
+        return im.getchannel("A").getextrema()[0] > 0
+
+
+# ── AstroPix (Hubble images with AVM coordinates) ────────────────────────────
+# AstroPix has no API; its search and image pages are plain HTML whose AVM
+# fields carry RDFa `property` attributes, which is what these patterns key on.
+_AP_ITEM = re.compile(r"<div class='element-item ([^']*)'([^>]*)>")
+_AP_ATTR = re.compile(r"data-(release-date|url)='([^']*)'")
+_AP_AVM = re.compile(r"<dd property='avm:Spatial\.(\w+)'>\s*(.*?)\s*</dd>", re.S)
+_AP_CREDIT = re.compile(r"<dd property='photoshop:Credit'>\s*(.*?)\s*</dd>", re.S)
+_AP_POLICY = re.compile(r"Image Use Policy:\s*(.*?)\s*</p>", re.S)
+_AP_SIZE = re.compile(r'href="([^"]+?_\d+\.jpg)">\s*(\d+) x (\d+)')
+_AP_ORIGINAL = re.compile(r'Full Size Image\s*\((\d+) x (\d+)\)\s*<br>\s*<a href="([^"]+?_original\.jpg)"')
+
+
+def _ap_text(s: str) -> str:
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", s)).split())
+
+
+def astropix_search(ra: float, dec: float, radius: float,
+                    timeout: float, retries: int, delay: float) -> list[tuple[str, str]] | None:
+    """[(image page path, release date)] of the usable Hubble images within
+    `radius` degrees, newest first. None if AstroPix could not be reached."""
+    q = urllib.parse.urlencode({"ra": f"{ra:.5f}", "dec": f"{dec:.5f}", "radius": f"{radius:.4f}"})
+    data = fetch_one(f"{ASTROPIX}/search?{q}", timeout, retries, delay)
+    if data is None:
+        return None
+    out = []
+    for m in _AP_ITEM.finditer(data.decode("utf-8", "replace")):
+        tags = {t.removeprefix("navigator_param_") for t in m.group(1).split()}
+        attrs = dict(_AP_ATTR.findall(m.group(2)))
+        if NASA_REQUIRE <= tags and not tags & NASA_REJECT and "url" in attrs:
+            out.append((attrs["url"], attrs.get("release-date", "")))
+    out.sort(key=lambda t: t[1], reverse=True)
+    return out
+
+
+def astropix_image(path: str, timeout: float, retries: int, delay: float) -> dict | None | bool:
+    """The AVM spatial block, credit and JPEG sizes of one AstroPix image page.
+    None if it lacks a full TAN J2000 solution, False if it is unreachable."""
+    data = fetch_one(f"{ASTROPIX}{path}", timeout, retries, delay)
+    if data is None:
+        return False
+    page = data.decode("utf-8", "replace")
+    raw = {k: _ap_text(v) for k, v in _AP_AVM.findall(page)}
+    try:
+        avm = {
+            "ReferenceValue": [float(v) for v in raw["ReferenceValue"].split(",")],
+            "ReferenceDimension": [float(v) for v in raw["ReferenceDimension"].split(",")],
+            "ReferencePixel": [float(v) for v in raw["ReferencePixel"].split(",")],
+            "Scale": [float(v) for v in raw["Scale"].split(",")],
+            "Rotation": float(raw["Rotation"]),
+        }
+    except (KeyError, ValueError):
+        return None
+    if (raw.get("CoordsystemProjection", "TAN") != "TAN"
+            or raw.get("CoordinateFrame", "ICRS") not in ("ICRS", "FK5")
+            or raw.get("Quality", "Full") != "Full"
+            or any(len(avm[k]) != 2 for k in ("ReferenceValue", "ReferenceDimension", "ReferencePixel", "Scale"))
+            or avm["Scale"][0] == 0 or avm["Scale"][1] == 0):
+        return None
+    sizes = [(int(w), int(h), url) for url, w, h in _AP_SIZE.findall(page)]
+    if (o := _AP_ORIGINAL.search(page)):
+        sizes.append((int(o.group(1)), int(o.group(2)), o.group(3)))
+    if not sizes:
+        return None
+    credit = _AP_CREDIT.search(page)
+    policy = _AP_POLICY.search(page)
+    return {
+        "id": path.removeprefix("/image/"),
+        "page": f"{ASTROPIX}{path}",
+        "credit": _ap_text(credit.group(1)) if credit else "",
+        "policy": _ap_text(policy.group(1)) if policy else "",
+        "avm": avm,
+        "sizes": sorted(sizes),
+    }
+
+
+def nasa_score(rec: dict, entry: dict, thumb_fov: float) -> float | None:
+    """How well an image frames the object: the share of the sprite it covers,
+    or None if it misses much of the object. Catalog sizes are major axes, and
+    press frames are often cropped tight, so 70 % of it around the centre will do."""
+    avm = rec["avm"]
+    w, h = avm["ReferenceDimension"]
+    wcs = AvmWcs(avm, int(w), int(h))
+    x, y = wcs.sky_to_pix(entry["ra"], entry["dec"])
+    r = 0.7 * entry["size_arcmin"] / 120.0 / wcs.deg_px
+    if not (r <= x <= w - r and r <= y <= h - r):
+        return None
+    side = min(w * abs(avm["Scale"][0]), h * abs(avm["Scale"][1]))
+    return min(1.0, side / thumb_fov)
+
+
+def nasa_lookup(entry: dict, nasa_dir: str,
+                timeout: float, retries: int, delay: float) -> dict | None | bool:
+    """The Hubble image for a small nebula, found once then cached in
+    `nasa/<slug>.json` (+ `.jpg`). Returns the record, None when there is no
+    usable image, False when AstroPix could not be reached (retry later)."""
+    from PIL import Image
+    meta_path = os.path.join(nasa_dir, f"{entry['slug']}.json")
+    img_path = os.path.join(nasa_dir, f"{entry['slug']}.jpg")
+    try:
+        with open(meta_path) as f:
+            rec = json.load(f)
+        if not rec.get("id") or os.path.exists(img_path):
+            return rec if rec.get("id") else None
+    except (OSError, ValueError):
+        rec = None
+
+    if rec is None:
+        thumb_fov = nasa_thumb_fov(entry)
+        hits = astropix_search(entry["ra"], entry["dec"], max(0.05, entry["size_arcmin"] / 60.0),
+                               timeout, retries, delay)
+        if hits is None:
+            return False
+        best, best_score = None, 0.0
+        for path, _ in hits[:NASA_MAX_CANDIDATES]:
+            cand = astropix_image(path, timeout, retries, delay)
+            if cand is False:
+                return False
+            score = nasa_score(cand, entry, thumb_fov) if cand else None
+            # Newest first, so a tie keeps the more recent processing.
+            if score is not None and score > best_score + 0.05:
+                best, best_score = cand, score
+        os.makedirs(nasa_dir, exist_ok=True)
+        if best is None:
+            with open(meta_path, "w") as f:
+                json.dump({"id": None}, f)
+            return None
+        # Smallest JPEG fine enough for the sprite, else the largest allowed.
+        ref_w = best["avm"]["ReferenceDimension"][0]
+        want = thumb_fov / THUMB_PX / 1.2
+        allowed = [s for s in best["sizes"] if s[0] <= NASA_MAX_PX] or best["sizes"][:1]
+        fine = [s for s in allowed if abs(best["avm"]["Scale"][0]) * ref_w / s[0] <= want]
+        best["image"] = (fine[0] if fine else allowed[-1])[2]
+        del best["sizes"]
+        rec = best
+
+    data = fetch_one(rec["image"], timeout, retries, delay)
+    if data is None:
+        return False
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            im.verify()
+    except (OSError, ValueError):
+        return False
+    with open(img_path + ".part", "wb") as f:
+        f.write(data)
+    os.replace(img_path + ".part", img_path)
+    with open(meta_path + ".part", "w") as f:
+        json.dump(rec, f, indent=1)
+    os.replace(meta_path + ".part", meta_path)
+    return rec
+
+
+def overlay_tile(data: bytes, entry: dict, nasa: dict, nasa_dir: str) -> bytes:
+    """The tile JPEG with the object's Hubble image warped in."""
+    from PIL import Image
+    with Image.open(io.BytesIO(data)) as im, \
+            Image.open(os.path.join(nasa_dir, f"{entry['slug']}.jpg")) as hs:
+        out = overlay_avm(im.convert("RGB"), entry["ra"], entry["dec"], entry["fov"],
+                          hs.convert("RGB"), nasa["avm"])
+    buf = io.BytesIO()
+    out.save(buf, "JPEG", quality=90)
+    return buf.getvalue()
 
 
 def main() -> int:
@@ -480,6 +867,53 @@ def main() -> int:
         p = thumb_path(entry)
         return os.path.exists(p) and os.path.getsize(p) > 256
 
+    # What each tile on disk was made from: {slug: {"base": "dss2" | "nsns",
+    # "nsns": False once NSNS turned out not to cover it, "nasa": AstroPix id
+    # of the image warped in}}. A tile absent from it is a plain DSS2 cutout.
+    sources_path = os.path.join(args.out, SOURCES_FILE)
+    try:
+        with open(sources_path) as f:
+            sources: dict[str, dict] = json.load(f)
+    except (OSError, ValueError):
+        sources = {}
+    nasa_dir = os.path.join(args.out, NASA_DIR)
+
+    def write_sources() -> None:
+        tmp = sources_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(sources, f, indent=0, sort_keys=True)
+        os.replace(tmp, sources_path)
+
+    def nasa_cached(entry: dict) -> dict | None:
+        """The cached AstroPix lookup ({"id": None} when nothing fits), or None if never looked up."""
+        try:
+            with open(os.path.join(nasa_dir, f"{entry['slug']}.json")) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    def nasa_args(entry: dict) -> tuple | None:
+        """`make_thumb`'s Hubble parameters if one is baked into the tile."""
+        nid = sources.get(entry["slug"], {}).get("nasa")
+        rec = nasa_cached(entry) if nid else None
+        if not rec or rec.get("id") != nid:
+            return None
+        return (entry["ra"], entry["dec"], nasa_thumb_fov(entry),
+                os.path.join(nasa_dir, f"{entry['slug']}.jpg"), rec["avm"])
+
+    def needs_work(entry: dict) -> bool:
+        if args.force or not have(entry):
+            return True
+        m = sources.get(entry["slug"], {})
+        if wants_nsns(entry) and m.get("base") != "nsns" and m.get("nsns") is not False:
+            return True
+        if m.get("base") == "nsns" and not wants_nsns(entry):
+            return True
+        if wants_nasa(entry):
+            rec = nasa_cached(entry)
+            return rec is None or (rec.get("id") is not None and m.get("nasa") != rec["id"])
+        return False
+
     def write_thumbs(force: bool) -> int:
         """Build every missing sprite from the tiles on disk. Returns how many were written."""
         todo_t = [e for e in planned if have(e) and (force or not have_thumb(e))]
@@ -493,7 +927,7 @@ def main() -> int:
 
         def one(entry: dict) -> None:
             nonlocal n_done
-            make_thumb(tile_path(entry), thumb_path(entry))
+            make_thumb(tile_path(entry), thumb_path(entry), nasa_args(entry))
             with t_lock:
                 n_done += 1
                 n = n_done
@@ -506,16 +940,21 @@ def main() -> int:
         return len(todo_t)
 
     def write_index() -> int:
-        index = [
-            {
+        index = []
+        for e in planned:
+            if not have(e):
+                continue
+            item = {
                 "name": e["name"],
                 "path": f"{e['slug']}.jpg",
                 "ra": round(float(e["ra"]), 6),
                 "dec": round(float(e["dec"]), 6),
                 "fov": round(e["fov"], 6),
             }
-            for e in planned if have(e)
-        ]
+            # The sprite of a tile with a Hubble image covers less than the tile.
+            if sources.get(e["slug"], {}).get("nasa"):
+                item["thumb_fov"] = round(nasa_thumb_fov(e), 6)
+            index.append(item)
         index.sort(key=lambda e: e["name"])
         tmp = os.path.join(args.out, "index.json.tmp")
         with open(tmp, "w") as f:
@@ -541,15 +980,24 @@ def main() -> int:
             print(f"mean:    {human_bytes(mean_bytes)}/tile")
 
         # Resolution mix — the tell that TILE_PX changed mid-cache, which
-        # `have()` will not correct on its own.
-        dims: dict[str, int] = {}
+        # `have()` will not correct on its own. NSNS tiles are smaller on purpose.
+        dims: dict[str, list[int]] = {}
         for e in present:
             d = jpeg_dims(tile_path(e))
-            dims[f"{d[0]}x{d[1]}" if d else "unreadable"] = \
-                dims.get(f"{d[0]}x{d[1]}" if d else "unreadable", 0) + 1
-        for dim, count in sorted(dims.items(), key=lambda kv: -kv[1]):
-            flag = "" if dim == f"{TILE_PX}x{TILE_PX}" else f"  (not current TILE_PX={TILE_PX}; --force to refetch)"
+            key = f"{d[0]}x{d[1]}" if d else "unreadable"
+            px = nsns_px(e["fov"]) if sources.get(e["slug"], {}).get("base") == "nsns" else TILE_PX
+            tally = dims.setdefault(key, [0, 0])
+            tally[0] += 1
+            tally[1] += key != f"{px}x{px}"
+        for dim, (count, off) in sorted(dims.items(), key=lambda kv: -kv[1][0]):
+            flag = f"  ({off:,} not at the current size; --force to refetch)" if off else ""
             print(f"  {dim:>11}: {count:,}{flag}")
+
+        n_nsns = sum(1 for e in present if sources.get(e["slug"], {}).get("base") == "nsns")
+        n_nasa = sum(1 for e in present if sources.get(e["slug"], {}).get("nasa"))
+        n_redo = sum(1 for e in present if needs_work(e))
+        print(f"nebulae: {n_nsns:,} NSNS tiles, {n_nasa:,} with a Hubble image"
+              + (f"  ({n_redo:,} to redo — run a fetch)" if n_redo else ""))
 
         n_thumbs = sum(1 for e in present if have_thumb(e))
         print(f"thumbs:  {n_thumbs:,} / {n_have:,}"
@@ -582,9 +1030,9 @@ def main() -> int:
         print(f"index.json rebuilt: {write_index()} tiles")
         return 0
 
-    todo = [e for e in planned if args.force or not have(e)]
+    todo = [e for e in planned if needs_work(e)]
     skipped = len(planned) - len(todo)
-    print(f"to fetch: {len(todo)}  (already on disk: {skipped})")
+    print(f"to fetch: {len(todo)}  (up to date on disk: {skipped})")
     if not todo:
         print(f"index.json: {write_index()} tiles")
         write_thumbs(False)
@@ -597,24 +1045,81 @@ def main() -> int:
     failed: list[str] = []
     lock = threading.Lock()
     start = time.time()
+    net = (args.timeout, args.retries, args.delay)
+
+    def process(entry: dict) -> bool:
+        """Bring one tile up to date: its base cutout (NSNS or DSS2) and, for
+        a small nebula, its Hubble image. False if something has to be retried."""
+        s = entry["slug"]
+        with lock:
+            m = dict(sources.get(s, {}))
+        fresh = (args.force or not have(entry)
+                 or (m.get("base") == "nsns" and not wants_nsns(entry)))
+        if fresh:
+            m.pop("nasa", None)
+        ra, dec, fov = entry["ra"], entry["dec"], entry["fov"]
+        data = None
+
+        if (wants_nsns(entry) and (fresh or m.get("base") != "nsns")
+                and (args.force or m.get("nsns") is not False)):
+            covered = nsns_covered(ra, dec, fov, *net)
+            if covered is None:
+                return False
+            if covered:
+                data = fetch(ra, dec, fov, *net, hips=NSNS_HIPS, px=nsns_px(fov))
+                if data is None:
+                    return False
+                m["base"] = "nsns"
+                m.pop("nsns", None)
+            else:
+                m["nsns"] = False
+
+        nasa = nasa_lookup(entry, nasa_dir, *net) if wants_nasa(entry) else None
+        lookup_failed = nasa is False
+        if lookup_failed:
+            nasa = None
+        # A new tile, or one baked with another Hubble image: start again
+        # from a clean DSS2 cutout.
+        if data is None and (fresh or (nasa and m.get("nasa") not in (None, nasa["id"]))):
+            data = fetch(ra, dec, fov, *net)
+            if data is None:
+                return False
+            m["base"] = "dss2"
+            m.pop("nasa", None)
+        if nasa and m.get("nasa") != nasa["id"]:
+            if data is None:
+                with open(tile_path(entry), "rb") as f:
+                    data = f.read()
+            data = overlay_tile(data, entry, nasa, nasa_dir)
+            m["nasa"] = nasa["id"]
+
+        if data is not None:
+            # Write via a temp file so an interrupted run never leaves a partial
+            # JPEG that `have()` would later mistake for a complete tile.
+            tmp = tile_path(entry) + ".part"
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, tile_path(entry))
+            # The sprite of the old tile is stale; the end-of-run pass rebuilds it.
+            try:
+                os.remove(thumb_path(entry))
+            except FileNotFoundError:
+                pass
+        with lock:
+            if m in ({}, {"base": "dss2"}):
+                sources.pop(s, None)
+            else:
+                sources[s] = m
+        return not lookup_failed
 
     def work(entry: dict) -> None:
         nonlocal done
-        data = fetch(entry["ra"], entry["dec"], entry["fov"],
-                     args.timeout, args.retries, args.delay)
+        ok = process(entry)
         with lock:
             done += 1
             n = done
-        if data is None:
-            with lock:
+            if not ok:
                 failed.append(entry["name"])
-            return
-        # Write via a temp file so an interrupted run never leaves a partial
-        # JPEG that `have()` would later mistake for a complete tile.
-        tmp = tile_path(entry) + ".part"
-        with open(tmp, "wb") as f:
-            f.write(data)
-        os.replace(tmp, tile_path(entry))
         if n % 25 == 0 or n == len(todo):
             rate = n / max(time.time() - start, 1e-6)
             eta = (len(todo) - n) / rate if rate > 0 else 0
@@ -622,6 +1127,7 @@ def main() -> int:
                   f"{rate * 60:.0f}/min  ETA {eta / 60:.0f} min")
         if n % 250 == 0:
             with lock:
+                write_sources()
                 write_index()
 
     try:
@@ -630,6 +1136,7 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\ninterrupted — writing index for what landed", file=sys.stderr)
 
+    write_sources()
     total = write_index()
     print(f"\nindex.json: {total} tiles in {args.out}")
     write_thumbs(False)
