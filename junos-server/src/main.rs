@@ -110,7 +110,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/files/rename",   post(files::rename))
         .route("/api/files/delete",   delete(files::delete))
         .route("/api/files/resolve",  get(files::resolve_abs))
-        .route("/api/files/tilt",     get(files::tilt))
         .route("/api/taskqueue/list",         get(taskqueue::list))
         .route("/api/taskqueue/queue/:name",
                get(taskqueue::get_queue).put(taskqueue::put_queue).delete(taskqueue::delete_queue))

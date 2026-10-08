@@ -28,8 +28,8 @@ order:
   **Goto & Align**, **Add to Scheduler** or the **Framing Assistant**.
 - **Mount** — coordinates in JNow and J2000, goto/sync, park, tracking,
   slew rate, meridian flip, and plate solving.
-- **Focus** — autofocus with a live HFR v-curve, manual stepping, the full
-  settings pane, and an **Aberration Inspector** for tilt and field curvature.
+- **Focus** — autofocus with a live HFR v-curve, manual stepping, and the full
+  settings pane.
 - **Imaging** — camera and cooling status, all exposure settings, a capture
   **sequence queue**, and a live preview with pan and pinch-zoom.
 - **Files** — browse the captures folder: thumbnails, FITS headers, rename
@@ -321,9 +321,9 @@ browser commands are forwarded back to the attached KStars session.
 The server does **no protocol translation** — messages flow through opaque.
 All Ekos Live semantics live in the WASM client. Beyond the relay, the server
 adds a handful of local HTTP APIs the browser cannot do on its own: the
-captures-folder browser (`/api/files/*`), FITS thumbnailing and star/tilt
-analysis, the offline DSO tile cache (`/api/dso_tiles/*`), and launching
-KStars or PHD2 on the host (`/api/apps/*`).
+captures-folder browser (`/api/files/*`), FITS thumbnailing, star detection
+on focus frames, the offline DSO tile cache (`/api/dso_tiles/*`), and
+launching KStars or PHD2 on the host (`/api/apps/*`).
 
 ## Repository layout
 

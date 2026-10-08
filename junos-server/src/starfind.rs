@@ -1,15 +1,13 @@
-//! Lightweight star detector for the tilt / aberration analyzer.
+//! Lightweight star detector for the focus frames' star overlay
+//! (`kstars_ws.rs::detect_focus_stars`).
 //!
 //! This is **not** a full SEP port — it is a pragmatic pipeline:
 //!   background (median + MAD) → threshold → connected-component labelling →
 //!   flux-weighted centroid → flux-weighted mean radius (HFR).
 //!
-//! For the aberration inspector this is sufficient: sensor tilt is derived from
-//! the *position* of each tile's HFR-vs-focuser-position minimum, so only the
-//! monotonicity of HFR with defocus matters, not its absolute scale. HFR here
-//! uses the canonical autofocus definition `HFR = Σ(fᵢ·rᵢ) / Σ(fᵢ)` (Weber &
-//! Brady), where `fᵢ` is background-subtracted pixel flux and `rᵢ` the distance
-//! from the centroid.
+//! HFR here uses the canonical autofocus definition `HFR = Σ(fᵢ·rᵢ) / Σ(fᵢ)`
+//! (Weber & Brady), where `fᵢ` is background-subtracted pixel flux and `rᵢ` the
+//! distance from the centroid.
 
 use std::cmp::Ordering;
 

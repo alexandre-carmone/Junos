@@ -124,7 +124,7 @@ pub fn TabContent(
         </Show>
         <Show when=focus_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
-                <FocusTab focus=focus_snapshot camera=camera send=Arc::clone(&send_focus) />
+                <FocusTab focus=focus_snapshot send=Arc::clone(&send_focus) />
             </div>
         </Show>
         <Show when=imaging_visible>

@@ -21,16 +21,14 @@ use leptos::html;
 use wasm_bindgen::{closure::Closure, JsCast};
 use web_sys::{HtmlCanvasElement, CanvasRenderingContext2d, MouseEvent};
 
-use crate::compat::{CameraSnapshot, FocusSnapshot};
+use crate::compat::FocusSnapshot;
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{send_cmd, dispatch_setting};
 use crate::Tab;
 
-mod abmath;
-mod aberration;
-use aberration::AberrationInspector;
+mod vcurve;
 use crate::dom::{event_target_checked, event_target_value};
 
 const CARD: &str = "panel p-3 flex flex-col gap-2";
@@ -117,9 +115,8 @@ const SETTINGS: &[(&str, fn(&Translations) -> &'static str)] = &[
 
 #[component]
 pub fn FocusTab(
-    #[prop(into)] focus:  Signal<FocusSnapshot>,
-    #[prop(into)] camera: Signal<CameraSnapshot>,
-    #[prop(into)] send:   SendCmd,
+    #[prop(into)] focus: Signal<FocusSnapshot>,
+    #[prop(into)] send:  SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
@@ -294,7 +291,7 @@ pub fn FocusTab(
             hi = c + 0.1;
         }
         let m = (hi - lo) * 0.04; // nice-rounding below adds the rest
-        let (y_min, y_max, y_step) = abmath::nice_axis(lo - m, hi + m, y_target);
+        let (y_min, y_max, y_step) = vcurve::nice_axis(lo - m, hi + m, y_target);
         let y_min = y_min.max(0.0); // HFR is never negative
         let y_span = (y_max - y_min).max(1e-6);
         let y_of = |hfr: f64| py1 - (hfr - y_min) / y_span * ph;
@@ -344,7 +341,7 @@ pub fn FocusTab(
         };
         if pos_mode {
             // Ticks on round position values inside the sampled span.
-            let x_step = abmath::nice_step((p_max - p_min) / 4.0);
+            let x_step = vcurve::nice_step((p_max - p_min) / 4.0);
             let first_tick = (p_min / x_step).ceil() * x_step;
             let mut v = first_tick;
             let mut guard = 0;
@@ -386,14 +383,14 @@ pub fn FocusTab(
         y_axis_title();
 
         // ── Fitted V-curve (position mode only) ────────────────────────────
-        // Same parabola the aberration inspector fits, sampled at 20 points
-        // across the range like KStars' focushfrvplot.cpp::drawPolynomial.
+        // Least-squares parabola, sampled at 20 points across the range like
+        // KStars' focushfrvplot.cpp::drawPolynomial.
         // `a > 0` means it opens upward, i.e. it actually has a minimum.
         let mut vertex: Option<f64> = None;
         if pos_mode {
-            let samples: Vec<abmath::Sample> = history
+            let samples: Vec<vcurve::Sample> = history
                 .iter()
-                .filter_map(|s| s.position.map(|p| abmath::Sample { pos: p as f64, hfr: s.hfr }))
+                .filter_map(|s| s.position.map(|p| vcurve::Sample { pos: p as f64, hfr: s.hfr }))
                 .collect();
             let distinct = {
                 let mut v: Vec<i64> = samples.iter().map(|s| s.pos as i64).collect();
@@ -403,7 +400,7 @@ pub fn FocusTab(
             };
             if distinct >= 3 {
                 if let Some((a, b, c)) =
-                    abmath::fit_parabola(&samples).filter(|&(a, _, _)| a > 0.0)
+                    vcurve::fit_parabola(&samples).filter(|&(a, _, _)| a > 0.0)
                 {
                     ctx.set_stroke_style_str(MUTED);
                     ctx.set_line_width(1.0);
@@ -723,7 +720,6 @@ pub fn FocusTab(
     });
 
     let send_sv = StoredValue::new(send.clone());
-    let send_ab = send.clone();
     let dash = || "—".to_string();
 
     view! {
@@ -881,8 +877,6 @@ pub fn FocusTab(
                                 <button class="btn h-12 text-base" on:click=cmd("focus_out")>{move || tr().focus_out_btn}</button>
                             </div>
                         </div>
-
-                        <AberrationInspector focus=focus camera=camera send=send_ab.clone() />
                     </div>
 
                     // HFR V-curve — under the frame on md+. Title and caption
