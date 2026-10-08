@@ -56,7 +56,6 @@ fn device_icon(iface: i64) -> &'static str {
         i if i & (1 << 1) != 0 => Tab::Imaging,                // CCD
         i if i & (1 << 2) != 0 => Tab::Guide,                  // GUIDER
         i if i & (1 << 3) != 0 => Tab::Focus,                  // FOCUSER
-        i if i & ((1 << 9) | (1 << 10)) != 0 => Tab::FlatCal,  // DUSTCAP / LIGHTBOX
         _ => Tab::Devices,
     };
     tab_icon(tab)

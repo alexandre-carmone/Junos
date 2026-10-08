@@ -6,7 +6,7 @@
 use leptos::prelude::*;
 
 use crate::ws::{
-    AlignFrame, DeviceStore, DustCapParkState, FocusStars, GuideDriftSample, GuideStateSample, HfrSample,
+    AlignFrame, DeviceStore, FocusStars, GuideDriftSample, GuideStateSample, HfrSample,
     PolarVectorData,
 };
 
@@ -365,33 +365,6 @@ pub fn derive_mosaic(store: &DeviceStore) -> Signal<MosaicSnapshot> {
             pa:              v["positionAngle"].as_f64(),
             tiles,
         }
-    })
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct DustCapSnapshot {
-    pub device:           String,
-    pub has_light_panel:  bool,
-    pub park_state:       DustCapParkState,
-    pub light_on:         Option<bool>,
-    pub brightness:       Option<f64>,
-    pub brightness_min:   Option<f64>,
-    pub brightness_max:   Option<f64>,
-}
-
-pub fn derive_dustcap(store: &DeviceStore) -> Signal<DustCapSnapshot> {
-    let dc = store.dustcap_status;
-    Signal::derive(move || match dc.get() {
-        Some(d) => DustCapSnapshot {
-            device:          d.device,
-            has_light_panel: d.has_light_panel,
-            park_state:      d.park_state,
-            light_on:        d.light_on,
-            brightness:      d.brightness,
-            brightness_min:  d.brightness_min,
-            brightness_max:  d.brightness_max,
-        },
-        None => DustCapSnapshot::default(),
     })
 }
 

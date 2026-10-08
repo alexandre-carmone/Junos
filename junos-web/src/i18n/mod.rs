@@ -86,11 +86,8 @@ translations! {
     mount_time_to_flip, mount_flip_due, mount_auto_flip, mount_flip_delay, mount_flip_autofocus, mount_past_meridian, meridian, tab_focus,
     focus_start, focus_abort, focus_measure_hfr, focus_position, focus_hfr, focus_stars, focus_step_size, focus_num_steps,
     focus_algorithm, focus_star_detect, focus_curve_fit, focus_tolerance, focus_idle, focus_log, focus_curve, focus_move_to,
-    focus_step_in, focus_step_out, focus_focuser_label, focus_max_iter, focus_backlash, focus_sep_profile, tab_flat_cal, fc_light_panel,
-    fc_panel_device, fc_light_on, fc_light_off, fc_intensity, fc_adu_optimizer, fc_target_adu, fc_tolerance_pct, fc_initial_exp,
-    fc_max_iterations, fc_min_exp, fc_max_exp, fc_start, fc_abort, fc_state, fc_measured_adu, fc_current_exp,
-    fc_optimal_exp, fc_idle, fc_preview, fc_histogram, fc_log, fc_no_log, tab_dust_cap, dc_device,
-    dc_park, dc_unpark, tab_filter_wheel, fw_device, fw_current_filter, fw_move_to, fw_config_title, fw_filter_name,
+    focus_step_in, focus_step_out, focus_focuser_label, focus_max_iter, focus_backlash, focus_sep_profile,
+    tab_filter_wheel, fw_device, fw_current_filter, fw_move_to, fw_config_title, fw_filter_name,
     fw_target_adu, fw_flat_exposure, fw_panel_intensity, fw_focus_offset, fw_save_config, tab_guide, tab_scheduler, hide_tabs,
     show_tabs, tab_imaging, tab_files, tab_mount_abbr, files_title, files_no_selection, files_raw_header, files_breadcrumb_root,
     files_capture_basics, files_optical, files_astrometry, files_filename, files_size, files_mtime, files_exposure, files_gain,
@@ -202,9 +199,6 @@ translations! {
     guide_btn_start, guide_btn_stop, guide_drift_title, guide_target_title, guide_no_drift, guide_total,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
-    // Flat Cal tab — extra labels not already in fc_* / dc_*
-    fc_section_dust_cap, fc_no_device, fc_status_unknown, fc_status_parked,
-    fc_status_unparked, fc_status_moving, fc_brightness_label,
     // Rig (optical-train) manager — section in the Profiles tab
     rig_section, rig_add_train, rig_offline_hint, rig_no_trains, rig_train_name,
     rig_role_mount, rig_role_camera, rig_role_scope, rig_role_guider,

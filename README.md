@@ -16,7 +16,7 @@ Two crates make it up:
 
 ## Features
 
-The UI is a 13-tab shell (a wheel on phones, a side strip on desktop), in this
+The UI is a 12-tab shell (a wheel on phones, a side strip on desktop), in this
 order:
 
 - **Profiles** — create, edit, start and stop Ekos equipment profiles,
@@ -53,7 +53,6 @@ order:
 - **Mosaic** — plan a mosaic (grid, overlap, position angle) and **Send to
   Scheduler** to import every tile as a job. Its center can be picked on the
   sky map.
-- **Flat Cal** — dust cap, flat panel, and the ADU optimizer.
 - **Devices** — a full **INDI control panel in the browser**: every property
   of every connected device, plus the INDI message log.
 

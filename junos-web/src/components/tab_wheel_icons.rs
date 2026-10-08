@@ -32,9 +32,6 @@ pub fn tab_icon(tab: Tab) -> &'static str {
         Tab::Scheduler => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10 L21 10 M8 3 L8 7 M16 3 L16 7"/><circle cx="9" cy="14" r="0.9" fill="currentColor"/><circle cx="13" cy="14" r="0.9" fill="currentColor"/><circle cx="17" cy="14" r="0.9" fill="currentColor"/></svg>"##,
         // 3x3 mosaic grid
         Tab::Mosaic => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 9 L21 9 M3 15 L21 15 M9 3 L9 21 M15 3 L15 21"/></svg>"##,
-        // Flat panel: an illuminated disc behind a tube — light source + scope
-        // aperture suggesting a flat-frame setup.
-        Tab::FlatCal => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6.2"/><path d="M12 3 L12 5 M12 19 L12 21 M3 12 L5 12 M19 12 L21 12 M5.6 5.6 L7 7 M17 17 L18.4 18.4 M5.6 18.4 L7 17 M17 7 L18.4 5.6"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" opacity="0.6"/></svg>"##,
         // INDI control panel: three slider tracks with offset thumbs
         Tab::Devices => r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 7 L20 7 M4 12 L20 12 M4 17 L20 17"/><circle cx="9" cy="7" r="2.2" fill="currentColor" stroke="none"/><circle cx="15.5" cy="12" r="2.2" fill="currentColor" stroke="none"/><circle cx="7" cy="17" r="2.2" fill="currentColor" stroke="none"/></svg>"##,
         // Settings gear

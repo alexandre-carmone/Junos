@@ -1,4 +1,4 @@
-//! Junos Web UI — the browser app: a 13-tab shell over the Ekos Live
+//! Junos Web UI — the browser app: a 12-tab shell over the Ekos Live
 //! wire format, with a WebGPU planetarium on the Sky tab.
 
 /// `leptos::logging::log!`, compiled out of release builds.
@@ -41,7 +41,7 @@ use components::tabs::TabContent;
 use i18n::Lang;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tab { Sky, Targets, Mount, Focus, Imaging, Files, PolarAlign, Guide, Scheduler, Mosaic, FlatCal, Devices, Profiles }
+pub enum Tab { Sky, Targets, Mount, Focus, Imaging, Files, PolarAlign, Guide, Scheduler, Mosaic, Devices, Profiles }
 
 #[derive(Clone, Copy)]
 pub struct ActiveTabCtx(pub RwSignal<Tab>);
