@@ -5,6 +5,19 @@
 //! ("1.", "") never gets reformatted under the user's cursor. The typed
 //! accessors below are the single place that decides what is usable.
 
+/// How a Light row dithers — `<GuideDitherPerJob>` (sequencejob.cpp). The
+/// Guide module's "Enable dithering" stays the master switch either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Dither {
+    /// 0: the Guide module's "dither every N frames".
+    #[default]
+    Guide,
+    /// N > 0: every `dither_every` frames for this row.
+    Every,
+    /// -1: never for this row.
+    Off,
+}
+
 /// One row in the sequence builder.
 #[derive(Clone)]
 pub struct SeqFrame {
@@ -30,6 +43,9 @@ pub struct SeqFrame {
     pub flat_adu_mode:  bool,
     pub flat_adu:       String,
     pub flat_tolerance: String,
+    /// Light rows only — KStars dithers nothing else (`checkDithering`).
+    pub dither:       Dither,
+    pub dither_every: String,
 }
 
 impl Default for SeqFrame {
@@ -51,6 +67,8 @@ impl Default for SeqFrame {
             flat_adu:       "20000".into(),
             // KStars' own default (kcfg `CalibrationADUValueTolerance`).
             flat_tolerance: "1000".into(),
+            dither:       Dither::Guide,
+            dither_every: "3".into(),
         }
     }
 }
@@ -96,11 +114,26 @@ impl SeqFrame {
         }
     }
 
-    /// Gain, offset, delay and binning are numbers KStars can read. Exposure
-    /// and count are checked by `duration_secs`.
+    /// `<GuideDitherPerJob>`: 0 (the Guide module's frequency), N or -1.
+    /// Rows other than Light never dither, so they always follow the Guide
+    /// module, whatever was picked while they were Light.
+    pub fn dither_per_job(&self) -> Result<i32, ()> {
+        if self.frame_type != "Light" {
+            return Ok(0);
+        }
+        match self.dither {
+            Dither::Guide => Ok(0),
+            Dither::Off => Ok(-1),
+            Dither::Every => self.dither_every.trim().parse::<i32>().ok().filter(|n| *n >= 1).ok_or(()),
+        }
+    }
+
+    /// Gain, offset, delay, binning and dither are numbers KStars can read.
+    /// Exposure and count are checked by `duration_secs`.
     pub fn values_ok(&self) -> bool {
         self.gain_value().is_ok() && self.offset_value().is_ok() && self.delay_secs().is_ok()
             && Self::bin_n(&self.bin_x).is_ok() && Self::bin_n(&self.bin_y).is_ok()
+            && self.dither_per_job().is_ok()
     }
 
     /// True when the row can be serialized into a job KStars will accept.

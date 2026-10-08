@@ -11,9 +11,9 @@ use leptos::prelude::*;
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
 use crate::components::frame_type::{frame_type_options, frame_type_pills, frame_type_visual};
 use crate::dom::event_target_value;
-use crate::i18n::{t, Lang};
+use crate::i18n::{t, Lang, Translations};
 
-use super::model::{fmt_duration, SeqFrame};
+use super::model::{fmt_duration, Dither, SeqFrame};
 
 /// One-tap exposure presets in seconds. Longer than the one-shot panel's
 /// focus-oriented list: these are typical sub lengths.
@@ -22,9 +22,9 @@ const SEQ_EXPOSURE_PRESETS: &[u32] = &[1, 5, 30, 60, 120, 180, 300, 600];
 const BIN_FACTORS: &[u32] = &[1, 2, 3, 4];
 
 const INPUT: &str = "input w-full min-w-0 font-mono";
-const LABEL: &str = "text-text-blue text-xs uppercase tracking-[0.06em] truncate";
+pub(super) const LABEL: &str = "text-text-blue text-xs uppercase tracking-[0.06em] truncate";
 /// Segmented-control pill; add `class:btn--active` for the selected one.
-const PILL: &str = "btn btn--sm btn-ghost font-mono max-[479px]:h-9";
+pub(super) const PILL: &str = "btn btn--sm btn-ghost font-mono max-[479px]:h-9";
 /// Field grids size by the space the editor actually gets (it is embedded
 /// in containers of very different widths), not by the viewport.
 const GRID_2: &str = "grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-sp-3";
@@ -254,6 +254,37 @@ pub fn JobCard(
         </div>
     });
 
+    // Dithering — Light rows only, the only frames KStars dithers.
+    let is_light = Memo::new(move |_| frame().frame_type == "Light");
+    let dither_pill = move |mode: Dither, label: fn(&Translations) -> &'static str| view! {
+        <button type="button" class=PILL
+                class:btn--active=move || frame().dither == mode
+                on:click=move |_| update_row(frames, idx, |f| f.dither = mode)>
+            {move || label(tr())}
+        </button>
+    };
+    let dither = move || is_light.get().then(|| view! {
+        <div class="flex flex-col gap-[3px]">
+            <span class=LABEL>{move || tr().seq_dither}</span>
+            <div class="flex flex-wrap items-center gap-[4px]">
+                {dither_pill(Dither::Guide, |s| s.seq_dither_guide)}
+                {dither_pill(Dither::Every, |s| s.seq_dither_every)}
+                {dither_pill(Dither::Off, |s| s.seq_dither_off)}
+                <Show when=move || frame().dither == Dither::Every>
+                    <span class="flex items-center gap-[6px] ml-sp-1">
+                        <span class="w-16">{text_input(
+                            "numeric",
+                            move || frame().dither_every,
+                            move |v| update_row(frames, idx, |f| f.dither_every = v),
+                            move || frame().dither_per_job().is_err(),
+                        )}</span>
+                        <span class="text-sm text-text-muted">{move || tr().seq_frames_unit}</span>
+                    </span>
+                </Show>
+            </div>
+        </div>
+    });
+
     // "More": rarely changed settings, with their current values summarised
     // on the closed line so non-defaults are visible without opening it.
     let more_summary = move || {
@@ -379,6 +410,7 @@ pub fn JobCard(
                     {filter()}
                     <div class=GRID_2>{exposure()}{count()}</div>
                     {presets()}
+                    {dither}
                     {flat}
                     {more()}
                     {actions()}

@@ -1,27 +1,39 @@
 //! Shared capture-sequence editor used by the Imaging tab, the Mosaic
 //! Planner and the Scheduler "Add job" form.
 //!
-//! - `model.rs` — the `SeqFrame` row and its validation / duration helpers.
-//! - `esq.rs`   — `build_esq_xml`, the ESQ serializer callers feed to KStars.
-//! - `card.rs`  — `JobCard`, one collapsible card per row.
+//! - `model.rs`  — the `SeqFrame` row and its validation / duration helpers.
+//! - `limits.rs` — `SeqLimits`, the sequence-wide refocus / guide limits.
+//! - `esq.rs`    — `build_esq_xml`, the ESQ serializer callers feed to KStars.
+//! - `card.rs`   — `JobCard`, one collapsible card per row.
+//! - `limits_panel.rs` — the "Focus & guiding" section editing `SeqLimits`.
+//! - `cover.rs`  — `SeqEnd`: the panel / dust cap after the last frame.
 //!
 //! This file is the editor shell: the card list (one card open at a time),
-//! the destination folder and the sticky totals / "Add exposure" footer.
+//! the end-of-sequence action, the limits, the destination folder and the
+//! sticky totals / "Add exposure" footer.
 
 mod card;
+mod cover;
 mod esq;
+mod limits;
+mod limits_panel;
 mod model;
 
+pub use cover::SeqEnd;
 pub use esq::build_esq_xml;
+pub use limits::SeqLimits;
 pub use model::{SeqFrame, fmt_duration};
 
 use leptos::prelude::*;
+use serde_json::Value;
 
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
 use crate::dom::event_target_value;
 use crate::i18n::{Lang, t};
 
 use card::JobCard;
+use cover::EndRow;
+use limits_panel::LimitsPanel;
 
 #[component]
 pub fn SequenceEditor(
@@ -31,6 +43,12 @@ pub fn SequenceEditor(
     /// Caller-owned destination folder. Written into each job's
     /// `<FITSDirectory>` on serialize. Defaults from `CaptureDirCtx`.
     fits_dir: RwSignal<String>,
+    /// Caller-owned sequence-wide limits, serialized with the rows. They
+    /// follow Ekos' current ones (`capture_settings`) until edited.
+    limits: RwSignal<SeqLimits>,
+    /// Caller-owned panel / dust cap action after the last frame.
+    end: RwSignal<SeqEnd>,
+    #[prop(into)] capture_settings: Signal<Value>,
     #[prop(into)] camera:       Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
 ) -> impl IntoView {
@@ -76,6 +94,12 @@ pub fn SequenceEditor(
             <For each=move || 0..frames.with(Vec::len) key=|i| *i let:idx>
                 <JobCard idx=idx frames=frames open=open camera=camera filter_wheel=filter_wheel />
             </For>
+
+            // The panel and cap once the calibration frames are done.
+            <EndRow end=end frames=frames />
+
+            // Refocus and guide limits — apply to the whole sequence.
+            <LimitsPanel limits=limits capture_settings=capture_settings />
 
             // Destination folder — applies to every job in this form.
             <label class="flex flex-col gap-[3px] mt-sp-1">

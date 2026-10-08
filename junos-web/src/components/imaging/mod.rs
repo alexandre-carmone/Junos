@@ -31,7 +31,7 @@ use serde_json::json;
 
 use crate::compat::{CameraSnapshot, CaptureSnapshot, FilterWheelSnapshot};
 use crate::components::form::{sheet, CARD, CARD_TITLE, CHIP, FOOTER, LABEL, NUM};
-use crate::components::sequence_editor::{build_esq_xml, SeqFrame, SequenceEditor};
+use crate::components::sequence_editor::{build_esq_xml, SeqEnd, SeqFrame, SeqLimits, SequenceEditor};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::components::zoom::frame_zoom;
 use crate::dom::event_target_value;
@@ -227,11 +227,17 @@ pub fn ImagingTab(
     // Queue. The editor's draft lives here, so it survives closing the sheet.
     let frames = RwSignal::new(vec![SeqFrame::default()]);
     let fits_dir = RwSignal::new(String::new());
+    let limits = RwSignal::new(SeqLimits::default());
+    let end = RwSignal::new(SeqEnd::default());
+    let capture_settings = Memo::new(move |_| capture.with(|c| c.settings.clone()));
     let s_seq = send.clone();
     let on_send_seq = move |_| {
-        let xml = camera.with_untracked(|cam| {
-            build_esq_xml("", &fits_dir.get_untracked(), &frames.get_untracked(), true, cam)
-        });
+        let frames = frames.get_untracked();
+        // The Send button stays disabled while the script isn't written.
+        let Ok(post) = end.with_untracked(|e| e.post_job_script(&frames)) else { return };
+        let xml = camera.with_untracked(|cam| limits.with_untracked(|l| {
+            build_esq_xml("", &fits_dir.get_untracked(), &frames, l, post.as_deref(), true, cam)
+        }));
         send_cmd(&s_seq, LOAD, json!({ "filedata": xml }));
         refresh_queue_soon(s_seq.clone());
         editor_open.set(false);
@@ -258,11 +264,14 @@ pub fn ImagingTab(
         let on_send = on_send_seq.clone();
         view! {
             <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3">
-                <SequenceEditor frames=frames fits_dir=fits_dir camera=camera filter_wheel=filter_wheel />
+                <SequenceEditor frames=frames fits_dir=fits_dir limits=limits end=end capture_settings=capture_settings
+                                camera=camera filter_wheel=filter_wheel />
             </div>
             <div class=FOOTER>
                 <button class="btn btn-primary h-11 px-5 ml-auto font-semibold"
                         disabled=move || frames.with(|f| f.is_empty() || !f.iter().all(SeqFrame::is_valid))
+                            || !limits.with(SeqLimits::is_valid)
+                            || frames.with(|f| end.with(|e| e.post_job_script(f).is_err()))
                         on:click=on_send>
                     {move || tr().imaging_send_sequence}
                 </button>

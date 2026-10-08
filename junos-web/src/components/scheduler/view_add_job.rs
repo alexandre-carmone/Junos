@@ -13,7 +13,7 @@ use crate::components::coord_input::{
     parse_canonical, CoordInput, CoordMode,
 };
 use crate::components::form::{JobOptions, CARD, CARD_TITLE, FOOTER, LABEL, NUM, ROW, SELECT};
-use crate::components::sequence_editor::{build_esq_xml, fmt_duration, SeqFrame, SequenceEditor};
+use crate::components::sequence_editor::{build_esq_xml, fmt_duration, SeqEnd, SeqFrame, SeqLimits, SequenceEditor};
 use crate::components::sky::clock;
 use crate::dom::event_target_value;
 use crate::dso_catalog::DsoCatalogData;
@@ -42,6 +42,10 @@ pub struct AddJobForm {
     pub frames: RwSignal<Vec<SeqFrame>>,
     /// Capture folder; defaults from CaptureDirCtx and is kept by `reset`.
     pub fits_dir: RwSignal<String>,
+    /// Refocus / guide limits written with the sequence.
+    pub limits: RwSignal<SeqLimits>,
+    /// Panel / dust cap after the last frame.
+    pub end: RwSignal<SeqEnd>,
     /// Where the altitude card's session starts — `""` (the job that ends
     /// last, else the start condition), `"auto"`, `"time"` or a job index.
     /// Only an indication: it's never sent to KStars.
@@ -62,6 +66,8 @@ impl AddJobForm {
             opts: JobOptions::new(),
             frames: RwSignal::new(vec![SeqFrame::default()]),
             fits_dir: RwSignal::new(String::new()),
+            limits: RwSignal::new(SeqLimits::default()),
+            end: RwSignal::new(SeqEnd::default()),
             alt_ref: RwSignal::new(String::new()),
             alt_ref_time: RwSignal::new(String::new()),
         }
@@ -76,6 +82,9 @@ impl AddJobForm {
         self.error.set(None);
         self.opts.reset();
         self.frames.set(vec![SeqFrame::default()]);
+        // Not edited: the editor takes Ekos' values again.
+        self.limits.set(SeqLimits::default());
+        self.end.set(SeqEnd::default());
         self.alt_ref.set(String::new());
         self.alt_ref_time.set(String::new());
     }
@@ -307,6 +316,8 @@ pub fn AddJobSheet(
     #[prop(into)] site: Signal<SiteSnapshot>,
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
+    /// Ekos' Capture settings, whose limits the sequence starts from.
+    #[prop(into)] capture_settings: Signal<Value>,
     /// The jobs already scheduled, whose ends the altitude card can start from.
     #[prop(into)] jobs: Signal<Vec<Value>>,
     #[prop(into)] home_dir: Signal<String>,
@@ -324,6 +335,8 @@ pub fn AddJobSheet(
         f.ra.track();
         f.dec.track();
         f.frames.track();
+        f.limits.track();
+        f.end.track();
         f.error.set(None);
     });
 
@@ -375,6 +388,12 @@ pub fn AddJobSheet(
         if frames.iter().any(|fr| !fr.values_ok()) {
             return fail(tr.seq_err_values);
         }
+        if !f.limits.with_untracked(SeqLimits::is_valid) {
+            return fail(tr.seq_err_limits);
+        }
+        let Ok(post) = f.end.with_untracked(|e| e.post_job_script(&frames)) else {
+            return fail(tr.seq_err_end);
+        };
         // ADU flats: KStars skips the calibration for a target ≤ 0 and aborts
         // the capture on non-FITS/XISF encodings (cameraprocess.cpp) — catch
         // both here rather than mid-run.
@@ -400,7 +419,9 @@ pub fn AddJobSheet(
         } else {
             format!("{fits_root}/{safe_name}")
         };
-        let xml = camera.with_untracked(|cam| build_esq_xml("", &seq_fits_path, &frames, false, cam));
+        let xml = camera.with_untracked(|cam| f.limits.with_untracked(|l| {
+            build_esq_xml("", &seq_fits_path, &frames, l, post.as_deref(), false, cam)
+        }));
         let rel_path = format!(".junos-sequences/{safe_name}.esq");
         let abs_path = if home.is_empty() { rel_path.clone() } else { format!("{home}/{rel_path}") };
 
@@ -498,7 +519,8 @@ pub fn AddJobSheet(
                 <div class="min-w-0 flex flex-col gap-3">
                     <div class=CARD>
                         <span class=CARD_TITLE>{move || tr().sched_seq_label}</span>
-                        <SequenceEditor frames=f.frames fits_dir=f.fits_dir camera=camera filter_wheel=filter_wheel />
+                        <SequenceEditor frames=f.frames fits_dir=f.fits_dir limits=f.limits end=f.end
+                                        capture_settings=capture_settings camera=camera filter_wheel=filter_wheel />
                         <span class=format!("{CARD_TITLE} pt-1")>{move || tr().sched_steps_legend}</span>
                         {f.opts.steps_view(lang)}
                     </div>

@@ -18,6 +18,8 @@ use std::borrow::Cow;
 use roxmltree::{Document, Node};
 use serde_json::Value;
 
+use crate::components::sequence_editor::SeqLimits;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
     Schedules,
@@ -106,6 +108,8 @@ pub(crate) struct Procedure {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Sequence {
     pub frames: Vec<SeqRow>,
+    /// The refocus / guide limits at the head, `None` in a file without them.
+    pub limits: Option<SeqLimits>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -120,6 +124,10 @@ pub(crate) struct SeqRow {
     pub iso: String,
     pub target: String,
     pub dir: String,
+    /// `<GuideDitherPerJob>`: 0 follows the Guide module, N > 0, -1 never.
+    pub dither: Option<i32>,
+    /// `<PostJobScript>`, run after the row's last frame.
+    pub post_script: String,
 }
 
 impl SeqRow {
@@ -332,10 +340,39 @@ pub(crate) fn parse_sequence(xml: &str) -> Result<Sequence, String> {
                 iso: text(j, "ISOIndex"),
                 target: text(j, "TargetName"),
                 dir: text(j, "FITSDirectory"),
+                dither: text(j, "GuideDitherPerJob").parse().ok(),
+                post_script: text(j, "PostJobScript"),
             }
         })
         .collect();
-    Ok(Sequence { frames })
+    Ok(Sequence { frames, limits: parse_limits(root) })
+}
+
+/// The `SequenceQueue::load` head elements. A missing one keeps KStars'
+/// default; the HFR check's details aren't shown, so they aren't read.
+fn parse_limits(root: Node) -> Option<SeqLimits> {
+    const TAGS: [&str; 5] =
+        ["RefocusEveryN", "RefocusOnTemperatureDelta", "RefocusOnMeridianFlip", "GuideDeviation", "HFRCheck"];
+    if !TAGS.iter().any(|t| child(root, t).is_some()) {
+        return None;
+    }
+    let on = |tag: &str| child(root, tag).is_some_and(|n| n.attribute("enabled") == Some("true"));
+    let mut l = SeqLimits::default();
+    let value = |tag: &str, field: &mut String| {
+        let v = text(root, tag);
+        if !v.is_empty() { *field = v; }
+    };
+    value("RefocusEveryN", &mut l.refocus_every_min);
+    value("RefocusOnTemperatureDelta", &mut l.refocus_temp_delta);
+    value("GuideDeviation", &mut l.guide_abort_arcsec);
+    value("GuideStartDeviation", &mut l.guide_start_arcsec);
+    l.refocus_every = on("RefocusEveryN");
+    l.refocus_temp = on("RefocusOnTemperatureDelta");
+    l.refocus_flip = on("RefocusOnMeridianFlip");
+    l.hfr_check = on("HFRCheck");
+    l.guide_abort = on("GuideDeviation");
+    l.guide_start = on("GuideStartDeviation");
+    Some(l)
 }
 
 // ── task-queue .json ─────────────────────────────────────────────────────────
@@ -460,8 +497,19 @@ mod tests {
             bin_y: "2".into(),
             ..SeqFrame::default()
         };
-        let xml = build_esq_xml("NGC 7000", "/data/A&B", &[light], false, &Default::default());
+        let limits = SeqLimits {
+            refocus_every: true,
+            refocus_every_min: "45".into(),
+            refocus_temp: true,
+            refocus_temp_delta: "0.5".into(),
+            guide_abort: true,
+            guide_abort_arcsec: "1.5".into(),
+            ..SeqLimits::default()
+        };
+        let xml = build_esq_xml("NGC 7000", "/data/A&B", &[light], &limits, Some("/q/junos_panel_off.sh"),
+                                false, &Default::default());
         let s = parse_sequence(&xml).unwrap();
+        assert_eq!(s.limits, Some(limits));
         assert_eq!(s.frames.len(), 1);
         let f = &s.frames[0];
         assert_eq!((f.frame_type.as_str(), f.filter.as_str()), ("Light", "Ha"));
@@ -469,6 +517,7 @@ mod tests {
         assert_eq!((f.bin.as_str(), f.gain.as_str(), f.offset.as_str()), ("2\u{00d7}2", "100", ""));
         assert_eq!((f.target.as_str(), f.dir.as_str()), ("NGC 7000", "/data/A&B"));
         assert_eq!(f.duration_secs(), 3600.0);
+        assert_eq!(f.post_script, "/q/junos_panel_off.sh");
     }
 
     #[test]

@@ -23,7 +23,7 @@ use crate::astro;
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
 use crate::components::form::{CARD, CARD_TITLE, FOOTER, JobOptions, LABEL, NUM, ROW};
 use crate::components::scheduler::resolve_completion_condition;
-use crate::components::sequence_editor::{SeqFrame, SequenceEditor, build_esq_xml, fmt_duration};
+use crate::components::sequence_editor::{SeqEnd, SeqFrame, SeqLimits, SequenceEditor, build_esq_xml, fmt_duration};
 use crate::components::sky::{derive_planner_mosaic_plan, fmt_dec, fmt_ra, mosaic_span_am};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::dom::event_target_value;
@@ -47,6 +47,8 @@ fn fmt_arc(am: f64) -> String {
 pub fn MosaicTab(
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
+    /// Ekos' Capture settings — the sequence starts from their limits.
+    #[prop(into)] capture_settings: Signal<serde_json::Value>,
     #[prop(into)] focal_length_mm: Signal<Option<f64>>,
     #[prop(into)] home_dir: Signal<String>,
     mosaic_tiles: RwSignal<Option<serde_json::Value>>,
@@ -66,6 +68,9 @@ pub fn MosaicTab(
     // Capture folder (defaults from CaptureDirCtx); also the base directory
     // KStars puts each tile's folder under.
     let seq_fits_dir: RwSignal<String> = RwSignal::new(String::new());
+    // Refocus / guide limits, written once in the sequence every tile shares.
+    let seq_limits = RwSignal::new(SeqLimits::default());
+    let seq_end = RwSignal::new(SeqEnd::default());
 
     // Steps, start / completion and constraints, copied into every tile job.
     // The view hides "finish at a time": the first tile would hold the mount
@@ -86,6 +91,8 @@ pub fn MosaicTab(
     Effect::new(move |_| {
         p.center.track();
         seq_frames.track();
+        seq_limits.track();
+        seq_end.track();
         tile_am.track();
         form_error.set(None);
     });
@@ -109,11 +116,17 @@ pub fn MosaicTab(
         if seq_frames.with_untracked(|fs| fs.iter().any(|f| f.duration_secs().is_some() && !f.values_ok())) {
             return fail(tr.seq_err_values);
         }
+        if !seq_limits.with_untracked(SeqLimits::is_valid) {
+            return fail(tr.seq_err_limits);
+        }
         let valid_frames: Vec<SeqFrame> =
             seq_frames.with_untracked(|fs| fs.iter().filter(|f| f.is_valid()).cloned().collect());
         if valid_frames.is_empty() {
             return fail(tr.mosaic_err_no_frames);
         }
+        let Ok(post) = seq_end.with_untracked(|e| e.post_job_script(&valid_frames)) else {
+            return fail(tr.seq_err_end);
+        };
         let gw  = p.grid_w.get_untracked();
         let gh  = p.grid_h.get_untracked();
         let overlap = p.overlap.get_untracked();
@@ -152,7 +165,9 @@ pub fn MosaicTab(
             if fits.is_empty() { home.clone() } else { fits.to_string() }
         };
         let fits_dir = format!("{}/{}", base.trim_end_matches('/'), safe_name);
-        let xml = camera.with_untracked(|cam| build_esq_xml(&safe_name, &fits_dir, &valid_frames, true, cam));
+        let xml = camera.with_untracked(|cam| seq_limits.with_untracked(|l| {
+            build_esq_xml(&safe_name, &fits_dir, &valid_frames, l, post.as_deref(), true, cam)
+        }));
         if !home.is_empty() {
             send_cmd(&send_s, "file_directory_operation", serde_json::json!({
                 "operation": "create",
@@ -315,7 +330,8 @@ pub fn MosaicTab(
                         // Capture sequence, run on every tile.
                         <div class=CARD>
                             <span class=CARD_TITLE>{move || tr().mosaic_capture_seq}</span>
-                            <SequenceEditor frames=seq_frames fits_dir=seq_fits_dir camera=camera filter_wheel=filter_wheel />
+                            <SequenceEditor frames=seq_frames fits_dir=seq_fits_dir limits=seq_limits end=seq_end
+                                            capture_settings=capture_settings camera=camera filter_wheel=filter_wheel />
                             <span class=format!("{CARD_TITLE} pt-1")>{move || tr().sched_steps_legend}</span>
                             {opts.steps_view(lang)}
                         </div>

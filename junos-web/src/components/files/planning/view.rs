@@ -186,6 +186,15 @@ fn frame_row(f: SeqRow, tr: &'static Translations) -> impl IntoView {
     if !f.iso.is_empty() {
         extras.push(format!("ISO #{}", f.iso));
     }
+    // Only Light frames dither; 0 just follows the Guide module.
+    match f.dither.filter(|_| f.frame_type == "Light") {
+        Some(n) if n > 0 => extras.push(format!("{} {} {n}", tr.seq_dither, tr.seq_dither_every.to_lowercase())),
+        Some(n) if n < 0 => extras.push(format!("{} {}", tr.seq_dither, tr.seq_dither_off.to_lowercase())),
+        _ => {}
+    }
+    if let Some(name) = f.post_script.rsplit('/').next().filter(|n| !n.is_empty()) {
+        extras.push(format!("{} {name}", tr.seq_then_runs));
+    }
     view! {
         <div class="flex items-center gap-2 min-h-[44px] md:min-h-9 py-1 border-b border-border-base">
             <span class="inline-flex shrink-0" style=format!("color:{color}") inner_html=icon></span>
@@ -210,6 +219,10 @@ fn sequence_view(q: Sequence, tr: &'static Translations) -> impl IntoView {
     let target = q.frames.iter().map(|f| f.target.clone()).find(|t| !t.is_empty());
     let dir = q.frames.iter().map(|f| f.dir.clone()).find(|d| !d.is_empty());
     let has_where = target.is_some() || dir.is_some();
+    let limits = q.limits.map(|l| {
+        let parts = l.summary(tr);
+        if parts.is_empty() { tr.seq_limits_none.to_string() } else { parts.join(" \u{00b7} ") }
+    });
     view! {
         <div class=CARD>
             <span class=CARD_TITLE>{tr.plan_frames}</span>
@@ -219,6 +232,12 @@ fn sequence_view(q: Sequence, tr: &'static Translations) -> impl IntoView {
                 <span class="font-mono text-text-blue-bright">{format!("{n} {unit} \u{00b7} {}", fmt_duration(total))}</span>
             </div>
         </div>
+        {limits.map(|l| view! {
+            <div class=CARD>
+                <span class=CARD_TITLE>{tr.seq_limits}</span>
+                <span class="text-sm text-text">{l}</span>
+            </div>
+        })}
         {has_where.then(|| view! {
             <div class=CARD>
                 {target.map(|t| kv(tr.files_target, t))}

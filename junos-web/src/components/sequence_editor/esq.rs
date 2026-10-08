@@ -7,6 +7,7 @@ use std::borrow::Cow;
 
 use crate::compat::CameraSnapshot;
 
+use super::limits::SeqLimits;
 use super::model::SeqFrame;
 
 /// Escape text-node content, so a folder path like `/data/M81 & M82` or an
@@ -41,6 +42,10 @@ fn vector(xml: &mut String, name: &str, element: &str, value: f64) {
 /// the sanitized name straight into `fits_dir` instead, so it passes `false` to
 /// drop the `%t` folder and avoid a doubled-up subfolder.
 ///
+/// `limits` is the sequence-wide head (refocus, HFR check, guide drift),
+/// which KStars applies to its global options on load. `post_script` is run
+/// by KStars after the last frame (`SeqEnd::post_job_script`).
+///
 /// `camera` resolves what the rows leave to the camera (an unset format) and
 /// what KStars wants as an index (ISO). Numbers are written as parsed, so a
 /// stray space or decimal can't turn into 0 on KStars' side.
@@ -48,22 +53,17 @@ pub fn build_esq_xml(
     job_name: &str,
     fits_dir: &str,
     frames: &[SeqFrame],
+    limits: &SeqLimits,
+    post_script: Option<&str>,
     target_folder: bool,
     camera: &CameraSnapshot,
 ) -> String {
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<SequenceQueue version='2.1'>\n");
-    xml.push_str("<GuideDeviation enabled='false'>0</GuideDeviation>\n");
-    xml.push_str("<GuideStartDeviation enabled='false'>0</GuideStartDeviation>\n");
-    xml.push_str("<HFRCheck enabled='false'><HFRDeviation>0.1</HFRDeviation>\
-<HFRCheckAlgorithm>0</HFRCheckAlgorithm><HFRCheckThreshold>0</HFRCheckThreshold>\
-<HFRCheckFrames>1</HFRCheckFrames></HFRCheck>\n");
-    xml.push_str("<RefocusOnTemperatureDelta enabled='false'>1</RefocusOnTemperatureDelta>\n");
-    xml.push_str("<RefocusEveryN enabled='false'>60</RefocusEveryN>\n");
-    xml.push_str("<RefocusOnMeridianFlip enabled='false'/>\n");
+    xml.push_str(&limits.esq_xml());
     let job_name = esc(job_name);
     let fits_dir = esc(fits_dir);
-    for f in frames {
+    for (i, f) in frames.iter().enumerate() {
         xml.push_str("<Job>\n");
         match f.exposure_secs() {
             Some(secs) => xml.push_str(&format!("<Exposure>{secs}</Exposure>\n")),
@@ -96,10 +96,12 @@ pub fn build_esq_xml(
         if !job_name.is_empty() {
             xml.push_str(&format!("<TargetName>{job_name}</TargetName>\n"));
         }
-        // -1 would disable dithering for the job outright, overriding the Guide
-        // module's "Enable dithering" (camerastate.cpp checkDithering). 0 keeps
-        // it on and falls back to the global DitherFrames — KStars' own default.
-        xml.push_str("<GuideDitherPerJob>0</GuideDitherPerJob>\n");
+        if let Some(script) = post_script.filter(|_| i + 1 == frames.len()) {
+            xml.push_str(&format!("<PostJobScript>{}</PostJobScript>\n", esc(script)));
+        }
+        // 0 follows the Guide module's DitherFrames, N dithers every N frames,
+        // -1 never (camerastate.cpp checkDithering / resetDitherCounter).
+        xml.push_str(&format!("<GuideDitherPerJob>{}</GuideDitherPerJob>\n", f.dither_per_job().unwrap_or(0)));
         xml.push_str(&format!("<FITSDirectory>{fits_dir}</FITSDirectory>\n"));
         // %t = target name (per-tile job name for mosaics), %F = Filter,
         // %T = frame Type, %e = exposure (adds "_secs"), %D = datetime.

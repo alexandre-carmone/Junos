@@ -52,6 +52,7 @@ use labels::scheduler_status_label;
 pub(crate) use labels::{param_label, step_label};
 // The Mosaic tab adds its tile jobs with the add-job form's keys.
 pub(crate) use mapping::resolve_completion_condition;
+pub(crate) use queue_api::save_script;
 use queue_api::QueueList;
 use view_add_job::{AddJobForm, AddJobSheet};
 use view_jobs::SchedulerJobs;
@@ -79,6 +80,8 @@ pub fn SchedulerTab(
     #[prop(into)] site: Signal<SiteSnapshot>,
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
+    /// Ekos' Capture settings — the add-job sequence starts from their limits.
+    #[prop(into)] capture_settings: Signal<serde_json::Value>,
     #[prop(into)] online: Signal<bool>,
     file_reply: RwSignal<Option<FileReply>>,
     /// Suggestions for the queue editor's custom INDI steps.
@@ -246,7 +249,8 @@ pub fn SchedulerTab(
 
             <Show when=move || add_open.get()>
                 {sheet(move || tr().sched_add_job_btn, move || add_open.set(false), view! {
-                    <AddJobSheet form=form site=site camera=camera filter_wheel=filter_wheel jobs=jobs home_dir=home_dir
+                    <AddJobSheet form=form site=site camera=camera filter_wheel=filter_wheel
+                                 capture_settings=capture_settings jobs=jobs home_dir=home_dir
                                  send=Arc::clone(&send_add) lang=lang open=add_open />
                 })}
             </Show>
