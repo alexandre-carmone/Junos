@@ -43,6 +43,7 @@ use crate::{ActiveTabCtx, Tab};
 
 use crate::astro;
 use crate::catalog::CatalogData;
+use crate::coords::J2000;
 use crate::dso_catalog::DsoCatalogData;
 use crate::star_tiles::{fetch_deep_stars, DeepStarCatalog};
 use self::deep_stars::{DeepStarField, DEEP_FROM_MAG};
@@ -55,9 +56,9 @@ use controls::SkyControls;
 use framing::FramingOverlay;
 
 pub use framing::FramingState;
-pub(crate) use actions::{fmt_dec, fmt_ra};
+pub(crate) use actions::{fmt_dec, fmt_ra, goto_rade_msg};
 pub(crate) use framing::mosaic_span_am;
-use render::{HitItem, MosaicPlanRender, MosaicTileRender, SchedulerJobRender};
+use render::{HitItem, HitKind, MosaicPlanRender, MosaicTileRender, SchedulerJobRender};
 use render::layer::{Catalogs, Frame};
 use render::params::{LayerToggles, OverlayState, PipelineMode, SceneParams, SolvedImage, ViewParams};
 use render::pipeline::RenderPipeline;
@@ -195,7 +196,7 @@ fn local_storage() -> Option<web_sys::Storage> {
 }
 
 /// Signal initialised from localStorage `key` and written back on change.
-fn persisted<T>(key: &'static str, default: T) -> RwSignal<T>
+pub(crate) fn persisted<T>(key: &'static str, default: T) -> RwSignal<T>
 where
     T: std::str::FromStr + ToString + Send + Sync + 'static,
 {
@@ -603,6 +604,39 @@ pub fn SkyTab(
 
     // Target card subject (or None for closed) — tap, right-click, long-press.
     let target = RwSignal::new(None::<SkyTarget>);
+
+    // "Show on Sky" from another tab (Targets): the sky moves to the time
+    // asked for (back to live when that is now), centres the object and
+    // opens its card.
+    if let Some(focus) = use_context::<crate::SkyFocusCtx>() {
+        Effect::new(move |_| {
+            let Some(f) = focus.0.get() else { return };
+            focus.0.set(None);
+            match f.at_ms {
+                Some(ms) if (ms - js_sys::Date::now()).abs() > 300_000.0 => clock.update(|c| *c = c.at(ms)),
+                Some(_) => clock.set(SkyClock::live()),
+                None => {}
+            }
+            let jd = clock.get_untracked().jd();
+            let aim = search::aim_at(f.ra_deg, f.dec_deg, f.size_arcmin, jd, &site.get_untracked());
+            set_follow_mount.set(false);
+            set_center_alt.set(aim.alt);
+            set_center_az.set(aim.az);
+            set_fov_radius.set(aim.fov);
+            dso_mag_limit.set(aim.mag_limit);
+            let p = J2000::new(f.ra_deg, f.dec_deg).to_jnow(jd);
+            target.set(Some(SkyTarget::new(p.ra_deg, p.dec_deg, Some(HitItem {
+                sx: 0.0, sy: 0.0, radius: 0.0,
+                kind: HitKind::Dso(f.kind),
+                name: f.name,
+                mag: f.mag,
+                ra_jnow_deg: p.ra_deg,
+                dec_jnow_deg: p.dec_deg,
+                size_arcmin: Some(f.size_arcmin as f64),
+                phase: None,
+            }))));
+        });
+    }
 
     // Goto-and-align coordination: the target card sets this
     // to `true` after dispatching a goto. An Effect below watches the mount's

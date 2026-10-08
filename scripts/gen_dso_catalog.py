@@ -19,6 +19,8 @@ it come the catalogs imagers reach for once the NGC runs out:
     Stock, Trumpler, Berkeley, King, …)
   * Globular clusters outside the NGC/IC    VizieR VII/202 (Palomar, Terzan, …)
 
+and, for the constellation of each object, Roman's boundary table (VI/42).
+
 plus `dso_extra.csv`: curated EN/FR common names for any designation, and
 exotic objects no bulk catalog covers (quasars, protoplanetary nebulae, faint
 supernova remnants, Local Group dwarfs, …), placed by CDS Sesame or by the
@@ -40,10 +42,19 @@ Every download is cached and committed (openngc.csv, openngc_addendum.csv,
 wikidata_fr_dso.json, dso_sources/), so a rebuild is offline and reproducible.
 `--refresh` refetches the VizieR, SIMBAD and Sesame sources.
 
+Each object also gets its IAU constellation, looked up from its position in
+Roman's table of the 1875 boundaries (VizieR VI/42), and an emission-line
+signature: how much of it shows in Hα, OIII, SII and broadband (stars,
+galaxies, reflection), 0–3 each — what is worth a filter. It is derived from
+the kind and the evidence the catalogs give (OpenNGC's HII/EmN/RfN/Neb types
+and Hubble type, SIMBAD's object type, Sharpless vs van den Bergh), and
+`dso_extra.csv` overrides it for the objects that deserve better.
+
 Fields emitted per object:
-  ra_deg, dec_deg (J2000), name, kind, mag (99 = unknown), size_arcmin (major),
-  size_minor_arcmin, pa_deg, common_names (English), fr_names (French), ids
-  (other designations, searchable but not displayed)
+  ra_deg, dec_deg (J2000), name, kind, lines (emission signature), con (IAU
+  abbreviation), mag (99 = unknown), size_arcmin (major), size_minor_arcmin,
+  pa_deg, common_names (English), fr_names (French), ids (other designations,
+  searchable but not displayed)
 
 Usage:
     python3 scripts/gen_dso_catalog.py
@@ -187,6 +198,36 @@ KINDS = (
     "Galaxy", "OpenCluster", "GlobularCluster", "Nebula", "PlanetaryNebula",
     "SupernovaRemnant", "GalaxyCluster", "DarkNebula",
 )
+
+# ── Emission-line signature ──────────────────────────────────────────────────
+# (Hα, OIII, SII, broadband), each 0 = nothing, 1 = optional, 2 = significant,
+# 3 = dominant. Packed into one byte, two bits per band in that order.
+LINE_BANDS = ("Ha", "OIII", "SII", "RGB")
+SIG_BROADBAND = (0, 0, 0, 3)          # stars, galaxies, reflection, dust
+SIG_SPIRAL = (1, 0, 0, 3)             # Hα lifts the HII regions of a spiral
+SIG_EMISSION = (3, 1, 2, 0)           # HII region
+SIG_CLUSTER_NEBULA = (3, 1, 2, 2)     # cluster in its HII region (Cl+N)
+SIG_MIXED = (3, 1, 1, 2)              # emission and reflection together
+SIG_BUBBLE = (3, 3, 1, 0)             # Wolf-Rayet shell: OIII as strong as Hα
+SIG_PLANETARY = (2, 3, 1, 1)
+SIG_SNR = (3, 2, 2, 0)
+SIG_NEBULA = (2, 0, 0, 2)             # bright nebula of unknown nature
+# A spiral or irregular Hubble type (not a lenticular S0): HII regions.
+SPIRAL_RE = re.compile(r"^(S(AB|A|B)?[a-dm]|I)")
+SPIRAL_MIN_ARCMIN = 5.0
+
+# Evidence for the signature, per catalog: OpenNGC's type, SIMBAD's object
+# type. "emn" emission, "rfn" reflection, "bub" Wolf-Rayet shell, "neb"
+# bright nebula of unknown nature, "cln" cluster with nebula.
+NGC_TYPE_HINT = {"HII": "emn", "EmN": "emn", "RfN": "rfn", "Neb": "neb", "Cl+N": "cln"}
+OTYPE_HINT = {
+    "HII": "emn", "EmO": "emn", "SFR": "emn", "RNe": "rfn", "bub": "bub", "WR*": "bub",
+}
+
+
+def otype_hints(otype, default=None):
+    h = OTYPE_HINT.get(otype, default)
+    return {h} if h else set()
 
 
 # ── download + cache helpers ─────────────────────────────────────────────────
@@ -684,6 +725,7 @@ class Catalog:
             if target["mag"] >= MISSING_MAG and entry["mag"] < MISSING_MAG:
                 target["mag"] = entry["mag"]
             add_unique(target.setdefault("simbad_names", []), names)
+            target.setdefault("hints", set()).update(entry.get("hints", ()))
             self.stats[source + " (merged)"] = self.stats.get(source + " (merged)", 0) + 1
             return target
         entry["simbad_names"] = list(names)
@@ -701,12 +743,12 @@ class Catalog:
                 taken.update(n.lower() for n in names)
 
 
-def new_entry(name, ra, dec, kind, mag=MISSING_MAG, size=0.0, size_minor=0.0, pa=0.0):
+def new_entry(name, ra, dec, kind, mag=MISSING_MAG, size=0.0, size_minor=0.0, pa=0.0, hints=()):
     return {
         "name": name, "ra_deg": ra, "dec_deg": dec, "kind": kind,
         "mag": MISSING_MAG if mag is None else mag,
         "size_arcmin": size or 0.0, "size_minor_arcmin": size_minor or 0.0,
-        "pa_deg": pa or 0.0,
+        "pa_deg": pa or 0.0, "hints": set(hints),
     }
 
 
@@ -768,7 +810,12 @@ def load_openngc(cat):
                     continue
 
             name = addendum_name(row) if addendum else make_name(row)
-            obj = new_entry(name, ra, dec, type_map[obj_type], mag, maj, minor, pa)
+            hints = {NGC_TYPE_HINT[obj_type]} if obj_type in NGC_TYPE_HINT else set()
+            if SPIRAL_RE.match(row.get("Hubble", "").strip()):
+                hints.add("spiral")
+            obj = new_entry(name, ra, dec, type_map[obj_type], mag, maj, minor, pa, hints)
+            # OpenNGC's constellation, to check ours against.
+            obj["ngc_const"] = row.get("Const", "").strip()
             if obj_type == "Cl+N":
                 # Filed as a cluster (M42, M17, IC 1396), but the Sharpless
                 # region on top of it is the same object.
@@ -948,7 +995,8 @@ def load_sharpless(cat):
         desig = f"Sh2-{int(r['Sh2'])}"
         x, names, otype = xid_info(xids, desig)
         e = new_entry(desig, float(r["_RAJ2000"]), float(r["_DEJ2000"]),
-                      nebula_kind("Nebula", otype), size=parse_float(r["Diam"], 0.0))
+                      nebula_kind("Nebula", otype), size=parse_float(r["Diam"], 0.0),
+                      hints=otype_hints(otype, "emn"))  # Sharpless: HII regions
         cat.merge_or_add(e, desig, x, names, source="Sharpless")
 
 
@@ -963,7 +1011,7 @@ def load_vdb(cat):
         desig = f"vdB {int(r['VdB'])}"
         radius = max(parse_float(r["BRadMax"], 0.0), parse_float(r["RRadMax"], 0.0))
         e = new_entry(desig, float(r["_RAJ2000"]), float(r["_DEJ2000"]), "Nebula",
-                      size=2.0 * radius)
+                      size=2.0 * radius, hints={"rfn"})
         cat.merge_or_add(e, desig, source="van den Bergh")
 
 
@@ -1040,7 +1088,8 @@ def load_lbn(cat, forced):
             continue
         d1, d2 = parse_float(r["Diam1"], 0.0), parse_float(r["Diam2"], 0.0)
         e = new_entry(desig, float(r["_RAJ2000"]), float(r["_DEJ2000"]),
-                      nebula_kind("Nebula", otype), size=max(d1, d2), size_minor=min(d1, d2))
+                      nebula_kind("Nebula", otype), size=max(d1, d2), size_minor=min(d1, d2),
+                      hints=otype_hints(otype, "neb"))
         # A fragment of a larger nebula is dropped — unless it is that
         # nebula under another number, which the merge below folds in.
         if (not known and desig not in forced
@@ -1142,6 +1191,17 @@ def parse_size(s):
     return float(m[1]), float(m[2] or 0.0), float(m[3] or 0.0)
 
 
+def parse_lines(s, name):
+    """'Ha3 OIII2 SII1 RGB2' → (3, 2, 1, 2); a band left out is 0."""
+    sig = dict.fromkeys(LINE_BANDS, 0)
+    for tok in s.split():
+        m = re.match(r"^(Ha|OIII|SII|RGB)([0-3])$", tok)
+        if not m:
+            raise SystemExit(f"dso_extra.csv: {name}: bad lines token {tok!r}")
+        sig[m[1]] = int(m[2])
+    return tuple(sig[b] for b in LINE_BANDS)
+
+
 def apply_extra(cat, rows):
     to_resolve = [r["resolve"] for r in rows
                   if r["resolve"] and not re.match(r"^[\d.]+\s+[-+]?[\d.]+$", r["resolve"])]
@@ -1180,7 +1240,7 @@ def apply_extra(cat, rows):
             mag = parse_float(r["mag"], None)
             if mag is None and kind in ("Galaxy", "GlobularCluster"):
                 mag = parse_float(d.get("vmag"), None)
-            e = new_entry(name, ra, dec, kind, mag, *size)
+            e = new_entry(name, ra, dec, kind, mag, *size, hints=otype_hints(otype))
             xids = [c for c in (canon(a) for a in aliases) if c and c != canon(name)]
             obj = cat.merge_or_add(e, canon(name) or name, xids, source="dso_extra.csv",
                                    positional=False)
@@ -1198,6 +1258,8 @@ def apply_extra(cat, rows):
             obj["size_arcmin"], obj["size_minor_arcmin"], obj["pa_deg"] = parse_size(r["size"])
         if r["mag"]:
             obj["mag"] = float(r["mag"])
+        if r.get("lines"):
+            obj["lines"] = parse_lines(r["lines"], name)
 
         # Curated names go first: they are the ones to display. A leading
         # '=' drops the names the catalogs gave instead.
@@ -1219,6 +1281,73 @@ def forced_designations(rows):
         out.add(canon(r["name"]) or r["name"])
         out.update(canon(i) or i for i in r["ids"].split("|") if i.strip())
     return out
+
+
+# ── constellation and emission signature ─────────────────────────────────────
+
+B1875_JD = 2405889.258550475
+
+
+def precess_from_j2000(ra, dec, jd):
+    """J2000 RA/Dec (deg) to the mean equinox of `jd`: IAU 1976 (Lieske), as
+    `precess_j2000_to_jnow` in coords.rs."""
+    t = (jd - 2451545.0) / 36525.0
+    arcsec = lambda x: math.radians(x / 3600.0)
+    zeta = arcsec((0.017998 * t + 0.30188) * t * t + 2306.2181 * t)
+    z = arcsec((0.018203 * t + 1.09468) * t * t + 2306.2181 * t)
+    theta = arcsec((-0.041833 * t - 0.42665) * t * t + 2004.3109 * t)
+    ra0, dec0 = math.radians(ra), math.radians(dec)
+    a = math.cos(dec0) * math.sin(ra0 + zeta)
+    b = math.cos(theta) * math.cos(dec0) * math.cos(ra0 + zeta) - math.sin(theta) * math.sin(dec0)
+    c = math.sin(theta) * math.cos(dec0) * math.cos(ra0 + zeta) + math.cos(theta) * math.sin(dec0)
+    return math.degrees(math.atan2(a, b) + z) % 360.0, math.degrees(math.asin(max(-1.0, min(1.0, c))))
+
+
+def load_constellation_bounds():
+    """Roman (1987): the 1875 boundaries as RA strips, southern edge first
+    by declination — the first strip a position falls in is its constellation."""
+    rows = vizier("VI/42/data", ["RA_low", "RA_up", "DE_low", "const"], "vizier_cst_bounds.tsv")
+    return [(float(r["RA_low"]), float(r["RA_up"]), float(r["DE_low"]), r["const"]) for r in rows]
+
+
+def constellation(ra, dec, bounds):
+    ra1875, dec1875 = precess_from_j2000(ra, dec, B1875_JD)
+    ra_h = ra1875 / 15.0
+    for lo, hi, de_lo, con in bounds:
+        if dec1875 >= de_lo and lo <= ra_h < hi:
+            return con
+    return "Oct"  # below the last strip: the south pole
+
+
+def line_signature(o):
+    """(Hα, OIII, SII, broadband) for an object; see SIG_*."""
+    if "lines" in o:
+        return o["lines"]
+    h = o.get("hints", set())
+    kind = o["kind"]
+    if kind == "Galaxy":
+        return SIG_SPIRAL if "spiral" in h and o["size_arcmin"] >= SPIRAL_MIN_ARCMIN else SIG_BROADBAND
+    if kind == "PlanetaryNebula":
+        return SIG_PLANETARY
+    if kind == "SupernovaRemnant":
+        return SIG_SNR
+    if kind == "OpenCluster":
+        return SIG_CLUSTER_NEBULA if h & {"cln", "emn", "bub"} else SIG_BROADBAND
+    if kind != "Nebula":
+        return SIG_BROADBAND
+    if "bub" in h:
+        return SIG_BUBBLE
+    if "emn" in h and "rfn" in h:
+        return SIG_MIXED
+    if "emn" in h:
+        return SIG_EMISSION
+    if "rfn" in h:
+        return SIG_BROADBAND
+    return SIG_NEBULA
+
+
+def pack_lines(sig):
+    return sum(v << (2 * i) for i, v in enumerate(sig))
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -1314,17 +1443,40 @@ def main():
     print(f"Objects with EN names: {sum(1 for o in objects if o['common_names']):,}")
     print(f"Objects with FR names: {fr_hits:,}")
 
+    # Constellation, checked against OpenNGC's where it has one: a mismatch
+    # is an object on a boundary, placed by slightly different coordinates.
+    bounds = load_constellation_bounds()
+    mismatches = []
+    for o in objects:
+        o["con"] = constellation(o["ra_deg"], o["dec_deg"], bounds)
+        ngc = {"Se1": "Ser", "Se2": "Ser"}.get(o.get("ngc_const", ""), o.get("ngc_const", ""))
+        if ngc and ngc.lower() != o["con"].lower():
+            mismatches.append(f"{o['name']} ({ngc} → {o['con']})")
+    print(f"Constellations differing from OpenNGC: {len(mismatches)}"
+          + (f" — {', '.join(mismatches[:30])}" if mismatches else ""))
+
+    sigs = {}
+    for o in objects:
+        sig = line_signature(o)
+        sigs[sig] = sigs.get(sig, 0) + 1
+        o["lines_byte"] = pack_lines(sig)
+    print("Emission signatures (Ha, OIII, SII, RGB):")
+    for sig, n in sorted(sigs.items(), key=lambda kv: -kv[1]):
+        print(f"  {sig}  {n:>6,}")
+
     # --- Emit binary ---
     # Format (little-endian):
     #   [u32] n_objects
     #   Objects: ra(f32) dec(f32) mag(f32) size_arcmin(f32) size_minor(f32) pa_deg(f32)
-    #            kind(u8) name_len(u8) name(utf8)
+    #            kind(u8) lines(u8) con(3 × ASCII) name_len(u8) name(utf8)
     #            aliases_count(u8) [ alias_len(u8) alias(utf8) ] × aliases_count
     #            fr_names_count(u8) [ fr_len(u8) fr(utf8) ] × fr_names_count
     #            ids_count(u8) [ id_len(u8) id(utf8) ] × ids_count
     # kind codes: 0=Galaxy 1=OpenCluster 2=GlobularCluster 3=Nebula
     #             4=PlanetaryNebula 5=SupernovaRemnant 6=GalaxyCluster
     #             7=DarkNebula
+    # lines: Hα | OIII << 2 | SII << 4 | broadband << 6, each 0–3
+    # con: IAU abbreviation ("And", "CVn")
     KIND_CODE = {k: i for i, k in enumerate(KINDS)}
 
     def name_list(names):
@@ -1349,7 +1501,8 @@ def main():
         buf += struct.pack('<ffffff',
                            o['ra_deg'], o['dec_deg'], o['mag'],
                            o['size_arcmin'], o['size_minor_arcmin'], o['pa_deg'])
-        buf += bytes([KIND_CODE[o['kind']], len(name_enc)]) + name_enc
+        buf += bytes([KIND_CODE[o['kind']], o['lines_byte']]) + o['con'].encode('ascii')
+        buf += bytes([len(name_enc)]) + name_enc
         buf += name_list(o['common_names'])
         buf += name_list(o['fr_names'])
         buf += name_list([i for i in o['ids'] if i != o['name']])

@@ -16,10 +16,14 @@
 #            what the sky labels show. A leading '=' replaces the names the
 #            catalogs gave instead ("=Horsehead Nebula").
 #   ids      other designations to search by, '|'-separated.
+#   lines    what each band shows of it, replacing the signature the
+#            generator derives: "Ha3 OIII2 SII1 RGB2", each 0 (nothing) …
+#            3 (dominant), a band left out is 0. RGB is broadband: stars,
+#            galaxies, reflection. The Targets tab's filter advice.
 #
 # Naming a designation here also keeps it when its catalog's cut would drop
 # it (LDN opacity, LBN brightness, Abell distance class).
-name;resolve;kind;size;mag;en;fr;ids
+name;resolve;kind;size;mag;en;fr;ids;lines
 
 # ── Sharpless HII regions ────────────────────────────────────────────────────
 Sh2-27;;;;;Zeta Ophiuchi Nebula;Nébuleuse de Zêta Ophiuchi;
@@ -37,11 +41,11 @@ Sh2-155;;;;;Cave Nebula;Nébuleuse de la Caverne;
 Sh2-157;;;;;Lobster Claw Nebula;Nébuleuse de la Pince de Homard;
 Sh2-170;;;;;Little Rosette Nebula;Nébuleuse de la Petite Rosette;
 Sh2-185;;;;;Gamma Cassiopeiae Nebula;Nébuleuse de Gamma Cassiopeiae;
-Sh2-240;;SupernovaRemnant;;;Spaghetti Nebula|Simeis 147;Nébuleuse Spaghetti;Simeis 147
+Sh2-240;;SupernovaRemnant;;;Spaghetti Nebula|Simeis 147;Nébuleuse Spaghetti;Simeis 147;Ha3 OIII1 SII2
 Sh2-261;;;;;Lower's Nebula;Nébuleuse de Lower;
 Sh2-264;;;;;Lambda Orionis Ring|Angelfish Nebula;Anneau de Lambda Orionis|Nébuleuse du Poisson-ange;
 Sh2-276;;;;;Barnard's Loop;Boucle de Barnard;
-Sh2-308;;;;;Dolphin Head Nebula;Nébuleuse de la Tête de Dauphin;
+Sh2-308;;;;;Dolphin Head Nebula;Nébuleuse de la Tête de Dauphin;;Ha1 OIII3
 
 # ── Reflection, bright and dark nebulae ──────────────────────────────────────
 vdB 141;;;;;Ghost Nebula;Nébuleuse du Fantôme;
@@ -61,46 +65,46 @@ LDN 1622;;;;;Boogeyman Nebula;Nébuleuse du Croque-mitaine;
 Caldwell 99;;;420x300;;Coalsack Nebula;Sac de Charbon;
 
 # ── Planetary nebulae ────────────────────────────────────────────────────────
-Abell 21;;;;;Medusa Nebula;Nébuleuse de la Méduse;
+Abell 21;;;;;Medusa Nebula;Nébuleuse de la Méduse;;Ha3 OIII2 SII1
 Abell 33;;;;;Diamond Ring Nebula;Nébuleuse de la Bague de diamant;
 
 # ── NGC / IC objects OpenNGC leaves unnamed ──────────────────────────────────
-NGC 281;;;;;Pacman Nebula;Nébuleuse Pac-Man;
+NGC 281;;;;;Pacman Nebula;Nébuleuse Pac-Man;;Ha3 OIII2 SII2
 IC 1805;;;;;Heart Nebula;Nébuleuse du Cœur;
 IC 1848;;;;;Soul Nebula;Nébuleuse de l'Âme;
-IC 410;;;;;Tadpoles Nebula;Nébuleuse des Têtards;
+IC 410;;;;;Tadpoles Nebula;Nébuleuse des Têtards;;Ha3 OIII2 SII2
 IC 405;;;;;Flaming Star Nebula;Nébuleuse de l'Étoile flamboyante;
 IC 417;;;;;Spider Nebula;Nébuleuse de l'Araignée;
 NGC 1931;;;;;Fly Nebula;Nébuleuse de la Mouche;
-NGC 7380;;;;;Wizard Nebula;Nébuleuse du Sorcier;
-NGC 7635;;;;;Bubble Nebula;Nébuleuse de la Bulle;
+NGC 7380;;;;;Wizard Nebula;Nébuleuse du Sorcier;;Ha3 OIII2 SII2 RGB1
+NGC 7635;;;;;Bubble Nebula;Nébuleuse de la Bulle;;Ha3 OIII2 SII1
 IC 5146;;;;;Cocoon Nebula;Nébuleuse du Cocon;
 NGC 6888;;;;;Crescent Nebula;Nébuleuse du Croissant;
-NGC 2359;;;;;Thor's Helmet;Casque de Thor;
-IC 2177;;;;;Seagull Nebula;Nébuleuse de la Mouette;
-NGC 2174;;;;;Monkey Head Nebula;Nébuleuse de la Tête de Singe;
+NGC 2359;;;;;Thor's Helmet;Casque de Thor;;Ha3 OIII3 SII1
+IC 2177;;;;;Seagull Nebula;Nébuleuse de la Mouette;;Ha3 OIII1 SII2 RGB1
+NGC 2174;;;;;Monkey Head Nebula;Nébuleuse de la Tête de Singe;;Ha3 OIII1 SII2
 NGC 2238;;;;;;Nébuleuse de la Rosette;
 IC 443;;;;;Jellyfish Nebula;Nébuleuse de la Méduse;
 IC 1396;;;;;Elephant's Trunk Nebula;Nébuleuse de la Trompe d'éléphant;
 NGC 7023;;;;;Iris Nebula;Nébuleuse de l'Iris;
-IC 63;;;;;Ghost of Cassiopeia;Fantôme de Cassiopée;
-NGC 1333;;;;;Embryo Nebula;Nébuleuse de l'Embryon;
+IC 63;;;;;Ghost of Cassiopeia;Fantôme de Cassiopée;;Ha3 SII1 RGB2
+NGC 1333;;;;;Embryo Nebula;Nébuleuse de l'Embryon;;Ha1 RGB3
 NGC 1491;;;;;Fossil Footprint Nebula;Nébuleuse de l'Empreinte fossile;
 NGC 1579;;;;;Northern Trifid Nebula;Trifide du Nord;
 NGC 1788;;;;;Cosmic Bat Nebula;Nébuleuse de la Chauve-souris cosmique;
 NGC 1909;;;;;;Nébuleuse de la Tête de Sorcière;
-NGC 1977;;;;;;Nébuleuse de l'Homme qui court;
-NGC 2024;;;;;Flame Nebula;Nébuleuse de la Flamme;
+NGC 1977;;;;;;Nébuleuse de l'Homme qui court;;Ha2 RGB3
+NGC 2024;;;;;Flame Nebula;Nébuleuse de la Flamme;;Ha3 SII1 RGB2
 IC 434;;;;;=Horsehead Nebula;Nébuleuse de la Tête de Cheval;
 NGC 2264;;;;;Christmas Tree Cluster|Cone Nebula;Amas de l'Arbre de Noël|Nébuleuse du Cône;
 NGC 2261;;;;;Hubble's Variable Nebula;Nébuleuse variable de Hubble;
-NGC 2736;;;;;;Nébuleuse du Crayon;
-NGC 6960;;;;;;Dentelles du Cygne;
-NGC 6992;;;;;;Dentelles du Cygne;
-IC 4628;;;;;Prawn Nebula;Nébuleuse de la Crevette;
-NGC 6334;;;;;Cat's Paw Nebula;Nébuleuse de la Patte de Chat;
-NGC 6357;;;;;War and Peace Nebula;Nébuleuse Guerre et Paix;
-NGC 6188;;;;;Dragons of Ara;Dragons de l'Autel;
+NGC 2736;;;;;;Nébuleuse du Crayon;;Ha3 OIII3 SII1
+NGC 6960;;;;;;Dentelles du Cygne;;Ha3 OIII3 SII1
+NGC 6992;;;;;;Dentelles du Cygne;;Ha3 OIII3 SII1
+IC 4628;;;;;Prawn Nebula;Nébuleuse de la Crevette;;Ha3 OIII1 SII2
+NGC 6334;;;;;Cat's Paw Nebula;Nébuleuse de la Patte de Chat;;Ha3 OIII1 SII2
+NGC 6357;;;;;War and Peace Nebula;Nébuleuse Guerre et Paix;;Ha3 OIII2 SII2 RGB1
+NGC 6188;;;;;Dragons of Ara;Dragons de l'Autel;;Ha3 OIII2 SII2
 IC 4592;;;;;Blue Horsehead Nebula;Nébuleuse de la Tête de Cheval bleue;
 IC 4604;;;;;Rho Ophiuchi Nebula;Nébuleuse de Rho Ophiuchi;
 IC 1795;;;;;Fish Head Nebula;Nébuleuse de la Tête de Poisson;
@@ -207,3 +211,27 @@ SNR G260.4-3.4;SNR G260.4-03.4;SupernovaRemnant;60x50;;Puppis A;Puppis A;
 3C 10;SNR G120.1+01.4;SupernovaRemnant;8;;Tycho's Supernova Remnant;Rémanent de la supernova de Tycho;
 SNR G4.5+6.8;SNR G004.5+06.8;SupernovaRemnant;3;;Kepler's Supernova Remnant;Rémanent de la supernova de Kepler;
 SNR G327.6+14.6;SNR G327.6+14.6;SupernovaRemnant;30;;SN 1006;SN 1006;
+
+# ── Emission signatures ─────────────────────────────────────────────────────
+# Objects whose derived line signature is wrong or too generic: OIII-bright
+# HII regions and remnants, mixed emission + reflection, reflection nebulae
+# filed as clusters.
+M8;;;;;;;;Ha3 OIII2 SII2
+M16;;;;;;;;Ha3 OIII2 SII2
+M17;;;;;;;;Ha3 OIII2 SII1
+M42;;;;;;;;Ha3 OIII2 SII1 RGB2
+NGC 2237;;;;;;;;Ha3 OIII2 SII2
+NGC 3372;;;;;;;;Ha3 OIII2 SII2
+NGC 2070;;;;;;;;Ha3 OIII2 SII2
+NGC 896;;;;;;;;Ha3 OIII1 SII2
+IC 4685;;;;;;;;Ha3 OIII1 SII2
+NGC 6995;;;;;;;;Ha3 OIII3 SII1
+NGC 6979;;;;;;;;Ha3 OIII3 SII1
+M20;;;;;;;;Ha3 OIII1 SII1 RGB2
+IC 59;;;;;;;;Ha2 RGB3
+NGC 1973;;;;;;;;Ha2 RGB3
+NGC 1975;;;;;;;;Ha2 RGB3
+NGC 7129;;;;;;;;Ha1 RGB3
+M27;;;;;;;;Ha3 OIII3 SII1 RGB1
+M57;;;;;;;;Ha3 OIII3 SII1 RGB1
+NGC 7293;;;;;;;;Ha3 OIII3 SII1 RGB1

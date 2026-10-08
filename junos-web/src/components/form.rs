@@ -95,8 +95,8 @@ pub fn toggle_chip(on: RwSignal<bool>, label: impl Fn() -> &'static str + Send +
 /// centered panel on md+. `body` brings its own scroll area and footer. Each
 /// sheet is one layer, so a later one (the queue editor) dims and blocks the
 /// one under it. `data-sheet` hides the tab wheel meanwhile (`tab_wheel.rs`).
-pub fn sheet(
-    title: impl Fn() -> &'static str + Send + 'static,
+pub fn sheet<T: IntoView + 'static>(
+    title: impl Fn() -> T + Send + 'static,
     on_close: impl Fn() + Clone + Send + 'static,
     body: impl IntoView,
 ) -> impl IntoView {

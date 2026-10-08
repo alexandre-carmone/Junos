@@ -1,7 +1,9 @@
 //! Desktop tab bar — vertical strip of all tab icons on the right edge.
 //!
 //! Replaces `TabWheel` at the `md` breakpoint (≥768px) so desktop users see
-//! every tab at once and can click directly. Mobile keeps the wheel.
+//! every tab at once and can click directly. Mobile keeps the wheel. On a
+//! screen shorter than the strip, it scrolls; its padding (cancelled sideways
+//! by a negative margin) keeps the active tab's glow inside the scroller.
 
 use leptos::prelude::*;
 use web_sys::MouseEvent;
@@ -23,7 +25,8 @@ pub fn TabBar() -> impl IntoView {
         .unwrap_or_else(|| RwSignal::new(false));
 
     view! {
-        <div class="hidden md:flex flex-col gap-2 fixed right-2 top-1/2 -translate-y-1/2 z-[60] pointer-events-auto">
+        <div class="hidden md:flex flex-col gap-2 fixed right-2 top-1/2 -translate-y-1/2 z-[60] pointer-events-auto \
+                    max-h-[100dvh] overflow-y-auto [scrollbar-width:none] p-2 -mx-2">
             {TABS.iter().map(|&tab| {
                 view! {
                     <button

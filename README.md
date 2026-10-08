@@ -16,7 +16,7 @@ Two crates make it up:
 
 ## Features
 
-The UI is a 12-tab shell (a wheel on phones, a side strip on desktop), in this
+The UI is a 13-tab shell (a wheel on phones, a side strip on desktop), in this
 order:
 
 - **Profiles** — create, edit, start and stop Ekos equipment profiles,
@@ -26,6 +26,13 @@ order:
   grids, solar-system bodies, and a mount-anchored FOV reticle. Drag to pan,
   scroll or pinch to zoom. Right-click anywhere for **Goto**,
   **Goto & Align**, **Add to Scheduler** or the **Framing Assistant**.
+- **Targets** — tonight's best deep-sky objects for an observing window you
+  set (dusk to dawn by default): ranked by a tunable **Best** score or by
+  altitude, Moon distance, size, time up or magnitude, filtered by category,
+  constellation, magnitude and wavelength. Each object shows which bands are
+  worth a filter (Hα, OIII, SII or broadband L-RGB), and opens with its
+  altitude curve, **Show on Sky**, **Framing**, **Goto** and
+  **Add to Scheduler**.
 - **Mount** — coordinates in JNow and J2000, goto/sync, park, tracking,
   slew rate, meridian flip, and plate solving.
 - **Focus** — autofocus with a live HFR v-curve, manual stepping, and the full

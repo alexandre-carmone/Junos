@@ -24,7 +24,7 @@ use leptos::prelude::*;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
-mod altitude;
+pub(crate) mod altitude;
 mod labels;
 mod mapping;
 mod queue_api;

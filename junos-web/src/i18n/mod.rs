@@ -268,6 +268,20 @@ translations! {
     plan_confirm_delete_schedule, plan_confirm_delete_sequence, plan_confirm_delete_queue,
     plan_confirm_delete_script, plan_save_schedule, plan_save_name, plan_save, plan_saving, plan_save_hint,
     plan_confirm_overwrite, plan_saved, plan_nothing_written, plan_no_home,
+    // Targets tab
+    tab_targets, targets_night, targets_start, targets_end, targets_dusk, targets_dawn, targets_now,
+    targets_moon_up, targets_moon_down, targets_moon_all_night, targets_sort_best, targets_sort_alt,
+    targets_sort_moon, targets_sort_size, targets_sort_time, targets_sort_mag, targets_search,
+    targets_filters, targets_categories, targets_bands, targets_bands_hint, targets_constellation,
+    targets_all_constellations, targets_limits, targets_max_mag, targets_min_size, targets_min_alt,
+    targets_min_moon, targets_min_time, targets_weights, targets_weights_hint, targets_w_alt, targets_w_time,
+    targets_w_moon, targets_w_bright, targets_w_size, targets_show_more, targets_empty, targets_loading,
+    targets_count, targets_peak_title, targets_moon_title, targets_time_title, targets_score_title,
+    targets_at_start, targets_peak, targets_above, targets_moon_dist, targets_moon_below,
+    targets_wavelengths, targets_band_rgb, targets_band_rgb_short, targets_strength_1, targets_strength_2,
+    targets_strength_3, targets_adv_broadband, targets_adv_broadband_ha, targets_adv_ha, targets_adv_dual,
+    targets_adv_oiii, targets_adv_mixed, targets_adv_unknown, targets_show_sky, targets_goto,
+    targets_below_horizon,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

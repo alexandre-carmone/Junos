@@ -213,6 +213,7 @@ def read_dso_bin(path: str) -> list[dict]:
     for _ in range(n):
         ra, dec, mag, size, size_minor, pa = struct.unpack("<ffffff", r.take(24))
         kind = r.u8()
+        r.take(4)  # emission signature (u8) + constellation (3 × ASCII) — unused here
         name = r.string()
         r.name_list()  # common_names — unused here
         r.name_list()  # fr_names — unused here

@@ -1,4 +1,4 @@
-//! Junos Web UI — the browser app: a 12-tab shell over the Ekos Live
+//! Junos Web UI — the browser app: a 13-tab shell over the Ekos Live
 //! wire format, with a WebGPU planetarium on the Sky tab.
 
 /// `leptos::logging::log!`, compiled out of release builds.
@@ -41,7 +41,7 @@ use components::tabs::TabContent;
 use i18n::Lang;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tab { Sky, Mount, Focus, Imaging, Files, PolarAlign, Guide, Scheduler, Mosaic, FlatCal, Devices, Profiles }
+pub enum Tab { Sky, Targets, Mount, Focus, Imaging, Files, PolarAlign, Guide, Scheduler, Mosaic, FlatCal, Devices, Profiles }
 
 #[derive(Clone, Copy)]
 pub struct ActiveTabCtx(pub RwSignal<Tab>);
@@ -84,6 +84,25 @@ pub struct DsoTilesCtx(pub RwSignal<Option<Arc<dso_tiles::DsoTileIndex>>>);
 /// Consumed (and cleared) by SchedulerTab when it opens the job builder.
 #[derive(Clone, Copy)]
 pub struct SchedulerPrefillCtx(pub RwSignal<Option<(String, f64, f64)>>);
+
+/// "Show on Sky" from the Targets tab: the object to centre and open the
+/// target card on, and the instant to show it at (`None` keeps the sky's
+/// time). Consumed (and cleared) by SkyTab, which is always mounted.
+#[derive(Clone)]
+pub struct SkyFocus {
+    /// Displayed name ("M31 · Andromeda Galaxy").
+    pub name: String,
+    /// J2000, degrees.
+    pub ra_deg: f64,
+    pub dec_deg: f64,
+    pub size_arcmin: f32,
+    pub mag: Option<f32>,
+    pub kind: dso_catalog::DsoType,
+    pub at_ms: Option<f64>,
+}
+
+#[derive(Clone, Copy)]
+pub struct SkyFocusCtx(pub RwSignal<Option<SkyFocus>>);
 
 /// Names the device a long-running operation is holding, so the sky
 /// right-click menu can disable Goto / Goto & Align while it runs.
@@ -243,6 +262,7 @@ fn App() -> impl IntoView {
     // ── Scheduler prefill context (sky right-click → Add to Scheduler) ───
     let prefill_ctx = RwSignal::new(None::<(String, f64, f64)>);
     provide_context(SchedulerPrefillCtx(prefill_ctx));
+    provide_context(SkyFocusCtx(RwSignal::new(None)));
 
     // ── Busy guards for the sky right-click menu ──────────────────────────
     // Goto is refused while the mount is physically moving; Goto & Align also

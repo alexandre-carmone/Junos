@@ -52,7 +52,7 @@ impl SkyTarget {
 /// to the mount's `EQUATORIAL_EOD_COORD` property. `setJ2000Enabled(true)`
 /// only changes the UI display. So we send JNow and set `isJ2000: false`
 /// to keep KStars' UI consistent.
-fn goto_rade_msg(ra_deg_jnow: f64, dec_deg_jnow: f64) -> String {
+pub(crate) fn goto_rade_msg(ra_deg_jnow: f64, dec_deg_jnow: f64) -> String {
     let ra_h = ra_deg_jnow / 15.0;
     serde_json::json!({
         "type": "mount_goto_rade",

@@ -16,6 +16,30 @@ use super::clock::SkyClock;
 use super::object_search::{SearchHit, search_objects};
 use crate::dom::event_target_value;
 
+/// Where to point the view to show a J2000 object at `jd`: its Alt/Az, a
+/// field radius that frames it (8° for a point), and the DSO magnitude limit
+/// that field calls for.
+pub(super) struct Aim {
+    pub alt: f64,
+    pub az: f64,
+    pub fov: f64,
+    pub mag_limit: f64,
+}
+
+pub(super) fn aim_at(ra_deg: f64, dec_deg: f64, size_arcmin: f32, jd: f64, site: &SiteSnapshot) -> Aim {
+    let lst = astro::lst_deg(astro::gmst_deg(jd), site.longitude);
+    // Catalog coords are J2000 — precess to JNow before alt/az conversion.
+    let jnow = J2000::new(ra_deg, dec_deg).to_jnow(jd);
+    let (alt, az) = astro::eq_to_altaz(jnow.ra_deg, jnow.dec_deg, lst, site.latitude);
+    let fov = if size_arcmin > 1.0 {
+        (size_arcmin as f64 / 60.0 * 5.0).clamp(0.3, 30.0)
+    } else {
+        8.0
+    };
+    let auto_mag = (11.0 + 3.0 * (10.0_f64 / fov).log10()).clamp(4.0, 20.0);
+    Aim { alt, az, fov, mag_limit: (auto_mag * 2.0).round() / 2.0 }
+}
+
 #[component]
 pub fn SkySearch(
     sky_search: ReadSignal<String>,
@@ -61,25 +85,13 @@ pub fn SkySearch(
                     view! {
                         <div
                             on:click=move |_| {
-                                let jd = clock.get_untracked().jd();
-                                let gmst = astro::gmst_deg(jd);
-                                let s = site.get_untracked();
-                                let lst = astro::lst_deg(gmst, s.longitude);
-                                // Catalog coords are J2000 — precess to JNow before alt/az conversion.
-                                let jnow = J2000::new(ra_deg, dec_deg).to_jnow(jd);
-                                let (alt, az) = astro::eq_to_altaz(jnow.ra_deg, jnow.dec_deg, lst, s.latitude);
-                                set_center_alt.set(alt);
-                                set_center_az.set(az);
+                                let aim = aim_at(ra_deg, dec_deg, size_arcmin, clock.get_untracked().jd(),
+                                                 &site.get_untracked());
+                                set_center_alt.set(aim.alt);
+                                set_center_az.set(aim.az);
                                 set_follow_mount.set(false);
-
-                                let fov = if size_arcmin > 1.0 {
-                                    (size_arcmin as f64 / 60.0 * 5.0).clamp(0.3, 30.0)
-                                } else {
-                                    8.0
-                                };
-                                set_fov_radius.set(fov);
-                                let auto_mag = (11.0 + 3.0 * (10.0_f64 / fov).log10()).clamp(4.0, 20.0);
-                                dso_mag_limit.set((auto_mag * 2.0).round() / 2.0);
+                                set_fov_radius.set(aim.fov);
+                                dso_mag_limit.set(aim.mag_limit);
 
                                 set_sky_search.set(String::new());
                             }

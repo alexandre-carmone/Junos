@@ -33,9 +33,10 @@ use crate::{ActiveTabCtx, Tab, TabLabelsCtx};
 
 use crate::components::tab_wheel_icons::tab_icon;
 
-pub const TABS: [Tab; 12] = [
+pub const TABS: [Tab; 13] = [
     Tab::Profiles,
     Tab::Sky,
+    Tab::Targets,
     Tab::Mount,
     Tab::Focus,
     Tab::Imaging,
@@ -67,6 +68,7 @@ fn base_angle(i: usize) -> f32 {
 pub fn tab_title(tab: Tab, s: &crate::i18n::Translations) -> &'static str {
     match tab {
         Tab::Sky        => s.tab_sky,
+        Tab::Targets    => s.tab_targets,
         Tab::Mount      => s.tab_mount,
         Tab::Focus      => s.tab_focus,
         Tab::Imaging    => s.tab_imaging,

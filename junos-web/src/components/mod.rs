@@ -21,4 +21,5 @@ pub mod tab_bar;
 pub mod tab_wheel;
 pub mod tab_wheel_icons;
 pub mod tabs;
+pub mod targets;
 pub mod zoom;

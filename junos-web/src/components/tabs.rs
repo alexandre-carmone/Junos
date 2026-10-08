@@ -29,6 +29,7 @@ use crate::components::polar_align::PolarAlignTab;
 use crate::components::profiles::ProfilesTab;
 use crate::components::scheduler::SchedulerTab;
 use crate::components::sky::SkyTab;
+use crate::components::targets::TargetsTab;
 use crate::ws::{DeviceStore, SendCmd};
 use crate::{ActiveTabCtx, Tab};
 
@@ -80,9 +81,11 @@ pub fn TabContent(
     let send_files = Arc::clone(&send);
     let send_profiles = Arc::clone(&send);
     let send_devices = Arc::clone(&send);
+    let send_targets = Arc::clone(&send);
     let send_mosaic = send;
 
     let sky_visible = move || active_tab.get() == Tab::Sky;
+    let targets_visible = move || active_tab.get() == Tab::Targets;
     let mount_visible = move || active_tab.get() == Tab::Mount;
     let focus_visible = move || active_tab.get() == Tab::Focus;
     let imaging_visible = move || active_tab.get() == Tab::Imaging;
@@ -117,6 +120,11 @@ pub fn TabContent(
                 follow_mount=sky_follow_mount
             />
         </div>
+        <Show when=targets_visible>
+            <div class="absolute inset-0 z-[40] md:right-[64px]">
+                <TargetsTab site=site send=Arc::clone(&send_targets) />
+            </div>
+        </Show>
         <Show when=mount_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <MountTab mount=mount solve=solve align_settings=store.align_settings filter_wheel=filter_wheel send=Arc::clone(&send_mount) />
