@@ -146,7 +146,10 @@ pub fn SkyTargetCard(
     let on_add_scheduler = move |_| {
         if let Some(tg) = target.get_untracked() {
             if let Some(pctx) = prefill_ctx {
-                pctx.0.set(Some((tg.name(), tg.ra_jnow_deg, tg.dec_jnow_deg)));
+                // The add-job form takes J2000; the card holds JNow at the
+                // displayed time.
+                let j = JNow::new(tg.ra_jnow_deg, tg.dec_jnow_deg).to_j2000(clock.get_untracked().jd());
+                pctx.0.set(Some((tg.name(), j.ra_deg, j.dec_deg)));
             }
             if let Some(atctx) = active_tab_ctx {
                 atctx.0.set(Tab::Scheduler);

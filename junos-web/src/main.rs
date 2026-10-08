@@ -80,7 +80,7 @@ pub struct FramingCtx(pub FramingState);
 pub struct DsoTilesCtx(pub RwSignal<Option<Arc<dso_tiles::DsoTileIndex>>>);
 
 /// Prefill data passed from the sky right-click menu to the scheduler job builder.
-/// Set to Some((name, ra_deg, dec_deg)) when the user clicks "Add to Scheduler".
+/// Set to Some((name, ra_deg, dec_deg)), J2000, when the user clicks "Add to Scheduler".
 /// Consumed (and cleared) by SchedulerTab when it opens the job builder.
 #[derive(Clone, Copy)]
 pub struct SchedulerPrefillCtx(pub RwSignal<Option<(String, f64, f64)>>);
