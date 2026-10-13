@@ -6,8 +6,8 @@
 use leptos::prelude::*;
 
 use crate::ws::{
-    AlignFrame, DeviceStore, FocusStars, GuideDriftSample, GuideStateSample, HfrSample,
-    PolarVectorData,
+    AlignFrame, DeviceStore, FocusStars, FrameStats, GuideDriftSample, GuideStateSample,
+    HfrSample, PolarVectorData,
 };
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -66,6 +66,7 @@ pub struct CaptureSnapshot {
     pub exposure_total: Option<f64>,
     pub log: String,
     pub preview_url: Option<String>,
+    pub preview_stats: Option<FrameStats>,
     pub settings: serde_json::Value,
     pub sequence: serde_json::Value,
 }
@@ -234,6 +235,7 @@ pub fn derive_capture(store: &DeviceStore) -> Signal<CaptureSnapshot> {
     let settings_sig = store.capture_settings;
     let seq_sig      = store.capture_sequence;
     let preview_sig  = store.capture_preview_url;
+    let stats_sig    = store.capture_preview_stats;
     Signal::derive(move || {
         let s = status_sig.get();
         CaptureSnapshot {
@@ -246,6 +248,7 @@ pub fn derive_capture(store: &DeviceStore) -> Signal<CaptureSnapshot> {
             exposure_total: s.exposure_total,
             log: s.log,
             preview_url: preview_sig.get(),
+            preview_stats: stats_sig.get(),
             settings: settings_sig.get(),
             sequence: seq_sig.get(),
         }

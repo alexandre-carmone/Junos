@@ -5,7 +5,8 @@
 //! Files), then the frame — pinned on phones with the cards scrolling beneath
 //! it, frame | cards from `md` — and a pinned footer with Preview, Loop and
 //! Start / Stop, so Stop is always one tap away. Tapping the frame opens it
-//! full screen (`components/zoom.rs`); the sequence editor and a job's
+//! full screen (`components/zoom.rs`); a histogram overlays it
+//! (`histogram.rs`, toggled top-right); the sequence editor and a job's
 //! details open as `sheet`s.
 //!
 //! Outbound (message.cpp::processCaptureCommands):
@@ -24,6 +25,7 @@
 //! folded by `ws/store.rs`.
 
 mod fields;
+mod histogram;
 mod jobs;
 
 use leptos::prelude::*;
@@ -31,6 +33,7 @@ use serde_json::json;
 
 use crate::compat::{CameraSnapshot, CaptureSnapshot, FilterWheelSnapshot};
 use crate::components::form::{sheet, CARD, CARD_TITLE, CHIP, FOOTER, LABEL, NUM};
+use crate::components::sky::persisted;
 use crate::components::sequence_editor::{build_esq_xml, SeqEnd, SeqFrame, SeqLimits, SequenceEditor};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::components::zoom::frame_zoom;
@@ -38,6 +41,7 @@ use crate::dom::event_target_value;
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{send_cmd, send_device_property_set};
+use histogram::{histogram_panel, toggle_button, Histogram};
 use crate::{ActiveTabCtx, RevealInFilesCtx, Tab};
 
 const DASH: &str = "\u{2014}";
@@ -111,6 +115,7 @@ pub fn ImagingTab(
     // so a tick only redraws the progress tiles.
     let status = Memo::new(move |_| capture.with(|c| c.status.clone()));
     let preview = Memo::new(move |_| capture.with(|c| c.preview_url.clone()));
+    let stats = Memo::new(move |_| capture.with(|c| c.preview_stats.clone()));
     let queue = Memo::new(move |_| capture.with(|c| c.sequence.as_array().cloned().unwrap_or_default()));
     let live = Memo::new(move |_| capture.with(|c| (c.seq_current, c.seq_total)));
     let device = Memo::new(move |_| camera.with(|c| c.device.clone()));
@@ -124,6 +129,11 @@ pub fn ImagingTab(
     });
 
     let zoom_open = RwSignal::new(false);
+    // Recounted each time the frame's <img> loads.
+    let hist = RwSignal::new(None::<Histogram>);
+    let show_hist = persisted("imaging_histogram", true);
+    let hist_log = persisted("imaging_histogram_log", false);
+    let hist_adu = persisted("imaging_histogram_adu", false);
     let editor_open = RwSignal::new(false);
     let detail = RwSignal::new(None::<usize>);
     let esc = window_event_listener(leptos::ev::keydown, move |e| {
@@ -323,7 +333,12 @@ pub fn ImagingTab(
                           }>
                         <img src=move || preview.get().unwrap_or_default() title=move || tr().imaging_view_fullres
                              class="max-w-full max-h-full object-contain cursor-zoom-in [image-rendering:pixelated]"
+                             on:load=move |ev| hist.set(Histogram::from_load(&ev))
                              on:click=move |_| zoom_open.set(true) />
+                        {toggle_button(show_hist, lang)}
+                        <Show when=move || show_hist.get() && hist.with(Option::is_some)>
+                            {histogram_panel(hist, stats.into(), hist_adu, hist_log, lang)}
+                        </Show>
                     </Show>
                 </div>
 

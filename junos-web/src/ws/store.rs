@@ -41,6 +41,8 @@ pub struct DeviceStore {
     pub capture_settings: RwSignal<serde_json::Value>,
     pub capture_sequence: RwSignal<serde_json::Value>,
     pub capture_preview_url: RwSignal<Option<String>>,
+    /// Raw statistics of the frame behind `capture_preview_url`.
+    pub capture_preview_stats: RwSignal<Option<FrameStats>>,
     pub polar_state: RwSignal<PolarStateData>,
     pub align_settings: RwSignal<serde_json::Value>,
     pub align_solution: RwSignal<AlignSolutionData>,
@@ -155,6 +157,7 @@ impl DeviceStore {
             capture_settings: RwSignal::new(serde_json::Value::Null),
             capture_sequence: RwSignal::new(serde_json::Value::Null),
             capture_preview_url: RwSignal::new(None),
+            capture_preview_stats: RwSignal::new(None),
             polar_state: RwSignal::new(PolarStateData::default()),
             align_settings: RwSignal::new(serde_json::Value::Null),
             align_solution: RwSignal::new(AlignSolutionData::default()),
@@ -1207,6 +1210,7 @@ impl DeviceStore {
                     } else if uuid.starts_with("+G") {
                         self.guide_preview_url.set(Some(url));
                     } else {
+                        self.capture_preview_stats.set(parse_frame_stats(&payload["metadata"]));
                         self.capture_preview_url.set(Some(url));
                     }
                 }
@@ -1353,4 +1357,22 @@ fn parse_fov_arcmin(s: &str) -> Option<(f64, f64)> {
     };
     let (w, h) = s.split_once('x')?;
     Some((num(w)?, num(h)?))
+}
+
+/// A capture frame's raw statistics from its media metadata (media.cpp:446).
+/// `None` unless all five numbers are there.
+fn parse_frame_stats(meta: &serde_json::Value) -> Option<FrameStats> {
+    let num = |k: &str| meta[k].as_f64();
+    Some(FrameStats {
+        median: num("median")?,
+        mean: num("mean")?,
+        stddev: num("stddev")?,
+        min: num("min")?,
+        max: num("max")?,
+        // Sent as a string (QString::number).
+        bpp: meta["bpp"].as_str().and_then(|b| b.parse().ok()).unwrap_or(0),
+        shadows: num("shadows").unwrap_or(0.0),
+        midtones: num("midtones").unwrap_or(0.5),
+        highlights: num("highlights").unwrap_or(1.0),
+    })
 }

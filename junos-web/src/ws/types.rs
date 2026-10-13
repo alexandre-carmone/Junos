@@ -228,6 +228,25 @@ pub struct FocusStars {
     pub kstars_hfr: Option<f64>,
 }
 
+/// KStars' statistics of the raw frame behind a capture preview, in ADU
+/// (`metadata`, media.cpp:446). The JPEG itself is auto-stretched, so these
+/// are the frame's real levels. `bpp` is the sample size in bits (8, 16, 32
+/// or 64, `FITSData::bpp`). `shadows` / `midtones` / `highlights` are the
+/// stretch that made the JPEG (0–1 of the full scale, red channel only;
+/// 0 / 0.5 / 1 is no stretch).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameStats {
+    pub median: f64,
+    pub mean: f64,
+    pub stddev: f64,
+    pub min: f64,
+    pub max: f64,
+    pub bpp: u32,
+    pub shadows: f64,
+    pub midtones: f64,
+    pub highlights: f64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ScopeInfo {
     /// OAL DB row id (string). Empty for a not-yet-saved scope. Required for
