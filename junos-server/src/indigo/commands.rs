@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use super::alias;
+use super::imaging::Imaging;
 use super::mount;
 use super::protocol::{interface, new_vector_msg, Kind, PropertyStore};
 use super::roles::Roles;
@@ -50,7 +51,7 @@ const POLLED: &[&str] = &[
     "get_drivers",
 ];
 
-pub fn handle(cmd: &Value, ctx: &Ctx) -> Vec<Out> {
+pub fn handle(cmd: &Value, ctx: &Ctx, imaging: &mut Imaging) -> Vec<Out> {
     let Some(ty) = cmd.get("type").and_then(Value::as_str) else {
         return Vec::new();
     };
@@ -148,7 +149,38 @@ pub fn handle(cmd: &Value, ctx: &Ctx) -> Vec<Out> {
         }
         "mount_goto_target" => reply("device_message", unsupported_payload(ty)),
 
-        "capture_get_all_settings" => reply("capture_get_all_settings", json!({})),
+        // ── Imaging tab: one-shot preview / loop ─────────────────────────
+        "capture_get_all_settings" => reply(
+            "capture_get_all_settings",
+            imaging.settings_payload(ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref(), ctx.captures_dir),
+        ),
+        "capture_set_all_settings" => {
+            let mut out: Vec<Out> = payload
+                .as_object()
+                .into_iter()
+                .flat_map(|m| m.iter())
+                .flat_map(|(k, v)| {
+                    imaging.apply_setting(k, v, ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref())
+                })
+                .map(Out::ToIndigo)
+                .collect();
+            // Echo, as KStars does: the form pins an edit until it comes back.
+            out.push(Out::ToBrowser(reply_msg(
+                "capture_get_all_settings",
+                imaging.settings_payload(ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref(), ctx.captures_dir),
+            )));
+            out
+        }
+        "capture_preview" | "capture_loop" | "capture_stop" => {
+            let Some(camera) = ctx.roles.camera.as_deref() else {
+                return reply("device_message", json!({ "device": PROFILE_NAME, "message": "No camera found on the INDIGO server" }));
+            };
+            let writes = match ty {
+                "capture_stop" => imaging.stop(camera),
+                _ => imaging.start(ty == "capture_loop", camera, ctx.store, ctx.captures_dir),
+            };
+            writes.into_iter().map(Out::ToIndigo).collect()
+        }
 
         other if POLLED.contains(&other) => Vec::new(),
         other => {
@@ -366,6 +398,10 @@ mod tests {
     fn ctx(store: &PropertyStore) -> Ctx<'_> {
         let roles = Box::leak(Box::new(Roles::derive(store)));
         Ctx { store, roles, captures_dir: "/tmp/caps", indigo_host: "127.0.0.1", indigo_port: 7624 }
+    }
+
+    fn handle(cmd: &Value, ctx: &Ctx) -> Vec<Out> {
+        super::handle(cmd, ctx, &mut Imaging::default())
     }
 
     fn browser(outs: &[Out]) -> Vec<Value> {

@@ -10,6 +10,7 @@ mod alias;
 mod astro;
 mod commands;
 mod events;
+mod imaging;
 mod indi_shape;
 mod mount;
 mod protocol;
@@ -24,6 +25,9 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
+
+/// A fetched preview JPEG with its pixel size, from the BLOB task.
+type Preview = (Vec<u8>, (u32, u32));
 
 use crate::config::Config;
 use crate::hub::{connection_state_msg, Hub, CMD_CAP};
@@ -82,6 +86,9 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
         let mut store = PropertyStore::default();
         let mut roles = Roles::default();
         let mut mount_emitter = mount::MountEmitter::default();
+        let mut imaging = imaging::Imaging::default();
+        let (preview_tx, mut preview_rx) = mpsc::channel::<Preview>(4);
+        let http = reqwest::Client::new();
         let mut tick = tokio::time::interval(Duration::from_secs(1));
 
         loop {
@@ -109,6 +116,16 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                             }
                             if let Some(m) = roles.mount.as_deref() {
                                 msgs.extend(mount_emitter.on_change(&change, &store, m));
+                            }
+                            if let Some(c) = roles.camera.as_deref() {
+                                let r = imaging.on_change(&change, &store, c);
+                                msgs.extend(r.to_browser);
+                                for w in r.to_indigo {
+                                    sink.send(Message::Text(w.into())).await?;
+                                }
+                                if let Some(link) = r.fetch_preview {
+                                    spawn_preview_fetch(&http, &url, &link, preview_tx.clone());
+                                }
                             }
                             for msg in msgs {
                                 hub.capture(&msg).await;
@@ -138,7 +155,7 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                         indigo_host: &indigo_host,
                         indigo_port,
                     };
-                    for out in commands::handle(&cmd, &ctx) {
+                    for out in commands::handle(&cmd, &ctx, &mut imaging) {
                         match out {
                             Out::ToBrowser(msg) => {
                                 remember_site(hub, &msg).await;
@@ -148,6 +165,13 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                             Out::ToIndigo(msg) => sink.send(Message::Text(msg.into())).await?,
                         }
                     }
+                }
+
+                // A preview JPEG arrived from the BLOB fetch.
+                Some((jpeg, size)) = preview_rx.recv() => {
+                    let msg = imaging.preview_msg(&jpeg, size);
+                    hub.capture_preview(&msg).await;
+                    let _ = hub.browser_tx.send(msg);
                 }
 
                 // Flush a throttled mount-coordinate update.
@@ -198,4 +222,32 @@ async fn remember_site(hub: &Hub, msg: &str) {
     if msg.starts_with(r#"{"type":"astro_get_location""#) {
         *hub.last_site_location.lock().await = Some(msg.to_string());
     }
+}
+
+/// Fetch a BLOB link over HTTP, off the session loop. INDIGO gives either a
+/// bare path (`/blob/0x….jpeg`) or an absolute URL; both resolve against the
+/// server we're connected to, on its HTTP side.
+fn spawn_preview_fetch(http: &reqwest::Client, indigo: &url::Url, link: &str, tx: mpsc::Sender<Preview>) {
+    let mut base = indigo.clone();
+    let _ = base.set_scheme(if indigo.scheme() == "wss" { "https" } else { "http" });
+    let Ok(target) = base.join(link) else {
+        warn!(link, "INDIGO BLOB link does not resolve");
+        return;
+    };
+    let http = http.clone();
+    tokio::spawn(async move {
+        let bytes = match http.get(target.clone()).send().await.and_then(|r| r.error_for_status()) {
+            Ok(r) => match r.bytes().await {
+                Ok(b) => b.to_vec(),
+                Err(e) => { warn!(%target, "INDIGO BLOB body: {e}"); return; }
+            },
+            Err(e) => { warn!(%target, "INDIGO BLOB fetch: {e}"); return; }
+        };
+        let size = image::ImageReader::new(std::io::Cursor::new(&bytes))
+            .with_guessed_format()
+            .ok()
+            .and_then(|r| r.into_dimensions().ok())
+            .unwrap_or((0, 0));
+        let _ = tx.send((bytes, size)).await;
+    });
 }

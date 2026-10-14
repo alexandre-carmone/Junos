@@ -132,7 +132,6 @@ impl Item {
         }
     }
 
-    #[allow(dead_code)] // the imaging phase reads BLOB links; defined with its siblings
     pub fn blob_url(&self) -> Option<&str> {
         match &self.value {
             ItemValue::Blob(Some(u)) => Some(u),
