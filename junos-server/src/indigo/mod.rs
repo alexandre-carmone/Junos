@@ -6,10 +6,14 @@
 //! (`commands.rs`) and turns property changes into Ekos Live events
 //! (`events.rs`) — so the WASM client needs no second protocol.
 
+mod alias;
+mod astro;
 mod commands;
 mod events;
 mod indi_shape;
+mod mount;
 mod protocol;
+mod roles;
 mod scansexa;
 
 use std::sync::Arc;
@@ -25,7 +29,8 @@ use crate::config::Config;
 use crate::hub::{connection_state_msg, Hub, CMD_CAP};
 
 use commands::{Ctx, Out};
-use protocol::PropertyStore;
+use protocol::{Change, PropertyStore};
+use roles::Roles;
 
 /// Entry point spawned by `main` with `--backend indigo`. Never returns: it
 /// keeps reconnecting to the INDIGO server for the life of the process, with
@@ -75,6 +80,9 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
         let _ = hub.browser_tx.send(online);
 
         let mut store = PropertyStore::default();
+        let mut roles = Roles::default();
+        let mut mount_emitter = mount::MountEmitter::default();
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
 
         loop {
             tokio::select! {
@@ -86,7 +94,23 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                                 continue;
                             };
                             let Some(change) = store.apply(frame) else { continue };
-                            for msg in events::for_change(&change, &store) {
+                            let mut msgs = events::for_change(&change, &store);
+                            // A device appeared or vanished: the roles (and
+                            // so the train the browser binds to) may change.
+                            if matches!(change, Change::Defined { ref name, .. } if name == "INFO")
+                                || matches!(change, Change::Deleted { .. })
+                            {
+                                let new_roles = Roles::derive(&store);
+                                if new_roles != roles {
+                                    roles = new_roles;
+                                    msgs.push(commands::reply_msg("train_get_all", roles.train_payload()));
+                                    msgs.push(commands::reply_msg("get_scopes", roles.scopes_payload(&store)));
+                                }
+                            }
+                            if let Some(m) = roles.mount.as_deref() {
+                                msgs.extend(mount_emitter.on_change(&change, &store, m));
+                            }
+                            for msg in msgs {
                                 hub.capture(&msg).await;
                                 let _ = hub.browser_tx.send(msg);
                             }
@@ -109,6 +133,7 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                     let Ok(cmd) = serde_json::from_str::<Value>(&cmd) else { continue };
                     let ctx = Ctx {
                         store: &store,
+                        roles: &roles,
                         captures_dir: &captures_dir,
                         indigo_host: &indigo_host,
                         indigo_port,
@@ -121,6 +146,16 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                                 let _ = hub.browser_tx.send(msg);
                             }
                             Out::ToIndigo(msg) => sink.send(Message::Text(msg.into())).await?,
+                        }
+                    }
+                }
+
+                // Flush a throttled mount-coordinate update.
+                _ = tick.tick() => {
+                    if let Some(m) = roles.mount.as_deref() {
+                        for msg in mount_emitter.tick(&store, m) {
+                            hub.capture(&msg).await;
+                            let _ = hub.browser_tx.send(msg);
                         }
                     }
                 }

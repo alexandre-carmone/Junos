@@ -132,6 +132,7 @@ impl Item {
         }
     }
 
+    #[allow(dead_code)] // the imaging phase reads BLOB links; defined with its siblings
     pub fn blob_url(&self) -> Option<&str> {
         match &self.value {
             ItemValue::Blob(Some(u)) => Some(u),
@@ -171,7 +172,6 @@ impl Property {
     }
 
     /// Name of the first switch that is on, for one-of-many switches.
-    #[allow(dead_code)] // used by the mount phase, declared with its siblings
     pub fn selected(&self) -> Option<&str> {
         self.items.iter().find(|i| i.on()).map(|i| i.name.as_str())
     }
@@ -405,7 +405,6 @@ impl PropertyStore {
 }
 
 /// `INFO.DEVICE_INTERFACE` bits (`indigo_bus.h::indigo_device_interface`).
-#[allow(dead_code)] // the full set, ahead of the roles the mount phase picks
 pub mod interface {
     pub const MOUNT: u32 = 1 << 0;
     pub const CCD: u32 = 1 << 1;

@@ -10,12 +10,16 @@
 use serde_json::{json, Value};
 use tracing::debug;
 
-use super::protocol::{interface, Kind, PropertyStore};
+use super::alias;
+use super::mount;
+use super::protocol::{interface, new_vector_msg, Kind, PropertyStore};
+use super::roles::Roles;
 use super::scansexa;
 
 /// What the backend knows besides the property mirror.
 pub struct Ctx<'a> {
     pub store: &'a PropertyStore,
+    pub roles: &'a Roles,
     /// Resolved captures dir — the browser's default save folder.
     pub captures_dir: &'a str,
     /// The INDIGO server, for the synthetic profile's host/port.
@@ -35,7 +39,6 @@ pub const PROFILE_NAME: &str = "INDIGO";
 /// `ws/retry.rs`). Unsupported ones are dropped silently rather than nagging.
 const POLLED: &[&str] = &[
     "get_states",
-    "train_get_profiles",
     "focus_get_all_settings",
     "capture_get_sequences",
     "align_get_all_settings",
@@ -76,7 +79,12 @@ pub fn handle(cmd: &Value, ctx: &Ctx) -> Vec<Out> {
                 return Vec::new();
             };
             let compact = payload.get("compact").and_then(Value::as_bool).unwrap_or(false);
-            match ctx.store.get(device, name) {
+            // The INDI name the client knows first (an alias also renames
+            // the elements, even when INDIGO kept the property's name — e.g.
+            // `CCD_COOLER {ON}` vs INDI's `{COOLER_ON}`); else INDIGO's own.
+            let aliased = alias::lookup(ctx.store, device, name);
+            let prop = aliased.as_ref().or_else(|| ctx.store.get(device, name));
+            match prop {
                 Some(p) => {
                     let shaped = if compact {
                         super::indi_shape::compact(p)
@@ -117,14 +125,29 @@ pub fn handle(cmd: &Value, ctx: &Ctx) -> Vec<Out> {
             .map(|p| reply("astro_get_location", p))
             .unwrap_or_default(),
 
-        // ── Trains / scopes: nothing to offer until the mount phase ──────
-        "get_scopes" => reply("get_scopes", json!([])),
-        "train_get_all" => reply("train_get_all", json!([])),
+        // ── Trains / scopes: one synthetic train over the device roles ───
+        "get_scopes" => reply("get_scopes", ctx.roles.scopes_payload(ctx.store)),
+        "train_get_all" => reply("train_get_all", ctx.roles.train_payload()),
+        "train_get_profiles" => reply("train_get_profiles", ctx.roles.train_profiles_payload()),
         "train_set" => Vec::new(),
+
+        // ── Mount tab ────────────────────────────────────────────────────
         "mount_get_all_settings" | "mount_set_all_settings" => reply(
             "mount_get_all_settings",
             json!({ "executeMeridianFlip": false, "meridianFlipOffsetDegrees": 0.0 }),
         ),
+        "mount_park" | "mount_unpark" | "mount_set_tracking" | "mount_set_slew_rate"
+        | "mount_set_motion" | "mount_abort" | "mount_goto_rade" | "mount_sync_rade" => {
+            let Some(device) = ctx.roles.mount.as_deref() else {
+                return reply("device_message", json!({ "device": PROFILE_NAME, "message": "No mount found on the INDIGO server" }));
+            };
+            mount_command(ty, &payload, device)
+                .into_iter()
+                .map(Out::ToIndigo)
+                .collect()
+        }
+        "mount_goto_target" => reply("device_message", unsupported_payload(ty)),
+
         "capture_get_all_settings" => reply("capture_get_all_settings", json!({})),
 
         other if POLLED.contains(&other) => Vec::new(),
@@ -213,8 +236,13 @@ pub fn site_payload(store: &PropertyStore) -> Option<Value> {
 /// sexagesimal string —, `{name, text}`, `{name, state: 0|1}`).
 fn property_set(payload: &Value, store: &PropertyStore) -> Option<Out> {
     let device = payload.get("device").and_then(Value::as_str)?;
-    let name = payload.get("property").and_then(Value::as_str)?;
+    let requested = payload.get("property").and_then(Value::as_str)?;
     let elements = payload.get("elements").and_then(Value::as_array)?;
+    // An INDI name the client knows (`CCD_COOLER`, `FILTER_SLOT`…) is written
+    // to its INDIGO counterpart with its elements renamed; INDIGO's own names
+    // and elements pass through untouched.
+    let (name, rename) = alias::write_target(requested);
+    let name = name.as_str();
     let kind = store.get(device, name).map(|p| p.kind).or_else(|| {
         // Unknown property: infer the kind from the element keys.
         let first = elements.first()?;
@@ -229,7 +257,7 @@ fn property_set(payload: &Value, store: &PropertyStore) -> Option<Out> {
     let items: Vec<(String, Value)> = elements
         .iter()
         .filter_map(|e| {
-            let n = e.get("name").and_then(Value::as_str)?.to_string();
+            let n = rename(e.get("name").and_then(Value::as_str)?);
             let v = match kind {
                 Kind::Number => match e.get("value")? {
                     Value::Number(x) => json!(x),
@@ -254,7 +282,65 @@ fn property_set(payload: &Value, store: &PropertyStore) -> Option<Out> {
     if items.is_empty() {
         return None;
     }
-    Some(Out::ToIndigo(super::protocol::new_vector_msg(kind, device, name, &items)))
+    Some(Out::ToIndigo(new_vector_msg(kind, device, name, &items)))
+}
+
+/// The Mount tab's commands as INDIGO writes (`components/mount.rs` for the
+/// payloads, `PROPERTIES.md` for the targets).
+fn mount_command(ty: &str, payload: &Value, device: &str) -> Vec<String> {
+    let switch = |name: &str, items: &[(&str, bool)]| {
+        let items: Vec<(String, Value)> = items.iter().map(|(n, v)| (n.to_string(), json!(v))).collect();
+        new_vector_msg(Kind::Switch, device, name, &items)
+    };
+    let one_of = |name: &str, on: &str| switch(name, &[(on, true)]);
+    match ty {
+        "mount_park" => vec![one_of("MOUNT_PARK", "PARKED")],
+        "mount_unpark" => vec![one_of("MOUNT_PARK", "UNPARKED")],
+        "mount_set_tracking" => {
+            let on = payload.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+            vec![one_of("MOUNT_TRACKING", if on { "ON" } else { "OFF" })]
+        }
+        "mount_set_slew_rate" => {
+            let rate = payload.get("rate").and_then(Value::as_i64).unwrap_or(7);
+            vec![one_of("MOUNT_SLEW_RATE", mount::slew_rate_item(rate))]
+        }
+        "mount_set_motion" => {
+            let action = payload.get("action").and_then(Value::as_bool).unwrap_or(false);
+            let (prop, item) = match payload.get("direction").and_then(Value::as_str) {
+                Some("N") => ("MOUNT_MOTION_DEC", "NORTH"),
+                Some("S") => ("MOUNT_MOTION_DEC", "SOUTH"),
+                Some("E") => ("MOUNT_MOTION_RA", "EAST"),
+                Some("W") => ("MOUNT_MOTION_RA", "WEST"),
+                _ => return Vec::new(),
+            };
+            vec![switch(prop, &[(item, action)])]
+        }
+        "mount_abort" => vec![one_of("MOUNT_ABORT_MOTION", "ABORT_MOTION")],
+        "mount_goto_rade" | "mount_sync_rade" => {
+            let Some(ra_h) = payload.get("ra").and_then(Value::as_str).and_then(scansexa::parse) else {
+                return Vec::new();
+            };
+            let Some(mut dec) = payload.get("de").and_then(Value::as_str).and_then(scansexa::parse) else {
+                return Vec::new();
+            };
+            let mut ra = ra_h * 15.0;
+            // INDIGO mounts take epoch-of-date (MOUNT_EPOCH 0, the default).
+            if payload.get("isJ2000").and_then(Value::as_bool).unwrap_or(false) {
+                (ra, dec) = super::astro::j2000_to_jnow(ra, dec, super::astro::now_jd());
+            }
+            let mode = if ty == "mount_goto_rade" { "TRACK" } else { "SYNC" };
+            vec![
+                one_of("MOUNT_ON_COORDINATES_SET", mode),
+                new_vector_msg(
+                    Kind::Number,
+                    device,
+                    "MOUNT_EQUATORIAL_COORDINATES",
+                    &[("RA".to_string(), json!(ra / 15.0)), ("DEC".to_string(), json!(dec))],
+                ),
+            ]
+        }
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -278,7 +364,8 @@ mod tests {
     }
 
     fn ctx(store: &PropertyStore) -> Ctx<'_> {
-        Ctx { store, captures_dir: "/tmp/caps", indigo_host: "127.0.0.1", indigo_port: 7624 }
+        let roles = Box::leak(Box::new(Roles::derive(store)));
+        Ctx { store, roles, captures_dir: "/tmp/caps", indigo_host: "127.0.0.1", indigo_port: 7624 }
     }
 
     fn browser(outs: &[Out]) -> Vec<Value> {
@@ -376,6 +463,51 @@ mod tests {
         let b = browser(&handle(&json!({"type":"get_profiles","payload":{}}), &ctx(&s)));
         assert_eq!(b[0]["payload"]["selectedProfile"], PROFILE_NAME);
         assert_eq!(b[0]["payload"]["profiles"][0]["remote_port"], 7624);
+    }
+
+    #[test]
+    fn aliased_get_and_set() {
+        let mut s = store();
+        s.apply(parse_frame(r#"{"defSwitchVector":{"device":"Cam","name":"CCD_COOLER","perm":"rw","state":"Ok","items":[{"name":"ON","value":false},{"name":"OFF","value":true}]}}"#).unwrap());
+        let out = handle(&json!({"type":"device_property_get","payload":{"device":"Cam","property":"CCD_COOLER","compact":true}}), &ctx(&s));
+        let b = browser(&out);
+        assert_eq!(b[0]["payload"]["switches"][0]["name"], "COOLER_ON");
+        let out = handle(
+            &json!({"type":"device_property_set","payload":{"device":"Cam","property":"CCD_COOLER","elements":[{"name":"COOLER_ON","state":1},{"name":"COOLER_OFF","state":0}]}}),
+            &ctx(&s),
+        );
+        let i = indigo(&out);
+        assert_eq!(i[0]["newSwitchVector"]["name"], "CCD_COOLER");
+        assert_eq!(i[0]["newSwitchVector"]["items"][0]["name"], "ON");
+        assert_eq!(i[0]["newSwitchVector"]["items"][0]["value"], true);
+        // The mount's INDIGO-named coordinates answer the INDI poll too.
+        let out = handle(&json!({"type":"device_property_get","payload":{"device":"Mount","property":"EQUATORIAL_EOD_COORD","compact":true}}), &ctx(&s));
+        let b = browser(&out);
+        assert_eq!(b[0]["payload"]["name"], "EQUATORIAL_EOD_COORD");
+        assert_eq!(b[0]["payload"]["numbers"][0]["value"], 1.0);
+    }
+
+    #[test]
+    fn mount_commands() {
+        let s = store();
+        let c = ctx(&s);
+        let i = indigo(&handle(&json!({"type":"mount_park","payload":{}}), &c));
+        assert_eq!(i[0]["newSwitchVector"]["name"], "MOUNT_PARK");
+        assert_eq!(i[0]["newSwitchVector"]["items"][0]["name"], "PARKED");
+        let i = indigo(&handle(&json!({"type":"mount_set_motion","payload":{"direction":"W","action":true}}), &c));
+        assert_eq!(i[0]["newSwitchVector"]["name"], "MOUNT_MOTION_RA");
+        assert_eq!(i[0]["newSwitchVector"]["items"][0]["value"], true);
+        let i = indigo(&handle(&json!({"type":"mount_set_slew_rate","payload":{"rate":1}}), &c));
+        assert_eq!(i[0]["newSwitchVector"]["items"][0]["name"], "CENTERING");
+        let i = indigo(&handle(&json!({"type":"mount_goto_rade","payload":{"ra":"06 00 00","de":"+20 00 00","isJ2000":false}}), &c));
+        assert_eq!(i[0]["newSwitchVector"]["items"][0]["name"], "TRACK");
+        assert_eq!(i[1]["newNumberVector"]["items"][0]["value"], 6.0);
+        let i = indigo(&handle(&json!({"type":"mount_sync_rade","payload":{"ra":"06 00 00","de":"+20 00 00","isJ2000":true}}), &c));
+        assert_eq!(i[0]["newSwitchVector"]["items"][0]["name"], "SYNC");
+        let ra = i[1]["newNumberVector"]["items"][0]["value"].as_f64().unwrap();
+        assert!(ra > 6.0 && ra < 6.05, "{ra}");
+        let t = browser(&handle(&json!({"type":"train_get_all","payload":{}}), &c));
+        assert_eq!(t[0]["payload"][0]["mount"], "Mount");
     }
 
     #[test]
