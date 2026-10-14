@@ -1308,6 +1308,7 @@
   "plan_load_schedule": "Charger dans le Planificateur",
   "plan_load_sequence": "Charger dans Imagerie",
   "plan_offline": "Démarrez Ekos pour charger des fichiers dans KStars",
+  "backend_indigo_unavailable": "Indisponible avec le backend INDIGO — ce module est piloté par Ekos dans KStars.",
   "plan_confirm_load_schedule": "Charger ce planning ? Il remplace la liste des tâches du Planificateur.",
   "plan_confirm_load_sequence": "Charger cette séquence ? Elle remplace la file d'Imagerie.",
   "plan_sent": "Envoyé à KStars…",

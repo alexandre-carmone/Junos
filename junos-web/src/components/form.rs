@@ -8,6 +8,7 @@ use leptos::prelude::*;
 
 use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{t, Lang};
+use crate::{Backend, BackendCtx};
 
 pub const CARD: &str = "panel p-3 flex flex-col gap-2";
 pub const CARD_TITLE: &str = "text-xs uppercase tracking-[0.06em] font-semibold text-text-muted";
@@ -20,6 +21,30 @@ pub const CHECK: &str = "w-5 h-5 min-h-0 shrink-0 accent-accent-cyan";
 /// Pinned bar under a scrolling form: summary or error left, actions right.
 pub const FOOTER: &str = "shrink-0 flex items-center gap-3 px-3 pt-2 \
                           pb-[max(0.5rem,env(safe-area-inset-bottom))] border-t border-border-base bg-bg-elev-1";
+
+/// Reactive "the server runs the INDIGO backend" test, for the controls a tab
+/// hides rather than banners (Live Stack, the KStars/PHD2 launchers).
+pub fn backend_is_indigo() -> impl Fn() -> bool + Copy + Send + Sync + 'static {
+    let backend = use_context::<BackendCtx>().map(|c| c.0);
+    move || backend.is_some_and(|b| b.get() == Backend::Indigo)
+}
+
+/// Banner a tab shows under its header when the server runs a backend that
+/// can't drive it (the INDIGO backend only covers Devices, Mount and the
+/// Imaging preview). Renders nothing with the Ekos backend. Reads the
+/// language and `BackendCtx` from context so a tab inserts it with no args.
+pub fn backend_notice() -> impl IntoView {
+    let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
+    let shown = backend_is_indigo();
+    view! {
+        <Show when=shown>
+            <div class="shrink-0 mx-3 mt-2 px-3 py-2 rounded-lg border border-border-base bg-bg-elev-2 \
+                        text-sm text-state-warn" role="status">
+                {move || t(lang.get()).backend_indigo_unavailable}
+            </div>
+        </Show>
+    }
+}
 
 /// One row: label left, control right.
 pub fn setting_row(

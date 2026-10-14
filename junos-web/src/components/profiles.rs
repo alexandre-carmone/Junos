@@ -24,7 +24,7 @@ use std::time::Duration;
 use leptos::prelude::*;
 use serde_json::json;
 
-use crate::components::form::{setting_row, sheet, CARD, CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, ROW, SELECT};
+use crate::components::form::{backend_is_indigo, setting_row, sheet, CARD, CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, ROW, SELECT};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{t, Lang, Translations};
@@ -157,6 +157,8 @@ pub fn ProfilesTab(
     let send_modules = send.clone();
     let send_editor = send.clone();
 
+    let indigo = backend_is_indigo();
+
     view! {
         <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
             // Header
@@ -175,11 +177,15 @@ pub fn ProfilesTab(
             <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 md:pl-4 md:pr-6">
                 <div class="max-w-[1100px] mx-auto grid grid-cols-1 gap-3 md:grid-cols-2 items-start">
                     <div class="flex flex-col gap-3">
-                        <div class=CARD>
-                            <span class=CARD_TITLE>{move || tr().apps_section}</span>
-                            {app_row(move || tr().apps_kstars, "kstars", kstars_running, lang)}
-                            {app_row(move || tr().apps_phd2, "phd2", phd2_running, lang)}
-                        </div>
+                        // The launchers spawn KStars / PHD2 on the server host:
+                        // meaningless with the INDIGO backend, so hidden.
+                        <Show when=move || !indigo()>
+                            <div class=CARD>
+                                <span class=CARD_TITLE>{move || tr().apps_section}</span>
+                                {app_row(move || tr().apps_kstars, "kstars", kstars_running, lang)}
+                                {app_row(move || tr().apps_phd2, "phd2", phd2_running, lang)}
+                            </div>
+                        </Show>
 
                         <div class=CARD>
                             <span class=CARD_TITLE>{move || tr().profiles_title}</span>

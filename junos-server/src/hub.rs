@@ -1,8 +1,10 @@
-//! Shared state between the inbound KStars handlers and the outbound browser handler.
+//! Shared state between the backend session and the outbound browser handler.
 //!
-//! In the Ekos Live protocol, KStars is the *client*: it dials our server on
-//! `/message/ekos` (JSON) and `/media/ekos` (binary). Browsers connect to `/ws`
-//! and we fan-out messages between them and the currently connected KStars session.
+//! The backend is whatever produces Ekos Live events: with `--backend ekos`
+//! KStars is the *client* — it dials our server on `/message/ekos` (JSON) and
+//! `/media/ekos` (binary); with `--backend indigo` the `indigo` module's
+//! session plays that role. Browsers connect to `/ws` and we fan-out messages
+//! between them and the one attached backend session.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -150,16 +152,33 @@ impl ReplayCache {
     }
 }
 
+/// The server-synthesized `new_connection_state`. KStars' own carries
+/// `{connected, online}`; ours only ever asserts `connected` (the Ekos path
+/// leaves `online` to KStars, the INDIGO path sets it itself). `home_dir`
+/// lets the WASM client build absolute paths for files it asks the backend
+/// to save.
+pub fn connection_state_msg(connected: bool, online: Option<bool>, home_dir: Option<&str>) -> String {
+    let mut payload = serde_json::Map::new();
+    payload.insert("connected".into(), Value::Bool(connected));
+    if let Some(online) = online {
+        payload.insert("online".into(), Value::Bool(online));
+    }
+    if let Some(home) = home_dir {
+        payload.insert("home_dir".into(), Value::String(home.to_string()));
+    }
+    serde_json::json!({ "type": "new_connection_state", "payload": payload }).to_string()
+}
+
 #[derive(Clone)]
 pub struct Hub {
     /// Text frames from KStars (message channel + decoded media frames)
     /// fanned out to all connected browsers.
     pub browser_tx: broadcast::Sender<String>,
 
-    /// Current outbound pipe to the KStars message channel.
-    /// `None` while no KStars session is connected. Set by the `/message/ekos`
-    /// handler on connect and cleared on disconnect.
-    pub kstars_msg_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
+    /// Current outbound pipe to the backend session (KStars' message channel,
+    /// or the INDIGO translator). `None` while none is attached. Set through
+    /// `attach_backend` on connect and cleared by `detach_backend`.
+    pub backend_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
 
     /// Last `new_connection_state` received from KStars, replayed to browsers
     /// on connect so a page refresh gets the full connected+online state.
@@ -181,7 +200,7 @@ impl Hub {
         let (browser_tx, _) = broadcast::channel(BROADCAST_CAP);
         Self {
             browser_tx,
-            kstars_msg_tx: Arc::new(Mutex::new(None)),
+            backend_tx: Arc::new(Mutex::new(None)),
             last_connection_state: Arc::new(Mutex::new(None)),
             last_site_location: Arc::new(Mutex::new(None)),
             replay: Arc::new(Mutex::new(ReplayCache::default())),
@@ -216,8 +235,34 @@ impl Hub {
         *self.replay.lock().await = ReplayCache::default();
     }
 
-    /// Send a command string to KStars. Returns `false` if no KStars session
-    /// is currently connected or the queue is closed.
+    /// Register a backend session's command queue. Returns `false` — and
+    /// leaves the registry untouched — when another session is already
+    /// attached: only one backend may drive the browsers at a time, so the
+    /// caller must drop its socket.
+    pub async fn attach_backend(&self, tx: mpsc::Sender<String>) -> bool {
+        let mut guard = self.backend_tx.lock().await;
+        if guard.is_some() {
+            return false;
+        }
+        *guard = Some(tx);
+        true
+    }
+
+    /// Whether a backend session is currently attached.
+    pub async fn backend_attached(&self) -> bool {
+        self.backend_tx.lock().await.is_some()
+    }
+
+    /// Forget the backend session and everything cached from it, so a browser
+    /// connecting before the next attach sees a clean disconnected state.
+    pub async fn detach_backend(&self) {
+        *self.backend_tx.lock().await = None;
+        *self.last_connection_state.lock().await = None;
+        *self.last_site_location.lock().await = None;
+    }
+
+    /// Send a command string to the backend. Returns `false` if no session is
+    /// currently attached or the queue is closed.
     ///
     /// The sender is cloned out and the registry lock released *before* the
     /// bounded send is awaited. Holding it across that await wedges the whole
@@ -227,8 +272,8 @@ impl Hub {
     /// being polled, so no browser receives events either, and `detach` cannot
     /// take the lock to recover. With the lock released the stall is contained
     /// to the one browser whose command is queued; the rest keep flowing.
-    pub async fn send_to_kstars(&self, cmd: String) -> bool {
-        let tx = self.kstars_msg_tx.lock().await.clone();
+    pub async fn send_to_backend(&self, cmd: String) -> bool {
+        let tx = self.backend_tx.lock().await.clone();
         match tx {
             Some(tx) => tx.send(cmd).await.is_ok(),
             None => false,

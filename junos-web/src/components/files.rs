@@ -25,7 +25,7 @@ mod viewer;
 use leptos::prelude::*;
 use serde_json::Value;
 
-use crate::components::form::{sheet, CHIP};
+use crate::components::form::{backend_is_indigo, sheet, CHIP};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::components::zoom::frame_zoom;
 use crate::i18n::{t, Lang};
@@ -262,6 +262,8 @@ pub fn FilesTab(
     let send_plan = StoredValue::new(send.clone());
     let send_stack = StoredValue::new(send);
 
+    let indigo = backend_is_indigo();
+
     view! {
         <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
             // Header
@@ -273,11 +275,14 @@ pub fn FilesTab(
                         on:click=move |_| plan_open.set(true)>
                     {move || tr().plan_title}
                 </button>
-                <button type="button" class=format!("{CHIP} gap-2 shrink-0")
-                        on:click=move |_| stack_open.set(true)>
-                    <span class=move || format!("w-2 h-2 rounded-full {}", livestack::dot(&stack_state.get()))></span>
-                    {move || tr().livestack_title}
-                </button>
+                // Live Stack is KStars' — hidden with the INDIGO backend.
+                <Show when=move || !indigo()>
+                    <button type="button" class=format!("{CHIP} gap-2 shrink-0")
+                            on:click=move |_| stack_open.set(true)>
+                        <span class=move || format!("w-2 h-2 rounded-full {}", livestack::dot(&stack_state.get()))></span>
+                        {move || tr().livestack_title}
+                    </button>
+                </Show>
                 <button class="btn-icon shrink-0 text-text-muted" title=move || tr().files_refresh
                         on:click=move |_| s.reload()>
                     <span class=move || if loading.get() { "inline-block w-5 h-5 animate-spin" } else { "inline-block w-5 h-5" }

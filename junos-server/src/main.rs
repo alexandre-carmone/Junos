@@ -6,6 +6,7 @@ mod config;
 mod dso_tiles;
 mod files;
 mod hub;
+mod indigo;
 mod kstars_ws;
 mod planning;
 mod proxy;
@@ -31,7 +32,7 @@ use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::apps::AppManager;
-use crate::config::Config;
+use crate::config::{Backend, Config};
 use crate::hub::Hub;
 
 #[derive(Clone)]
@@ -89,10 +90,24 @@ async fn main() -> anyhow::Result<()> {
 
     let dist_dir = config.dist_dir.clone();
 
+    // The backend decides who produces Ekos Live events. With `ekos` KStars
+    // dials in on the two Ekos Live routes; with `indigo` nothing dials in —
+    // the translator session dials out to the INDIGO server instead.
+    let backend_routes = match config.backend {
+        Backend::Ekos => Router::new()
+            .route("/api/authenticate", post(auth::authenticate))
+            .route("/message/ekos", get(kstars_ws::message_handler))
+            .route("/media/ekos", get(kstars_ws::media_handler)),
+        Backend::Indigo => {
+            tokio::spawn(indigo::run(state.hub.clone(), config.clone()));
+            Router::new()
+        }
+    };
+
     let app = Router::new()
         .route("/ws", get(proxy::ws_handler))
         .route("/api/config", get(api_config))
-        .route("/api/authenticate", post(auth::authenticate))
+        .merge(backend_routes)
         .route("/api/apps/launch", post(apps::launch_handler))
         .route("/api/apps/stop",   post(apps::stop_handler))
         .route("/api/apps/state",  get(apps::state_handler))
@@ -100,8 +115,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/dso_tiles/index.json", get(dso_tiles::index))
         .route("/api/dso_tiles/:name",      get(dso_tiles::tile))
         .route("/api/dso_tiles/thumbs/:name", get(dso_tiles::thumb))
-        .route("/message/ekos", get(kstars_ws::message_handler))
-        .route("/media/ekos", get(kstars_ws::media_handler))
         .route("/api/files/list",     get(files::list))
         .route("/api/files/meta",     get(files::meta))
         .route("/api/files/thumb",    get(files::thumb))
@@ -139,7 +152,10 @@ async fn main() -> anyhow::Result<()> {
     let http_listener = tokio::net::TcpListener::bind(http_addr)
         .await
         .with_context(|| format!("failed to bind HTTP address {http_addr}"))?;
-    info!("HTTP  (KStars)  → http://{}", http_addr);
+    match config.backend {
+        Backend::Ekos => info!("HTTP  (KStars)  → http://{}", http_addr),
+        Backend::Indigo => info!("HTTP  (plain)   → http://{}  [INDIGO at {}]", http_addr, config.indigo_url),
+    }
 
     // TLS material and the HTTPS socket are also resolved up front, so a bad
     // cert path or an occupied :8443 fails the unit instead of leaving the
@@ -222,6 +238,7 @@ async fn api_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     let dir = dir.canonicalize().unwrap_or(dir);
     Json(json!({
         "server": "junos-server",
+        "backend": state.config.backend.as_str(),
         "captures_dir": dir.to_string_lossy(),
     }))
 }

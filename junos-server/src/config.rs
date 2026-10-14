@@ -2,7 +2,29 @@
 
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+
+/// Which device-control stack sits behind the relay. The browser speaks Ekos
+/// Live either way; see the `indigo` module for the translation.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    /// KStars/Ekos connects *inbound* to `/message/ekos` and `/media/ekos`;
+    /// messages are relayed verbatim.
+    Ekos,
+    /// We connect *outbound* to an `indigo_server` and emulate Ekos Live on
+    /// top of its properties. No KStars involved.
+    Indigo,
+}
+
+impl Backend {
+    /// Wire name, as reported by `/api/config`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ekos => "ekos",
+            Self::Indigo => "indigo",
+        }
+    }
+}
 
 /// Junos server configuration.
 ///
@@ -15,7 +37,18 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "junos-server", about = "Ekos Live server + WASM frontend host")]
 pub struct Config {
-    /// HTTP listen address — used by KStars (Ekos Live offline server).
+    /// Device-control backend: `ekos` (KStars connects to us) or `indigo`
+    /// (we connect to an INDIGO server, see --indigo-url).
+    #[arg(long, value_enum, default_value_t = Backend::Ekos, env = "BACKEND")]
+    pub backend: Backend,
+
+    /// WebSocket URL of the INDIGO server (`--backend indigo` only). INDIGO
+    /// speaks JSON over a WebSocket upgrade on its usual TCP port.
+    #[arg(long, default_value = "ws://127.0.0.1:7624/", env = "INDIGO_URL")]
+    pub indigo_url: String,
+
+    /// HTTP listen address — used by KStars (Ekos Live offline server) with
+    /// `--backend ekos`; otherwise just a plain-HTTP copy of the browser UI.
     #[arg(long, default_value = "0.0.0.0:8080", env = "HTTP_ADDR")]
     pub http_addr: String,
 

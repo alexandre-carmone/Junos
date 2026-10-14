@@ -260,6 +260,7 @@ translations! {
     plan_schedule, plan_profile, plan_follower, plan_procedures, plan_on, plan_off, plan_at, plan_repeat,
     plan_frames, plan_tasks, plan_no_tasks, plan_device, plan_source, plan_unreadable, plan_load_schedule,
     plan_load_sequence, plan_offline, plan_confirm_load_schedule, plan_confirm_load_sequence, plan_sent,
+    backend_indigo_unavailable,
     plan_loaded_schedule, plan_loaded_sequence, plan_load_failed, plan_no_reply, plan_no_path,
     plan_confirm_delete_schedule, plan_confirm_delete_sequence, plan_confirm_delete_queue,
     plan_confirm_delete_script, plan_save_schedule, plan_save_name, plan_save, plan_saving, plan_save_hint,

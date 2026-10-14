@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::hub::{Hub, CMD_CAP};
+use crate::hub::{connection_state_msg, Hub, CMD_CAP};
 use crate::AppState;
 
 /// Metadata header size in binary media frames (from `kstars/ekos/ekoslive/media.h`).
@@ -37,19 +37,24 @@ pub async fn message_handler(
     ws.on_upgrade(move |socket| handle_message(socket, state.hub.clone()))
 }
 
-async fn handle_message(socket: WebSocket, hub: Hub) {
-    let Some(socket) = ensure_single_message_session(&hub, socket).await else {
+async fn handle_message(mut socket: WebSocket, hub: Hub) {
+    // Per-session command queue: browsers push into `cmd_tx`, this handler
+    // drains `cmd_rx` and writes to the KStars socket. Keep a single active
+    // KStars text channel: a second session while one is active is rejected
+    // to avoid racing writers.
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(CMD_CAP);
+    if !hub.attach_backend(cmd_tx).await {
+        warn!(
+            channel = "/message/ekos",
+            "Rejecting second KStars message session while one is active"
+        );
+        let _ = socket.send(Message::Close(None)).await;
         return;
-    };
+    }
 
     info!(channel = "/message/ekos", "KStars session connected");
 
     let (mut sink, mut stream) = socket.split();
-
-    // Per-session command queue: browsers push into `cmd_tx`, this handler
-    // drains `cmd_rx` and writes to the KStars socket.
-    let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(CMD_CAP);
-    publish_message_sender(&hub, cmd_tx).await;
 
     // Fresh session: drop any replay snapshot left over from a previous KStars
     // attach so a reconnecting browser doesn't recover stale state.
@@ -61,18 +66,18 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
     let handshake = set_client_state_msg();
     if let Err(e) = sink.send(Message::Text(handshake.into())).await {
         error!("Failed to send set_client_state handshake to KStars: {e}");
-        clear_kstars_sender(&hub).await;
+        hub.detach_backend().await;
         return;
     }
 
     // Notify browsers that a KStars session is live, including the server-side
     // home directory so the WASM client can construct absolute paths for files
     // it saves via scheduler_save_sequence_file (which prepends homePath on the
-    // KStars side).
+    // KStars side). `online` is KStars' to assert, once a profile starts.
     let home = std::env::var("HOME").unwrap_or_default();
     let _ = hub
         .browser_tx
-        .send(connection_state_msg(true, Some(home.as_str())));
+        .send(connection_state_msg(true, None, Some(home.as_str())));
 
     // Prime the observer site once per attach. KStars answers with
     // {name, latitude, longitude, elevation, tz, tz0}; that reply is snapshotted
@@ -166,18 +171,11 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
         }
     }
 
-    clear_kstars_sender(&hub).await;
+    hub.detach_backend().await;
 
-    let _ = hub.browser_tx.send(connection_state_msg(false, None));
+    let _ = hub.browser_tx.send(connection_state_msg(false, None, None));
 
     info!(channel = "/message/ekos", "KStars session ended");
-}
-
-async fn clear_kstars_sender(hub: &Hub) {
-    let mut guard = hub.kstars_msg_tx.lock().await;
-    *guard = None;
-    *hub.last_connection_state.lock().await = None;
-    *hub.last_site_location.lock().await = None;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,25 +347,6 @@ fn astro_get_location_msg() -> String {
     .to_string()
 }
 
-fn connection_state_msg(connected: bool, home_dir: Option<&str>) -> String {
-    if let Some(home) = home_dir {
-        return json!({
-            "type": "new_connection_state",
-            "payload": {
-                "connected": connected,
-                "home_dir": home,
-            },
-        })
-        .to_string();
-    }
-
-    json!({
-        "type": "new_connection_state",
-        "payload": { "connected": connected },
-    })
-    .to_string()
-}
-
 fn message_is_type(msg: &str, expected: &str) -> bool {
     serde_json::from_str::<Value>(msg)
         .ok()
@@ -381,27 +360,6 @@ fn event_type_for_log(msg: &str) -> &'static str {
     } else {
         "unknown"
     }
-}
-
-async fn ensure_single_message_session(hub: &Hub, socket: WebSocket) -> Option<WebSocket> {
-    // Keep a single active KStars text channel. If another session tries to
-    // connect while one is active, reject it to avoid racing writers.
-    let guard = hub.kstars_msg_tx.lock().await;
-    if guard.is_some() {
-        warn!(
-            channel = "/message/ekos",
-            "Rejecting second KStars message session while one is active"
-        );
-        let mut socket = socket;
-        let _ = socket.send(Message::Close(None)).await;
-        return None;
-    }
-    Some(socket)
-}
-
-async fn publish_message_sender(hub: &Hub, tx: mpsc::Sender<String>) {
-    let mut guard = hub.kstars_msg_tx.lock().await;
-    *guard = Some(tx);
 }
 
 #[cfg(test)]

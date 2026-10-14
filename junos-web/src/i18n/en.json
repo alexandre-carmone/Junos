@@ -1218,6 +1218,7 @@
   "plan_load_schedule": "Load in Scheduler",
   "plan_load_sequence": "Load in Imaging",
   "plan_offline": "Start Ekos to load files into KStars",
+  "backend_indigo_unavailable": "Not available with the INDIGO backend — this module is driven by Ekos in KStars.",
   "plan_confirm_load_schedule": "Load this schedule? It replaces the Scheduler's job list.",
   "plan_confirm_load_sequence": "Load this sequence? It replaces the Imaging queue.",
   "plan_sent": "Sent to KStars…",

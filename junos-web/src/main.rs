@@ -65,6 +65,19 @@ pub struct RevealInFilesCtx(pub RwSignal<Option<String>>);
 #[derive(Clone, Copy)]
 pub struct CaptureDirCtx(pub RwSignal<String>);
 
+/// Which device-control stack the server relays (`/api/config.backend`). The
+/// wire protocol is Ekos Live either way; the INDIGO backend only emulates
+/// part of it, so tabs it can't drive show `form::backend_notice`.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum Backend {
+    #[default]
+    Ekos,
+    Indigo,
+}
+
+#[derive(Clone, Copy)]
+pub struct BackendCtx(pub RwSignal<Backend>);
+
 /// App-level context holding the shared mosaic planner signals.
 #[derive(Clone, Copy)]
 pub struct MosaicPlannerCtx(pub MosaicPlannerState);
@@ -335,6 +348,8 @@ fn App() -> impl IntoView {
     // by the sequencer forms as the initial "Destination folder" value.
     let capture_dir = RwSignal::new(String::new());
     provide_context(CaptureDirCtx(capture_dir));
+    let backend = RwSignal::new(Backend::default());
+    provide_context(BackendCtx(backend));
     wasm_bindgen_futures::spawn_local(async move {
         if let Ok(resp) = gloo_net::http::Request::get("/api/config").send().await {
             if let Ok(v) = resp.json::<serde_json::Value>().await {
@@ -342,6 +357,9 @@ fn App() -> impl IntoView {
                     if !d.is_empty() {
                         capture_dir.set(d.to_string());
                     }
+                }
+                if v.get("backend").and_then(|b| b.as_str()) == Some("indigo") {
+                    backend.set(Backend::Indigo);
                 }
             }
         }

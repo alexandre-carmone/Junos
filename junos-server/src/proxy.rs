@@ -14,6 +14,7 @@ use futures_util::{SinkExt, StreamExt};
 use tracing::{debug, warn};
 
 use crate::apps::build_app_state_msg;
+use crate::hub::connection_state_msg;
 use crate::AppState;
 
 pub async fn ws_handler(
@@ -29,17 +30,14 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
 
     let (mut sink, mut stream) = socket.split();
 
-    // On connect, replay the last connection state from KStars so the browser
-    // gets the full connected+online flags even after a page refresh.
+    // On connect, replay the last connection state from the backend so the
+    // browser gets the full connected+online flags even after a page refresh.
     let init = match hub.last_connection_state.lock().await.clone() {
         Some(state) => state,
         None => {
-            let connected = hub.kstars_msg_tx.lock().await.is_some();
+            let connected = hub.backend_attached().await;
             let home = std::env::var("HOME").unwrap_or_default();
-            format!(
-                r#"{{"type":"new_connection_state","payload":{{"connected":{},"home_dir":"{}"}}}}"#,
-                connected, home
-            )
+            connection_state_msg(connected, None, Some(&home))
         }
     };
     let _ = sink.send(Message::Text(init.into())).await;
@@ -86,12 +84,12 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
                 }
             }
 
-            // Browser command → KStars
+            // Browser command → backend
             frame = stream.next() => {
                 match frame {
                     Some(Ok(Message::Text(text))) => {
-                        if !hub.send_to_kstars(text.to_string()).await {
-                            debug!("Dropping browser command — no KStars session attached");
+                        if !hub.send_to_backend(text.to_string()).await {
+                            debug!("Dropping browser command — no backend session attached");
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,

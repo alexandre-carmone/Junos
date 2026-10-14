@@ -39,7 +39,7 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
 use crate::compat::GuideSnapshot;
-use crate::components::form::{sheet, CARD, CARD_TITLE, FOOTER};
+use crate::components::form::{backend_notice, sheet, CARD, CARD_TITLE, FOOTER};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
@@ -196,6 +196,9 @@ pub fn GuideTab(
                     <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
                 </button>
             </div>
+
+            // Backend gate: nothing below works without Ekos (INDIGO backend).
+            {backend_notice()}
 
             // Cards — one column on phones; RMS and frame full width, drift |
             // target from md.

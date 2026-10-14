@@ -38,6 +38,7 @@ use wasm_bindgen::{closure::Closure, JsCast};
 use web_sys::MouseEvent;
 
 use crate::compat::{MountSnapshot, PolarAlignSnapshot};
+use crate::components::form::backend_notice;
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{Lang, Translations, t};
@@ -536,6 +537,9 @@ pub fn PolarAlignTab(
                     <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
                 </button>
             </div>
+
+            // Backend gate: nothing below works without Ekos (INDIGO backend).
+            {backend_notice()}
 
             // Body — a column on phones, frame | controls on md+.
             <div class="flex-1 min-h-0 flex flex-col \
