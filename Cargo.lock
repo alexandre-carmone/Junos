@@ -1541,6 +1541,7 @@ dependencies = [
  "futures-util",
  "if-addrs",
  "image",
+ "indexmap",
  "libc",
  "mime_guess",
  "rcgen",
@@ -1549,9 +1550,11 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

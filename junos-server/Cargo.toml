@@ -34,3 +34,9 @@ image              = { version = "0.25", default-features = false, features = ["
 mime_guess         = "2"
 libc               = "0.2"
 reqwest            = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# INDIGO backend: outbound JSON-over-WebSocket client to indigo_server, URL
+# joining for its BLOB links, and insertion-ordered property maps (INDI
+# clients render groups in definition order).
+tokio-tungstenite  = "0.24"
+url                = "2"
+indexmap           = "2"
