@@ -162,6 +162,14 @@
           doCheck = false;
         };
 
+        # ── INDIGO (server + simulators + agents) ──────────────────────────
+        #
+        # The INDIGO counterpart of KStars for the `--backend indigo` relay:
+        # `indigo_server -- indigo_ccd_simulator indigo_mount_simulator` gives
+        # a simulated rig on :7624 with no hardware. Not in nixpkgs, so built
+        # from the upstream tag in nix/indigo.nix.
+        indigo = pkgs.callPackage ./nix/indigo.nix { };
+
         # ── Dev shell ───────────────────────────────────────────────────────
         devShell = pkgs.mkShell {
           packages = [
@@ -175,6 +183,7 @@
             pkgs.uv
             pkgs.just
             pkgs.cacert
+            indigo
           ];
 
           shellHook = ''
@@ -188,7 +197,7 @@
 
       in {
         packages = {
-          inherit junosWebDist junosServer;
+          inherit junosWebDist junosServer indigo;
 
           # Default package: thin wrapper that bakes --dist-dir into the binary
           # so callers never have to pass it explicitly.

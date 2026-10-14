@@ -56,6 +56,15 @@ ensure-trunk:
 dev-server:
     cargo run -p junos-server
 
+# INDIGO backend. `dev-indigo` runs an indigo_server with the simulator
+# drivers (available inside `nix develop`, see flake.nix); `dev-server-indigo`
+# points the relay at it instead of waiting for KStars.
+dev-indigo:
+    indigo_server -v indigo_ccd_simulator indigo_mount_simulator
+
+dev-server-indigo:
+    cargo run -p junos-server -- --backend indigo
+
 clean:
     cargo clean
     rm -rf junos-web/dist

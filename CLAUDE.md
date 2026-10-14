@@ -74,7 +74,7 @@ Pass `--no-https` to skip TLS for headless/CI runs. `config.rs` (clap, env-aware
 - `kstars_ws.rs` handles `GET /message/ekos` and `GET /media/ekos` (KStars connects to these as an Ekos Live "offline server"). On connect it sends KStars the `set_client_state` handshake (required — KStars drops every outbound event until it receives that) and publishes a synthetic `new_connection_state {connected:true}` to the hub. Inbound text is broadcast to browsers verbatim; binary media frames are decoded from the 512-byte metadata header plus JPEG/FITS payload and re-emitted as `new_preview_image`.
 - `proxy.rs` handles `GET /ws` (browser side). On connect it tells the new browser the current KStars-attached state, then loops: KStars events → browser, browser commands → KStars via the hub.
 - `auth.rs` is a stub for `POST /api/authenticate` (no real auth — local relay only).
-- `config.rs` parses the clap `Config` (all long-only flags, each with an env var): `--http-addr`/`HTTP_ADDR`, `--https-addr`/`HTTPS_ADDR`, `--dist-dir`/`DIST_DIR`, `--captures-dir`/`CAPTURES_DIR`, `--dso-tile-dir`/`DSO_TILE_DIR`, `--taskqueue-dir`/`TASKQUEUE_DIR`, `--tls-cert`, `--tls-key`, `--no-https`. Also `resolved_captures_dir()` / `resolved_dso_tile_dir()` / `resolved_taskqueue_dir()`.
+- `config.rs` parses the clap `Config` (all long-only flags, each with an env var): `--backend`/`BACKEND` (`ekos`|`indigo`), `--indigo-url`/`INDIGO_URL`, `--http-addr`/`HTTP_ADDR`, `--https-addr`/`HTTPS_ADDR`, `--dist-dir`/`DIST_DIR`, `--captures-dir`/`CAPTURES_DIR`, `--dso-tile-dir`/`DSO_TILE_DIR`, `--taskqueue-dir`/`TASKQUEUE_DIR`, `--tls-cert`, `--tls-key`, `--no-https`. Also `resolved_captures_dir()` / `resolved_dso_tile_dir()` / `resolved_taskqueue_dir()`.
 - `tls.rs` — cert/key resolution and self-signed generation into `.certs/` (`CN=junos-dev`, SANs = localhost + 127.0.0.1 + every non-loopback IPv4). Supplying only one of `--tls-cert`/`--tls-key` is a fatal error.
 - `files.rs` — the Files tab's backend: `/api/files/{list,meta,thumb,raw,download,rename,delete,resolve}`, FITS header parsing and thumbnailing. Sandboxed to the resolved captures dir by canonicalize checks. `starfind.rs` is the star detector `kstars_ws.rs` runs on focus frames for the Focus tab's star overlay.
 - `apps.rs` — `/api/apps/{launch,stop,state}`: spawn and monitor KStars or PHD2 on the server host.
@@ -84,7 +84,21 @@ Pass `--no-https` to skip TLS for headless/CI runs. `config.rs` (clap, env-aware
 - `main.rs` — also serves `GET /api/config`, which reports the resolved captures dir. The frontend reads it once into `CaptureDirCtx` so the sequencer forms default to a folder the Files tab can browse.
 - `skysurvey.rs` — `/api/skysurvey`, a same-origin hips2fits proxy. Route still registered but no longer used by the framing path.
 
-There is **no protocol translation** in the server. Messages flow through opaque. All Ekos Live semantics live in the WASM client.
+With `--backend ekos` (the default) there is **no protocol translation** in the server. Messages flow through opaque. All Ekos Live semantics live in the WASM client.
+
+### Backends (`--backend ekos|indigo`)
+
+`config.rs` has a `Backend` enum. `ekos` is the relay described above: KStars dials in on `/message/ekos` + `/media/ekos`. `indigo` (`--indigo-url`, default `ws://127.0.0.1:7624/`) registers neither route and instead spawns `indigo::run`, which dials *out* to an `indigo_server` (JSON over WebSocket) and **emulates Ekos Live** for the browser, so the frontend protocol doesn't change. `hub.rs` is backend-neutral (`attach_backend` / `detach_backend` / `send_to_backend`); `/api/config` reports `backend`, which the frontend reads into `BackendCtx` — tabs the INDIGO backend can't drive show `form::backend_notice` and Live Stack / the KStars–PHD2 launchers are hidden.
+
+`junos-server/src/indigo/`:
+
+- `protocol.rs` — INDIGO frames (`def*Vector`/`set*Vector`/`deleteProperty`/`message`, items always in `value`, BLOBs as URLs only) and `PropertyStore`, the insertion-ordered property mirror; `interface::*` are the `INFO.DEVICE_INTERFACE` bits.
+- `indi_shape.rs` — a property in KStars' `indistd.cpp` JSON shape (full / compact, INDI integer enums).
+- `alias.rs` — INDI ↔ INDIGO names for the properties the browser polls *by INDI name* (`CCD_INFO`, `EQUATORIAL_EOD_COORD`, `FILTER_SLOT`, `CCD_COOLER`…). Aliased replies only answer an explicit `device_property_get`; pushes use INDIGO names, so the Devices tab never sees duplicates.
+- `commands.rs` — the browser → INDIGO dispatcher. Unsupported commands get a `device_message`; the ones the client polls on a timer (`POLLED`) are swallowed.
+- `events.rs` — generic INDI pushes; `mount.rs` — `new_mount_state` (KStars' status strings, 1 s coordinate throttle flushed by the session tick); `imaging.rs` — Preview/Loop on the camera driver (`CCD_UPLOAD_MODE` LOCAL into the captures dir + `CCD_PREVIEW` → `CCD_PREVIEW_IMAGE` JPEG → `new_preview_image`); `roles.rs` — which device plays which Ekos role (one synthetic optical train, `get_scopes` from the camera's `CCD_LENS`, which is in **cm**); `astro.rs` — sidereal time / precession, a port of the frontend's (keep in step); `scansexa.rs` — `f_scansexa`.
+
+Covered: Devices, Mount, Imaging preview/loop/cooling/filter, Profiles (one synthetic "INDIGO" profile whose start/stop connects every device), the Sky's mount reticle. Not covered (banner): Focus, Guide, Align, Polar Align, the capture queue, Scheduler, Live Stack — the INDIGO agents (`AGENT_IMAGER_*`, `AGENT_GUIDER_*`, `AGENT_PLATESOLVER_*`) are the path for those. `indigo_server` isn't in nixpkgs: `flake.nix` builds it from source for the dev shell (`just dev-indigo` runs it with the simulators, `just dev-server-indigo` the relay against it).
 
 ### Frontend (`junos-web`)
 

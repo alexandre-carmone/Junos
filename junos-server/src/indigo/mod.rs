@@ -101,6 +101,19 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                                 continue;
                             };
                             let Some(change) = store.apply(frame) else { continue };
+                            // INDIGO devices come up disconnected and nothing
+                            // else will connect them: do what Ekos' profile
+                            // auto-connect does, as each one appears.
+                            if let Change::Defined { device, name } = &change {
+                                if name == "CONNECTION"
+                                    && !store.connected(device)
+                                    && store.interface(device) & protocol::interface::AGENT == 0
+                                {
+                                    let items = [("CONNECTED".to_string(), Value::Bool(true))];
+                                    let w = protocol::new_vector_msg(protocol::Kind::Switch, device, "CONNECTION", &items);
+                                    sink.send(Message::Text(w.into())).await?;
+                                }
+                            }
                             let mut msgs = events::for_change(&change, &store);
                             // A device appeared or vanished: the roles (and
                             // so the train the browser binds to) may change.
