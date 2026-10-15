@@ -41,7 +41,7 @@ mod view_save;
 mod view_settings;
 
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot, SchedulerSnapshot, SiteSnapshot};
-use crate::components::form::{backend_notice, sheet, CHIP, FOOTER};
+use crate::components::form::{sheet, CHIP, FOOTER};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{Lang, t};
 use crate::ws::{DeviceInfo, FileReply, IndiProperty, SendCmd};
@@ -203,9 +203,6 @@ pub fn SchedulerTab(
                     <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
                 </button>
             </div>
-
-            // Backend gate: nothing below works without Ekos (INDIGO backend).
-            {backend_notice()}
 
             // Sub-tabs
             <div role="tablist" class="shrink-0 grid grid-cols-2 gap-1.5 px-3 py-1.5 md:flex md:pl-4 md:pr-6 \

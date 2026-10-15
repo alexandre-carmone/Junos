@@ -433,6 +433,12 @@ impl Align {
         out
     }
 
+    /// The solve action (the Align sheet's radio); the Scheduler forces
+    /// `Slew` (CENTER) for its own solves and puts the user's back.
+    pub fn set_action(&mut self, action: Action) -> Action {
+        std::mem::replace(&mut self.action, action)
+    }
+
     /// `align_solve`: capture and solve, then sync / center per the solve
     /// action. `Err` explains why nothing was started.
     pub fn solve(&mut self, store: &PropertyStore, agent: &str, rig: &Rig) -> Result<(Vec<String>, Option<String>), String> {

@@ -17,10 +17,26 @@ use super::protocol::{new_vector_msg, Change, Kind, PropertyStore, State};
 /// INDIGO's `HFD` is a half-flux *diameter*; Ekos charts the radius.
 const HFD_TO_HFR: f64 = 0.5;
 
+/// The agent processes this tab owns; a batch (`EXPOSURE`, the capture
+/// queue's) or anything else on the same `AGENT_START_PROCESS` is not its.
+fn owns(item: &str) -> bool {
+    matches!(item, "FOCUSING" | "PREVIEW" | "PREVIEW_1")
+}
+
+/// Properties whose messages belong in the Focus log even outside a run.
+fn focus_property(name: &str) -> bool {
+    name == "AGENT_IMAGER_FOCUS" || name == "AGENT_IMAGER_SELECTION" || name.starts_with("FOCUSER_")
+}
+
 #[derive(Default)]
 pub struct Focus {
     log: Log,
     process: Process,
+    /// The owned process that is running, if any.
+    active: Option<String>,
+    /// Somebody else's process (the capture queue's batch) runs: its
+    /// messages and frames are not this tab's.
+    foreign: bool,
     abort_requested: bool,
     last_frame: f64,
     /// Size of the last preview frame, for the crosshair mapping.
@@ -77,23 +93,37 @@ impl Focus {
         let name = match change {
             Change::Defined { device, name } | Change::Updated { device, name } if device == agent => name.as_str(),
             Change::Message { device: Some(d), text } if d == agent => {
-                if self.log.push(text) {
+                if !self.foreign && self.log.push(text) {
                     r.to_browser.push(self.state_msg(json!({})));
                 }
                 return r;
             }
             Change::Deleted { device, name: None } if device == agent => {
                 self.process = Process::default();
+                self.active = None;
+                self.foreign = false;
                 r.to_browser.push(self.state_msg(json!({ "status": "Idle" })));
                 return r;
             }
             _ => return r,
         };
         let Some(p) = store.get(agent, name) else { return r };
-        let noted = p.message.as_deref().is_some_and(|m| self.log.push(m));
+        let noted = (!self.foreign || focus_property(name)) && name != "AGENT_START_PROCESS" && p.message.as_deref().is_some_and(|m| self.log.push(m));
         match name {
             "AGENT_START_PROCESS" => match self.process.observe(p) {
+                Edge::Started(item) if !owns(&item) => {
+                    self.active = None;
+                    self.foreign = true;
+                }
+                Edge::Finished { item, .. } if !owns(&item) => {
+                    self.foreign = false;
+                }
                 Edge::Started(item) => {
+                    self.active = Some(item.clone());
+                    self.foreign = false;
+                    if let Some(m) = p.message.as_deref() {
+                        self.log.push(m);
+                    }
                     self.last_frame = 0.0;
                     let payload = match item.as_str() {
                         "FOCUSING" => {
@@ -106,6 +136,10 @@ impl Focus {
                     r.to_browser.push(self.state_msg(payload));
                 }
                 Edge::Finished { ok, item } => {
+                    self.active = None;
+                    if let Some(m) = p.message.as_deref() {
+                        self.log.push(m);
+                    }
                     let payload = match (item.as_str(), ok) {
                         ("FOCUSING", true) => {
                             let (hfr, pos) = self.stats(store, agent);
@@ -132,12 +166,14 @@ impl Focus {
                     self.abort_requested = false;
                     r.to_browser.push(self.state_msg(payload));
                 }
-                Edge::Still if noted => r.to_browser.push(self.state_msg(json!({}))),
+                Edge::Still if !self.foreign && p.message.as_deref().is_some_and(|m| self.log.push(m)) => {
+                    r.to_browser.push(self.state_msg(json!({})))
+                }
                 Edge::Still => {}
             },
             "AGENT_IMAGER_STATS" => {
                 let frame = p.number("FRAME").unwrap_or(0.0);
-                if self.process.is_running() && frame > self.last_frame {
+                if self.active.is_some() && frame > self.last_frame {
                     self.last_frame = frame;
                     let (hfr, pos) = self.stats(store, agent);
                     if let Some(h) = hfr {
@@ -150,7 +186,7 @@ impl Focus {
                 }
             }
             "CCD_PREVIEW_IMAGE" => {
-                if p.state == State::Ok && self.process.is_running() {
+                if p.state == State::Ok && self.active.is_some() {
                     if let Some(url) = p.item("IMAGE").and_then(|i| i.blob_url()) {
                         r.fetch_preview = Some(url.to_string());
                     }
@@ -409,6 +445,28 @@ mod tests {
         // A message frame lands in the log, newest first.
         let r = f.on_change(&Change::Message { device: Some(A.into()), text: "Preview failed".into() }, &s, A);
         assert!(payloads(&r)[0]["log"].as_str().unwrap().starts_with("Preview failed\n"));
+    }
+
+    #[test]
+    fn batch_runs_are_not_focus() {
+        let mut s = store();
+        let mut f = Focus::default();
+        let c = set(&mut s, r#"{"setSwitchVector":{"device":"Imager Agent","name":"AGENT_START_PROCESS","state":"Busy","message":"Batch started","items":[{"name":"EXPOSURE","value":true}]}}"#);
+        assert!(f.on_change(&c, &s, A).to_browser.is_empty());
+        let c = set(&mut s, r#"{"setNumberVector":{"device":"Imager Agent","name":"AGENT_IMAGER_STATS","state":"Busy","items":[{"name":"FRAME","value":1},{"name":"HFD","value":6.4}]}}"#);
+        assert!(f.on_change(&c, &s, A).to_browser.is_empty());
+        let c = set(&mut s, r#"{"setBLOBVector":{"device":"Imager Agent","name":"CCD_PREVIEW_IMAGE","state":"Ok","items":[{"name":"IMAGE","value":"/blob/0x9.jpeg"}]}}"#);
+        assert!(f.on_change(&c, &s, A).fetch_preview.is_none());
+        let r = f.on_change(&Change::Message { device: Some(A.into()), text: "Dithering started".into() }, &s, A);
+        assert!(r.to_browser.is_empty());
+        let c = set(&mut s, r#"{"setSwitchVector":{"device":"Imager Agent","name":"AGENT_START_PROCESS","state":"Ok","message":"Batch finished","items":[{"name":"EXPOSURE","value":false}]}}"#);
+        assert!(f.on_change(&c, &s, A).to_browser.is_empty());
+        // A focus run afterwards still works, and its log has none of the batch.
+        f.start(&s, A).unwrap();
+        let c = set(&mut s, r#"{"setSwitchVector":{"device":"Imager Agent","name":"AGENT_START_PROCESS","state":"Busy","message":"Focusing started","items":[{"name":"FOCUSING","value":true}]}}"#);
+        let p = payloads(&f.on_change(&c, &s, A));
+        assert_eq!(p[0]["status"], "In Progress");
+        assert_eq!(p[0]["log"], "Focusing started");
     }
 
     #[test]

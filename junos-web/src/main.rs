@@ -66,8 +66,9 @@ pub struct RevealInFilesCtx(pub RwSignal<Option<String>>);
 pub struct CaptureDirCtx(pub RwSignal<String>);
 
 /// Which device-control stack the server relays (`/api/config.backend`). The
-/// wire protocol is Ekos Live either way; the INDIGO backend only emulates
-/// part of it, so tabs it can't drive show `form::backend_notice`.
+/// wire protocol is Ekos Live either way; the few controls the INDIGO backend
+/// can't drive (Live Stack, FITS-upload solves, the app launchers) are hidden
+/// through `form::backend_is_indigo`.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Backend {
     #[default]

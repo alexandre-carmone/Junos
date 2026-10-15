@@ -77,6 +77,14 @@ pub fn eq_to_altaz(ra_deg: f64, dec_deg: f64, lst_deg: f64, lat_deg: f64) -> (f6
     (alt.to_degrees(), az)
 }
 
+/// Great-circle separation of two equatorial positions, degrees (haversine).
+pub fn angular_sep_deg(ra1_deg: f64, dec1_deg: f64, ra2_deg: f64, dec2_deg: f64) -> f64 {
+    let (d1, d2) = (dec1_deg.to_radians(), dec2_deg.to_radians());
+    let dra = (ra2_deg - ra1_deg).to_radians();
+    let h = ((d2 - d1) / 2.0).sin().powi(2) + d1.cos() * d2.cos() * (dra / 2.0).sin().powi(2);
+    2.0 * h.sqrt().min(1.0).asin().to_degrees()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +117,14 @@ mod tests {
         // Due east, on the equator, from the equator: rising, az 90.
         let (alt, az) = eq_to_altaz(90.0, 0.0, 0.0, 0.0);
         assert!(alt.abs() < 1e-9 && (az - 90.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn separation() {
+        assert!((angular_sep_deg(0.0, 0.0, 90.0, 0.0) - 90.0).abs() < 1e-9);
+        assert!(angular_sep_deg(123.4, -45.6, 123.4, -45.6).abs() < 1e-9);
+        // Across the RA wrap, and pole to pole.
+        assert!((angular_sep_deg(359.0, 0.0, 1.0, 0.0) - 2.0).abs() < 1e-9);
+        assert!((angular_sep_deg(0.0, 90.0, 180.0, -90.0) - 180.0).abs() < 1e-9);
     }
 }

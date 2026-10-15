@@ -10,7 +10,9 @@ mod agents;
 mod alias;
 mod align;
 mod astro;
+mod capture;
 mod commands;
+mod ephem;
 mod events;
 mod focus;
 mod guide;
@@ -21,6 +23,7 @@ mod mount;
 mod process;
 mod protocol;
 mod roles;
+mod scheduler;
 mod scansexa;
 
 use std::sync::Arc;
@@ -40,6 +43,7 @@ use commands::{Ctx, Modules, Out};
 use media::{Fetched, Source};
 use protocol::{Change, PropertyStore};
 use roles::Roles;
+use scheduler::{queue::ScriptReq, ScriptDone};
 
 /// Entry point spawned by `main` with `--backend indigo`. Never returns: it
 /// keeps reconnecting to the INDIGO server for the life of the process, with
@@ -94,6 +98,7 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
         let mut modules = Modules::new(Instant::now());
         let mut media = media::Media::default();
         let (preview_tx, mut preview_rx) = mpsc::channel::<Fetched>(4);
+        let (script_tx, mut script_rx) = mpsc::channel::<ScriptDone>(4);
         let http = reqwest::Client::new();
         let mut tick = tokio::time::interval(Duration::from_secs(1));
 
@@ -139,6 +144,7 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                             }
                             if let Some(a) = set.imager.as_deref() {
                                 reactions.push((Source::Focus, modules.focus.on_change(&change, &store, a)));
+                                reactions.push((Source::Imaging, modules.capture.on_change(&change, &store, a, now)));
                             }
                             if let Some(a) = set.guider.as_deref() {
                                 reactions.push((Source::Guide, modules.guide.on_change(&change, &store, a)));
@@ -147,7 +153,9 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                                 let rig = commands::rig(&modules.agents.set, &store, &roles);
                                 reactions.push((Source::Align, modules.align.on_change(&change, &store, a, &rig, now)));
                             }
+                            let mut module_msgs = Vec::new();
                             for (source, r) in reactions {
+                                module_msgs.extend(r.to_browser.iter().cloned());
                                 msgs.extend(r.to_browser);
                                 for w in r.to_indigo {
                                     sink.send(Message::Text(w.into())).await?;
@@ -155,6 +163,18 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                                 if let Some(link) = r.fetch_preview {
                                     spawn_preview_fetch(&http, &url, &link, source, preview_tx.clone());
                                 }
+                            }
+                            // The Scheduler reads the modules' transitions.
+                            let events = modules.capture.drain_events();
+                            modules.scheduler.observe(&module_msgs, events);
+                            if modules.scheduler.is_running() {
+                                let ctx = Ctx { store: &store, roles: &roles, captures_dir: &captures_dir, home: &home, indigo_host: &indigo_host, indigo_port };
+                                let (sctx, scheduler, mut drivers) = commands::sched(&ctx, &mut modules);
+                                let r = scheduler.step(&sctx, &mut drivers);
+                                for w in r.to_indigo {
+                                    sink.send(Message::Text(w.into())).await?;
+                                }
+                                msgs.extend(r.to_browser);
                             }
                             // Keep the agents' device lists filled and the
                             // unclaimed devices connected.
@@ -190,6 +210,7 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                         store: &store,
                         roles: &roles,
                         captures_dir: &captures_dir,
+                        home: &home,
                         indigo_host: &indigo_host,
                         indigo_port,
                     };
@@ -238,10 +259,42 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                     for w in plan.to_indigo {
                         sink.send(Message::Text(w.into())).await?;
                     }
-                    for msg in plan.to_browser.into_iter().chain(modules.align.tick(now)) {
+                    let mut msgs: Vec<String> = plan.to_browser.into_iter().chain(modules.align.tick(now)).collect();
+                    if let Some(a) = modules.agents.set.imager.clone() {
+                        let r = modules.capture.tick(&store, &a, now);
+                        for w in r.to_indigo {
+                            sink.send(Message::Text(w.into())).await?;
+                        }
+                        msgs.extend(r.to_browser);
+                    }
+                    // The Scheduler: procedures, evaluation, stage timeouts.
+                    let events = modules.capture.drain_events();
+                    modules.scheduler.observe(&[], events);
+                    if modules.scheduler.is_running() {
+                        let ctx = Ctx { store: &store, roles: &roles, captures_dir: &captures_dir, home: &home, indigo_host: &indigo_host, indigo_port };
+                        let (sctx, scheduler, mut drivers) = commands::sched(&ctx, &mut modules);
+                        let mut r = scheduler.step(&sctx, &mut drivers);
+                        let t = scheduler.tick(&sctx, &mut drivers);
+                        r.to_indigo.extend(t.to_indigo);
+                        r.to_browser.extend(t.to_browser);
+                        r.scripts.extend(t.scripts);
+                        for w in r.to_indigo {
+                            sink.send(Message::Text(w.into())).await?;
+                        }
+                        msgs.extend(r.to_browser);
+                        for req in r.scripts {
+                            spawn_script(req, script_tx.clone());
+                        }
+                    }
+                    for msg in msgs {
                         hub.capture(&msg).await;
                         let _ = hub.browser_tx.send(msg);
                     }
+                }
+
+                // A procedure's script ended.
+                Some(done) = script_rx.recv() => {
+                    modules.scheduler.script_finished(done);
                 }
             }
         }
@@ -282,6 +335,34 @@ async fn remember_site(hub: &Hub, msg: &str) {
     if msg.starts_with(r#"{"type":"astro_get_location""#) {
         *hub.last_site_location.lock().await = Some(msg.to_string());
     }
+}
+
+/// Run a procedure's script — no arguments, nothing on stdin, like KStars'
+/// `ScriptAction` — and report its end; killed after its timeout.
+fn spawn_script(req: ScriptReq, tx: mpsc::Sender<ScriptDone>) {
+    tokio::spawn(async move {
+        let outcome = match tokio::process::Command::new(&req.path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Err(e) => Err(format!("cannot start {}: {e}", req.path.display())),
+            Ok(child) => match tokio::time::timeout(req.timeout, child.wait_with_output()).await {
+                Ok(Ok(out)) => {
+                    let err = String::from_utf8_lossy(&out.stderr);
+                    if !err.trim().is_empty() {
+                        info!(script = %req.path.display(), "stderr: {}", err.trim());
+                    }
+                    out.status.code().ok_or_else(|| "killed by a signal".to_string())
+                }
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(_) => Err("timed out".to_string()),
+            },
+        };
+        let _ = tx.send(ScriptDone { id: req.id, outcome }).await;
+    });
 }
 
 /// Fetch a BLOB link over HTTP, off the session loop. INDIGO gives either a

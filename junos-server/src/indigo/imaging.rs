@@ -7,8 +7,9 @@
 //! `CCD_PREVIEW` ENABLED so the driver also publishes a stretched JPEG
 //! (`CCD_PREVIEW_IMAGE`), which becomes the browser's `new_preview_image`
 //! (`media.rs`).
-//! The capture queue (`capture_start`) is not covered: that is the Imager
-//! agent's job, a later phase.
+//! The capture queue (`capture_start`) lives in `capture/`, on the Imager
+//! Agent; this module only ever drives its own one-shot exposures, and its
+//! `new_capture_state` is gated on them.
 
 use serde_json::{json, Value};
 
@@ -37,34 +38,22 @@ pub struct Imaging {
     looping: bool,
     /// An exposure we started is in flight: the next preview is ours.
     armed: bool,
+    /// The exposure the camera reports is one of ours.
+    mine: bool,
     last_exposure_state: Option<State>,
 }
 
 impl Imaging {
-    /// `capture_get_all_settings`: the one-shot values, where frames go, and
-    /// the sequence limits the browser's editor expects to find
-    /// (`sequence_editor/limits.rs::from_capture_settings` needs
-    /// `enforceRefocusEveryN` to exist at all).
+    /// `capture_get_all_settings`: the one-shot values and where frames go.
+    /// The sequence limits the browser's editor expects alongside
+    /// (`enforceRefocusEveryN`…) come from the queue (`Capture::limits_payload`);
+    /// `commands.rs` merges the two maps.
     pub fn settings_payload(&self, store: &PropertyStore, camera: Option<&str>, wheel: Option<&str>, captures_dir: &str) -> Value {
         let mut p = json!({
             "captureExposureN": self.settings.exposure,
             "captureTypeS": self.settings.frame_type,
             "captureISOS": "",
             "fileDirectoryT": captures_dir,
-            "enforceRefocusEveryN": false,
-            "refocusEveryN": 60,
-            "enforceAutofocusOnTemperature": false,
-            "maxFocusTemperatureDelta": 1.0,
-            "refocusAfterMeridianFlip": false,
-            "enforceAutofocusHFR": false,
-            "hFRCheckAlgorithm": "Last Autofocus",
-            "hFRThresholdPercentage": 10.0,
-            "inSequenceCheckFrames": 1,
-            "hFRDeviation": 0.1,
-            "enforceGuideDeviation": false,
-            "guideDeviation": 2.0,
-            "enforceStartGuiderDrift": false,
-            "startGuideDeviation": 2.0,
         });
         if let Some(gain) = camera.and_then(|c| store.get(c, "CCD_GAIN")).and_then(|g| g.number("GAIN")) {
             p["captureGainN"] = json!(gain);
@@ -117,7 +106,8 @@ impl Imaging {
         if store.get(camera, "CCD_UPLOAD_MODE").is_some_and(|p| !p.on("LOCAL")) {
             out.push(switch("CCD_UPLOAD_MODE", "LOCAL"));
         }
-        if store.get(camera, "CCD_LOCAL_MODE").is_some_and(|p| p.text("DIR") != Some(captures_dir)) {
+        // The driver appends a `/` to DIR: compare without it.
+        if store.get(camera, "CCD_LOCAL_MODE").is_some_and(|p| p.text("DIR").map(|d| d.trim_end_matches('/')) != Some(captures_dir.trim_end_matches('/'))) {
             out.push(new_vector_msg(Kind::Text, camera, "CCD_LOCAL_MODE", &[("DIR".into(), json!(captures_dir))]));
         }
         if store.get(camera, "CCD_PREVIEW").is_some_and(|p| !p.on("ENABLED")) {
@@ -163,6 +153,18 @@ impl Imaging {
             "CCD_EXPOSURE" => {
                 let Some(p) = store.get(camera, name) else { return r };
                 let was = self.last_exposure_state.replace(p.state);
+                // Only our own exposures: the agent's batches report through
+                // the capture queue, with their counts. An exposure is ours
+                // when it went Busy while we were armed, until it ends.
+                if p.state == State::Busy && was != Some(State::Busy) {
+                    self.mine = self.is_active();
+                }
+                if !self.mine {
+                    return r;
+                }
+                if p.state != State::Busy {
+                    self.mine = false;
+                }
                 let status = match p.state {
                     State::Busy => "Capturing",
                     State::Ok if was == Some(State::Busy) => "Image Received",
@@ -295,6 +297,12 @@ mod tests {
         let mut s = store();
         let mut im = Imaging::default();
         im.settings.exposure = 2.0;
+        // An exposure that isn't ours (the agent's batch): no capture state,
+        // not even when it ends.
+        s.apply(parse_frame(r#"{"setNumberVector":{"device":"Cam","name":"CCD_EXPOSURE","state":"Busy","items":[{"name":"EXPOSURE","value":1.5}]}}"#).unwrap());
+        assert!(im.on_change(&Change::Updated { device: "Cam".into(), name: "CCD_EXPOSURE".into() }, &s, "Cam").to_browser.is_empty());
+        s.apply(parse_frame(r#"{"setNumberVector":{"device":"Cam","name":"CCD_EXPOSURE","state":"Ok","items":[{"name":"EXPOSURE","value":0}]}}"#).unwrap());
+        assert!(im.on_change(&Change::Updated { device: "Cam".into(), name: "CCD_EXPOSURE".into() }, &s, "Cam").to_browser.is_empty());
         im.start(true, "Cam", &s, "/caps");
 
         s.apply(parse_frame(r#"{"setNumberVector":{"device":"Cam","name":"CCD_EXPOSURE","state":"Busy","items":[{"name":"EXPOSURE","value":1.5}]}}"#).unwrap());
@@ -331,7 +339,7 @@ mod tests {
         assert_eq!(p["captureGainN"], 120.0);
         assert_eq!(p["FilterPosCombo"], "Ha");
         assert_eq!(p["fileDirectoryT"], "/caps");
-        assert_eq!(p["enforceRefocusEveryN"], false);
+        assert!(p.get("enforceRefocusEveryN").is_none(), "the limits are the queue's");
         assert!(im.apply_setting("captureExposureN", &json!(5.0), &s, Some("Cam"), Some("Wheel")).is_empty());
         assert_eq!(im.settings.exposure, 5.0);
         let w = im.apply_setting("FilterPosCombo", &json!("L"), &s, Some("Cam"), Some("Wheel"));

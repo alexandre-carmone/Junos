@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use super::protocol::{Property, State};
 
 /// What a property change asks the session to do.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Reaction {
     pub to_browser: Vec<String>,
     pub to_indigo: Vec<String>,

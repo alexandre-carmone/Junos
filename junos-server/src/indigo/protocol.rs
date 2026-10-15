@@ -423,6 +423,10 @@ pub mod interface {
     #[allow(dead_code)]
     pub const AO: u32 = 1 << 8;
     pub const AGENT: u32 = 1 << 14;
+    // INDIGO_INTERFACE_AUX and INDIGO_INTERFACE_AUX_DUSTCAP: the dust cap
+    // the Scheduler's procedures park (`scheduler/queue.rs`).
+    pub const AUX: u32 = 1 << 15;
+    pub const DUSTCAP: u32 = AUX | (1 << 20);
 }
 
 #[cfg(test)]

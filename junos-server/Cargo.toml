@@ -40,3 +40,7 @@ reqwest            = { version = "0.12", default-features = false, features = ["
 tokio-tungstenite  = "0.24"
 url                = "2"
 indexmap           = "2"
+# INDIGO backend: the relay sequences the capture queue and runs the Scheduler
+# itself — `.esq` / `.esl` XML and local wall-clock time for the job conditions.
+roxmltree          = "0.20"
+chrono             = { version = "0.4", default-features = false, features = ["clock", "std"] }

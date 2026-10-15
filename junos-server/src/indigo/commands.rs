@@ -15,6 +15,7 @@ use tracing::debug;
 use super::agents::{AgentSet, Agents, Kind as AgentKind};
 use super::align::{Align, Rig};
 use super::alias;
+use super::capture::{Capture, FrameType, Job};
 use super::focus::Focus;
 use super::guide::Guide;
 use super::imaging::Imaging;
@@ -22,6 +23,7 @@ use super::mount;
 use super::protocol::{interface, new_vector_msg, Kind, PropertyStore};
 use super::roles::Roles;
 use super::scansexa;
+use super::scheduler::{Drivers, SchedCtx, SchedReaction, Scheduler};
 
 /// What the backend knows besides the property mirror.
 pub struct Ctx<'a> {
@@ -29,6 +31,9 @@ pub struct Ctx<'a> {
     pub roles: &'a Roles,
     /// Resolved captures dir — the browser's default save folder.
     pub captures_dir: &'a str,
+    /// The relay's `$HOME` — what KStars answers to `file_default_path`,
+    /// and what `scheduler_save_sequence_file` paths are relative to.
+    pub home: &'a str,
     /// The INDIGO server, for the synthetic profile's host/port.
     pub indigo_host: &'a str,
     pub indigo_port: u16,
@@ -42,20 +47,24 @@ pub enum Out {
 /// The per-session module state the commands act on.
 pub struct Modules {
     pub imaging: Imaging,
+    pub capture: Capture,
     pub focus: Focus,
     pub guide: Guide,
     pub align: Align,
     pub agents: Agents,
+    pub scheduler: Scheduler,
 }
 
 impl Modules {
     pub fn new(now: Instant) -> Self {
         Self {
             imaging: Imaging::default(),
+            capture: Capture::default(),
             focus: Focus::default(),
             guide: Guide::new(),
             align: Align::default(),
             agents: Agents::new(now),
+            scheduler: Scheduler::default(),
         }
     }
 }
@@ -77,9 +86,6 @@ pub const PROFILE_NAME: &str = "INDIGO";
 /// `ws/retry.rs`). Unsupported ones are dropped silently rather than nagging.
 const POLLED: &[&str] = &[
     "get_states",
-    "capture_get_sequences",
-    "scheduler_get_all_settings",
-    "scheduler_get_jobs",
     "livestacker_get_all_settings",
     "get_drivers",
 ];
@@ -141,15 +147,40 @@ pub fn handle(cmd: &Value, ctx: &Ctx, m: &mut Modules) -> Vec<Out> {
         // Starting the profile fills the agents' device lists (which connects
         // the devices) and connects the rest; stopping releases everything.
         "profile_start" | "profile_stop" => {
+            let mut out = Vec::new();
+            // The queue's preparation phases aren't Busy on the agent, so the
+            // plan's abort wouldn't reach them.
+            if ty == "profile_stop" {
+                if m.scheduler.is_running() {
+                    let (sctx, scheduler, mut drivers) = sched(ctx, m);
+                    let r = scheduler.stop(&sctx, &mut drivers);
+                    out.extend(sched_outs(r));
+                }
+                if m.capture.is_running() {
+                    if let Some(agent) = m.agents.set.imager.clone() {
+                        out.extend(outs(m.capture.stop(&agent)));
+                    }
+                }
+            }
             m.agents.set_active(ty == "profile_start");
             let plan = m.agents.plan(ctx.store, ctx.roles, Instant::now());
-            plan.to_indigo
-                .into_iter()
-                .map(Out::ToIndigo)
-                .chain(plan.to_browser.into_iter().map(Out::ToBrowser))
-                .collect()
+            out.extend(plan.to_indigo.into_iter().map(Out::ToIndigo));
+            out.extend(plan.to_browser.into_iter().map(Out::ToBrowser));
+            out
         }
-        "file_default_path" => reply("file_default_path", json!(ctx.captures_dir)),
+        // KStars answers its home dir (`KSPaths::writableLocation`, type 8);
+        // the captures dir reaches the browser through `/api/config`.
+        "file_default_path" => reply("file_default_path", json!(ctx.home)),
+        "file_directory_operation" => {
+            let op = payload.get("operation").and_then(Value::as_str).unwrap_or("");
+            let path = payload.get("path").and_then(Value::as_str).unwrap_or("");
+            let result = match op {
+                "create" if !path.is_empty() => std::fs::create_dir_all(path).is_ok(),
+                "exists" => std::path::Path::new(path).is_dir(),
+                _ => return reply("device_message", unsupported_payload(&format!("file_directory_operation {op}"))),
+            };
+            reply("file_directory_operation", json!({ "result": result, "operation": op }))
+        }
         "astro_get_location" => site_payload(ctx.store)
             .map(|p| reply("astro_get_location", p))
             .unwrap_or_default(),
@@ -177,41 +208,115 @@ pub fn handle(cmd: &Value, ctx: &Ctx, m: &mut Modules) -> Vec<Out> {
         }
         "mount_goto_target" => reply("device_message", unsupported_payload(ty)),
 
-        // ── Imaging tab: one-shot preview / loop ─────────────────────────
-        "capture_get_all_settings" => reply(
-            "capture_get_all_settings",
-            m.imaging.settings_payload(ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref(), ctx.captures_dir),
-        ),
+        // ── Imaging tab: one-shot preview / loop, and the capture queue ──
+        "capture_get_all_settings" => reply("capture_get_all_settings", capture_settings(ctx, m)),
         "capture_set_all_settings" => {
             let mut out: Vec<Out> = payload
                 .as_object()
                 .into_iter()
-                .flat_map(|m| m.iter())
+                .flat_map(|map| map.iter())
                 .flat_map(|(k, v)| {
-                    m.imaging.apply_setting(k, v, ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref())
+                    if m.capture.apply_setting(k, v) {
+                        Vec::new()
+                    } else {
+                        m.imaging.apply_setting(k, v, ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref())
+                    }
                 })
                 .map(Out::ToIndigo)
                 .collect();
             // Echo, as KStars does: the form pins an edit until it comes back.
-            out.push(Out::ToBrowser(reply_msg(
-                "capture_get_all_settings",
-                m.imaging.settings_payload(ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref(), ctx.captures_dir),
-            )));
+            out.push(Out::ToBrowser(reply_msg("capture_get_all_settings", capture_settings(ctx, m))));
             out
         }
-        "capture_preview" | "capture_loop" | "capture_stop" => {
+        "capture_preview" | "capture_loop" => {
             let Some(camera) = ctx.roles.camera.as_deref() else {
                 return reply("device_message", json!({ "device": PROFILE_NAME, "message": "No camera found on the INDIGO server" }));
             };
-            // The Imager Agent owns the camera while it focuses or frames.
-            if ty != "capture_stop" && m.agents.set.imager.as_deref().is_some_and(|a| AgentSet::busy(ctx.store, a)) {
-                return reply("device_message", json!({ "device": PROFILE_NAME, "message": "The camera is busy with the Focus tab" }));
+            if m.capture.is_running() {
+                return reply("device_message", json!({ "device": PROFILE_NAME, "message": "The camera is busy with the capture queue" }));
             }
-            let writes = match ty {
-                "capture_stop" => m.imaging.stop(camera),
-                _ => m.imaging.start(ty == "capture_loop", camera, ctx.store, ctx.captures_dir),
+            // The Imager Agent owns the camera while it focuses or frames.
+            if m.agents.set.imager.as_deref().is_some_and(|a| AgentSet::busy(ctx.store, a)) {
+                return reply("device_message", json!({ "device": PROFILE_NAME, "message": "The Imager Agent is busy" }));
+            }
+            m.imaging.start(ty == "capture_loop", camera, ctx.store, ctx.captures_dir).into_iter().map(Out::ToIndigo).collect()
+        }
+        "capture_stop" => {
+            let mut out = Vec::new();
+            if let Some(agent) = m.agents.set.imager.clone().filter(|_| m.capture.is_running()) {
+                out.extend(outs(m.capture.stop(&agent)));
+            }
+            if let Some(camera) = ctx.roles.camera.as_deref().filter(|_| m.imaging.is_active()) {
+                out.extend(m.imaging.stop(camera).into_iter().map(Out::ToIndigo));
+            }
+            out
+        }
+        "capture_start" => {
+            let Some(agent) = m.agents.set.imager.clone() else {
+                return vec![Out::ToBrowser(m.agents.missing_msg(AgentKind::Imager))];
             };
-            writes.into_iter().map(Out::ToIndigo).collect()
+            let mut out = Vec::new();
+            // The agent and a direct Imaging loop can't share the camera.
+            if let Some(camera) = ctx.roles.camera.as_deref().filter(|_| m.imaging.is_active()) {
+                out.extend(m.imaging.stop(camera).into_iter().map(Out::ToIndigo));
+            }
+            match m.capture.start(ctx.store, &agent, ctx.captures_dir, Instant::now()) {
+                Ok(r) => out.extend(outs(r)),
+                Err(why) => out.push(Out::ToBrowser(reply_msg("device_message", json!({ "device": agent, "message": format!("Cannot start the capture queue: {why}") })))),
+            }
+            out
+        }
+        "capture_get_sequences" => vec![Out::ToBrowser(m.capture.sequences_msg())],
+        "capture_load_sequence_file" => {
+            let (result, path) = match (payload.get("filedata").and_then(Value::as_str), payload.get("filepath").and_then(Value::as_str)) {
+                (Some(xml), _) => (m.capture.load_xml(xml, None), "<inline>".to_string()),
+                (None, Some(path)) => (m.capture.load_file(path, None), path.to_string()),
+                _ => (Err("no filedata or filepath".to_string()), String::new()),
+            };
+            let mut out = vec![Out::ToBrowser(reply_msg("capture_load_sequence_file", json!({ "result": result.is_ok(), "path": path })))];
+            match result {
+                Ok(()) => {
+                    out.push(Out::ToBrowser(m.capture.sequences_msg()));
+                    out.push(Out::ToBrowser(reply_msg("new_capture_state", json!({ "status": "Idle", "seqv": 0, "seqr": 0, "ovp": 0, "expv": 0.0 }))));
+                }
+                Err(why) => out.push(Out::ToBrowser(reply_msg("device_message", json!({ "device": PROFILE_NAME, "message": format!("Sequence not loaded: {why}") })))),
+            }
+            out
+        }
+        "capture_save_sequence_file" => {
+            let Some(path) = payload.get("filepath").and_then(Value::as_str).filter(|p| !p.is_empty()) else {
+                return Vec::new();
+            };
+            match m.capture.save_file(path) {
+                Ok(text) => reply("capture_save_sequence_file", json!(text)),
+                Err(why) => reply("device_message", json!({ "device": PROFILE_NAME, "message": format!("Sequence not saved: {why}") })),
+            }
+        }
+        "capture_remove_sequence" => {
+            let index = payload.get("index").and_then(Value::as_u64).unwrap_or(u64::MAX) as usize;
+            let mut out = Vec::new();
+            if let Err(why) = m.capture.remove(index) {
+                out.push(Out::ToBrowser(reply_msg("device_message", json!({ "device": PROFILE_NAME, "message": format!("Job not removed: {why}") }))));
+            }
+            out.push(Out::ToBrowser(m.capture.sequences_msg()));
+            out
+        }
+        "capture_clear_sequences" => {
+            let agent = m.agents.set.imager.clone().unwrap_or_default();
+            outs(m.capture.clear(&agent))
+        }
+        // The browser never sends it (it loads a whole file instead), but
+        // Ekos' one-shot form makes a job too.
+        "capture_add_sequence" => {
+            let mut job = Job::new(FrameType::from_label(&m.imaging.settings.frame_type), m.imaging.settings.exposure, 1);
+            job.filter = ctx.roles.wheel.as_deref().and_then(|w| super::imaging::current_filter(ctx.store, w));
+            job.gain = ctx.roles.camera.as_deref().and_then(|c| ctx.store.get(c, "CCD_GAIN")).and_then(|g| g.number("GAIN"));
+            let mut out = Vec::new();
+            if let Err(why) = m.capture.add(job) {
+                out.push(Out::ToBrowser(reply_msg("device_message", json!({ "device": PROFILE_NAME, "message": format!("Job not added: {why}") }))));
+            }
+            out.push(Out::ToBrowser(m.capture.sequences_msg()));
+            out
         }
 
         // ── Focus tab: the Imager Agent ──────────────────────────────────
@@ -239,6 +344,10 @@ pub fn handle(cmd: &Value, ctx: &Ctx, m: &mut Modules) -> Vec<Out> {
             let mut out = Vec::new();
             let writes = match ty {
                 "focus_start" | "focus_capture" | "focus_loop" => {
+                    // The queue's preparation isn't Busy on the agent yet.
+                    if m.capture.is_running() {
+                        return reply("device_message", json!({ "device": agent, "message": "The Imager Agent is busy with the capture queue" }));
+                    }
                     // The agent and a direct Imaging loop can't share the camera.
                     if let Some(camera) = ctx.roles.camera.as_deref().filter(|_| m.imaging.is_active()) {
                         out.extend(m.imaging.stop(camera).into_iter().map(Out::ToIndigo));
@@ -385,6 +494,89 @@ pub fn handle(cmd: &Value, ctx: &Ctx, m: &mut Modules) -> Vec<Out> {
         // The agent rotates the mount itself; nothing to acknowledge.
         "polar_slew_done" | "polar_reset_view" => Vec::new(),
 
+        // ── Scheduler: run by the relay ──────────────────────────────────
+        "scheduler_get_all_settings" => reply("scheduler_get_all_settings", m.scheduler.settings.payload()),
+        "scheduler_set_all_settings" => {
+            if let Some(map) = payload.as_object() {
+                m.scheduler.apply_settings(map);
+            }
+            Vec::new()
+        }
+        "scheduler_get_jobs" => {
+            let (sctx, scheduler, _) = sched(ctx, m);
+            vec![Out::ToBrowser(scheduler.jobs_msg(&sctx))]
+        }
+        "scheduler_add_jobs" => {
+            let (sctx, scheduler, _) = sched(ctx, m);
+            let mut r = SchedReaction::default();
+            if let Err(why) = scheduler.add_job(&sctx, &mut r) {
+                r.to_browser.push(reply_msg("device_message", json!({ "device": PROFILE_NAME, "message": format!("Job not added: {why}") })));
+            }
+            sched_outs(r)
+        }
+        "scheduler_remove_jobs" => {
+            let index = payload.get("index").and_then(Value::as_u64).unwrap_or(u64::MAX) as usize;
+            let (sctx, scheduler, mut drivers) = sched(ctx, m);
+            let mut r = SchedReaction::default();
+            if let Err(why) = scheduler.remove_job(index, &sctx, &mut drivers, &mut r) {
+                r.to_browser.push(reply_msg("device_message", json!({ "device": PROFILE_NAME, "message": format!("Job not removed: {why}") })));
+            }
+            sched_outs(r)
+        }
+        // KStars' toggle: stop while running, else start.
+        "scheduler_start_job" => {
+            let mut out = Vec::new();
+            // The queue's camera can't be shared with a preview loop.
+            if !m.scheduler.is_running() {
+                if let Some(camera) = ctx.roles.camera.as_deref().filter(|_| m.imaging.is_active()) {
+                    out.extend(m.imaging.stop(camera).into_iter().map(Out::ToIndigo));
+                }
+            }
+            let (sctx, scheduler, mut drivers) = sched(ctx, m);
+            let r = if scheduler.is_running() { scheduler.stop(&sctx, &mut drivers) } else { scheduler.start(&sctx, &mut drivers) };
+            out.extend(sched_outs(r));
+            out
+        }
+        "scheduler_save_sequence_file" => {
+            let (Some(rel), Some(data)) = (payload.get("path").and_then(Value::as_str), payload.get("filedata").and_then(Value::as_str)) else {
+                return reply("scheduler_save_sequence_file", json!({ "result": false, "path": "" }));
+            };
+            let rel = rel.trim_start_matches('/');
+            let abs = std::path::Path::new(ctx.home).join(rel);
+            let ok = !rel.split('/').any(|c| c == "..")
+                && abs.parent().is_some_and(|p| std::fs::create_dir_all(p).is_ok())
+                && std::fs::write(&abs, data).is_ok();
+            reply("scheduler_save_sequence_file", json!({ "result": ok, "path": abs.to_string_lossy() }))
+        }
+        "scheduler_save_file" => {
+            let Some(path) = payload.get("filepath").and_then(Value::as_str).filter(|p| !p.is_empty()) else {
+                return Vec::new();
+            };
+            let mut r = SchedReaction::default();
+            let saved = m.scheduler.save_file(std::path::Path::new(path), PROFILE_NAME, &mut r);
+            let mut out = sched_outs(r);
+            match saved {
+                Ok(text) => out.push(Out::ToBrowser(reply_msg("scheduler_save_file", json!(text)))),
+                Err(why) => out.push(Out::ToBrowser(reply_msg("device_message", json!({ "device": PROFILE_NAME, "message": format!("Schedule not saved: {why}") })))),
+            }
+            out
+        }
+        "scheduler_load_file" => {
+            let (sctx, scheduler, mut drivers) = sched(ctx, m);
+            let mut r = SchedReaction::default();
+            let (result, path) = match (payload.get("filedata").and_then(Value::as_str), payload.get("filepath").and_then(Value::as_str)) {
+                (Some(xml), _) => (scheduler.load_xml(xml, &sctx, &mut drivers, &mut r), "<inline>".to_string()),
+                (None, Some(p)) => (scheduler.load_file(std::path::Path::new(p), &sctx, &mut drivers, &mut r), p.to_string()),
+                _ => (Err("no filedata or filepath".to_string()), String::new()),
+            };
+            let mut out = sched_outs(r);
+            out.push(Out::ToBrowser(reply_msg("scheduler_load_file", json!({ "result": result.is_ok(), "path": path }))));
+            if let Err(why) = result {
+                out.push(Out::ToBrowser(reply_msg("device_message", json!({ "device": PROFILE_NAME, "message": format!("Schedule not loaded: {why}") }))));
+            }
+            out
+        }
+
         other if POLLED.contains(&other) => Vec::new(),
         other => {
             debug!(command = other, "unsupported with the INDIGO backend");
@@ -395,6 +587,54 @@ pub fn handle(cmd: &Value, ctx: &Ctx, m: &mut Modules) -> Vec<Out> {
 
 pub fn reply_msg(ty: &str, payload: Value) -> String {
     json!({ "type": ty, "payload": payload }).to_string()
+}
+
+/// A module reaction as command outputs (a command can't ask for a preview
+/// fetch; none does).
+fn outs(r: super::process::Reaction) -> Vec<Out> {
+    r.to_indigo
+        .into_iter()
+        .map(Out::ToIndigo)
+        .chain(r.to_browser.into_iter().map(Out::ToBrowser))
+        .collect()
+}
+
+/// The scheduler with what it drives, out of the module set (disjoint
+/// borrows). The wall clock is read here: the runner takes it as data.
+pub fn sched<'a>(ctx: &'a Ctx, m: &'a mut Modules) -> (SchedCtx<'a>, &'a mut Scheduler, Drivers<'a>) {
+    let Modules { capture, focus, guide, align, agents, scheduler, .. } = m;
+    let sctx = SchedCtx {
+        store: ctx.store,
+        roles: ctx.roles,
+        set: &agents.set,
+        captures_dir: ctx.captures_dir,
+        now: Instant::now(),
+        jd: super::astro::now_jd(),
+        local: chrono::Local::now(),
+    };
+    (sctx, scheduler, Drivers { capture, focus, guide, align })
+}
+
+/// A scheduler reaction as command outputs. A procedure's scripts only start
+/// from the session tick, never from a command.
+fn sched_outs(r: SchedReaction) -> Vec<Out> {
+    debug_assert!(r.scripts.is_empty());
+    r.to_indigo
+        .into_iter()
+        .map(Out::ToIndigo)
+        .chain(r.to_browser.into_iter().map(Out::ToBrowser))
+        .collect()
+}
+
+/// `capture_get_all_settings`: the one-shot form plus the queue's limits.
+fn capture_settings(ctx: &Ctx, m: &Modules) -> Value {
+    let mut p = m.imaging.settings_payload(ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref(), ctx.captures_dir);
+    if let (Some(map), Some(limits)) = (p.as_object_mut(), m.capture.limits_payload().as_object()) {
+        for (k, v) in limits {
+            map.insert(k.clone(), v.clone());
+        }
+    }
+    p
 }
 
 pub fn unsupported_payload(command: &str) -> Value {
@@ -522,7 +762,7 @@ fn property_set(payload: &Value, store: &PropertyStore) -> Option<Out> {
 
 /// The Mount tab's commands as INDIGO writes (`components/mount.rs` for the
 /// payloads, `PROPERTIES.md` for the targets).
-fn mount_command(ty: &str, payload: &Value, device: &str, store: &PropertyStore) -> Vec<String> {
+pub(super) fn mount_command(ty: &str, payload: &Value, device: &str, store: &PropertyStore) -> Vec<String> {
     let switch = |name: &str, items: &[(&str, bool)]| {
         let items: Vec<(String, Value)> = items.iter().map(|(n, v)| (n.to_string(), json!(v))).collect();
         new_vector_msg(Kind::Switch, device, name, &items)
@@ -604,7 +844,7 @@ mod tests {
 
     fn ctx(store: &PropertyStore) -> Ctx<'_> {
         let roles = Box::leak(Box::new(Roles::derive(store, &super::super::agents::AgentSet::default())));
-        Ctx { store, roles, captures_dir: "/tmp/caps", indigo_host: "127.0.0.1", indigo_port: 7624 }
+        Ctx { store, roles, captures_dir: "/tmp/caps", home: "/home/t", indigo_host: "127.0.0.1", indigo_port: 7624 }
     }
 
     fn handle(cmd: &Value, ctx: &Ctx) -> Vec<Out> {
@@ -764,9 +1004,84 @@ mod tests {
     }
 
     #[test]
+    fn capture_queue_and_file_commands() {
+        let s = store();
+        let c = ctx(&s);
+        let mut m = Modules::new(Instant::now());
+        let b = browser(&super::handle(&json!({"type":"capture_get_sequences","payload":{}}), &c, &mut m));
+        assert_eq!(b[0]["type"], "capture_get_sequences");
+        assert_eq!(b[0]["payload"], json!([]));
+        let b = browser(&super::handle(&json!({"type":"file_default_path","payload":{"type":8}}), &c, &mut m));
+        assert_eq!(b[0]["payload"], "/home/t");
+        let dir = std::env::temp_dir().join(format!("junos-cmd-{}", std::process::id())).join("sub");
+        let b = browser(&super::handle(&json!({"type":"file_directory_operation","payload":{"operation":"create","path":dir}}), &c, &mut m));
+        assert_eq!(b[0]["payload"], json!({ "result": true, "operation": "create" }));
+        assert!(dir.is_dir());
+        let b = browser(&super::handle(&json!({"type":"capture_load_sequence_file","payload":{"filedata":crate::indigo::capture::esq::tests::BROWSER_XML}}), &c, &mut m));
+        assert_eq!(b[0]["type"], "capture_load_sequence_file");
+        assert_eq!(b[0]["payload"]["result"], true);
+        assert_eq!(b[1]["payload"].as_array().unwrap().len(), 2);
+        assert_eq!(b[2]["payload"]["status"], "Idle");
+        // The limits come back with the one-shot settings.
+        let b = browser(&super::handle(&json!({"type":"capture_get_all_settings","payload":{}}), &c, &mut m));
+        assert_eq!(b[0]["payload"]["enforceRefocusEveryN"], true);
+        assert_eq!(b[0]["payload"]["captureExposureN"], 1.0);
+        let b = browser(&super::handle(&json!({"type":"capture_set_all_settings","payload":{"enforceRefocusEveryN":false}}), &c, &mut m));
+        assert_eq!(b[0]["payload"]["enforceRefocusEveryN"], false);
+        let b = browser(&super::handle(&json!({"type":"capture_remove_sequence","payload":{"index":5}}), &c, &mut m));
+        assert_eq!(b[0]["type"], "device_message");
+        assert_eq!(b[1]["payload"].as_array().unwrap().len(), 2);
+        let b = browser(&super::handle(&json!({"type":"capture_remove_sequence","payload":{"index":0}}), &c, &mut m));
+        assert_eq!(b[0]["payload"].as_array().unwrap().len(), 1);
+        // No Imager Agent in this rig: start explains.
+        let b = browser(&super::handle(&json!({"type":"capture_start","payload":{}}), &c, &mut m));
+        assert_eq!(b[0]["type"], "device_message");
+        assert!(b[0]["payload"]["message"].as_str().unwrap().contains("Imager Agent"));
+        let b = browser(&super::handle(&json!({"type":"capture_clear_sequences","payload":{}}), &c, &mut m));
+        assert!(b.iter().any(|v| v["type"] == "capture_get_sequences" && v["payload"] == json!([])));
+    }
+
+    #[test]
+    fn scheduler_commands() {
+        let s = store();
+        let c = ctx(&s);
+        let mut m = Modules::new(Instant::now());
+        let b = browser(&super::handle(&json!({"type":"scheduler_get_jobs","payload":{}}), &c, &mut m));
+        assert_eq!(b[0]["type"], "scheduler_get_jobs");
+        assert_eq!(b[0]["payload"]["jobs"], json!([]));
+        let b = browser(&super::handle(&json!({"type":"scheduler_get_all_settings","payload":{}}), &c, &mut m));
+        assert_eq!(b[0]["payload"]["kcfg_GreedyScheduling"], true);
+        assert!(super::handle(&json!({"type":"scheduler_set_all_settings","payload":{"schedulerStartupEnabled":true,"nameEdit":"X"}}), &c, &mut m).is_empty());
+        assert!(m.scheduler.settings.startup_enabled);
+        assert_eq!(m.scheduler.form.0["nameEdit"], "X");
+        // The sequence file lands under the relay's home.
+        let home = std::env::temp_dir().join(format!("junos-home-{}", std::process::id()));
+        let c2 = Ctx { home: &home.to_string_lossy(), ..c };
+        let b = browser(&super::handle(&json!({"type":"scheduler_save_sequence_file","payload":{"path":".junos-sequences/x.esq","filedata":"<SequenceQueue version='2.1'/>"}}), &c2, &mut m));
+        assert_eq!(b[0]["payload"]["result"], true);
+        assert!(home.join(".junos-sequences/x.esq").is_file());
+        let b = browser(&super::handle(&json!({"type":"scheduler_save_sequence_file","payload":{"path":"../x.esq","filedata":""}}), &c2, &mut m));
+        assert_eq!(b[0]["payload"]["result"], false);
+        // Adding without a name explains; the schedule still saves (empty) with its text as the reply.
+        let b = browser(&super::handle(&json!({"type":"scheduler_add_jobs","payload":{}}), &c, &mut m));
+        assert_eq!(b[0]["type"], "device_message");
+        let esl = home.join(".junos-schedules/night.esl");
+        let b = browser(&super::handle(&json!({"type":"scheduler_save_file","payload":{"filepath":esl}}), &c, &mut m));
+        assert!(b.iter().any(|v| v["type"] == "scheduler_save_file" && v["payload"].as_str().unwrap().contains("<SchedulerList")));
+        assert!(esl.is_file());
+        let b = browser(&super::handle(&json!({"type":"scheduler_load_file","payload":{"filepath":esl}}), &c, &mut m));
+        assert!(b.iter().any(|v| v["type"] == "scheduler_load_file" && v["payload"]["result"] == true));
+        // Start with nothing to run stays idle; a remove out of range explains.
+        let b = browser(&super::handle(&json!({"type":"scheduler_start_job","payload":{}}), &c, &mut m));
+        assert!(b.iter().all(|v| v["type"] == "new_scheduler_state" || v["type"] == "scheduler_get_jobs"));
+        let b = browser(&super::handle(&json!({"type":"scheduler_remove_jobs","payload":{"index":3}}), &c, &mut m));
+        assert_eq!(b[0]["type"], "device_message");
+    }
+
+    #[test]
     fn polled_commands_are_silent_and_others_explain() {
         let s = store();
-        assert!(handle(&json!({"type":"scheduler_get_jobs","payload":{}}), &ctx(&s)).is_empty());
+        assert!(handle(&json!({"type":"get_states","payload":{}}), &ctx(&s)).is_empty());
         // No agents: the polled settings stay silent, the actions explain.
         assert!(handle(&json!({"type":"focus_get_all_settings","payload":{}}), &ctx(&s)).is_empty());
         let b = browser(&handle(&json!({"type":"focus_start","payload":{}}), &ctx(&s)));
@@ -774,8 +1089,8 @@ mod tests {
         assert!(b[0]["payload"]["message"].as_str().unwrap().contains("Imager Agent"));
         let b = browser(&handle(&json!({"type":"option_get","payload":{}}), &ctx(&s)));
         assert_eq!(b[0]["payload"][0]["value"], 0);
-        let b = browser(&handle(&json!({"type":"scheduler_start_job","payload":{}}), &ctx(&s)));
+        let b = browser(&handle(&json!({"type":"scheduler_import_mosaic","payload":{}}), &ctx(&s)));
         assert_eq!(b[0]["type"], "device_message");
-        assert!(b[0]["payload"]["message"].as_str().unwrap().contains("scheduler_start_job"));
+        assert!(b[0]["payload"]["message"].as_str().unwrap().contains("scheduler_import_mosaic"));
     }
 }

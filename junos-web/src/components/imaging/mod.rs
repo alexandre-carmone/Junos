@@ -32,7 +32,7 @@ use leptos::prelude::*;
 use serde_json::json;
 
 use crate::compat::{CameraSnapshot, CaptureSnapshot, FilterWheelSnapshot};
-use crate::components::form::{backend_notice, sheet, CARD, CARD_TITLE, CHIP, FOOTER, LABEL, NUM};
+use crate::components::form::{sheet, CARD, CARD_TITLE, CHIP, FOOTER, LABEL, NUM};
 use crate::components::sky::persisted;
 use crate::components::sequence_editor::{build_esq_xml, SeqEnd, SeqFrame, SeqLimits, SequenceEditor};
 use crate::components::tab_wheel_icons::tab_icon;
@@ -320,9 +320,6 @@ pub fn ImagingTab(
                     <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Files)></span>
                 </button>
             </div>
-
-            // Backend gate: nothing below works without Ekos (INDIGO backend).
-            {backend_notice()}
 
             // Body — a column on phones, frame | cards on md+.
             <div class="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_360px] \

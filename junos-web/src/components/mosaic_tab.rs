@@ -21,7 +21,7 @@ use leptos::prelude::*;
 
 use crate::astro;
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
-use crate::components::form::{backend_notice, CARD, CARD_TITLE, FOOTER, JobOptions, LABEL, NUM, ROW};
+use crate::components::form::{CARD, CARD_TITLE, FOOTER, JobOptions, LABEL, NUM, ROW};
 use crate::components::scheduler::resolve_completion_condition;
 use crate::components::sequence_editor::{SeqEnd, SeqFrame, SeqLimits, SequenceEditor, build_esq_xml, fmt_duration};
 use crate::components::sky::{derive_planner_mosaic_plan, fmt_dec, fmt_ra, mosaic_span_am};
@@ -271,9 +271,6 @@ pub fn MosaicTab(
                 <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Mosaic)></span>
                 <span class="min-w-0 truncate font-semibold text-text-blue-bright">{move || tr().mosaic_planner_title}</span>
             </div>
-
-            // Backend gate: nothing below works without Ekos (INDIGO backend).
-            {backend_notice()}
 
             // Cards — one column on phones, two from md.
             <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 md:pl-4 md:pr-6">
