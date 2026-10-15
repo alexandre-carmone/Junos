@@ -170,6 +170,12 @@
         # from the upstream tag in nix/indigo.nix.
         indigo = pkgs.callPackage ./nix/indigo.nix { };
 
+        # astrometry.net's solver tools (solve-field, image2xy), which
+        # INDIGO's Astrometry Agent shells out to for plate solving and polar
+        # alignment. Not in nixpkgs; nix/astrometry.nix builds the C solver
+        # stack only. The agent also needs `curl` to fetch its index files.
+        astrometry = pkgs.callPackage ./nix/astrometry.nix { };
+
         # ── Dev shell ───────────────────────────────────────────────────────
         devShell = pkgs.mkShell {
           packages = [
@@ -183,11 +189,17 @@
             pkgs.uv
             pkgs.just
             pkgs.cacert
+            pkgs.curl
             indigo
+            astrometry
           ];
 
           shellHook = ''
             export OPENSSL_NO_VENDOR=1
+            # The Astrometry Agent keeps its index files (and astrometry.cfg)
+            # under $INDIGO_CACHE_BASE/astrometry, else ~/.indigo/astrometry.
+            # .cache/ is gitignored.
+            export INDIGO_CACHE_BASE="$PWD/.cache/indigo"
             if [ -e junos-web/bin/tailwindcss ]; then
               echo "warning: junos-web/bin/tailwindcss exists — the Nix shell ships its own \`tailwindcss\` on PATH."
               echo "         Trunk's pre_build hook still calls bin/tailwindcss; either delete it or keep both in sync."
@@ -197,7 +209,7 @@
 
       in {
         packages = {
-          inherit junosWebDist junosServer indigo;
+          inherit junosWebDist junosServer indigo astrometry;
 
           # Default package: thin wrapper that bakes --dist-dir into the binary
           # so callers never have to pass it explicitly.

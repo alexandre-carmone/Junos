@@ -133,6 +133,15 @@ pub fn slew_rate_item(index: i64) -> &'static str {
     }
 }
 
+/// Whether the mount speaks J2000 (`MOUNT_EPOCH.EPOCH` ≠ 0) rather than the
+/// epoch of date. The simulator's default is 2000.
+pub fn epoch_j2000(store: &PropertyStore, device: &str) -> bool {
+    store
+        .get(device, "MOUNT_EPOCH")
+        .and_then(|p| p.number("EPOCH"))
+        .is_some_and(|e| e != 0.0)
+}
+
 /// `kstars/indi/indimount.h:39`: −1 unknown, 0 west, 1 east.
 fn pier_side(store: &PropertyStore, device: &str) -> i64 {
     match store.get(device, "MOUNT_SIDE_OF_PIER").and_then(Property::selected) {
@@ -160,11 +169,18 @@ pub fn site_latlon(store: &PropertyStore, mount: Option<&str>) -> Option<(f64, f
 /// counterparts, Az/Alt, HA (degrees), pier side, slew rate and status.
 pub fn full_payload(store: &PropertyStore, device: &str) -> Option<Value> {
     let eq = store.get(device, "MOUNT_EQUATORIAL_COORDINATES")?;
-    let ra_h = eq.number("RA")?;
-    let dec = eq.number("DEC")?;
-    let ra = ra_h * 15.0;
+    let raw_ra = eq.number("RA")? * 15.0;
+    let raw_dec = eq.number("DEC")?;
     let jd = astro::now_jd();
-    let (ra0, de0) = astro::jnow_to_j2000(ra, dec, jd);
+    // KStars' `ra`/`de` are JNow, `ra0`/`de0` J2000, whatever the mount speaks.
+    let (ra, dec, ra0, de0) = if epoch_j2000(store, device) {
+        let (ra, dec) = astro::j2000_to_jnow(raw_ra, raw_dec, jd);
+        (ra, dec, raw_ra, raw_dec)
+    } else {
+        let (ra0, de0) = astro::jnow_to_j2000(raw_ra, raw_dec, jd);
+        (raw_ra, raw_dec, ra0, de0)
+    };
+    let ra_h = ra / 15.0;
     let site = site_latlon(store, Some(device));
 
     // Hour angle, from the mount's own sidereal clock when it has one.
@@ -247,6 +263,19 @@ mod tests {
         assert_eq!(status(&s, "M"), "Parking");
         s.apply(parse_frame(r#"{"setSwitchVector":{"device":"M","name":"MOUNT_PARK","state":"Ok","items":[{"name":"PARKED","value":true}]}}"#).unwrap());
         assert_eq!(status(&s, "M"), "Parked");
+    }
+
+    #[test]
+    fn j2000_mount_is_reported_in_both_epochs() {
+        let mut s = store();
+        s.apply(parse_frame(r#"{"defNumberVector":{"device":"M","name":"MOUNT_EPOCH","perm":"rw","state":"Ok","items":[{"name":"EPOCH","value":2000}]}}"#).unwrap());
+        assert!(epoch_j2000(&s, "M"));
+        let p = full_payload(&s, "M").unwrap();
+        // The raw coordinates are J2000 now; JNow drifts away from them.
+        assert_eq!(p["ra0"], 90.0);
+        assert_eq!(p["de0"], 20.0);
+        let ra = p["ra"].as_f64().unwrap();
+        assert!((ra - 90.0).abs() < 1.0 && (ra - 90.0).abs() > 1e-4);
     }
 
     #[test]

@@ -6,19 +6,25 @@
 //! (`commands.rs`) and turns property changes into Ekos Live events
 //! (`events.rs`) — so the WASM client needs no second protocol.
 
+mod agents;
 mod alias;
+mod align;
 mod astro;
 mod commands;
 mod events;
+mod focus;
+mod guide;
 mod imaging;
 mod indi_shape;
+mod media;
 mod mount;
+mod process;
 mod protocol;
 mod roles;
 mod scansexa;
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -26,13 +32,12 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
-/// A fetched preview JPEG with its pixel size, from the BLOB task.
-type Preview = (Vec<u8>, (u32, u32));
-
 use crate::config::Config;
 use crate::hub::{connection_state_msg, Hub, CMD_CAP};
 
-use commands::{Ctx, Out};
+use agents::Agents;
+use commands::{Ctx, Modules, Out};
+use media::{Fetched, Source};
 use protocol::{Change, PropertyStore};
 use roles::Roles;
 
@@ -86,8 +91,9 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
         let mut store = PropertyStore::default();
         let mut roles = Roles::default();
         let mut mount_emitter = mount::MountEmitter::default();
-        let mut imaging = imaging::Imaging::default();
-        let (preview_tx, mut preview_rx) = mpsc::channel::<Preview>(4);
+        let mut modules = Modules::new(Instant::now());
+        let mut media = media::Media::default();
+        let (preview_tx, mut preview_rx) = mpsc::channel::<Fetched>(4);
         let http = reqwest::Client::new();
         let mut tick = tokio::time::interval(Duration::from_secs(1));
 
@@ -101,26 +107,20 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                                 continue;
                             };
                             let Some(change) = store.apply(frame) else { continue };
-                            // INDIGO devices come up disconnected and nothing
-                            // else will connect them: do what Ekos' profile
-                            // auto-connect does, as each one appears.
-                            if let Change::Defined { device, name } = &change {
-                                if name == "CONNECTION"
-                                    && !store.connected(device)
-                                    && store.interface(device) & protocol::interface::AGENT == 0
-                                {
-                                    let items = [("CONNECTED".to_string(), Value::Bool(true))];
-                                    let w = protocol::new_vector_msg(protocol::Kind::Switch, device, "CONNECTION", &items);
-                                    sink.send(Message::Text(w.into())).await?;
-                                }
-                            }
-                            let mut msgs = events::for_change(&change, &store);
-                            // A device appeared or vanished: the roles (and
-                            // so the train the browser binds to) may change.
-                            if matches!(change, Change::Defined { ref name, .. } if name == "INFO")
-                                || matches!(change, Change::Deleted { .. })
-                            {
-                                let new_roles = Roles::derive(&store);
+                            let now = Instant::now();
+                            let mut msgs = modules.agents.on_change(&change, &store, now);
+                            msgs.extend(events::for_change(&change, &store));
+                            // A device appeared or vanished, or an agent
+                            // (de)selected one: the roles (and so the train
+                            // the browser binds to) may change.
+                            let roles_touched = match &change {
+                                Change::Defined { name, .. } => name == "INFO" || name.starts_with("FILTER_"),
+                                Change::Updated { name, .. } => name.starts_with("FILTER_"),
+                                Change::Deleted { .. } => true,
+                                Change::Message { .. } => false,
+                            };
+                            if roles_touched {
+                                let new_roles = Roles::derive(&store, &modules.agents.set);
                                 if new_roles != roles {
                                     roles = new_roles;
                                     msgs.push(commands::reply_msg("train_get_all", roles.train_payload()));
@@ -130,15 +130,40 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                             if let Some(m) = roles.mount.as_deref() {
                                 msgs.extend(mount_emitter.on_change(&change, &store, m));
                             }
+                            // The modules: the camera for Imaging, the agents
+                            // for Focus / Guide / Align.
+                            let set = modules.agents.set.clone();
+                            let mut reactions = Vec::new();
                             if let Some(c) = roles.camera.as_deref() {
-                                let r = imaging.on_change(&change, &store, c);
+                                reactions.push((Source::Imaging, modules.imaging.on_change(&change, &store, c)));
+                            }
+                            if let Some(a) = set.imager.as_deref() {
+                                reactions.push((Source::Focus, modules.focus.on_change(&change, &store, a)));
+                            }
+                            if let Some(a) = set.guider.as_deref() {
+                                reactions.push((Source::Guide, modules.guide.on_change(&change, &store, a)));
+                            }
+                            if let Some(a) = set.astrometry.as_deref() {
+                                let rig = commands::rig(&modules.agents.set, &store, &roles);
+                                reactions.push((Source::Align, modules.align.on_change(&change, &store, a, &rig, now)));
+                            }
+                            for (source, r) in reactions {
                                 msgs.extend(r.to_browser);
                                 for w in r.to_indigo {
                                     sink.send(Message::Text(w.into())).await?;
                                 }
                                 if let Some(link) = r.fetch_preview {
-                                    spawn_preview_fetch(&http, &url, &link, preview_tx.clone());
+                                    spawn_preview_fetch(&http, &url, &link, source, preview_tx.clone());
                                 }
+                            }
+                            // Keep the agents' device lists filled and the
+                            // unclaimed devices connected.
+                            if Agents::relevant(&change) {
+                                let plan = modules.agents.plan(&store, &roles, now);
+                                for w in plan.to_indigo {
+                                    sink.send(Message::Text(w.into())).await?;
+                                }
+                                msgs.extend(plan.to_browser);
                             }
                             for msg in msgs {
                                 hub.capture(&msg).await;
@@ -168,7 +193,7 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                         indigo_host: &indigo_host,
                         indigo_port,
                     };
-                    for out in commands::handle(&cmd, &ctx, &mut imaging) {
+                    for out in commands::handle(&cmd, &ctx, &mut modules) {
                         match out {
                             Out::ToBrowser(msg) => {
                                 remember_site(hub, &msg).await;
@@ -181,19 +206,41 @@ async fn session(hub: &Hub, config: &Config) -> anyhow::Result<()> {
                 }
 
                 // A preview JPEG arrived from the BLOB fetch.
-                Some((jpeg, size)) = preview_rx.recv() => {
-                    let msg = imaging.preview_msg(&jpeg, size);
+                Some(fetched) = preview_rx.recv() => {
+                    let msg = media.preview_msg(&fetched);
                     hub.capture_preview(&msg).await;
                     let _ = hub.browser_tx.send(msg);
+                    let after = match fetched.source {
+                        Source::Align => modules.align.frame_delivered(fetched.size),
+                        Source::Focus => {
+                            modules.focus.frame_delivered(fetched.size);
+                            Vec::new()
+                        }
+                        _ => Vec::new(),
+                    };
+                    for msg in after {
+                        hub.capture(&msg).await;
+                        let _ = hub.browser_tx.send(msg);
+                    }
                 }
 
-                // Flush a throttled mount-coordinate update.
+                // Flush a throttled mount-coordinate update, and retry the
+                // agent selections that are waiting on a backoff.
                 _ = tick.tick() => {
                     if let Some(m) = roles.mount.as_deref() {
                         for msg in mount_emitter.tick(&store, m) {
                             hub.capture(&msg).await;
                             let _ = hub.browser_tx.send(msg);
                         }
+                    }
+                    let now = Instant::now();
+                    let plan = modules.agents.plan(&store, &roles, now);
+                    for w in plan.to_indigo {
+                        sink.send(Message::Text(w.into())).await?;
+                    }
+                    for msg in plan.to_browser.into_iter().chain(modules.align.tick(now)) {
+                        hub.capture(&msg).await;
+                        let _ = hub.browser_tx.send(msg);
                     }
                 }
             }
@@ -240,7 +287,7 @@ async fn remember_site(hub: &Hub, msg: &str) {
 /// Fetch a BLOB link over HTTP, off the session loop. INDIGO gives either a
 /// bare path (`/blob/0x….jpeg`) or an absolute URL; both resolve against the
 /// server we're connected to, on its HTTP side.
-fn spawn_preview_fetch(http: &reqwest::Client, indigo: &url::Url, link: &str, tx: mpsc::Sender<Preview>) {
+fn spawn_preview_fetch(http: &reqwest::Client, indigo: &url::Url, link: &str, source: Source, tx: mpsc::Sender<Fetched>) {
     let mut base = indigo.clone();
     let _ = base.set_scheme(if indigo.scheme() == "wss" { "https" } else { "http" });
     let Ok(target) = base.join(link) else {
@@ -261,6 +308,6 @@ fn spawn_preview_fetch(http: &reqwest::Client, indigo: &url::Url, link: &str, tx
             .ok()
             .and_then(|r| r.into_dimensions().ok())
             .unwrap_or((0, 0));
-        let _ = tx.send((bytes, size)).await;
+        let _ = tx.send(Fetched { source, jpeg: bytes, size }).await;
     });
 }

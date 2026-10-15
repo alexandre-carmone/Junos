@@ -32,7 +32,7 @@ use wasm_bindgen::{closure::Closure, JsCast};
 use crate::compat::{FilterWheelSnapshot, MountSnapshot, SolveSnapshot};
 use crate::components::coord_input::{CoordInput, CoordMode};
 use crate::components::form::{
-    check_row, setting_row, sheet, CARD, CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, SELECT,
+    backend_is_indigo, check_row, setting_row, sheet, CARD, CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, SELECT,
 };
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::dom::{event_target_checked, event_target_value};
@@ -435,6 +435,7 @@ pub fn MountTab(
         send_cmd(&s_solve, ty, json!({}));
     };
     let file_input: NodeRef<leptos::html::Input> = NodeRef::new();
+    let indigo = backend_is_indigo();
     let s_fits = send.clone();
     let on_file = move |ev: web_sys::Event| {
         let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) else { return };
@@ -734,10 +735,14 @@ pub fn MountTab(
                             })
                         }}
                         <div class="flex gap-2">
-                            <button class="btn btn-ghost h-11 flex-1"
-                                    on:click=move |_| if let Some(el) = file_input.get() { el.click() }>
-                                {move || tr().mount_solve_load_fits}
-                            </button>
+                            // A FITS upload needs KStars: INDIGO's JSON
+                            // protocol has no way to hand the solver a file.
+                            <Show when=move || !indigo()>
+                                <button class="btn btn-ghost h-11 flex-1"
+                                        on:click=move |_| if let Some(el) = file_input.get() { el.click() }>
+                                    {move || tr().mount_solve_load_fits}
+                                </button>
+                            </Show>
                             <button class=move || if solving() { "btn btn-danger h-11 flex-1" } else { "btn btn-primary h-11 flex-1" }
                                     on:click=on_solve>
                                 {move || if solving() { tr().mount_solve_stop } else { tr().mount_solve_capture }}

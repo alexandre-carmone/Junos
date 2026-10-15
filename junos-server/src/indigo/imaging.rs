@@ -5,13 +5,15 @@
 //! An exposure is driven straight on the camera driver — `CCD_UPLOAD_MODE`
 //! LOCAL into the captures dir (so the Files tab lists the frames),
 //! `CCD_PREVIEW` ENABLED so the driver also publishes a stretched JPEG
-//! (`CCD_PREVIEW_IMAGE`), which becomes the browser's `new_preview_image`.
+//! (`CCD_PREVIEW_IMAGE`), which becomes the browser's `new_preview_image`
+//! (`media.rs`).
 //! The capture queue (`capture_start`) is not covered: that is the Imager
 //! agent's job, a later phase.
 
 use serde_json::{json, Value};
 
 use super::commands::reply_msg;
+use super::process::Reaction;
 use super::protocol::{new_vector_msg, Change, Kind, PropertyStore, State};
 
 /// Ekos' one-shot form values.
@@ -36,16 +38,6 @@ pub struct Imaging {
     /// An exposure we started is in flight: the next preview is ours.
     armed: bool,
     last_exposure_state: Option<State>,
-    previews: u64,
-}
-
-/// What a camera property change asks the session to do.
-#[derive(Default)]
-pub struct Reaction {
-    pub to_browser: Vec<String>,
-    pub to_indigo: Vec<String>,
-    /// A preview JPEG to fetch (BLOB link as INDIGO gave it) and forward.
-    pub fetch_preview: Option<String>,
 }
 
 impl Imaging {
@@ -139,6 +131,11 @@ impl Imaging {
         out
     }
 
+    /// An exposure or a loop of ours is in flight.
+    pub fn is_active(&self) -> bool {
+        self.looping || self.armed
+    }
+
     pub fn stop(&mut self, camera: &str) -> Vec<String> {
         self.looping = false;
         self.armed = false;
@@ -196,7 +193,6 @@ impl Imaging {
                 let Some(p) = store.get(camera, name) else { return r };
                 if p.state == State::Ok && self.armed {
                     if let Some(url) = p.item("IMAGE").and_then(|i| i.blob_url()) {
-                        self.previews += 1;
                         r.fetch_preview = Some(url.to_string());
                         if self.looping {
                             r.to_indigo.push(self.expose(camera));
@@ -209,26 +205,6 @@ impl Imaging {
             _ => {}
         }
         r
-    }
-
-    /// The `new_preview_image` for a fetched JPEG, in the shape
-    /// `kstars_ws.rs::decode_media_frame` produces (inline base64, KStars'
-    /// media metadata). No raw statistics: the browser's histogram works on
-    /// the display axis only.
-    pub fn preview_msg(&self, jpeg: &[u8], (w, h): (u32, u32)) -> String {
-        use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-        reply_msg(
-            "new_preview_image",
-            json!({
-                "metadata": {
-                    "uuid": format!("+P{}", self.previews),
-                    "ext": "jpg",
-                    "resolution": format!("{w}x{h}"),
-                    "bpp": "8",
-                },
-                "data": BASE64.encode(jpeg),
-            }),
-        )
     }
 }
 
@@ -344,12 +320,6 @@ mod tests {
         assert_eq!(kinds(&im.stop("Cam")), ["newSwitchVector:CCD_ABORT_EXPOSURE"]);
         let r = im.on_change(&Change::Updated { device: "Cam".into(), name: "CCD_PREVIEW_IMAGE".into() }, &s, "Cam");
         assert!(r.fetch_preview.is_none() && r.to_indigo.is_empty());
-
-        let msg = im.preview_msg(b"\xff\xd8", (640, 480));
-        let v: Value = serde_json::from_str(&msg).unwrap();
-        assert_eq!(v["payload"]["metadata"]["resolution"], "640x480");
-        assert_eq!(v["payload"]["metadata"]["ext"], "jpg");
-        assert_eq!(v["payload"]["data"], "/9g=");
     }
 
     #[test]

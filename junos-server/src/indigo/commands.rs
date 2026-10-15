@@ -7,10 +7,16 @@
 //! `device_message` so the user sees why nothing happened — except the ones
 //! the client polls every few seconds, which are swallowed.
 
+use std::time::Instant;
+
 use serde_json::{json, Value};
 use tracing::debug;
 
+use super::agents::{AgentSet, Agents, Kind as AgentKind};
+use super::align::{Align, Rig};
 use super::alias;
+use super::focus::Focus;
+use super::guide::Guide;
 use super::imaging::Imaging;
 use super::mount;
 use super::protocol::{interface, new_vector_msg, Kind, PropertyStore};
@@ -33,6 +39,37 @@ pub enum Out {
     ToIndigo(String),
 }
 
+/// The per-session module state the commands act on.
+pub struct Modules {
+    pub imaging: Imaging,
+    pub focus: Focus,
+    pub guide: Guide,
+    pub align: Align,
+    pub agents: Agents,
+}
+
+impl Modules {
+    pub fn new(now: Instant) -> Self {
+        Self {
+            imaging: Imaging::default(),
+            focus: Focus::default(),
+            guide: Guide::new(),
+            align: Align::default(),
+            agents: Agents::new(now),
+        }
+    }
+}
+
+/// What a solve or a polar alignment needs besides the solver.
+pub fn rig<'a>(set: &AgentSet, store: &PropertyStore, roles: &'a Roles) -> Rig<'a> {
+    let holds = |agent: Option<&str>, list: &str| agent.is_some_and(|a| AgentSet::selected(store, a, list).is_some());
+    Rig {
+        mount_ready: holds(set.mount.as_deref(), "FILTER_MOUNT_LIST"),
+        camera_ready: holds(set.imager.as_deref(), "FILTER_CCD_LIST"),
+        mount: roles.mount.as_deref(),
+    }
+}
+
 /// The synthetic Ekos profile that stands in for "which INDIGO server".
 pub const PROFILE_NAME: &str = "INDIGO";
 
@@ -40,18 +77,14 @@ pub const PROFILE_NAME: &str = "INDIGO";
 /// `ws/retry.rs`). Unsupported ones are dropped silently rather than nagging.
 const POLLED: &[&str] = &[
     "get_states",
-    "focus_get_all_settings",
     "capture_get_sequences",
-    "align_get_all_settings",
-    "guide_get_all_settings",
     "scheduler_get_all_settings",
     "scheduler_get_jobs",
     "livestacker_get_all_settings",
-    "option_get",
     "get_drivers",
 ];
 
-pub fn handle(cmd: &Value, ctx: &Ctx, imaging: &mut Imaging) -> Vec<Out> {
+pub fn handle(cmd: &Value, ctx: &Ctx, m: &mut Modules) -> Vec<Out> {
     let Some(ty) = cmd.get("type").and_then(Value::as_str) else {
         return Vec::new();
     };
@@ -105,20 +138,15 @@ pub fn handle(cmd: &Value, ctx: &Ctx, imaging: &mut Imaging) -> Vec<Out> {
 
         // ── Session / profiles ───────────────────────────────────────────
         "get_profiles" => reply("get_profiles", profiles_payload(ctx)),
+        // Starting the profile fills the agents' device lists (which connects
+        // the devices) and connects the rest; stopping releases everything.
         "profile_start" | "profile_stop" => {
-            let connect = ty == "profile_start";
-            ctx.store
-                .device_names()
-                .filter(|d| ctx.store.interface(d) & interface::AGENT == 0)
-                .filter(|d| ctx.store.get(d, "CONNECTION").is_some())
-                .filter(|d| ctx.store.connected(d) != connect)
-                .map(|d| {
-                    let items = [
-                        ("CONNECTED".to_string(), json!(connect)),
-                        ("DISCONNECTED".to_string(), json!(!connect)),
-                    ];
-                    Out::ToIndigo(super::protocol::new_vector_msg(Kind::Switch, d, "CONNECTION", &items))
-                })
+            m.agents.set_active(ty == "profile_start");
+            let plan = m.agents.plan(ctx.store, ctx.roles, Instant::now());
+            plan.to_indigo
+                .into_iter()
+                .map(Out::ToIndigo)
+                .chain(plan.to_browser.into_iter().map(Out::ToBrowser))
                 .collect()
         }
         "file_default_path" => reply("file_default_path", json!(ctx.captures_dir)),
@@ -142,7 +170,7 @@ pub fn handle(cmd: &Value, ctx: &Ctx, imaging: &mut Imaging) -> Vec<Out> {
             let Some(device) = ctx.roles.mount.as_deref() else {
                 return reply("device_message", json!({ "device": PROFILE_NAME, "message": "No mount found on the INDIGO server" }));
             };
-            mount_command(ty, &payload, device)
+            mount_command(ty, &payload, device, ctx.store)
                 .into_iter()
                 .map(Out::ToIndigo)
                 .collect()
@@ -152,7 +180,7 @@ pub fn handle(cmd: &Value, ctx: &Ctx, imaging: &mut Imaging) -> Vec<Out> {
         // ── Imaging tab: one-shot preview / loop ─────────────────────────
         "capture_get_all_settings" => reply(
             "capture_get_all_settings",
-            imaging.settings_payload(ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref(), ctx.captures_dir),
+            m.imaging.settings_payload(ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref(), ctx.captures_dir),
         ),
         "capture_set_all_settings" => {
             let mut out: Vec<Out> = payload
@@ -160,14 +188,14 @@ pub fn handle(cmd: &Value, ctx: &Ctx, imaging: &mut Imaging) -> Vec<Out> {
                 .into_iter()
                 .flat_map(|m| m.iter())
                 .flat_map(|(k, v)| {
-                    imaging.apply_setting(k, v, ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref())
+                    m.imaging.apply_setting(k, v, ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref())
                 })
                 .map(Out::ToIndigo)
                 .collect();
             // Echo, as KStars does: the form pins an edit until it comes back.
             out.push(Out::ToBrowser(reply_msg(
                 "capture_get_all_settings",
-                imaging.settings_payload(ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref(), ctx.captures_dir),
+                m.imaging.settings_payload(ctx.store, ctx.roles.camera.as_deref(), ctx.roles.wheel.as_deref(), ctx.captures_dir),
             )));
             out
         }
@@ -175,12 +203,187 @@ pub fn handle(cmd: &Value, ctx: &Ctx, imaging: &mut Imaging) -> Vec<Out> {
             let Some(camera) = ctx.roles.camera.as_deref() else {
                 return reply("device_message", json!({ "device": PROFILE_NAME, "message": "No camera found on the INDIGO server" }));
             };
+            // The Imager Agent owns the camera while it focuses or frames.
+            if ty != "capture_stop" && m.agents.set.imager.as_deref().is_some_and(|a| AgentSet::busy(ctx.store, a)) {
+                return reply("device_message", json!({ "device": PROFILE_NAME, "message": "The camera is busy with the Focus tab" }));
+            }
             let writes = match ty {
-                "capture_stop" => imaging.stop(camera),
-                _ => imaging.start(ty == "capture_loop", camera, ctx.store, ctx.captures_dir),
+                "capture_stop" => m.imaging.stop(camera),
+                _ => m.imaging.start(ty == "capture_loop", camera, ctx.store, ctx.captures_dir),
             };
             writes.into_iter().map(Out::ToIndigo).collect()
         }
+
+        // ── Focus tab: the Imager Agent ──────────────────────────────────
+        "focus_get_all_settings" | "focus_set_all_settings" => {
+            let Some(agent) = m.agents.set.imager.clone() else {
+                return if ty == "focus_get_all_settings" { Vec::new() } else { vec![Out::ToBrowser(m.agents.missing_msg(AgentKind::Imager))] };
+            };
+            let mut out: Vec<Out> = payload
+                .as_object()
+                .filter(|_| ty == "focus_set_all_settings")
+                .into_iter()
+                .flat_map(|map| map.iter())
+                .flat_map(|(k, v)| m.focus.apply_setting(k, v, ctx.store, &agent))
+                .map(Out::ToIndigo)
+                .collect();
+            out.push(Out::ToBrowser(reply_msg("focus_get_all_settings", m.focus.settings_payload(ctx.store, &agent))));
+            out
+        }
+        "focus_start" | "focus_stop" | "focus_capture" | "focus_loop" | "focus_reset" | "focus_in" | "focus_out"
+        | "focus_set_crosshair" => {
+            let Some(agent) = m.agents.set.imager.clone() else {
+                return vec![Out::ToBrowser(m.agents.missing_msg(AgentKind::Imager))];
+            };
+            let busy_msg = || reply("device_message", json!({ "device": agent, "message": "The Imager Agent is busy" }));
+            let mut out = Vec::new();
+            let writes = match ty {
+                "focus_start" | "focus_capture" | "focus_loop" => {
+                    // The agent and a direct Imaging loop can't share the camera.
+                    if let Some(camera) = ctx.roles.camera.as_deref().filter(|_| m.imaging.is_active()) {
+                        out.extend(m.imaging.stop(camera).into_iter().map(Out::ToIndigo));
+                    }
+                    let w = match ty {
+                        "focus_start" => m.focus.start(ctx.store, &agent),
+                        _ => m.focus.preview(ctx.store, &agent, ty == "focus_loop"),
+                    };
+                    match w {
+                        Some(w) => w,
+                        None => return busy_msg(),
+                    }
+                }
+                "focus_stop" => m.focus.stop(&agent),
+                "focus_reset" => m.focus.reset(ctx.store, &agent),
+                "focus_in" | "focus_out" => {
+                    let steps = payload.get("steps").and_then(Value::as_f64).unwrap_or(0.0);
+                    m.focus.step(ctx.store, &agent, ty == "focus_in", steps)
+                }
+                _ => {
+                    let x = payload.get("x").and_then(Value::as_f64).unwrap_or(0.5);
+                    let y = payload.get("y").and_then(Value::as_f64).unwrap_or(0.5);
+                    m.focus.crosshair(ctx.store, &agent, x, y)
+                }
+            };
+            out.extend(writes.into_iter().map(Out::ToIndigo));
+            out
+        }
+
+        // ── Guide tab: the Guider Agent ──────────────────────────────────
+        "guide_get_all_settings" | "guide_set_all_settings" => {
+            let Some(agent) = m.agents.set.guider.clone() else {
+                return if ty == "guide_get_all_settings" { Vec::new() } else { vec![Out::ToBrowser(m.agents.missing_msg(AgentKind::Guider))] };
+            };
+            let mut out: Vec<Out> = payload
+                .as_object()
+                .filter(|_| ty == "guide_set_all_settings")
+                .into_iter()
+                .flat_map(|map| map.iter())
+                .flat_map(|(k, v)| m.guide.apply_setting(k, v, ctx.store, &agent))
+                .map(Out::ToIndigo)
+                .collect();
+            out.push(Out::ToBrowser(reply_msg("guide_get_all_settings", m.guide.settings_payload(ctx.store, &agent))));
+            out
+        }
+        "guide_set_calibration_settings" => {
+            let Some(agent) = m.agents.set.guider.clone() else {
+                return vec![Out::ToBrowser(m.agents.missing_msg(AgentKind::Guider))];
+            };
+            let mut out: Vec<Out> = m.guide.apply_calibration(&payload, ctx.store, &agent).into_iter().map(Out::ToIndigo).collect();
+            out.push(Out::ToBrowser(reply_msg("guide_get_all_settings", m.guide.settings_payload(ctx.store, &agent))));
+            out
+        }
+        "guide_start" | "guide_stop" | "guide_capture" | "guide_loop" | "guide_clear" => {
+            let Some(agent) = m.agents.set.guider.clone() else {
+                return vec![Out::ToBrowser(m.agents.missing_msg(AgentKind::Guider))];
+            };
+            if ctx.roles.guider.is_none() {
+                return reply("device_message", json!({ "device": agent, "message": "No guide camera: the Guider Agent has no camera selected" }));
+            }
+            let writes = match ty {
+                "guide_start" => m.guide.start(ctx.store, &agent),
+                "guide_capture" | "guide_loop" => m.guide.preview(ctx.store, &agent, ty == "guide_loop"),
+                "guide_stop" => Some(m.guide.stop(&agent)),
+                _ => Some(m.guide.clear_calibration(ctx.store, &agent)),
+            };
+            match writes {
+                Some(w) => w.into_iter().map(Out::ToIndigo).collect(),
+                None => reply("device_message", json!({ "device": agent, "message": "The Guider Agent is busy" })),
+            }
+        }
+        // Only the internal guider exists here.
+        "option_get" => reply("option_get", json!([{ "name": "GuiderType", "value": 0 }])),
+        "option_set" => {
+            let external = payload
+                .get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|o| o.get("name").and_then(Value::as_str) == Some("GuiderType") && o.get("value").and_then(Value::as_i64).unwrap_or(0) != 0);
+            if external {
+                reply("device_message", json!({ "device": PROFILE_NAME, "message": "Only the internal guider (the INDIGO Guider Agent) is available" }))
+            } else {
+                Vec::new()
+            }
+        }
+
+        // ── Align / Polar Align: the Astrometry Agent ────────────────────
+        "align_get_all_settings" | "align_set_all_settings" | "align_set_astrometry_settings" => {
+            let Some(agent) = m.agents.set.astrometry.clone() else {
+                return if ty == "align_get_all_settings" { Vec::new() } else { vec![Out::ToBrowser(m.agents.missing_msg(AgentKind::Astrometry))] };
+            };
+            let imager = m.agents.set.imager.clone();
+            let writes: Vec<String> = match ty {
+                "align_set_all_settings" => payload
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|map| map.iter())
+                    .flat_map(|(k, v)| m.align.apply_setting(k, v, ctx.store, &agent, imager.as_deref()))
+                    .collect(),
+                "align_set_astrometry_settings" => m.align.apply_astrometry(&payload, ctx.store, &agent),
+                _ => Vec::new(),
+            };
+            let mut out: Vec<Out> = writes.into_iter().map(Out::ToIndigo).collect();
+            out.push(Out::ToBrowser(reply_msg("align_get_all_settings", m.align.settings_payload(ctx.store, &agent, imager.as_deref()))));
+            out
+        }
+        "align_solve" | "align_stop" | "polar_start" | "polar_stop" | "polar_refresh" => {
+            let Some(agent) = m.agents.set.astrometry.clone() else {
+                return vec![Out::ToBrowser(m.agents.missing_msg(AgentKind::Astrometry))];
+            };
+            let fail = |why: String| reply("device_message", json!({ "device": agent, "message": why }));
+            match ty {
+                "align_stop" | "polar_stop" => m.align.stop(&agent).into_iter().map(Out::ToIndigo).collect(),
+                "align_solve" => {
+                    let rig = rig(&m.agents.set, ctx.store, ctx.roles);
+                    match m.align.solve(ctx.store, &agent, &rig) {
+                        Ok((writes, warning)) => {
+                            let mut out: Vec<Out> = writes.into_iter().map(Out::ToIndigo).collect();
+                            if let Some(w) = warning {
+                                out.push(Out::ToBrowser(reply_msg("device_message", json!({ "device": agent, "message": w }))));
+                            }
+                            out
+                        }
+                        Err(why) => fail(why),
+                    }
+                }
+                "polar_start" => {
+                    let rig = rig(&m.agents.set, ctx.store, ctx.roles);
+                    match m.align.polar_start(ctx.store, &agent, &rig) {
+                        Ok(writes) => writes.into_iter().map(Out::ToIndigo).collect(),
+                        Err(why) => fail(why),
+                    }
+                }
+                _ => {
+                    let exposure = payload.get("value").and_then(Value::as_f64);
+                    match m.align.polar_refresh(ctx.store, &agent, exposure) {
+                        Ok(writes) => writes.into_iter().map(Out::ToIndigo).collect(),
+                        Err(why) => fail(why),
+                    }
+                }
+            }
+        }
+        // The agent rotates the mount itself; nothing to acknowledge.
+        "polar_slew_done" | "polar_reset_view" => Vec::new(),
 
         other if POLLED.contains(&other) => Vec::new(),
         other => {
@@ -319,7 +522,7 @@ fn property_set(payload: &Value, store: &PropertyStore) -> Option<Out> {
 
 /// The Mount tab's commands as INDIGO writes (`components/mount.rs` for the
 /// payloads, `PROPERTIES.md` for the targets).
-fn mount_command(ty: &str, payload: &Value, device: &str) -> Vec<String> {
+fn mount_command(ty: &str, payload: &Value, device: &str, store: &PropertyStore) -> Vec<String> {
     let switch = |name: &str, items: &[(&str, bool)]| {
         let items: Vec<(String, Value)> = items.iter().map(|(n, v)| (n.to_string(), json!(v))).collect();
         new_vector_msg(Kind::Switch, device, name, &items)
@@ -356,9 +559,13 @@ fn mount_command(ty: &str, payload: &Value, device: &str) -> Vec<String> {
                 return Vec::new();
             };
             let mut ra = ra_h * 15.0;
-            // INDIGO mounts take epoch-of-date (MOUNT_EPOCH 0, the default).
-            if payload.get("isJ2000").and_then(Value::as_bool).unwrap_or(false) {
-                (ra, dec) = super::astro::j2000_to_jnow(ra, dec, super::astro::now_jd());
+            // The target goes out in the mount's epoch (`MOUNT_EPOCH`: 0 =
+            // epoch of date, else J2000 — the simulator's default).
+            let target_j2000 = payload.get("isJ2000").and_then(Value::as_bool).unwrap_or(false);
+            match (target_j2000, mount::epoch_j2000(store, device)) {
+                (true, false) => (ra, dec) = super::astro::j2000_to_jnow(ra, dec, super::astro::now_jd()),
+                (false, true) => (ra, dec) = super::astro::jnow_to_j2000(ra, dec, super::astro::now_jd()),
+                _ => {}
             }
             let mode = if ty == "mount_goto_rade" { "TRACK" } else { "SYNC" };
             vec![
@@ -396,12 +603,12 @@ mod tests {
     }
 
     fn ctx(store: &PropertyStore) -> Ctx<'_> {
-        let roles = Box::leak(Box::new(Roles::derive(store)));
+        let roles = Box::leak(Box::new(Roles::derive(store, &super::super::agents::AgentSet::default())));
         Ctx { store, roles, captures_dir: "/tmp/caps", indigo_host: "127.0.0.1", indigo_port: 7624 }
     }
 
     fn handle(cmd: &Value, ctx: &Ctx) -> Vec<Out> {
-        super::handle(cmd, ctx, &mut Imaging::default())
+        super::handle(cmd, ctx, &mut Modules::new(Instant::now()))
     }
 
     fn browser(outs: &[Out]) -> Vec<Value> {
@@ -485,8 +692,9 @@ mod tests {
         let i = indigo(&out);
         assert_eq!(i.len(), 1);
         assert_eq!(i[0]["newSwitchVector"]["device"], "Mount");
-        assert_eq!(i[0]["newSwitchVector"]["items"][0]["value"], false);
-        // Already connected: profile_start has nothing to do.
+        assert_eq!(i[0]["newSwitchVector"]["items"][0]["name"], "DISCONNECTED");
+        assert_eq!(i[0]["newSwitchVector"]["items"][0]["value"], true);
+        // Already connected (and no agents to fill): profile_start has nothing to do.
         assert!(handle(&json!({"type":"profile_start","payload":{}}), &ctx(&s)).is_empty());
     }
 
@@ -542,6 +750,15 @@ mod tests {
         assert_eq!(i[0]["newSwitchVector"]["items"][0]["name"], "SYNC");
         let ra = i[1]["newNumberVector"]["items"][0]["value"].as_f64().unwrap();
         assert!(ra > 6.0 && ra < 6.05, "{ra}");
+        // A J2000 mount takes a J2000 target as is and converts a JNow one.
+        let mut s2 = store();
+        s2.apply(parse_frame(r#"{"defNumberVector":{"device":"Mount","name":"MOUNT_EPOCH","perm":"rw","state":"Ok","items":[{"name":"EPOCH","value":2000}]}}"#).unwrap());
+        let c2 = ctx(&s2);
+        let i = indigo(&handle(&json!({"type":"mount_goto_rade","payload":{"ra":"06 00 00","de":"+20 00 00","isJ2000":true}}), &c2));
+        assert_eq!(i[1]["newNumberVector"]["items"][0]["value"], 6.0);
+        let i = indigo(&handle(&json!({"type":"mount_goto_rade","payload":{"ra":"06 00 00","de":"+20 00 00","isJ2000":false}}), &c2));
+        let ra = i[1]["newNumberVector"]["items"][0]["value"].as_f64().unwrap();
+        assert!(ra < 6.0 && ra > 5.95, "{ra}");
         let t = browser(&handle(&json!({"type":"train_get_all","payload":{}}), &c));
         assert_eq!(t[0]["payload"][0]["mount"], "Mount");
     }
@@ -550,6 +767,13 @@ mod tests {
     fn polled_commands_are_silent_and_others_explain() {
         let s = store();
         assert!(handle(&json!({"type":"scheduler_get_jobs","payload":{}}), &ctx(&s)).is_empty());
+        // No agents: the polled settings stay silent, the actions explain.
+        assert!(handle(&json!({"type":"focus_get_all_settings","payload":{}}), &ctx(&s)).is_empty());
+        let b = browser(&handle(&json!({"type":"focus_start","payload":{}}), &ctx(&s)));
+        assert_eq!(b[0]["type"], "device_message");
+        assert!(b[0]["payload"]["message"].as_str().unwrap().contains("Imager Agent"));
+        let b = browser(&handle(&json!({"type":"option_get","payload":{}}), &ctx(&s)));
+        assert_eq!(b[0]["payload"][0]["value"], 0);
         let b = browser(&handle(&json!({"type":"scheduler_start_job","payload":{}}), &ctx(&s)));
         assert_eq!(b[0]["type"], "device_message");
         assert!(b[0]["payload"]["message"].as_str().unwrap().contains("scheduler_start_job"));

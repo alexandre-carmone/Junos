@@ -10,7 +10,7 @@ use leptos::prelude::*;
 use serde_json::Value;
 use web_sys::PointerEvent;
 
-use crate::components::form::{CARD, CARD_TITLE, FOOTER};
+use crate::components::form::{backend_is_indigo, CARD, CARD_TITLE, FOOTER};
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
 
@@ -31,6 +31,10 @@ pub(super) fn viewer(s: Shared, files: Memo<Vec<Item>>, send: SendCmd, lang: RwS
     let tr = move || t(lang.get());
     let rel = Memo::new(move |_| s.selected.get().unwrap_or_default());
     let image = move || rel.with(|r| is_image_ext(ext_of(r)));
+    // Resolve & Slew uploads the file to KStars' solver; INDIGO's JSON
+    // protocol can't hand the Astrometry Agent a file.
+    let indigo = backend_is_indigo();
+    let can_slew = move || image() && !indigo();
     // Place in the list, for "3 / 42" and ‹ ›; None once filtered out.
     let pos = Memo::new(move |_| {
         rel.with(|r| files.with(|f| f.iter().position(|(x, _)| x == r).map(|i| (i, f.len()))))
@@ -193,7 +197,7 @@ pub(super) fn viewer(s: Shared, files: Memo<Vec<Item>>, send: SendCmd, lang: RwS
                    download="">
                     {move || tr().files_download}
                 </a>
-                <Show when=image>
+                <Show when=can_slew>
                     <button class="btn btn-primary h-11 px-5 font-semibold max-md:flex-1" on:click=on_slew.clone()>
                         {move || tr().files_resolve_slew}
                     </button>

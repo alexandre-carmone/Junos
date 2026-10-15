@@ -3,12 +3,17 @@
 //!
 //! Ekos keys everything on optical trains (`train_get_all`) and the browser
 //! binds each module to its train's device (`ws/mod.rs`). INDIGO has no such
-//! thing: the agents pick devices with `FILTER_*_LIST` switches. Until that is
-//! wired, one synthetic train is derived from the `INFO.DEVICE_INTERFACE`
-//! bits — first mount, first camera, …
+//! thing: the agents pick devices with `FILTER_*_LIST` switches. The roles
+//! follow those lists — what the Imager Agent holds is the camera, what the
+//! Mount Agent holds is the mount — and a list still at `NONE` gets a default
+//! pick from the `INFO.DEVICE_INTERFACE` bits, which `agents.rs` then writes
+//! into the list. Without agents the defaults are the roles.
+
+use std::collections::HashSet;
 
 use serde_json::{json, Value};
 
+use super::agents::{AgentSet, Kind};
 use super::protocol::{interface, PropertyStore};
 
 pub const TRAIN_NAME: &str = "INDIGO";
@@ -19,45 +24,92 @@ pub const SCOPE_NAME: &str = "INDIGO lens";
 pub struct Roles {
     pub mount: Option<String>,
     pub camera: Option<String>,
+    /// The guide camera (what Ekos' train calls the guider).
     pub guider: Option<String>,
+    /// The pulse-guiding output — an ST4 port or the mount's own.
+    pub guider_port: Option<String>,
     pub focuser: Option<String>,
     pub wheel: Option<String>,
 }
 
+/// How much a device name looks like a given role: the simulator driver
+/// ships "CCD Imager Simulator", "CCD Guider Simulator", "CCD Bahtinov Mask
+/// Simulator", "CCD File Simulator" and "DSLR Simulator", all cameras.
+fn camera_score(name: &str, guide: bool) -> i32 {
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("bahtinov") || lower.contains("file simulator") {
+        -3
+    } else if lower.contains("guid") {
+        if guide { 2 } else { -2 }
+    } else if lower.contains("dslr") {
+        -1
+    } else if lower.contains("imager") {
+        if guide { -1 } else { 1 }
+    } else {
+        0
+    }
+}
+
 impl Roles {
-    pub fn derive(store: &PropertyStore) -> Self {
+    pub fn derive(store: &PropertyStore, agents: &AgentSet) -> Self {
+        let held = agents.held(store);
         let devices: Vec<(&str, u32)> = store
             .device_names()
             .map(|d| (d, store.interface(d)))
             .filter(|(_, i)| i & interface::AGENT == 0)
+            .filter(|(d, _)| !held.contains(*d))
             .collect();
-        let first = |bit: u32| {
-            devices
+        let best = |filter: &dyn Fn(&str, u32) -> bool, score: &dyn Fn(&str) -> i32| -> Option<String> {
+            let mut candidates: Vec<(i32, usize, &str)> = devices
                 .iter()
-                .find(|(_, i)| i & bit != 0)
-                .map(|(d, _)| d.to_string())
+                .enumerate()
+                .filter(|(_, (d, i))| filter(d, *i))
+                .map(|(idx, (d, _))| (score(d), idx, *d))
+                .collect();
+            // Highest score, then definition order.
+            candidates.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            candidates.first().map(|(_, _, d)| d.to_string())
         };
-        let mount = first(interface::MOUNT);
-        let camera = first(interface::CCD);
-        // The guide camera: a second CCD, else a CCD that also guides.
-        let guider = devices
-            .iter()
-            .filter(|(_, i)| i & interface::CCD != 0)
-            .map(|(d, _)| d.to_string())
-            .find(|d| Some(d) != camera.as_ref())
-            .or_else(|| {
-                devices
-                    .iter()
-                    .find(|(_, i)| i & interface::GUIDER != 0 && i & interface::CCD != 0)
-                    .map(|(d, _)| d.to_string())
-            });
-        Self {
-            mount,
-            camera,
-            guider,
-            focuser: first(interface::FOCUSER),
-            wheel: first(interface::WHEEL),
-        }
+        let chosen = |kind: Kind, list: &str| agents.get(kind).and_then(|a| AgentSet::selected(store, a, list));
+
+        let mount = chosen(Kind::Mount, "FILTER_MOUNT_LIST")
+            .or_else(|| best(&|_, i| i & interface::MOUNT != 0, &|_| 0));
+        let camera = chosen(Kind::Imager, "FILTER_CCD_LIST")
+            .or_else(|| best(&|_, i| i & interface::CCD != 0, &|d| camera_score(d, false)));
+        let ccd_count = store
+            .device_names()
+            .filter(|d| store.interface(d) & interface::AGENT == 0 && store.interface(d) & interface::CCD != 0)
+            .count();
+        let guider = chosen(Kind::Guider, "FILTER_CCD_LIST").or_else(|| {
+            // Never the main camera: two agents can't share one device.
+            if ccd_count < 2 {
+                return None;
+            }
+            best(&|d, i| i & interface::CCD != 0 && Some(d) != camera.as_deref(), &|d| camera_score(d, true))
+        });
+        let prefix_score = |prefer: &Option<String>, d: &str| -> i32 {
+            prefer.as_deref().is_some_and(|p| d.starts_with(p)) as i32
+        };
+        let guider_port = chosen(Kind::Guider, "FILTER_GUIDER_LIST").or_else(|| {
+            best(
+                &|_, i| i & interface::GUIDER != 0 && i & (interface::CCD | interface::MOUNT) == 0,
+                &|d| 2 * prefix_score(&guider, d) + prefix_score(&mount, d),
+            )
+        });
+        let focuser = chosen(Kind::Imager, "FILTER_FOCUSER_LIST")
+            .or_else(|| best(&|_, i| i & interface::FOCUSER != 0, &|d| prefix_score(&camera, d)));
+        let wheel = chosen(Kind::Imager, "FILTER_WHEEL_LIST")
+            .or_else(|| best(&|_, i| i & interface::WHEEL != 0, &|d| prefix_score(&camera, d)));
+        Self { mount, camera, guider, guider_port, focuser, wheel }
+    }
+
+    /// Every device the roles name.
+    #[allow(dead_code)]
+    pub fn devices(&self) -> HashSet<&str> {
+        [&self.mount, &self.camera, &self.guider, &self.guider_port, &self.focuser, &self.wheel]
+            .into_iter()
+            .filter_map(|d| d.as_deref())
+            .collect()
     }
 
     /// `train_get_all`: one train. Empty slots are `"--"`, which the browser
@@ -137,12 +189,13 @@ mod tests {
         ] {
             store.apply(parse_frame(&f).unwrap());
         }
-        let r = Roles::derive(&store);
+        let r = Roles::derive(&store, &AgentSet::default());
         assert_eq!(r.mount.as_deref(), Some("Mount"));
         assert_eq!(r.camera.as_deref(), Some("Main Cam"));
         assert_eq!(r.guider.as_deref(), Some("Guide Cam"));
         assert_eq!(r.wheel.as_deref(), Some("Wheel"));
         assert_eq!(r.focuser, None);
+        assert_eq!(r.guider_port, None, "a GUIDER bit on a CCD or a mount is not a port");
         let t = r.train_payload();
         assert_eq!(t[0]["camera"], "Main Cam");
         assert_eq!(t[0]["focuser"], "--");
@@ -153,5 +206,61 @@ mod tests {
         assert_eq!(s[0]["name"], SCOPE_NAME);
         assert_eq!(s[0]["focal_length"], 400.0);
         assert_eq!(s[0]["aperture"], 80.0);
+    }
+
+    #[test]
+    fn simulator_roster_lands_on_the_right_devices() {
+        let mut store = PropertyStore::default();
+        for f in [
+            info("CCD Imager Simulator", interface::CCD),
+            info("CCD Guider Simulator", interface::CCD),
+            info("CCD Bahtinov Mask Simulator", interface::CCD),
+            info("DSLR Simulator", interface::CCD),
+            info("CCD File Simulator", interface::CCD),
+            info("CCD Imager Simulator (wheel)", interface::WHEEL),
+            info("CCD Imager Simulator (focuser)", interface::FOCUSER),
+            info("CCD Guider Simulator (guider)", interface::GUIDER),
+            info("CCD Guider Simulator (AO)", interface::AO),
+            info("Mount Simulator", interface::MOUNT | interface::GUIDER),
+            info("Mount Simulator (guider)", interface::GUIDER),
+        ] {
+            store.apply(parse_frame(&f).unwrap());
+        }
+        let r = Roles::derive(&store, &AgentSet::default());
+        assert_eq!(r.camera.as_deref(), Some("CCD Imager Simulator"));
+        assert_eq!(r.guider.as_deref(), Some("CCD Guider Simulator"));
+        assert_eq!(r.guider_port.as_deref(), Some("CCD Guider Simulator (guider)"));
+        assert_eq!(r.focuser.as_deref(), Some("CCD Imager Simulator (focuser)"));
+        assert_eq!(r.wheel.as_deref(), Some("CCD Imager Simulator (wheel)"));
+        assert_eq!(r.mount.as_deref(), Some("Mount Simulator"));
+    }
+
+    #[test]
+    fn lone_camera_has_no_guide_camera() {
+        let mut store = PropertyStore::default();
+        store.apply(parse_frame(&info("Cam", interface::CCD)).unwrap());
+        let r = Roles::derive(&store, &AgentSet::default());
+        assert_eq!(r.camera.as_deref(), Some("Cam"));
+        assert_eq!(r.guider, None);
+    }
+
+    #[test]
+    fn roles_follow_the_agents_selection() {
+        let mut store = PropertyStore::default();
+        for f in [
+            info("CCD Imager Simulator", interface::CCD),
+            info("CCD Guider Simulator", interface::CCD),
+            info("Imager Agent", interface::AGENT | interface::CCD),
+            r#"{"defNumberVector":{"device":"Imager Agent","name":"AGENT_IMAGER_BATCH","perm":"rw","state":"Ok","items":[{"name":"EXPOSURE","value":1}]}}"#.to_string(),
+            r#"{"defSwitchVector":{"device":"Imager Agent","name":"FILTER_CCD_LIST","perm":"rw","state":"Ok","items":[{"name":"NONE","value":false},{"name":"CCD Imager Simulator","value":false},{"name":"CCD Guider Simulator","value":true}]}}"#.to_string(),
+        ] {
+            store.apply(parse_frame(&f).unwrap());
+        }
+        let agents = AgentSet::discover(&store);
+        let r = Roles::derive(&store, &agents);
+        // The user pointed the imager at the guider camera: the camera role
+        // follows, and the guide camera falls back to the other CCD.
+        assert_eq!(r.camera.as_deref(), Some("CCD Guider Simulator"));
+        assert_eq!(r.guider.as_deref(), Some("CCD Imager Simulator"));
     }
 }

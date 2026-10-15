@@ -22,7 +22,6 @@ use wasm_bindgen::{closure::Closure, JsCast};
 use web_sys::{HtmlCanvasElement, CanvasRenderingContext2d, MouseEvent};
 
 use crate::compat::FocusSnapshot;
-use crate::components::form::backend_notice;
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
@@ -743,9 +742,6 @@ pub fn FocusTab(
                     <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
                 </button>
             </div>
-
-            // Backend gate: nothing below works without Ekos (INDIGO backend).
-            {backend_notice()}
 
             // Body — a column on phones, a 2×2 grid on md+ (frame | controls
             // over curve | controls).

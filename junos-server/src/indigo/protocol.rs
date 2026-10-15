@@ -151,6 +151,11 @@ pub struct Property {
     pub state: State,
     pub rule: Rule,
     pub items: Vec<Item>,
+    /// The text that accompanied the most recent `def`/`set` of this property
+    /// (`None` when that frame carried none). Agents narrate their processes
+    /// this way ("Focusing finished", "Solving failed"), so a module reading
+    /// it inside `on_change` sees exactly the current frame's message.
+    pub message: Option<String>,
 }
 
 impl Property {
@@ -253,6 +258,7 @@ pub fn parse_frame(text: &str) -> Option<Frame> {
             state: State::parse(body.get("state").and_then(Value::as_str).unwrap_or("Idle")),
             rule: Rule::parse(body.get("rule").and_then(Value::as_str).unwrap_or("OneOfMany")),
             items,
+            message,
         }));
     }
 
@@ -351,11 +357,12 @@ impl PropertyStore {
                 self.devices.entry(device.clone()).or_default().insert(name.clone(), p);
                 Some(Change::Defined { device, name })
             }
-            Frame::Set { device, name, state, items, message: _ } => {
+            Frame::Set { device, name, state, items, message } => {
                 let p = self.devices.get_mut(&device)?.get_mut(&name)?;
                 if let Some(s) = state {
                     p.state = s;
                 }
+                p.message = message;
                 for (item_name, value) in items {
                     if let Some(i) = p.items.iter_mut().find(|i| i.name == item_name) {
                         i.value = value;
@@ -410,6 +417,11 @@ pub mod interface {
     pub const GUIDER: u32 = 1 << 2;
     pub const FOCUSER: u32 = 1 << 3;
     pub const WHEEL: u32 = 1 << 4;
+    // Named for the test rigs (a dome, an AO: devices no role claims).
+    #[allow(dead_code)]
+    pub const DOME: u32 = 1 << 5;
+    #[allow(dead_code)]
+    pub const AO: u32 = 1 << 8;
     pub const AGENT: u32 = 1 << 14;
 }
 
@@ -450,6 +462,22 @@ mod tests {
         let mut store = PropertyStore::default();
         let set = r#"{"setSwitchVector":{"device":"X","name":"Y","state":"Ok","items":[]}}"#;
         assert_eq!(store.apply(parse_frame(set).unwrap()), None);
+    }
+
+    #[test]
+    fn set_message_is_kept_until_the_next_frame() {
+        let mut store = PropertyStore::default();
+        store.apply(parse_frame(DEF_SWITCH).unwrap());
+        assert_eq!(store.get("Server", "RESTART").unwrap().message, None);
+        let set = r#"{"setSwitchVector":{"device":"Server","name":"RESTART","state":"Busy","message":"Restarting","items":[]}}"#;
+        store.apply(parse_frame(set).unwrap());
+        assert_eq!(store.get("Server", "RESTART").unwrap().message.as_deref(), Some("Restarting"));
+        let set = r#"{"setSwitchVector":{"device":"Server","name":"RESTART","state":"Ok","items":[]}}"#;
+        store.apply(parse_frame(set).unwrap());
+        assert_eq!(store.get("Server", "RESTART").unwrap().message, None);
+        let def = r#"{"defNumberVector":{"device":"D","name":"P","perm":"ro","state":"Ok","message":"hello","items":[{"name":"X","value":1}]}}"#;
+        store.apply(parse_frame(def).unwrap());
+        assert_eq!(store.get("D", "P").unwrap().message.as_deref(), Some("hello"));
     }
 
     #[test]

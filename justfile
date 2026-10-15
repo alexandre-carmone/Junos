@@ -57,10 +57,14 @@ dev-server:
     cargo run -p junos-server
 
 # INDIGO backend. `dev-indigo` runs an indigo_server with the simulator
-# drivers (available inside `nix develop`, see flake.nix); `dev-server-indigo`
-# points the relay at it instead of waiting for KStars.
+# drivers and the agents the relay drives (Imager = focus, Guider = guide,
+# Astrometry = plate solve / polar align, Mount = the solver's sync path);
+# the relay loads a missing agent itself, listing them here just keeps the
+# server's own panel complete. Available inside `nix develop` (flake.nix);
+# `dev-server-indigo` points the relay at it instead of waiting for KStars.
 dev-indigo:
-    indigo_server -v indigo_ccd_simulator indigo_mount_simulator
+    indigo_server -v indigo_ccd_simulator indigo_mount_simulator \
+        indigo_agent_imager indigo_agent_guider indigo_agent_astrometry indigo_agent_mount
 
 dev-server-indigo:
     cargo run -p junos-server -- --backend indigo

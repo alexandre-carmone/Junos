@@ -73,8 +73,10 @@ struct ReplayCache {
     /// the coordinates (message.cpp emits `new_mount_state` from several sites
     /// with partial payloads).
     last_mount_coords: Option<String>,
-    /// Latest `new_preview_image` (decoded from a media frame).
-    last_preview: Option<String>,
+    /// Latest `new_preview_image` per tab — keyed by the uuid prefix the
+    /// browser routes on (`+F` focus, `+G` guide, `+A` align, else imaging),
+    /// so a reconnecting browser gets every tab's last frame back.
+    last_preview: HashMap<String, String>,
     /// Recent `new_guide_state` messages within `GUIDE_WINDOW`, in arrival order.
     guide_history: VecDeque<(Instant, String)>,
 }
@@ -145,10 +147,21 @@ impl ReplayCache {
             out.push(m.clone());
         }
         out.extend(self.guide_history.iter().map(|(_, m)| m.clone()));
-        if let Some(p) = &self.last_preview {
-            out.push(p.clone());
-        }
+        out.extend(self.last_preview.values().cloned());
         out
+    }
+
+    fn capture_preview(&mut self, msg: &str) {
+        let uuid = serde_json::from_str::<Value>(msg)
+            .ok()
+            .and_then(|v| v["payload"]["metadata"]["uuid"].as_str().map(str::to_string))
+            .unwrap_or_default();
+        let key = ["+F", "+G", "+A"]
+            .into_iter()
+            .find(|p| uuid.starts_with(p))
+            .unwrap_or("")
+            .to_string();
+        self.last_preview.insert(key, msg.to_string());
     }
 }
 
@@ -220,7 +233,7 @@ impl Hub {
 
     /// Record the latest decoded preview image for replay on browser connect.
     pub async fn capture_preview(&self, msg: &str) {
-        self.replay.lock().await.last_preview = Some(msg.to_string());
+        self.replay.lock().await.capture_preview(msg);
     }
 
     /// Ordered messages to replay to a newly-connected browser (last preview,
@@ -392,9 +405,24 @@ mod tests {
     }
 
     #[test]
+    fn one_preview_per_tab_is_replayed() {
+        let mut c = ReplayCache::default();
+        c.capture_preview(r#"{"type":"new_preview_image","payload":{"metadata":{"uuid":"+P1"}}}"#);
+        c.capture_preview(r#"{"type":"new_preview_image","payload":{"metadata":{"uuid":"+F1"}}}"#);
+        c.capture_preview(r#"{"type":"new_preview_image","payload":{"metadata":{"uuid":"+F2"}}}"#);
+        c.capture_preview(r#"{"type":"new_preview_image","payload":{"metadata":{"uuid":"+A7"}}}"#);
+        let snap = c.snapshot();
+        let previews: Vec<&String> = snap.iter().filter(|m| m.contains("new_preview_image")).collect();
+        assert_eq!(previews.len(), 3);
+        assert!(previews.iter().any(|m| m.contains("+P1")));
+        assert!(previews.iter().any(|m| m.contains("+F2")) && !previews.iter().any(|m| m.contains("+F1")));
+        assert!(previews.iter().any(|m| m.contains("+A7")));
+    }
+
+    #[test]
     fn preview_is_replayed_last() {
         let mut c = ReplayCache::default();
-        c.last_preview = Some(r#"{"type":"new_preview_image","payload":{}}"#.to_string());
+        c.capture_preview(r#"{"type":"new_preview_image","payload":{}}"#);
         c.capture(r#"{"type":"new_camera_state","payload":{}}"#);
         let snap = c.snapshot();
         assert_eq!(

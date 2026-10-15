@@ -1,5 +1,5 @@
 //! Lightweight star detector for the focus frames' star overlay
-//! (`kstars_ws.rs::detect_focus_stars`).
+//! (`annotate_focus_payload`, run on every "+F" preview by both backends).
 //!
 //! This is **not** a full SEP port — it is a pragmatic pipeline:
 //!   background (median + MAD) → threshold → connected-component labelling →
@@ -10,6 +10,8 @@
 //! distance from the centroid.
 
 use std::cmp::Ordering;
+
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone)]
 pub struct Star {
@@ -207,5 +209,60 @@ mod tests {
         plane[20 * w + 20] = 60000.0; // single hot pixel
         let stars = detect_stars(&plane, w, h, &DetectParams::default());
         assert!(stars.is_empty(), "single hot pixel must be rejected");
+    }
+}
+
+/// Decode a JPEG and detect its stars. Returns `(stars, width, height)` in
+/// JPEG pixel space, or `None` if the payload isn't a decodable JPEG.
+pub fn detect_in_jpeg(jpeg: &[u8]) -> Option<(Vec<Star>, u32, u32)> {
+    use image::ImageFormat;
+    let img = image::load_from_memory_with_format(jpeg, ImageFormat::Jpeg).ok()?;
+    let luma = img.to_luma8();
+    let (w, h) = luma.dimensions();
+    let plane: Vec<f32> = luma.iter().map(|&p| p as f32).collect();
+    let stars = detect_stars(&plane, w as usize, h as usize, &DetectParams::default());
+    Some((stars, w, h))
+}
+
+/// Width of the real (unscaled) frame, parsed from the `resolution` metadata
+/// field (`"WxH"`, KStars media.cpp:403). `None` when absent or malformed.
+fn frame_width(metadata: &Value) -> Option<f64> {
+    metadata
+        .get("resolution")
+        .and_then(Value::as_str)
+        .and_then(|r| r.split_once('x'))
+        .and_then(|(w, _)| w.trim().parse::<f64>().ok())
+}
+
+/// Add the star overlay (`stars`, `star_w`, `star_h`, `star_scale`) to a
+/// `new_preview_image` payload when it is a focus frame (`uuid` "+F", JPEG).
+/// Detection runs on the exact JPEG that gets displayed, so the coordinates
+/// map straight onto the preview image with no rescaling. Other frames are
+/// left untouched.
+pub fn annotate_focus_payload(payload: &mut Value, jpeg: &[u8], metadata: &Value) {
+    let uuid = metadata.get("uuid").and_then(Value::as_str).unwrap_or("");
+    let ext = metadata.get("ext").and_then(Value::as_str).unwrap_or("");
+    if !(uuid.starts_with("+F") && ext == "jpg") {
+        return;
+    }
+    let Some((stars, w, h)) = detect_in_jpeg(jpeg) else { return };
+    let arr: Vec<Value> = stars
+        .iter()
+        .map(|s| json!({ "x": s.x, "y": s.y, "hfr": s.hfr }))
+        .collect();
+    payload["stars"] = Value::Array(arr);
+    payload["star_w"] = json!(w);
+    payload["star_h"] = json!(h);
+    // KStars renders the focus view at a zoom-dependent scale and then caps
+    // it at HB_IMAGE_WIDTH/2 (media.cpp:454), so the HFR measured above is in
+    // preview pixels. This ratio converts it to the frame's own (binned
+    // sensor) pixels — the unit KStars publishes its own HFR in. It is an
+    // arbitrary positive real, not 1 or 2, and can be < 1; the client decides
+    // whether to trust it.
+    if let Some(scale) = frame_width(metadata)
+        .filter(|fw| *fw > 0.0 && w > 0)
+        .map(|fw| fw / w as f64)
+    {
+        payload["star_scale"] = json!(scale);
     }
 }
