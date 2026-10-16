@@ -1178,6 +1178,8 @@
   "guide_export_log": "Export log",
   "guide_btn_start": "▶ Guider",
   "guide_btn_stop": "■ Arrêter",
+  "guide_connect_phd2": "Connecter PHD2",
+  "guide_phd2_already_connected": "PHD2 est déjà connecté",
   "guide_drift_title": "Dérive",
   "guide_target_title": "Cible",
   "guide_no_drift": "La dérive s'affiche pendant le guidage",

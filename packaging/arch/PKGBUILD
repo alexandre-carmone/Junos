@@ -15,6 +15,7 @@ license=('GPL3')
 # image doesn't enable lto, which is why the aarch64 package built fine.
 options=('!lto')
 depends=('glibc')
+optdepends=('dbus: Connect PHD2 button in the Guide tab (dbus-send to KStars)')
 # rustup provides cargo + the wasm32-unknown-unknown target. That target's std is
 # architecture-independent and rustup fetches it, so this works identically on
 # x86_64 and aarch64 — Arch Linux ARM has NO `rust-wasm` package and its `rust`

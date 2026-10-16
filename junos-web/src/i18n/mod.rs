@@ -199,7 +199,7 @@ translations! {
     // Guide tab — new actions (refresh, bulk-save, log export)
     guide_refresh_settings, guide_save_calibration, guide_export_log,
     // Guide tab — redesigned layout
-    guide_btn_start, guide_btn_stop, guide_drift_title, guide_target_title, guide_no_drift, guide_total,
+    guide_btn_start, guide_btn_stop, guide_connect_phd2, guide_phd2_already_connected, guide_drift_title, guide_target_title, guide_no_drift, guide_total,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
     // Rig (optical-train) manager — section in the Profiles tab

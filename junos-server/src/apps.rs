@@ -15,6 +15,13 @@
 //!   and polkit decide (fine from a desktop session; a system unit needs a
 //!   polkit rule and AF_UNIX, see `nix/module.nix` and `packaging/`). KStars
 //!   is not stopped first — systemd takes the session down with the host.
+//! - **External guider**: `POST /api/apps/guider {"action": "connect"|"disconnect"}`
+//!   — calls KStars' D-Bus `connectGuider` / `disconnectGuider` on
+//!   `/KStars/Ekos/Guide` through `dbus-send` (the Guide module's Connect /
+//!   Disconnect buttons for PHD2 and LinGuider: Ekos Live has no command for
+//!   them, and `option_set GuiderType` changes nothing live). Same host as
+//!   KStars and its session bus, like the cover script in
+//!   `sequence_editor/cover.rs`.
 //!
 //! ## Initial state
 //!
@@ -333,6 +340,70 @@ async fn host_power(action: &str) -> Result<(), String> {
     } else {
         stderr
     })
+}
+
+#[derive(Deserialize)]
+pub struct GuiderRequest {
+    pub action: String,
+}
+
+/// `POST /api/apps/guider {"action": "connect"|"disconnect"}` — KStars'
+/// `Guide::connectGuider` / `disconnectGuider` over the session D-Bus. Always
+/// HTTP 200 with `{ok, accepted, error}`: `accepted` is the method's return —
+/// `PHD2::Connect` answers false when it is already connected or still
+/// disconnecting (guide.cpp:3429, phd2.cpp:195). A missing KStars, a Guide
+/// module not yet created (Ekos not started) or no session bus come back in
+/// `error` as dbus-send reports them.
+pub async fn guider_handler(
+    State(_state): State<AppState>,
+    Json(body): Json<GuiderRequest>,
+) -> Json<serde_json::Value> {
+    let action = body.action.to_lowercase();
+    match guider_dbus(&action).await {
+        Ok(accepted) => Json(serde_json::json!({ "ok": true, "accepted": accepted })),
+        Err(e) => {
+            warn!("apps/guider error: {e}");
+            Json(serde_json::json!({ "ok": false, "error": e }))
+        }
+    }
+}
+
+async fn guider_dbus(action: &str) -> Result<bool, String> {
+    let method = match action {
+        "connect" => "connectGuider",
+        "disconnect" => "disconnectGuider",
+        _ => return Err(format!("unknown action: {action}")),
+    };
+    let output = Command::new("dbus-send")
+        .args([
+            "--session",
+            "--print-reply",
+            "--reply-timeout=10000",
+            "--dest=org.kde.kstars",
+            "/KStars/Ekos/Guide",
+            &format!("org.kde.kstars.Ekos.Guide.{method}"),
+        ])
+        .output()
+        .await
+        .map_err(|e| format!("failed to run dbus-send: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        // The two expected refusals, in plain words; anything else verbatim.
+        return Err(if stderr.contains("ServiceUnknown") {
+            "KStars is not running".to_string()
+        } else if stderr.contains("UnknownObject") {
+            "Ekos is not started".to_string()
+        } else if stderr.is_empty() {
+            format!("dbus-send exited with {}", output.status)
+        } else {
+            stderr
+        });
+    }
+    // Reply body: `   boolean true` on its own line after the header.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let accepted = stdout.lines().any(|l| l.trim() == "boolean true");
+    info!("apps: guider {action} requested (accepted: {accepted})");
+    Ok(accepted)
 }
 
 async fn push_status(state: &AppState) {

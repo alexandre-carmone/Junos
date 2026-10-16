@@ -1088,6 +1088,8 @@
   "guide_export_log": "Export log",
   "guide_btn_start": "▶ Guide",
   "guide_btn_stop": "■ Stop",
+  "guide_connect_phd2": "Connect PHD2",
+  "guide_phd2_already_connected": "PHD2 is already connected",
   "guide_drift_title": "Drift",
   "guide_target_title": "Target",
   "guide_no_drift": "Drift appears here while guiding",

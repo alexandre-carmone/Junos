@@ -31,6 +31,15 @@
 //! `processGuideCommands` — silently dropped. The log export is therefore
 //! client-side: a Blob of `GuideSnapshot.log`.
 //!
+//! HTTP: `POST /api/apps/guider {action: connect}` — the Connect PHD2 button.
+//! Ekos Live has no equivalent of the Guide module's Connect button, and
+//! `option_set GuiderType` only writes the option (`Guide::processGuideOptions`
+//! is never called), so junos-server calls KStars' D-Bus `connectGuider`
+//! instead (apps.rs). KStars gives up reconnecting after a few attempts
+//! (phd2.cpp `PHD2_RECONNECT_THRESHOLD`), so a PHD2 launched after Ekos
+//! needs this. The outcome arrives as guide log lines ("Connecting to PHD2
+//! Host…", "External guider connected."); only a refusal needs the reply.
+//!
 //! Deliberately NOT wired: dither-now / suspend / resume (not exposed over
 //! Ekos Live at all — they are DBUS/Q_SCRIPTABLE only in KStars).
 
@@ -167,6 +176,42 @@ pub fn GuideTab(
     let on_loop = move |_| send_cmd(&s_loop, "guide_loop", serde_json::json!({}));
     let send_settings = send.clone();
 
+    // Connect PHD2: HTTP to the server's D-Bus bridge. `note` is the reply
+    // worth showing — a refusal (red) or "already connected" (muted) — in the
+    // footer's log slot; the next guide log line replaces it.
+    let connecting = RwSignal::new(false);
+    let note = RwSignal::new(None::<(String, bool)>);
+    Effect::new(move |prev: Option<String>| {
+        let now = latest();
+        if prev.is_some_and(|p| p != now) { note.set(None); }
+        now
+    });
+    let on_connect = move |_| {
+        note.set(None);
+        connecting.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = async {
+                let resp = gloo_net::http::Request::post("/api/apps/guider")
+                    .json(&serde_json::json!({ "action": "connect" })).map_err(|e| e.to_string())?
+                    .send().await.map_err(|e| e.to_string())?;
+                if !resp.ok() {
+                    return Err(format!("HTTP {}", resp.status()));
+                }
+                let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+                match body["ok"].as_bool() {
+                    Some(true) => Ok(body["accepted"].as_bool().unwrap_or(true)),
+                    _ => Err(body["error"].as_str().unwrap_or("unknown error").to_string()),
+                }
+            }.await;
+            connecting.set(false);
+            match result {
+                Ok(true) => {}
+                Ok(false) => note.set(Some((tr().guide_phd2_already_connected.to_string(), false))),
+                Err(e) => note.set(Some((e, true))),
+            }
+        });
+    };
+
     let stat = move |label: String, value: Option<f64>| view! {
         <div class="min-w-0 rounded-lg bg-bg-elev-2 border border-border-base px-2.5 py-1.5 flex flex-col">
             <span class="text-xs uppercase tracking-[0.06em] text-text-muted truncate">{label}</span>
@@ -243,12 +288,34 @@ pub fn GuideTab(
                 </div>
             </div>
 
-            // Footer: latest log line (md+), Capture / Loop (internal guider),
+            // Footer: latest log line (md+) or the Connect PHD2 reply,
+            // Capture / Loop (internal guider), Connect PHD2 (PHD2),
             // Guide / Stop.
             <div class=format!("{FOOTER} md:pl-4 md:pr-6")>
-                <span class="max-md:hidden flex-1 min-w-0 truncate font-mono text-xs text-text-muted" title=latest>
-                    {latest}
-                </span>
+                {move || match note.get() {
+                    Some((text, is_err)) => {
+                        let title = text.clone();
+                        view! {
+                            <span class=format!("flex-1 min-w-0 truncate text-xs {}",
+                                                if is_err { "text-state-err" } else { "text-text-muted" })
+                                  title=title>
+                                {text}
+                            </span>
+                        }.into_any()
+                    }
+                    None => view! {
+                        <span class="max-md:hidden flex-1 min-w-0 truncate font-mono text-xs text-text-muted" title=latest>
+                            {latest}
+                        </span>
+                    }.into_any(),
+                }}
+                <Show when=move || guider.get() == 1>
+                    <button class="btn btn-ghost h-11 px-4 max-md:flex-1"
+                            disabled=move || connecting.get() || !idle()
+                            on:click=on_connect.clone()>
+                        {move || tr().guide_connect_phd2}
+                    </button>
+                </Show>
                 <Show when=move || guider.get() == 0>
                     <button class="btn btn-ghost h-11 px-4 max-md:flex-1" disabled=move || !idle() on:click=on_capture.clone()>
                         {move || tr().guide_capture}

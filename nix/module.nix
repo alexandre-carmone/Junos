@@ -393,7 +393,9 @@ in
         # User units are installed for every account; only run for `user`.
         unitConfig.ConditionUser = cfg.user;
 
-        path = cfg.apps.packages;
+        # dbus-send: the Guide tab's Connect PHD2 button (/api/apps/guider)
+        # calls KStars' D-Bus API.
+        path = cfg.apps.packages ++ [ pkgs.dbus ];
 
         serviceConfig = {
           ExecStart = execStart;
