@@ -126,7 +126,9 @@ The flake exposes a module:
 The module's `httpAddr` and `httpsAddr` default to **`127.0.0.1`** (unlike the
 bare binary, which binds `0.0.0.0`), so for LAN access set both explicitly in
 addition to `openFirewall = true`. `nix run github:alexandre-carmone/Junos`
-starts the server without installing anything.
+starts the server without installing anything. `hostPower.enable = true` (with
+`user` set) lets the Profiles tab's Power off / Reboot buttons act: it adds the
+polkit rule logind requires and opens AF_UNIX on the system unit.
 
 ### From source
 
@@ -329,7 +331,7 @@ All Ekos Live semantics live in the WASM client. Beyond the relay, the server
 adds a handful of local HTTP APIs the browser cannot do on its own: the
 captures-folder browser (`/api/files/*`), FITS thumbnailing, star detection
 on focus frames, the offline DSO tile cache (`/api/dso_tiles/*`), and
-launching KStars or PHD2 on the host (`/api/apps/*`).
+launching KStars or PHD2 on the host, or powering it off (`/api/apps/*`).
 
 ## Repository layout
 

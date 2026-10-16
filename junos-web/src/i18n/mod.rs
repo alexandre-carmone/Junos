@@ -162,6 +162,7 @@ translations! {
     sched_alt_title, sched_alt_hint, sched_alt_peak, sched_alt_below, sched_alt_dawn, sched_alt_no_slot, sched_alt_moon,
     sched_alt_ref, sched_alt_ref_end, sched_alt_ref_auto, sched_alt_ref_time, sched_alt_ref_note,
     apps_section, apps_kstars, apps_phd2, apps_launch, apps_stop, apps_running, apps_stopped,
+    apps_host, apps_poweroff, apps_reboot, apps_confirm_poweroff, apps_confirm_reboot, apps_poweroff_sent, apps_reboot_sent,
     // Files tab v2 — browser controls, file actions, livestacker extras.
     files_sort_name, files_sort_date, files_sort_size, files_sort_asc, files_sort_desc, files_filter_all,
     files_filter_images, files_filter_fits, files_filter_jpg, files_filter_placeholder, files_refresh, files_download,

@@ -97,6 +97,16 @@ The service runs as the `astronaut` user with
 into `/var/lib/junos-web/.certs/` on first start. It is not a `DynamicUser` —
 a random UID cannot enter a `0700` home dir, and the Files tab needs to.
 
+### Power off / Reboot from the browser
+
+The Profiles tab's Computer row runs `systemctl poweroff` / `reboot` in
+junos-server, as `astronaut`. The package installs
+`/usr/share/polkit-1/rules.d/50-junos-web-power.rules`, which lets that user
+through logind's polkit check, and the unit allows `AF_UNIX` for the system
+D-Bus socket. If you changed `User=`, edit the user name in the rule; delete
+the rule (or drop `AF_UNIX` from `RestrictAddressFamilies`) to forbid it — the
+buttons then show polkit's refusal instead of acting.
+
 ### LAN access / firewall
 
 Both ports bind `0.0.0.0`. If a firewall is active, open them:

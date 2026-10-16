@@ -179,6 +179,7 @@ pub fn ProfilesTab(
                             <span class=CARD_TITLE>{move || tr().apps_section}</span>
                             {app_row(move || tr().apps_kstars, "kstars", kstars_running, lang)}
                             {app_row(move || tr().apps_phd2, "phd2", phd2_running, lang)}
+                            {power_row(lang)}
                         </div>
 
                         <div class=CARD>
@@ -327,6 +328,63 @@ fn app_row(
             <button class=move || if running.get() { format!("{ACTION} btn-danger") } else { format!("{ACTION} btn-primary") }
                     on:click=toggle>
                 {move || if running.get() { tr().apps_stop } else { tr().apps_launch }}
+            </button>
+        </div>
+        {move || error.get().map(|e| view! { <div class="text-xs text-state-err break-words">{e}</div> })}
+    }
+}
+
+/// The host itself: Reboot / Power off through `/api/apps/power`, each behind
+/// a confirm. Nothing comes back over `/ws` — the socket drops with the host —
+/// so a sent action is remembered locally and only a failure needs the reply.
+fn power_row(lang: RwSignal<Lang>) -> impl IntoView {
+    const BTN: &str = "btn h-10 md:h-9 px-3 shrink-0";
+    let tr = move || t(lang.get());
+    let error = RwSignal::new(None::<String>);
+    let pending = RwSignal::new(false);
+    let sent = RwSignal::new(None::<&'static str>);
+    let request = move |action: &'static str| {
+        let message = if action == "reboot" { tr().apps_confirm_reboot } else { tr().apps_confirm_poweroff };
+        if !confirm(message) {
+            return;
+        }
+        error.set(None);
+        pending.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = async {
+                let resp = gloo_net::http::Request::post("/api/apps/power")
+                    .json(&json!({ "action": action })).map_err(|e| e.to_string())?
+                    .send().await.map_err(|e| e.to_string())?;
+                if !resp.ok() {
+                    return Err(format!("HTTP {}", resp.status()));
+                }
+                let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+                match body["ok"].as_bool() {
+                    Some(true) => Ok(()),
+                    _ => Err(body["error"].as_str().unwrap_or("unknown error").to_string()),
+                }
+            }.await;
+            pending.set(false);
+            match result {
+                Ok(()) => sent.set(Some(action)),
+                Err(e) => error.set(Some(e)),
+            }
+        });
+    };
+    let busy = move || pending.get() || sent.get().is_some();
+    view! {
+        <div class=ROW>
+            <span class=format!("{LABEL} flex-1")>{move || tr().apps_host}</span>
+            <span class="text-xs text-text-muted">
+                {move || sent.get().map(|a| if a == "reboot" { tr().apps_reboot_sent } else { tr().apps_poweroff_sent })}
+            </span>
+            <button class=format!("{BTN} btn-ghost") disabled=busy
+                    on:click=move |_| request("reboot")>
+                {move || tr().apps_reboot}
+            </button>
+            <button class=format!("{BTN} btn-danger") disabled=busy
+                    on:click=move |_| request("poweroff")>
+                {move || tr().apps_poweroff}
             </button>
         </div>
         {move || error.get().map(|e| view! { <div class="text-xs text-state-err break-words">{e}</div> })}

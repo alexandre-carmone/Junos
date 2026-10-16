@@ -25,7 +25,8 @@ depends=('glibc')
 makedepends=('rustup' 'trunk')
 _twver=3.4.17
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz"
-        "junos-web.service")
+        "junos-web.service"
+        "50-junos-web-power.rules")
 source_x86_64=("tailwindcss-$pkgver-x86_64::https://github.com/tailwindlabs/tailwindcss/releases/download/v$_twver/tailwindcss-linux-x64")
 source_aarch64=("tailwindcss-$pkgver-aarch64::https://github.com/tailwindlabs/tailwindcss/releases/download/v$_twver/tailwindcss-linux-arm64")
 sha256sums=('SKIP'
@@ -70,4 +71,8 @@ package() {
 
   install -Dm644 "$srcdir/junos-web.service" \
     "$pkgdir/usr/lib/systemd/system/junos-web.service"
+
+  # Lets the service user power off / reboot the host from the Profiles tab.
+  install -Dm644 "$srcdir/50-junos-web-power.rules" \
+    "$pkgdir/usr/share/polkit-1/rules.d/50-junos-web-power.rules"
 }

@@ -209,6 +209,15 @@ in
       };
     };
 
+    hostPower.enable = mkEnableOption ''
+      the Profiles tab's Power off / Reboot buttons. junos-server runs
+      `systemctl poweroff` / `systemctl reboot` as its own user, which logind
+      only grants with polkit's consent: this adds a polkit rule letting
+      `user` power off and reboot (also when other sessions are open) and,
+      for the hardened system unit, allows AF_UNIX so it can reach the
+      system D-Bus socket. Without it the buttons report polkit's refusal.
+      Requires `user` — a DynamicUser has no name for the rule to match'';
+
     group = mkOption {
       type = types.nullOr types.str;
       default = null;
@@ -288,12 +297,35 @@ in
           assertion = cfg.apps.enable -> cfg.user != null;
           message = "services.junos-web: apps.enable runs the server in a user's graphical session, so services.junos-web.user must be set.";
         }
+        {
+          assertion = cfg.hostPower.enable -> cfg.user != null;
+          message = "services.junos-web: hostPower.enable needs a polkit rule for a named user, so services.junos-web.user must be set.";
+        }
       ];
 
       networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall (
         [ (portOf cfg.httpAddr) ]
         ++ optional cfg.enableHttps (portOf cfg.httpsAddr)
       );
+
+      # `systemctl poweroff` from an unprivileged user asks logind, which asks
+      # polkit. The `-multiple-sessions` ids are the ones that prompt when
+      # someone else is logged in; a system unit has no session at all and
+      # needs this rule for the plain ids too.
+      security.polkit = mkIf cfg.hostPower.enable {
+        enable = true;
+        extraConfig = ''
+          polkit.addRule(function(action, subject) {
+            if (subject.user == "${toString cfg.user}" &&
+                (action.id == "org.freedesktop.login1.power-off" ||
+                 action.id == "org.freedesktop.login1.power-off-multiple-sessions" ||
+                 action.id == "org.freedesktop.login1.reboot" ||
+                 action.id == "org.freedesktop.login1.reboot-multiple-sessions")) {
+              return polkit.Result.YES;
+            }
+          });
+        '';
+      };
     }
 
     (mkIf (!cfg.apps.enable) {
@@ -339,7 +371,9 @@ in
             ProtectSystem = "strict";
             ProtectHome = if anyUnderHome then "tmpfs" else true;
             NoNewPrivileges = true;
-            RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+            # AF_UNIX only for hostPower: the system D-Bus socket behind
+            # `systemctl poweroff` / `reboot`.
+            RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ] ++ optional cfg.hostPower.enable "AF_UNIX";
           }
           // optionalAttrs (cfg.user  != null) { User  = cfg.user;  }
           // optionalAttrs (cfg.group != null) { Group = cfg.group; };

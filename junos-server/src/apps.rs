@@ -10,13 +10,18 @@
 //! - **Monitor**: a background task polls every 2 s; when a process that was
 //!   running exits (whether by our stop or externally), it broadcasts an
 //!   `app_state` message to all browsers.
+//! - **Host power**: `POST /api/apps/power {"action": "poweroff"|"reboot"}` —
+//!   runs `systemctl <action>` as the server's own user, nothing more: logind
+//!   and polkit decide (fine from a desktop session; a system unit needs a
+//!   polkit rule and AF_UNIX, see `nix/module.nix` and `packaging/`). KStars
+//!   is not stopped first — systemd takes the session down with the host.
 //!
 //! ## Initial state
 //!
 //! On startup `AppManager::scan_existing()` walks `/proc/*/comm` to detect
 //! already-running instances.  Such processes are tracked as "external" (no
-//! `Child` handle); the Stop button will still work via `/proc/<pid>/…` —
-//! we use `nix::sys::signal` rather than `Child::kill` in that path.
+//! `Child` handle); the Stop button still works for those via `libc::kill`
+//! rather than `Child::kill`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -284,6 +289,50 @@ pub async fn state_handler(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
     Json(state.app_manager.status_json().await)
+}
+
+#[derive(Deserialize)]
+pub struct PowerRequest {
+    pub action: String,
+}
+
+/// `POST /api/apps/power {"action": "poweroff"|"reboot"}` — hands the action
+/// to `systemctl`. Always HTTP 200 with `{ok, error}`, like the other two
+/// handlers; a polkit refusal ("Interactive authentication required") comes
+/// back in `error` so the Profiles tab can show it.
+pub async fn power_handler(
+    State(_state): State<AppState>,
+    Json(body): Json<PowerRequest>,
+) -> Json<serde_json::Value> {
+    let action = body.action.to_lowercase();
+    match host_power(&action).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })),
+        Err(e) => {
+            warn!("apps/power error: {e}");
+            Json(serde_json::json!({ "ok": false, "error": e }))
+        }
+    }
+}
+
+async fn host_power(action: &str) -> Result<(), String> {
+    if !matches!(action, "poweroff" | "reboot") {
+        return Err(format!("unknown action: {action}"));
+    }
+    let output = Command::new("systemctl")
+        .arg(action)
+        .output()
+        .await
+        .map_err(|e| format!("failed to run systemctl: {e}"))?;
+    if output.status.success() {
+        info!("apps: host {action} requested");
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if stderr.is_empty() {
+        format!("systemctl {action} exited with {}", output.status)
+    } else {
+        stderr
+    })
 }
 
 async fn push_status(state: &AppState) {

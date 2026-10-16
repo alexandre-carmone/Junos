@@ -1,0 +1,14 @@
+// junos-web: let the service user power off / reboot the host from the
+// Profiles tab (junos-server runs `systemctl poweroff` / `reboot` as itself,
+// and logind asks polkit). Change "astronaut" to the User= of junos-web.service.
+// The -multiple-sessions ids are the ones that otherwise prompt when another
+// user is logged in. Remove this file to forbid host power control.
+polkit.addRule(function(action, subject) {
+    if (subject.user == "astronaut" &&
+        (action.id == "org.freedesktop.login1.power-off" ||
+         action.id == "org.freedesktop.login1.power-off-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.reboot" ||
+         action.id == "org.freedesktop.login1.reboot-multiple-sessions")) {
+        return polkit.Result.YES;
+    }
+});

@@ -96,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/apps/launch", post(apps::launch_handler))
         .route("/api/apps/stop",   post(apps::stop_handler))
         .route("/api/apps/state",  get(apps::state_handler))
+        .route("/api/apps/power",  post(apps::power_handler))
         .route("/api/skysurvey",   get(skysurvey::skysurvey))
         .route("/api/dso_tiles/index.json", get(dso_tiles::index))
         .route("/api/dso_tiles/:name",      get(dso_tiles::tile))

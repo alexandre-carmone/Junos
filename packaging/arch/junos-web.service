@@ -28,7 +28,11 @@ ReadWritePaths=/home/astronaut/Pictures
 ReadWritePaths=-/home/astronaut/.local/share/kstars
 PrivateTmp=true
 NoNewPrivileges=true
-RestrictAddressFamilies=AF_INET AF_INET6
+# AF_UNIX is the system D-Bus socket: the Profiles tab's Power off / Reboot
+# buttons run `systemctl poweroff` / `reboot` as this user, authorised by the
+# polkit rule in /usr/share/polkit-1/rules.d/50-junos-web-power.rules (match
+# its user name to User= above). Drop AF_UNIX to forbid host power control.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]
 WantedBy=multi-user.target

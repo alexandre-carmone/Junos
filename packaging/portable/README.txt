@@ -25,6 +25,10 @@ Install as a service (example)
   # Edit junos-web.service so --dist-dir points at /usr/share/junos-web/dist
   # and the User=/captures paths match your host, then:
   sudo install -Dm644 junos-web.service /etc/systemd/system/junos-web.service
+  # Optional: the Profiles tab's Power off / Reboot buttons. Edit the user
+  # name in the rule to match User= in the unit (the unit keeps AF_UNIX for
+  # the D-Bus socket; drop it from RestrictAddressFamilies to forbid this).
+  sudo install -Dm644 50-junos-web-power.rules /etc/polkit-1/rules.d/50-junos-web-power.rules
   sudo systemctl daemon-reload
   sudo systemctl enable --now junos-web
 

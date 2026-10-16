@@ -57,6 +57,7 @@ mkdir -p "$stage"
 install -Dm755 target/release/junos-server            "$stage/junos-server"
 cp -a           junos-web/dist                          "$stage/dist"
 install -Dm644  packaging/arch/junos-web.service        "$stage/junos-web.service"
+install -Dm644  packaging/arch/50-junos-web-power.rules "$stage/50-junos-web-power.rules"
 install -Dm644  packaging/portable/README.txt           "$stage/README.txt"
 
 mkdir -p "$out"
