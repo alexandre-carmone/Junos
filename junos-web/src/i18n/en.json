@@ -908,6 +908,7 @@
   "sched_step_focus": "Focus",
   "sched_step_align": "Align",
   "sched_step_guide": "Guide",
+  "sched_split_calib": "Calibration frames in a separate job (no focus, align or guide, so a guiding failure can't lose them)",
   "sched_start_when": "Start when",
   "sched_cond_asap": "ASAP",
   "sched_cond_at_time": "At specific time",

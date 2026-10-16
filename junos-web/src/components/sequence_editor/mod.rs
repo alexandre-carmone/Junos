@@ -19,7 +19,7 @@ mod limits;
 mod limits_panel;
 mod model;
 
-pub use cover::SeqEnd;
+pub use cover::{has_calibration, SeqEnd};
 pub use esq::build_esq_xml;
 pub use limits::SeqLimits;
 pub use model::{SeqFrame, fmt_duration};

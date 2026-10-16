@@ -83,7 +83,7 @@ pub struct SeqEnd {
 }
 
 /// Only calibration rows move the cap or light the panel.
-fn has_calibration(frames: &[SeqFrame]) -> bool {
+pub fn has_calibration(frames: &[SeqFrame]) -> bool {
     frames.iter().any(|f| f.frame_type != "Light")
 }
 

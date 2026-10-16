@@ -12,8 +12,8 @@ use crate::components::coord_input::{
     degrees_to_dms_string, dms_string_to_degrees, hms_string_to_hours, hours_to_hms_string,
     parse_canonical, CoordInput, CoordMode,
 };
-use crate::components::form::{JobOptions, CARD, CARD_TITLE, FOOTER, LABEL, NUM, ROW, SELECT};
-use crate::components::sequence_editor::{build_esq_xml, fmt_duration, SeqEnd, SeqFrame, SeqLimits, SequenceEditor};
+use crate::components::form::{check_row, JobOptions, CARD, CARD_TITLE, FOOTER, LABEL, NUM, ROW, SELECT};
+use crate::components::sequence_editor::{build_esq_xml, fmt_duration, has_calibration, SeqEnd, SeqFrame, SeqLimits, SequenceEditor};
 use crate::components::sky::clock;
 use crate::dom::event_target_value;
 use crate::dso_catalog::DsoCatalogData;
@@ -46,6 +46,10 @@ pub struct AddJobForm {
     pub limits: RwSignal<SeqLimits>,
     /// Panel / dust cap after the last frame.
     pub end: RwSignal<SeqEnd>,
+    /// Flats, darks and bias as a second job without focus, align or guide
+    /// (see `on_add`). Only applies to a sequence mixing lights and
+    /// calibration rows.
+    pub split_calib: RwSignal<bool>,
     /// Where the altitude card's session starts — `""` (the job that ends
     /// last, else the start condition), `"auto"`, `"time"` or a job index.
     /// Only an indication: it's never sent to KStars.
@@ -68,6 +72,7 @@ impl AddJobForm {
             fits_dir: RwSignal::new(String::new()),
             limits: RwSignal::new(SeqLimits::default()),
             end: RwSignal::new(SeqEnd::default()),
+            split_calib: RwSignal::new(true),
             alt_ref: RwSignal::new(String::new()),
             alt_ref_time: RwSignal::new(String::new()),
         }
@@ -85,6 +90,7 @@ impl AddJobForm {
         // Not edited: the editor takes Ekos' values again.
         self.limits.set(SeqLimits::default());
         self.end.set(SeqEnd::default());
+        self.split_calib.set(true);
         self.alt_ref.set(String::new());
         self.alt_ref_time.set(String::new());
     }
@@ -419,43 +425,75 @@ pub fn AddJobSheet(
         } else {
             format!("{fits_root}/{safe_name}")
         };
-        let xml = camera.with_untracked(|cam| f.limits.with_untracked(|l| {
-            build_esq_xml("", &seq_fits_path, &frames, l, post.as_deref(), false, cam)
+        let xml_for = |rows: &[SeqFrame], post: Option<&str>| camera.with_untracked(|cam| f.limits.with_untracked(|l| {
+            build_esq_xml("", &seq_fits_path, rows, l, post, false, cam)
         }));
-        let rel_path = format!(".junos-sequences/{safe_name}.esq");
-        let abs_path = if home.is_empty() { rel_path.clone() } else { format!("{home}/{rel_path}") };
+
+        // KStars' scheduler runs the steps before Capture ever starts, and
+        // after MAX_FAILURE_ATTEMPTS guide (or focus, or align) failures it
+        // aborts the whole job (`SchedulerProcess::setGuideStatus`) — the
+        // flats, darks and bias of the same `.esq` are lost with the lights,
+        // though none of them needs a star. Split, the calibration rows
+        // become a second job inserted right below, same target, conditions
+        // and constraints, with no step that needs the sky (track at most),
+        // completing its sequence once: the greedy scheduler takes it when
+        // the lights job is done — or aborted. The in-sequence refocus
+        // limits only ever fire on light frames (`startFocusIfRequired`),
+        // so the same `.esq` head is harmless there. One job: (name, file
+        // stem, xml, calibration-only).
+        let (lights, calib): (Vec<SeqFrame>, Vec<SeqFrame>) =
+            frames.iter().cloned().partition(|fr| fr.frame_type == "Light");
+        let split = f.split_calib.get_untracked() && !lights.is_empty() && has_calibration(&calib);
+        let jobs: Vec<(String, String, String, bool)> = if split {
+            vec![
+                (name.clone(), safe_name.clone(), xml_for(&lights, None), false),
+                (format!("{name} calibration"), format!("{safe_name}-calibration"), xml_for(&calib, post.as_deref()), true),
+            ]
+        } else {
+            vec![(name.clone(), safe_name.clone(), xml_for(&frames, post.as_deref()), false)]
+        };
 
         let o = f.opts;
-        let (seq_r, rep_r, rep_lim, loop_r, until_r, until_val) = resolve_completion_condition(
+        let completion = resolve_completion_condition(
             o.complete_cond.get_untracked().as_str(),
             o.complete_count.get_untracked(),
             o.complete_at.get_untracked(),
         );
+        let once = resolve_completion_condition("sequence", String::new(), String::new());
+        let pa = f.pa.get_untracked().trim().parse::<f64>().unwrap_or(0.0);
 
-        // 1. Save the ESQ file on the KStars machine.
-        send_cmd(&send, "scheduler_save_sequence_file",
-            serde_json::json!({"path": rel_path, "filedata": xml}));
-        // 2. Fill KStars' job form: shared options, then this job's fields.
-        send_cmd(&send, "scheduler_set_all_settings", o.settings_json());
-        send_cmd(&send, "scheduler_set_all_settings", serde_json::json!({
-            "nameEdit":          name,
-            "raBox":             format!("{ra_h:.6}"),
-            "decBox":            format!("{dec_d:.6}"),
-            "sequenceEdit":      abs_path,
-            "positionAngleSpin": f.pa.get_untracked().trim().parse::<f64>().unwrap_or(0.0),
-            "schedulerTrackStep": o.track.get_untracked(),
-            "schedulerFocusStep": o.focus.get_untracked(),
-            "schedulerAlignStep": o.align.get_untracked(),
-            "schedulerGuideStep": o.guide.get_untracked(),
-            "schedulerCompleteSequences":    seq_r,
-            "schedulerRepeatSequences":      rep_r,
-            "schedulerRepeatSequencesLimit": rep_lim,
-            "schedulerUntilTerminated":      loop_r,
-            "schedulerUntil":                until_r,
-            "schedulerUntilValue":           until_val,
-        }));
-        // 3. Add the job, close, and refresh the list once KStars has it.
-        send_cmd(&send, "scheduler_add_jobs", serde_json::json!({}));
+        for (job_name, stem, xml, calib_only) in jobs {
+            let rel_path = format!(".junos-sequences/{stem}.esq");
+            let abs_path = if home.is_empty() { rel_path.clone() } else { format!("{home}/{rel_path}") };
+            let (seq_r, rep_r, rep_lim, loop_r, until_r, until_val) =
+                if calib_only { once.clone() } else { completion.clone() };
+            // 1. Save the ESQ file on the KStars machine.
+            send_cmd(&send, "scheduler_save_sequence_file",
+                serde_json::json!({"path": rel_path, "filedata": xml}));
+            // 2. Fill KStars' job form: shared options, then this job's fields.
+            send_cmd(&send, "scheduler_set_all_settings", o.settings_json());
+            send_cmd(&send, "scheduler_set_all_settings", serde_json::json!({
+                "nameEdit":          job_name,
+                "raBox":             format!("{ra_h:.6}"),
+                "decBox":            format!("{dec_d:.6}"),
+                "sequenceEdit":      abs_path,
+                "positionAngleSpin": pa,
+                "schedulerTrackStep": o.track.get_untracked(),
+                "schedulerFocusStep": !calib_only && o.focus.get_untracked(),
+                "schedulerAlignStep": !calib_only && o.align.get_untracked(),
+                "schedulerGuideStep": !calib_only && o.guide.get_untracked(),
+                "schedulerCompleteSequences":    seq_r,
+                "schedulerRepeatSequences":      rep_r,
+                "schedulerRepeatSequencesLimit": rep_lim,
+                "schedulerUntilTerminated":      loop_r,
+                "schedulerUntil":                until_r,
+                "schedulerUntilValue":           until_val,
+            }));
+            // 3. Add the job (KStars inserts it below the selected row and
+            //    selects it, so the calibration job follows its lights).
+            send_cmd(&send, "scheduler_add_jobs", serde_json::json!({}));
+        }
+        // Close, and refresh the list once KStars has them.
         open.set(false);
         let s = Arc::clone(&send);
         wasm_bindgen_futures::spawn_local(async move {
@@ -523,6 +561,12 @@ pub fn AddJobSheet(
                                         capture_settings=capture_settings camera=camera filter_wheel=filter_wheel />
                         <span class=format!("{CARD_TITLE} pt-1")>{move || tr().sched_steps_legend}</span>
                         {f.opts.steps_view(lang)}
+                        // Shown once the sequence mixes lights and calibration frames.
+                        <Show when=move || f.frames.with(|fs| {
+                            fs.iter().any(|fr| fr.frame_type == "Light") && has_calibration(fs)
+                        })>
+                            {check_row(f.split_calib, move || tr().sched_split_calib, |_| {})}
+                        </Show>
                     </div>
                 </div>
             </div>

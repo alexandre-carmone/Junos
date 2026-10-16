@@ -998,6 +998,7 @@
   "sched_step_focus": "MAP",
   "sched_step_align": "Alignement",
   "sched_step_guide": "Guidage",
+  "sched_split_calib": "Trames de calibration dans une tâche séparée (sans MAP, alignement ni guidage : un échec du guidage ne les perd pas)",
   "sched_start_when": "Démarrer quand",
   "sched_cond_asap": "Dès que possible",
   "sched_cond_at_time": "À une heure précise",
