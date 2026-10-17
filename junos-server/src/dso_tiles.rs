@@ -17,8 +17,35 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use tracing::{info, warn};
 
 use crate::AppState;
+
+/// Log what the tile cache holds at startup, so a missing, truncated or
+/// unparsable `index.json` (the sky then shows no imagery at all) is visible
+/// in the journal rather than silently served as an empty index.
+pub fn log_cache_state(dir: &std::path::Path) {
+    let index = dir.join("index.json");
+    match std::fs::read(&index) {
+        Err(_) => info!("DSO tile dir: {} (no index.json — sky imagery and framing previews off)", dir.display()),
+        Ok(bytes) => match serde_json::from_slice::<Vec<serde_json::Value>>(&bytes) {
+            Ok(tiles) => {
+                let thumbs = std::fs::read_dir(dir.join("thumbs"))
+                    .map(|rd| rd.flatten().filter(|e| e.metadata().map(|m| m.len() > 0).unwrap_or(false)).count())
+                    .unwrap_or(0);
+                let allsky = dir.join("allsky_small.jpg").is_file();
+                info!(
+                    "DSO tile dir: {} ({} tiles indexed, {} sprites, Milky Way {})",
+                    dir.display(), tiles.len(), thumbs, if allsky { "yes" } else { "no" }
+                );
+            }
+            Err(e) => warn!(
+                "DSO tile dir: {} — index.json unreadable ({} bytes: {e}); re-run `prefetch_dso_tiles.py --index-only` or re-copy the cache",
+                dir.display(), bytes.len()
+            ),
+        },
+    }
+}
 
 /// Serve `index.json`, or an empty index when the cache was never populated —
 /// the client treats "no tiles" and "no cache dir" identically.

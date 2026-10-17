@@ -75,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     info!("Scheduler task-queue dir: {}", config.resolved_taskqueue_dir().display());
+    dso_tiles::log_cache_state(&config.resolved_dso_tile_dir());
 
     let hub = Hub::new();
     let app_manager = AppManager::new(hub.browser_tx.clone());
