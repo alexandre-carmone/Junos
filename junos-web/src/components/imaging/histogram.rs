@@ -2,12 +2,16 @@
 //!
 //! The curve counts the levels of the JPEG on screen, in the browser. KStars
 //! auto-stretches every preview (media.cpp:406), so it shows what you see.
-//! Two x axes: **Display**, the levels 0–255 of that image; **ADU**, a fixed
-//! 0 → full-scale axis (65535 for a 16-bit frame), each level mapped back to
-//! its raw value by undoing the stretch. Up: the share of the pixels (top and
-//! dashed middle line, following Lin / Log).
+//! Two x axes: **Display**, the 256 levels of that image; **ADU**, the raw
+//! values within `ADU_SIGMAS` σ of the frame's median (clamped to its min and
+//! max — on a min → max axis the sky is a spike a few bins wide, the stars
+//! reach 65535), in `ADU_BINS` bins, each display level spread over the raw
+//! interval it covers once the stretch is undone; pixels beyond either end
+//! pile up in the edge bin, and the tick says so. Up: the share of the pixels
+//! (top and dashed middle line, following Lin / Log).
 //! Under it sit KStars' statistics of the raw frame (`FrameStats`, in ADU):
-//! the median gives the sky background, and Max flags a saturated frame.
+//! the median gives the sky background, and Max flags a saturated frame. A tap
+//! on them adds Mode, Range, SNR and the clipped shares.
 
 use std::fmt::Write;
 
@@ -19,43 +23,45 @@ use crate::components::form::CARD_TITLE;
 use crate::i18n::{t, Lang};
 use crate::ws::FrameStats;
 
-/// Longest side of the copy the levels are counted on — plenty for 256 bins.
-const SAMPLE_PX: f64 = 512.0;
 const H: f64 = 100.0;
+/// Bins of the ADU axis. More than KStars' 400 — the 256 levels are spread
+/// over the raw intervals they cover, so the curve stays smooth.
+const ADU_BINS: usize = 512;
+/// Half-width of the ADU axis, in σ around the median: wide enough for the
+/// sky and the faint stars, narrow enough that the sky keeps a shape.
+const ADU_SIGMAS: f64 = 20.0;
 /// R, G, B curve colours; a grey frame draws one cyan curve.
 const RGB: [&str; 3] = ["var(--state-err)", "var(--state-ok)", "var(--text-blue)"];
 /// Scale labels, shadowed so they stay legible over the curve.
 const AXIS: &str = "absolute font-mono text-[10px] leading-3 text-text-faint pointer-events-none \
                     [text-shadow:0_0_3px_rgba(0,0,0,0.9)]";
 const PILL: &str = "chip h-7 px-2.5 text-xs cursor-pointer disabled:opacity-40 disabled:cursor-default";
+const STATS_ROW: &str = "flex flex-wrap items-baseline gap-x-3";
 
-/// 256 bins per channel (R, G, B) across the x axis; `mono` when every pixel
-/// is grey.
+/// 256 bins per channel (R, G, B) across the x axis, counted on every pixel of
+/// the preview; `mono` when every pixel is grey.
 #[derive(Clone, PartialEq)]
 pub struct Histogram {
     bins: [[u32; 256]; 3],
     mono: bool,
+    total: u32,
 }
 
 impl Histogram {
     /// Count the frame an `<img>` just loaded, from its `load` event.
     pub fn from_load(ev: &Event) -> Option<Self> {
         let img: HtmlImageElement = ev.target()?.dyn_into().ok()?;
-        let (w, h) = (img.natural_width() as f64, img.natural_height() as f64);
-        if w == 0.0 || h == 0.0 {
+        let (w, h) = (img.natural_width(), img.natural_height());
+        if w == 0 || h == 0 {
             return None;
         }
-        let k = (SAMPLE_PX / w.max(h)).min(1.0);
-        let (cw, ch) = ((w * k).round().max(1.0), (h * k).round().max(1.0));
         let canvas: HtmlCanvasElement =
             web_sys::window()?.document()?.create_element("canvas").ok()?.dyn_into().ok()?;
-        canvas.set_width(cw as u32);
-        canvas.set_height(ch as u32);
+        canvas.set_width(w);
+        canvas.set_height(h);
         let ctx: CanvasRenderingContext2d = canvas.get_context("2d").ok()??.dyn_into().ok()?;
-        // Nearest neighbour: sample real pixels rather than average them.
-        ctx.set_image_smoothing_enabled(false);
-        ctx.draw_image_with_html_image_element_and_dw_and_dh(&img, 0.0, 0.0, cw, ch).ok()?;
-        Some(Self::count(&ctx.get_image_data(0.0, 0.0, cw, ch).ok()?.data()))
+        ctx.draw_image_with_html_image_element(&img, 0.0, 0.0).ok()?;
+        Some(Self::count(&ctx.get_image_data(0.0, 0.0, f64::from(w), f64::from(h)).ok()?.data()))
     }
 
     fn count(rgba: &[u8]) -> Self {
@@ -67,45 +73,135 @@ impl Histogram {
             bins[2][px[2] as usize] += 1;
             mono &= px[0] == px[1] && px[1] == px[2];
         }
-        Self { bins, mono }
-    }
-
-    /// The same counts on the fixed ADU axis, 0 → `full_scale`: each display
-    /// level moves to the bin of its raw value.
-    fn on_adu_axis(&self, s: &FrameStats) -> Self {
-        let full = full_scale(s);
-        let mut bins = [[0u32; 256]; 3];
-        for level in 0..256 {
-            let bin = ((to_adu(level as f64, s, full) / full * 255.0).round() as usize).min(255);
-            for c in 0..3 {
-                bins[c][bin] += self.bins[c][level];
-            }
-        }
-        Self { bins, mono: self.mono }
+        Self { bins, mono, total: (rgba.len() / 4) as u32 }
     }
 
     /// The channels to draw: one grey curve, or R, G, B.
-    fn curves(&self) -> &[[u32; 256]] {
+    fn channels(&self) -> &[[u32; 256]] {
         if self.mono { &self.bins[..1] } else { &self.bins }
     }
 
-    /// Top of the y scale, in pixels. Bins 0 and 255 stay out: the stretch
-    /// clips the background to 0, saturation piles up in 255, and either spike
-    /// would flatten the rest.
-    fn peak(&self) -> f64 {
-        self.curves().iter().flat_map(|b| b[1..255].iter()).copied().max().unwrap_or(0).max(1) as f64
+    /// The display axis: the 256 levels as counted.
+    fn display(&self) -> Curves {
+        let bins: Vec<Vec<f64>> =
+            self.channels().iter().map(|b| b.iter().map(|&c| f64::from(c)).collect()).collect();
+        let peak = peak_of(bins.iter().map(|b| &b[1..255]));
+        Curves { bins, mono: self.mono, peak, total: self.total, lo: 0.0, hi: 255.0, beyond: (false, false) }
+    }
+
+    /// The ADU axis: ±`ADU_SIGMAS` σ around the median, within the frame's
+    /// min → max, in `ADU_BINS` bins. Each display level covers a raw
+    /// interval (its edges at ±0.5 level, mapped back through the stretch);
+    /// its count is spread over the bins that interval overlaps, so a finer
+    /// axis never shows a comb. Pixels beyond either end land in the edge bin.
+    fn adu(&self, s: &FrameStats) -> Curves {
+        let full = full_scale(s);
+        let lo = s.min.max(s.median - ADU_SIGMAS * s.stddev);
+        let hi = s.max.min(s.median + ADU_SIGMAS * s.stddev).max(lo + 1e-6);
+        let scale = ADU_BINS as f64 / (hi - lo);
+        let edge = |level: f64| to_adu(level, s, full);
+        let channels = self.channels();
+        let mut bins = vec![vec![0.0; ADU_BINS]; channels.len()];
+        let spread = |bins: &mut [Vec<f64>], level: usize, a: f64, b: f64| {
+            // In bin units.
+            let (a, b) = ((a.clamp(lo, hi) - lo) * scale, (b.clamp(lo, hi) - lo) * scale);
+            let width = b - a;
+            for (chan, out) in channels.iter().zip(bins.iter_mut()) {
+                let count = f64::from(chan[level]);
+                if count == 0.0 {
+                    continue;
+                }
+                if width <= 1e-9 {
+                    out[(a as usize).min(ADU_BINS - 1)] += count;
+                    continue;
+                }
+                for i in a.floor() as usize..(b.ceil() as usize).min(ADU_BINS) {
+                    let overlap = (b.min(i as f64 + 1.0) - a.max(i as f64)).max(0.0);
+                    out[i] += count * overlap / width;
+                }
+            }
+        };
+        for level in 1..255 {
+            spread(&mut bins, level, edge(level as f64 - 0.5), edge(level as f64 + 0.5));
+        }
+        // The y scale tops out before the clipping piles go in — and leaves
+        // out the edge bins, where the pixels beyond the axis pile up. Level 0
+        // holds everything under the stretch's shadows, 255 everything over
+        // its highlights. Each gets its neighbour's width, so it stays a spike
+        // at that point rather than smearing out to min or max.
+        let peak = peak_of(bins.iter().map(|b| &b[1..ADU_BINS - 1]));
+        let w0 = edge(1.5) - edge(0.5);
+        spread(&mut bins, 0, edge(0.5) - w0, edge(0.5));
+        let w255 = edge(254.5) - edge(253.5);
+        spread(&mut bins, 255, edge(254.5), edge(254.5) + w255);
+        Curves { bins, mono: self.mono, peak, total: self.total, lo, hi, beyond: (lo > s.min, hi < s.max) }
+    }
+
+    /// The most populated display level, the clipping piles aside — on the
+    /// grey channel, or green for a colour frame.
+    fn mode_level(&self) -> usize {
+        let chan = if self.mono { &self.bins[0] } else { &self.bins[1] };
+        (1..255).max_by_key(|&l| chan[l]).unwrap_or(1)
+    }
+
+    /// Share of the pixels clipped at the display bottom (level 0) and top
+    /// (255): the highest of the drawn channels.
+    fn clipped(&self) -> (f64, f64) {
+        let total = f64::from(self.total.max(1));
+        let at = |l: usize| self.channels().iter().map(|b| f64::from(b[l])).fold(0.0, f64::max) / total;
+        (at(0), at(255))
+    }
+}
+
+/// What the plot draws: one curve per channel over an x axis `lo` → `hi`.
+#[derive(Clone, PartialEq)]
+struct Curves {
+    bins: Vec<Vec<f64>>,
+    mono: bool,
+    /// Top of the y scale, in pixels.
+    peak: f64,
+    total: u32,
+    lo: f64,
+    hi: f64,
+    /// Whether pixels lie beyond the left / right end, piled in the edge bin.
+    beyond: (bool, bool),
+}
+
+impl Curves {
+    /// Width of the SVG view box: the last bin's x.
+    fn width(&self) -> f64 {
+        (self.bins[0].len() - 1) as f64
+    }
+
+    /// The x tick at `at` (0 left, 1 right); an end tick says when the data
+    /// goes on beyond it.
+    fn x_tick(&self, at: f64) -> String {
+        let v = fmt_tick(self.lo + (self.hi - self.lo) * at, self.hi);
+        match at {
+            a if a <= 0.0 && self.beyond.0 => format!("\u{2039}{v}"),
+            a if a >= 1.0 && self.beyond.1 => format!("{v}\u{203a}"),
+            _ => v,
+        }
     }
 
     /// Share of the pixels at height `at` (0 bottom, 1 top) of the plot.
     fn share_at(&self, at: f64, log: bool) -> String {
-        let peak = self.peak();
-        let count = if log { (peak.ln_1p() * at).exp_m1() } else { peak * at };
-        let total = self.bins[0].iter().sum::<u32>().max(1);
-        match 100.0 * count / f64::from(total) {
-            p if p >= 10.0 => format!("{p:.0}%"),
-            p if p >= 1.0 => format!("{p:.1}%"),
-            p => format!("{p:.2}%"),
-        }
+        let count = if log { (self.peak.ln_1p() * at).exp_m1() } else { self.peak * at };
+        pct(count / f64::from(self.total.max(1)))
+    }
+}
+
+/// The highest count of `slices`, at least 1.
+fn peak_of<'a>(slices: impl Iterator<Item = &'a [f64]>) -> f64 {
+    slices.flatten().copied().fold(0.0, f64::max).max(1.0)
+}
+
+/// A share of the pixels as a percentage: `12%`, `1.2%`, `0.12%`.
+fn pct(share: f64) -> String {
+    match 100.0 * share {
+        p if p >= 10.0 => format!("{p:.0}%"),
+        p if p >= 1.0 => format!("{p:.1}%"),
+        p => format!("{p:.2}%"),
     }
 }
 
@@ -133,14 +229,14 @@ fn to_adu(level: f64, s: &FrameStats, full: f64) -> f64 {
 }
 
 /// SVG path of the filled area under `bins`, scaled so `peak` reaches the top.
-fn area(bins: &[u32; 256], peak: f64, log: bool) -> String {
+fn area(bins: &[f64], peak: f64, log: bool) -> String {
     let scale = |c: f64| if log { c.ln_1p() } else { c };
     let top = scale(peak);
     let mut d = format!("M0 {H}");
     for (i, &c) in bins.iter().enumerate() {
-        let _ = write!(d, " L{i} {:.1}", H * (1.0 - (scale(c as f64) / top).min(1.0)));
+        let _ = write!(d, " L{i} {:.1}", H * (1.0 - (scale(c) / top).min(1.0)));
     }
-    let _ = write!(d, " L255 {H} Z");
+    let _ = write!(d, " L{} {H} Z", bins.len() - 1);
     d
 }
 
@@ -153,12 +249,12 @@ fn fmt_adu(v: f64) -> String {
     }
 }
 
-/// An x-axis tick on a scale ending at `top`: thousands as `16.4k`.
-fn fmt_tick(v: f64, top: f64) -> String {
-    match top {
-        _ if v == 0.0 => "0".into(),
-        t if t >= 1000.0 => format!("{:.1}k", v / 1000.0),
-        t if t > 1.0 => format!("{v:.0}"),
+/// An x-axis tick on a scale ending at `hi`: thousands as `16.4k` on a wide
+/// scale, whole numbers else, decimals for a float frame.
+fn fmt_tick(v: f64, hi: f64) -> String {
+    match hi {
+        h if h >= 10_000.0 => format!("{:.1}k", v / 1000.0),
+        h if h > 1.0 => format!("{v:.0}"),
         _ => format!("{v:.2}"),
     }
 }
@@ -183,65 +279,86 @@ fn pill(
     }
 }
 
-fn stat(label: &'static str, value: f64, class: &'static str) -> impl IntoView {
+fn stat(label: &'static str, value: String, title: Option<&'static str>) -> impl IntoView {
     view! {
-        <span class=class><span class="text-text-faint">{label}</span>" "{fmt_adu(value)}</span>
+        <span title=title><span class="text-text-faint">{label}</span>" "{value}</span>
     }
 }
 
 /// The glass panel along the bottom of the frame: curve and its scale,
-/// Display / ADU and Log switches, stats.
+/// Display / ADU and Log switches, stats (a tap on them shows them all).
 pub fn histogram_panel(
     hist: RwSignal<Option<Histogram>>,
     stats: Signal<Option<FrameStats>>,
     adu: RwSignal<bool>,
     log: RwSignal<bool>,
+    expanded: RwSignal<bool>,
     lang: RwSignal<Lang>,
 ) -> impl IntoView {
     let tr = move || t(lang.get());
 
-    // What's drawn, and where its x axis ends. ADU needs KStars' stats.
+    // What's drawn, on which axis. ADU needs KStars' stats.
     let shown = Memo::new(move |_| {
         let h = hist.get()?;
         Some(match stats.get().filter(|_| adu.get()) {
-            Some(s) => (h.on_adu_axis(&s), full_scale(&s)),
-            None => (h, 255.0),
+            Some(s) => h.adu(&s),
+            None => h.display(),
         })
     });
 
-    let curves = move || shown.with(|v| v.as_ref().map(|(h, _)| {
-        let (peak, log) = (h.peak(), log.get());
-        h.curves().iter().zip(RGB).map(|(b, rgb)| {
-            let color = if h.mono { "var(--accent-cyan)" } else { rgb };
+    let curves = move || shown.with(|v| v.as_ref().map(|c| {
+        let log = log.get();
+        c.bins.iter().zip(RGB).map(|(b, rgb)| {
+            let color = if c.mono { "var(--accent-cyan)" } else { rgb };
             view! {
-                <path d=area(b, peak, log) fill=color fill-opacity="0.35" stroke=color stroke-width="1"
+                <path d=area(b, c.peak, log) fill=color fill-opacity="0.35" stroke=color stroke-width="1"
                       stroke-linejoin="round" vector-effect="non-scaling-stroke" class="mix-blend-screen" />
             }
         }).collect::<Vec<_>>()
     }));
-    let y_label = move |at: f64| move || shown.with(|v| v.as_ref().map(|(h, _)| h.share_at(at, log.get())));
+    let width = move || shown.with(|v| v.as_ref().map_or(255.0, Curves::width));
+    let y_label = move |at: f64| move || shown.with(|v| v.as_ref().map(|c| c.share_at(at, log.get())));
     let x_label = move |at: f64| move || {
-        let top = shown.with(|v| v.as_ref().map_or(255.0, |(_, top)| *top));
-        fmt_tick(top * at, top)
+        shown.with(|v| v.as_ref().map(|c| c.x_tick(at)).unwrap_or_default())
     };
 
-    let stats_line = move || stats.get().map(|s| {
+    // KStars' raw statistics.
+    let row1 = move || stats.get().map(|s| {
         let tr = tr();
         // An integer frame at its top value has clipped pixels.
         let saturated = matches!(s.bpp, 8 | 16) && s.max >= f64::from((1u32 << s.bpp) - 1);
         view! {
-            <div class="flex flex-wrap gap-x-3 font-mono tabular-nums text-[11px] leading-4 text-text-muted">
-                {stat(tr.imaging_hist_median, s.median, "")}
-                {stat(tr.imaging_hist_mean, s.mean, "max-md:hidden")}
-                {stat("\u{03c3}", s.stddev, "")}
-                {stat("Min", s.min, "max-md:hidden")}
-                <span class:text-state-err=saturated title=saturated.then_some(tr.imaging_hist_saturated)>
-                    {stat("Max", s.max, "")}
-                    {saturated.then_some(" \u{26a0}")}
-                </span>
-            </div>
+            {stat(tr.imaging_hist_median, fmt_adu(s.median), None)}
+            {stat(tr.imaging_hist_mean, fmt_adu(s.mean), None)}
+            {stat("\u{03c3}", fmt_adu(s.stddev), None)}
+            {stat("Min", fmt_adu(s.min), None)}
+            <span class:text-state-err=saturated title=saturated.then_some(tr.imaging_hist_saturated)>
+                {stat("Max", fmt_adu(s.max), None)}
+                {saturated.then_some(" \u{26a0}")}
+            </span>
         }
     });
+    // Derived: the mode (the sky background), range, SNR and the clipped shares.
+    let row2 = move || {
+        let h = hist.get()?;
+        let s = stats.get();
+        let tr = tr();
+        let level = h.mode_level();
+        let mode = match &s {
+            Some(s) => fmt_adu(to_adu(level as f64, s, full_scale(s))),
+            None => level.to_string(),
+        };
+        let (low, high) = h.clipped();
+        Some(view! {
+            {stat(tr.imaging_hist_mode, mode, Some(tr.imaging_hist_mode_title))}
+            {s.as_ref().map(|s| stat(tr.imaging_hist_range, fmt_adu(s.max - s.min), None))}
+            {s.as_ref().filter(|s| s.stddev > 0.0).map(|s| {
+                stat("SNR", format!("{:.1}", (s.mean - s.min) / s.stddev), Some(tr.imaging_hist_snr_title))
+            })}
+            {stat(tr.imaging_hist_clip_low, pct(low), Some(tr.imaging_hist_clip_low_title))}
+            {stat(tr.imaging_hist_clip_high, pct(high), Some(tr.imaging_hist_clip_high_title))}
+        })
+    };
 
     let no_stats = Signal::derive(move || stats.with(Option::is_none));
     let is_adu = Signal::derive(move || adu.get() && !no_stats.get());
@@ -260,12 +377,13 @@ pub fn histogram_panel(
             </div>
             <div class="flex flex-col gap-0.5">
                 <div class="relative">
-                    <svg viewBox=format!("0 0 255 {H}") preserveAspectRatio="none" class="block w-full h-12 md:h-20">
+                    <svg viewBox=move || format!("0 0 {} {H}", width()) preserveAspectRatio="none"
+                         class="block w-full h-12 md:h-20">
                         {[0.25, 0.5, 0.75].map(|at| view! {
-                            <line x1=255.0 * at x2=255.0 * at y1="0" y2=H stroke="var(--glass-border)" stroke-width="1"
-                                  vector-effect="non-scaling-stroke" />
+                            <line x1=move || width() * at x2=move || width() * at y1="0" y2=H
+                                  stroke="var(--glass-border)" stroke-width="1" vector-effect="non-scaling-stroke" />
                         })}
-                        <line x1="0" x2="255" y1=H / 2.0 y2=H / 2.0 stroke="var(--glass-border)" stroke-width="1"
+                        <line x1="0" x2=width y1=H / 2.0 y2=H / 2.0 stroke="var(--glass-border)" stroke-width="1"
                               stroke-dasharray="3 3" vector-effect="non-scaling-stroke" />
                         {curves}
                     </svg>
@@ -282,7 +400,23 @@ pub fn histogram_panel(
                     <span class=format!("{AXIS} right-0")>{x_label(1.0)}</span>
                 </div>
             </div>
-            {stats_line}
+            // The stats: KStars' row always, the derived row on a tap.
+            <button type="button"
+                    class="w-full text-left flex flex-col gap-0.5 font-mono tabular-nums text-[11px] leading-4 \
+                           text-text-muted cursor-pointer"
+                    title=move || tr().imaging_hist_more_title
+                    aria-expanded=move || expanded.get().to_string()
+                    on:click=move |_| expanded.update(|e| *e = !*e)>
+                <div class=STATS_ROW>
+                    {row1}
+                    <span class="ml-auto text-text-faint">
+                        {move || if expanded.get() { "\u{25be}" } else { "\u{25b8}" }}
+                    </span>
+                </div>
+                <Show when=move || expanded.get()>
+                    <div class=STATS_ROW>{row2}</div>
+                </Show>
+            </button>
         </div>
     }
 }

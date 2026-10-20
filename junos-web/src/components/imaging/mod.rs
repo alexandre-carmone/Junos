@@ -134,6 +134,7 @@ pub fn ImagingTab(
     let show_hist = persisted("imaging_histogram", true);
     let hist_log = persisted("imaging_histogram_log", false);
     let hist_adu = persisted("imaging_histogram_adu", false);
+    let hist_stats = persisted("imaging_histogram_stats", false);
     let editor_open = RwSignal::new(false);
     let detail = RwSignal::new(None::<usize>);
     let esc = window_event_listener(leptos::ev::keydown, move |e| {
@@ -337,7 +338,7 @@ pub fn ImagingTab(
                              on:click=move |_| zoom_open.set(true) />
                         {toggle_button(show_hist, lang)}
                         <Show when=move || show_hist.get() && hist.with(Option::is_some)>
-                            {histogram_panel(hist, stats.into(), hist_adu, hist_log, lang)}
+                            {histogram_panel(hist, stats.into(), hist_adu, hist_log, hist_stats, lang)}
                         </Show>
                     </Show>
                 </div>
