@@ -83,11 +83,11 @@
           cargoLock.lockFile = ./Cargo.lock;
 
           buildPhase = ''
-            cargo build -p junos-web --target wasm32-unknown-unknown --release
+            cargo build -p junos-web --target wasm32-unknown-unknown --profile wasm-release
           '';
           installPhase = ''
             mkdir -p $out
-            cp target/wasm32-unknown-unknown/release/junos-web.wasm $out/
+            cp target/wasm32-unknown-unknown/wasm-release/junos-web.wasm $out/
           '';
 
           doCheck = false;
@@ -102,6 +102,8 @@
             wasmBindgenCli
             pkgs.python3
             pkgs.tailwindcss
+            pkgs.gzip
+            pkgs.brotli
           ];
 
           buildPhase = ''
@@ -133,6 +135,9 @@
 
             # Strip Trunk directives from index.html and inject the init script
             python3 ${./nix/process-html.py} index.html "$out/index.html"
+
+            # .gz / .br siblings for junos-server's precompressed ServeDir
+            bash ${./scripts/precompress_dist.sh} "$out"
           '';
 
           dontInstall = true;
@@ -169,6 +174,7 @@
             wasmBindgenCli
             pkgs.trunk
             pkgs.tailwindcss
+            pkgs.brotli
             pkgs.pkg-config
             pkgs.openssl
             pkgs.python3

@@ -82,6 +82,8 @@ pub struct LayerToggles {
     pub solved_image_on: bool,
     pub dso_images_on: bool,
     pub milky_way_on: bool,
+    /// Low-bandwidth mode: no sprites, the small panorama.
+    pub lite: bool,
 }
 
 /// Borrowed/cloned subsystem state read by overlay layers (mount, camera,

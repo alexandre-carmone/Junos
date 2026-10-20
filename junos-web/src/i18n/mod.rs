@@ -280,7 +280,7 @@ translations! {
     targets_wavelengths, targets_band_rgb, targets_band_rgb_short, targets_strength_1, targets_strength_2,
     targets_strength_3, targets_adv_broadband, targets_adv_broadband_ha, targets_adv_ha, targets_adv_dual,
     targets_adv_oiii, targets_adv_mixed, targets_adv_unknown, targets_show_sky, targets_goto,
-    targets_below_horizon,
+    targets_below_horizon, lite_mode_label, lite_mode_hint,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

@@ -36,9 +36,10 @@ use std::sync::Arc;
 use axum::{extract::State, response::Json};
 use serde::Deserialize;
 use tokio::process::{Child, Command};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+use crate::hub::Hub;
 use crate::AppState;
 
 // ── Public process names ─────────────────────────────────────────────────────
@@ -128,8 +129,8 @@ impl AppEntry {
 #[derive(Clone)]
 pub struct AppManager {
     inner: Arc<Mutex<Inner>>,
-    /// Sender used to push `app_state` JSON to all browser WebSockets.
-    browser_tx: broadcast::Sender<String>,
+    /// Pushes `app_state` JSON to all browser WebSockets.
+    hub: Hub,
 }
 
 struct Inner {
@@ -137,13 +138,13 @@ struct Inner {
 }
 
 impl AppManager {
-    pub fn new(browser_tx: broadcast::Sender<String>) -> Self {
+    pub fn new(hub: Hub) -> Self {
         let mut apps = HashMap::new();
         apps.insert(APP_KSTARS.to_string(), AppEntry::new_idle());
         apps.insert(APP_PHD2.to_string(),   AppEntry::new_idle());
         Self {
             inner: Arc::new(Mutex::new(Inner { apps })),
-            browser_tx,
+            hub,
         }
     }
 
@@ -198,7 +199,7 @@ impl AppManager {
                     prev_kstars = cur_kstars;
                     prev_phd2   = cur_phd2;
                     let msg = build_app_state_msg(cur_kstars, cur_phd2);
-                    let _ = self.browser_tx.send(msg);
+                    self.hub.broadcast_text(msg);
                 }
             }
         });
@@ -411,5 +412,5 @@ async fn push_status(state: &AppState) {
     let kstars = status["kstars"].as_str() == Some("running");
     let phd2   = status["phd2"].as_str()   == Some("running");
     let msg = build_app_state_msg(kstars, phd2);
-    let _ = state.hub.browser_tx.send(msg);
+    state.hub.broadcast_text(msg);
 }

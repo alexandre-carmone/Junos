@@ -23,7 +23,7 @@ optdepends=('dbus: Connect PHD2 button in the Guide tab (dbus-send to KStars)')
 # arches). The Tailwind CLI is not packaged on ALARM, so it is fetched per-arch as
 # a checksummed source below. Network is used in build() (rustup toolchain +
 # cargo crates + trunk's wasm-bindgen/wasm-opt).
-makedepends=('rustup' 'trunk')
+makedepends=('rustup' 'trunk' 'brotli')
 _twver=3.4.17
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz"
         "junos-web.service"
@@ -58,6 +58,7 @@ build() {
 
   # Frontend (wasm + styles + public/ catalogs) -> junos-web/dist/
   ( cd junos-web && trunk build --release )
+  ./scripts/precompress_dist.sh junos-web/dist
   # Server binary -> target/release/junos-server
   cargo build --release -p junos-server
 }

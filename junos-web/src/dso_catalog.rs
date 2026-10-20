@@ -164,13 +164,12 @@ impl DsoCatalogData {
     }
 }
 
-/// Bump `v` with every change to the binary layout: the file is served
-/// without cache headers, and a browser holding the previous `dso.bin` would
-/// otherwise feed it to this parser.
+/// Bump `v` with every change to the binary layout or the data: the browser
+/// keeps the file by versioned URL (`net.rs`, and the server marks `*.bin`
+/// immutable), so a browser holding the previous `dso.bin` would otherwise
+/// feed it to this parser.
 pub async fn fetch_dso_catalog() -> Option<Arc<DsoCatalogData>> {
-    let bytes = gloo_net::http::Request::get("/dso.bin?v=3")
-        .send().await.ok()?
-        .binary().await.ok()?;
+    let bytes = crate::net::cached_bytes("/dso.bin?v=3").await?;
     DsoCatalogData::parse(&bytes).map(Arc::new)
 }
 

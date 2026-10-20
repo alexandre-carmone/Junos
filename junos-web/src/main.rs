@@ -22,6 +22,7 @@ mod dso_catalog;
 mod dso_tiles;
 mod ephemeris;
 mod i18n;
+mod net;
 mod star_tiles;
 mod ws;
 mod ws_helpers;
@@ -45,6 +46,13 @@ pub enum Tab { Sky, Targets, Mount, Focus, Imaging, Files, PolarAlign, Guide, Sc
 
 #[derive(Clone, Copy)]
 pub struct ActiveTabCtx(pub RwSignal<Tab>);
+
+/// The "Low bandwidth" switch (the `Lite` pill next to EN/FR, persisted to
+/// localStorage `junos_lite`). On: the relay re-encodes previews at 960 px /
+/// q70 (`junos_media_filter`), the sky skips `tycho.bin` and the deep-sky
+/// sprites, and takes the small Milky Way panorama.
+#[derive(Clone, Copy)]
+pub struct LiteModeCtx(pub RwSignal<bool>);
 
 /// Whether the tab wheel/bar show a text label under each tab icon.
 /// Off by default; persisted to localStorage key `tab_labels`.
@@ -306,6 +314,41 @@ fn App() -> impl IntoView {
 
     let active_tab = RwSignal::new(Tab::Sky);
     provide_context(ActiveTabCtx(active_tab));
+
+    // ── Low bandwidth ─────────────────────────────────────────────────────
+    let lite = components::sky::persisted("junos_lite", false);
+    provide_context(LiteModeCtx(lite));
+
+    // Tell the relay which preview kinds this browser displays (`proxy.rs`,
+    // `junos_media_filter`): it forwards nothing else, so a phone on the
+    // Profiles tab is not sent a 1920 px guide frame every few seconds. The
+    // Effect tracks `connected` so the filter is re-sent after a reconnect
+    // (`ws/mod.rs` discards what was queued while offline). The same tab
+    // read decides the mount-coordinate poll cadence (`ws/retry.rs`).
+    {
+        let send = send.clone();
+        let connected = store.connected;
+        let mount_fast_poll = store.mount_fast_poll;
+        Effect::new(move |_| {
+            let tab = active_tab.get();
+            let kinds: &[&str] = match tab {
+                Tab::Focus => &["+F"],
+                Tab::Guide => &["+G"],
+                Tab::PolarAlign => &["+A"],
+                Tab::Imaging => &["capture"],
+                _ => &[],
+            };
+            mount_fast_poll.set(matches!(tab, Tab::Sky | Tab::Mount | Tab::PolarAlign));
+            let mut payload = serde_json::json!({ "kinds": kinds });
+            if lite.get() {
+                payload["max_width"] = serde_json::json!(960);
+                payload["quality"] = serde_json::json!(70);
+            }
+            if connected.get() {
+                send(serde_json::json!({ "type": "junos_media_filter", "payload": payload }).to_string());
+            }
+        });
+    }
 
     // One-shot startup tab selection: once we hear back from the server
     // whether KStars is running, switch to Profiles if it isn't. After

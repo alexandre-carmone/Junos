@@ -17,6 +17,7 @@ build: build-wasm build-server
 
 build-wasm: ensure-trunk
     cd junos-web && trunk build --release
+    ./scripts/precompress_dist.sh junos-web/dist
 
 build-server:
     cargo build --release -p junos-server

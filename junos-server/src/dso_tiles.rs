@@ -49,14 +49,46 @@ pub fn log_cache_state(dir: &std::path::Path) {
 
 /// Serve `index.json`, or an empty index when the cache was never populated —
 /// the client treats "no tiles" and "no cache dir" identically.
-pub async fn index(State(state): State<AppState>) -> Response {
+///
+/// The file is 650 KB and only changes when tiles are added, so it carries a
+/// weak ETag from its `(mtime, len)` and `Cache-Control: no-cache`: the
+/// browser revalidates on every load and gets a bodyless 304 unless the
+/// index actually changed. (The previous `max-age=300` with no validator
+/// made every reload after five minutes a full download.)
+pub async fn index(State(state): State<AppState>, req_headers: HeaderMap) -> Response {
     let path = state.config.resolved_dso_tile_dir().join("index.json");
-    let body = std::fs::read(&path).unwrap_or_else(|_| b"[]".to_vec());
+    let etag = index_etag(&path).await;
 
     let mut headers = HeaderMap::new();
+    headers.insert(header::CACHE_CONTROL, "no-cache".parse().unwrap());
+    if let Some(etag) = &etag {
+        headers.insert(header::ETAG, etag.parse().unwrap());
+        let matches = req_headers
+            .get(header::IF_NONE_MATCH)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.split(',').any(|t| t.trim() == etag || t.trim() == "*"))
+            .unwrap_or(false);
+        if matches {
+            return (StatusCode::NOT_MODIFIED, headers).into_response();
+        }
+    }
+
+    let body = tokio::fs::read(&path).await.unwrap_or_else(|_| b"[]".to_vec());
     headers.insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
-    headers.insert(header::CACHE_CONTROL, "private, max-age=300".parse().unwrap());
     (StatusCode::OK, headers, Bytes::from(body)).into_response()
+}
+
+/// `W/"<mtime-secs>-<len>"` for the index on disk, `None` when it is absent
+/// (the empty index is then served without a validator).
+async fn index_etag(path: &std::path::Path) -> Option<String> {
+    let meta = tokio::fs::metadata(path).await.ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!("W/\"{}-{}\"", mtime, meta.len()))
 }
 
 /// Serve one cached cutout by file name.

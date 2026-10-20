@@ -12,19 +12,30 @@ use axum::{
     },
     response::IntoResponse,
 };
+use std::sync::Arc;
+
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use futures_util::{SinkExt, StreamExt};
+use image::imageops::FilterType;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::hub::{Hub, CMD_CAP};
+use crate::hub::{FrameKind, Hub, Outbound, CMD_CAP};
+use crate::starfind::Star;
 use crate::AppState;
 
 /// Metadata header size in binary media frames (from `kstars/ekos/ekoslive/media.h`).
 const METADATA_PACKET: usize = 512;
 /// Safety guard for oversized binary frames (metadata + payload).
 const MAX_MEDIA_FRAME: usize = 64 * 1024 * 1024;
+
+/// The lite preview a low-bandwidth browser gets (`proxy.rs`,
+/// `junos_media_filter`): KStars sends a fixed 1920 px / q90 JPEG
+/// (`media.h:124,128`, no option to lower it), which is 500–900 KB once
+/// base64'd; half the width at q70 is ~6× smaller.
+const LITE_MAX_WIDTH: u32 = 960;
+const LITE_QUALITY: u8 = 70;
 
 // ---------------------------------------------------------------------------
 // /message/ekos — text JSON channel
@@ -70,9 +81,7 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
     // it saves via scheduler_save_sequence_file (which prepends homePath on the
     // KStars side).
     let home = std::env::var("HOME").unwrap_or_default();
-    let _ = hub
-        .browser_tx
-        .send(connection_state_msg(true, Some(home.as_str())));
+    hub.broadcast_text(connection_state_msg(true, Some(home.as_str())));
 
     // Prime the observer site once per attach. KStars answers with
     // {name, latitude, longitude, elevation, tz, tz0}; that reply is snapshotted
@@ -120,7 +129,7 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
                         // a reconnecting browser recovers them (guide metrics,
                         // FOV geometry, module states).
                         hub.capture(&text).await;
-                        let _ = hub.browser_tx.send(text.to_string());
+                        hub.broadcast_text(text.to_string());
                     }
                     Some(Ok(Message::Ping(data))) => {
                         if sink.send(Message::Pong(data)).await.is_err() {
@@ -168,7 +177,7 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
 
     clear_kstars_sender(&hub).await;
 
-    let _ = hub.browser_tx.send(connection_state_msg(false, None));
+    hub.broadcast_text(connection_state_msg(false, None));
 
     info!(channel = "/message/ekos", "KStars session ended");
 }
@@ -200,16 +209,26 @@ async fn handle_media(socket: WebSocket, hub: Hub) {
         match frame {
             Ok(Message::Binary(data)) => {
                 debug!(bytes = data.len(), channel = "/media/ekos", "KStars media frame");
-                if let Some(json) = decode_media_frame(&data) {
-                    // Retain the latest preview so a reconnecting browser sees
-                    // the last frame immediately.
-                    hub.capture_preview(&json).await;
-                    let _ = hub.browser_tx.send(json);
+                // Star detection and the lite re-encode take tens of
+                // milliseconds: keep them off the async threads.
+                let want_lite = hub.lite_wanted();
+                let decoded = tokio::task::spawn_blocking(move || decode_media_frame(&data, want_lite))
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Media decode task failed: {e}");
+                        None
+                    });
+                if let Some(out) = decoded {
+                    let out = Arc::new(out);
+                    // Retain the latest frame per kind so a browser that
+                    // subscribes to that view sees it immediately.
+                    hub.capture_preview(out.clone()).await;
+                    let _ = hub.browser_tx.send(out);
                 }
             }
             Ok(Message::Text(text)) => {
                 // Some versions of Ekos Live send text JSON on media channel too.
-                let _ = hub.browser_tx.send(text.to_string());
+                hub.broadcast_text(text.to_string());
             }
             Ok(Message::Ping(_)) => { /* Axum auto-pongs */ }
             Ok(Message::Close(_)) => {
@@ -227,12 +246,22 @@ async fn handle_media(socket: WebSocket, hub: Hub) {
     info!(channel = "/media/ekos", "KStars session ended");
 }
 
-/// Decode a binary media frame into a `new_preview_image` JSON string.
+/// The focus-frame star overlay measured on the full preview, in its pixels.
+struct FocusOverlay {
+    stars: Vec<Star>,
+    width: u32,
+    height: u32,
+    /// Preview px → the frame's own (binned sensor) px; see `preview_json`.
+    sensor_scale: Option<f64>,
+}
+
+/// Decode a binary media frame into the `new_preview_image` broadcast — the
+/// full frame, plus the lite variant when a browser asked for one.
 ///
 /// Frame layout (from `kstars/ekos/ekoslive/media.h`):
 /// - Bytes 0..512: JSON metadata, null-padded to `METADATA_PACKET` bytes
 /// - Bytes 512..: raw JPEG (or FITS) data
-fn decode_media_frame(data: &[u8]) -> Option<String> {
+fn decode_media_frame(data: &[u8], want_lite: bool) -> Option<Outbound> {
     if data.len() > MAX_MEDIA_FRAME {
         warn!(
             bytes = data.len(),
@@ -259,49 +288,99 @@ fn decode_media_frame(data: &[u8]) -> Option<String> {
     };
 
     let payload = &data[METADATA_PACKET..];
-    let data_b64 = BASE64.encode(payload);
-
-    let mut out_payload = json!({
-        "metadata": metadata,
-        "data":     data_b64,
-    });
+    let uuid = metadata.get("uuid").and_then(Value::as_str).unwrap_or("");
+    let ext = metadata.get("ext").and_then(Value::as_str).unwrap_or("");
+    let kind = FrameKind::from_uuid(uuid);
 
     // Focus frames (uuid "+F", kstars media.cpp:752) get a server-side star
     // detection pass so the browser can overlay each detected star with its HFR.
     // We detect on the exact JPEG that gets displayed, so the star coordinates
     // map straight onto the preview image with no rescaling.
-    let uuid = metadata.get("uuid").and_then(Value::as_str).unwrap_or("");
-    let ext = metadata.get("ext").and_then(Value::as_str).unwrap_or("");
-    if uuid.starts_with("+F") && ext == "jpg" {
-        if let Some((stars, w, h)) = detect_focus_stars(payload) {
-            let arr: Vec<Value> = stars
-                .iter()
-                .map(|s| json!({ "x": s.x, "y": s.y, "hfr": s.hfr }))
-                .collect();
-            out_payload["stars"] = Value::Array(arr);
-            out_payload["star_w"] = json!(w);
-            out_payload["star_h"] = json!(h);
+    let overlay = if kind == FrameKind::Focus && ext == "jpg" {
+        detect_focus_stars(payload).map(|(stars, width, height)| FocusOverlay {
             // KStars renders the focus view at a zoom-dependent scale and
             // then caps it at HB_IMAGE_WIDTH/2 (media.cpp:454), so the HFR we
             // measure above is in preview pixels. This ratio converts it to the
             // frame's own (binned sensor) pixels — the unit KStars publishes its
             // own HFR in. It is an arbitrary positive real, not 1 or 2, and can
             // be < 1; the client decides whether to trust it.
-            if let Some(scale) = frame_width(&metadata)
-                .filter(|fw| *fw > 0.0 && w > 0)
-                .map(|fw| fw / w as f64)
-            {
-                out_payload["star_scale"] = json!(scale);
-            }
+            sensor_scale: frame_width(&metadata)
+                .filter(|fw| *fw > 0.0 && width > 0)
+                .map(|fw| fw / width as f64),
+            stars,
+            width,
+            height,
+        })
+    } else {
+        None
+    };
+
+    let full = preview_json(&metadata, BASE64.encode(payload), overlay.as_ref(), 1.0);
+    let lite = if want_lite && ext == "jpg" {
+        lite_jpeg(payload, LITE_MAX_WIDTH, LITE_QUALITY)
+            .map(|(bytes, ratio)| preview_json(&metadata, BASE64.encode(bytes), overlay.as_ref(), ratio))
+    } else {
+        None
+    };
+
+    Some(Outbound::Preview { kind, full, lite })
+}
+
+/// The `new_preview_image` message for one encoding of a frame. `ratio` is
+/// that encoding's width over the full preview's, so the star overlay
+/// measured on the full frame lands on the same stars.
+fn preview_json(metadata: &Value, data_b64: String, overlay: Option<&FocusOverlay>, ratio: f64) -> String {
+    let mut out_payload = json!({
+        "metadata": metadata,
+        "data":     data_b64,
+    });
+    if let Some(o) = overlay {
+        let arr: Vec<Value> = o
+            .stars
+            .iter()
+            .map(|s| json!({ "x": s.x * ratio, "y": s.y * ratio, "hfr": s.hfr * ratio }))
+            .collect();
+        out_payload["stars"] = Value::Array(arr);
+        out_payload["star_w"] = json!((o.width as f64 * ratio).round() as u32);
+        out_payload["star_h"] = json!((o.height as f64 * ratio).round() as u32);
+        if let Some(scale) = o.sensor_scale {
+            out_payload["star_scale"] = json!(scale / ratio);
         }
     }
-
-    let msg = json!({
+    json!({
         "type": "new_preview_image",
         "payload": out_payload,
-    });
+    })
+    .to_string()
+}
 
-    Some(msg.to_string())
+/// Re-encode a preview JPEG at most `max_width` wide and `quality`, for the
+/// low-bandwidth browsers. Returns the bytes and the width ratio to the
+/// original (1.0 when it was already narrow enough and only re-compressed).
+fn lite_jpeg(jpeg: &[u8], max_width: u32, quality: u8) -> Option<(Vec<u8>, f64)> {
+    let img = image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg).ok()?;
+    let (w, h) = (img.width(), img.height());
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let img = if w > max_width {
+        let nh = ((h as u64 * max_width as u64) / w as u64).max(1) as u32;
+        img.resize_exact(max_width, nh, FilterType::Triangle)
+    } else {
+        img
+    };
+    let ratio = img.width() as f64 / w as f64;
+
+    let mut buf = Vec::new();
+    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality);
+    let written = match img.color() {
+        image::ColorType::L8 | image::ColorType::L16 | image::ColorType::La8 | image::ColorType::La16 => {
+            img.to_luma8().write_with_encoder(enc)
+        }
+        _ => img.to_rgb8().write_with_encoder(enc),
+    };
+    written.ok()?;
+    Some((buf, ratio))
 }
 
 /// Width of the real (unscaled) frame, parsed from KStars' `resolution` metadata
@@ -417,15 +496,54 @@ mod tests {
         frame
     }
 
+    /// The full-frame `new_preview_image` JSON of a decoded frame.
+    fn full_json(frame: &[u8]) -> String {
+        match decode_media_frame(frame, false).expect("frame should decode") {
+            Outbound::Preview { full, lite, .. } => {
+                assert!(lite.is_none(), "no lite variant unless asked for");
+                full
+            }
+            other => panic!("expected a preview, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lite_variant_is_narrower_and_scales_the_star_overlay() {
+        let jpeg = synthetic_star_jpeg(200, 100);
+        let frame = build_media_frame(r#"{"uuid":"+F","ext":"jpg","resolution":"4000x2000"}"#, &jpeg);
+        let Some(Outbound::Preview { kind, full, lite }) = decode_media_frame(&frame, true) else {
+            panic!("frame should decode to a preview");
+        };
+        assert_eq!(kind, FrameKind::Focus);
+        let full: Value = serde_json::from_str(&full).unwrap();
+        let lite: Value = serde_json::from_str(&lite.expect("lite variant requested")).unwrap();
+
+        // 200 px wide is already under LITE_MAX_WIDTH: only re-compressed.
+        assert_eq!(lite["payload"]["star_w"], 200);
+        assert_eq!(lite["payload"]["star_scale"], full["payload"]["star_scale"]);
+
+        // Force a resize to check the overlay follows the pixels.
+        let (bytes, ratio) = lite_jpeg(&jpeg, 100, 70).expect("re-encode");
+        assert!((ratio - 0.5).abs() < 1e-9);
+        let img = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((img.width(), img.height()), (100, 50));
+        let overlay = FocusOverlay { stars: vec![Star { x: 60.0, y: 40.0, hfr: 2.0, flux: 1.0, npix: 9 }], width: 200, height: 100, sensor_scale: Some(20.0) };
+        let scaled: Value = serde_json::from_str(&preview_json(&json!({}), String::new(), Some(&overlay), ratio)).unwrap();
+        assert_eq!(scaled["payload"]["stars"][0]["x"], 30.0);
+        assert_eq!(scaled["payload"]["star_w"], 100);
+        assert_eq!(scaled["payload"]["star_h"], 50);
+        assert_eq!(scaled["payload"]["star_scale"], 40.0);
+    }
+
     #[test]
     fn decode_media_frame_rejects_short_payload() {
-        assert!(decode_media_frame(&vec![0u8; METADATA_PACKET]).is_none());
+        assert!(decode_media_frame(&vec![0u8; METADATA_PACKET], false).is_none());
     }
 
     #[test]
     fn decode_media_frame_with_json_metadata() {
         let frame = build_media_frame(r#"{"uuid":"+F","ext":"jpg"}"#, &[1, 2, 3]);
-        let decoded = decode_media_frame(&frame).expect("frame should decode");
+        let decoded = full_json(&frame);
         let parsed: Value = serde_json::from_str(&decoded).expect("decoded json");
         assert_eq!(parsed["type"], "new_preview_image");
         assert_eq!(parsed["payload"]["metadata"]["uuid"], "+F");
@@ -435,7 +553,7 @@ mod tests {
     #[test]
     fn decode_media_frame_falls_back_to_raw_metadata() {
         let frame = build_media_frame("not-json", &[255]);
-        let decoded = decode_media_frame(&frame).expect("frame should decode");
+        let decoded = full_json(&frame);
         let parsed: Value = serde_json::from_str(&decoded).expect("decoded json");
         assert_eq!(parsed["payload"]["metadata"]["raw"], "not-json");
     }
@@ -466,7 +584,7 @@ mod tests {
     fn focus_frame_gains_stars() {
         let jpeg = synthetic_star_jpeg(96, 96);
         let frame = build_media_frame(r#"{"uuid":"+F","ext":"jpg"}"#, &jpeg);
-        let decoded = decode_media_frame(&frame).expect("frame should decode");
+        let decoded = full_json(&frame);
         let parsed: Value = serde_json::from_str(&decoded).expect("decoded json");
         let stars = parsed["payload"]["stars"].as_array().expect("stars array");
         assert!(!stars.is_empty(), "focus frame should yield detected stars");
@@ -478,7 +596,7 @@ mod tests {
     fn non_focus_frame_has_no_stars() {
         let jpeg = synthetic_star_jpeg(96, 96);
         let frame = build_media_frame(r#"{"uuid":"+A","ext":"jpg"}"#, &jpeg);
-        let decoded = decode_media_frame(&frame).expect("frame should decode");
+        let decoded = full_json(&frame);
         let parsed: Value = serde_json::from_str(&decoded).expect("decoded json");
         assert!(parsed["payload"].get("stars").is_none(), "align frame must not detect stars");
     }

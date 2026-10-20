@@ -29,7 +29,7 @@ struct DragState {
 }
 
 use crate::i18n::{Lang, t};
-use crate::{ActiveTabCtx, Tab, TabLabelsCtx};
+use crate::{ActiveTabCtx, LiteModeCtx, Tab, TabLabelsCtx};
 
 use crate::components::tab_wheel_icons::tab_icon;
 
@@ -89,6 +89,9 @@ pub fn TabWheel() -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
     let show_labels = use_context::<TabLabelsCtx>()
+        .map(|c| c.0)
+        .unwrap_or_else(|| RwSignal::new(false));
+    let lite = use_context::<LiteModeCtx>()
         .map(|c| c.0)
         .unwrap_or_else(|| RwSignal::new(false));
 
@@ -543,6 +546,26 @@ pub fn TabWheel() -> impl IntoView {
                     }
                 >
                     "Aa"
+                </button>
+                <button
+                    class=move || {
+                        let base = "min-w-[34px] h-[22px] min-h-[22px] px-2 \
+                                    rounded-[11px] border \
+                                    font-mono font-semibold text-xs leading-none tracking-[0.05em] \
+                                    cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent]";
+                        if lite.get() {
+                            format!("{base} bg-accent-blue-active border-text-blue-bright text-text-dim")
+                        } else {
+                            format!("{base} bg-bg-wheel border-text-blue text-text-blue")
+                        }
+                    }
+                    title=move || tr().lite_mode_hint
+                    on:click=move |ev: MouseEvent| {
+                        ev.stop_propagation();
+                        lite.update(|v| *v = !*v);
+                    }
+                >
+                    {move || tr().lite_mode_label}
                 </button>
             </div>
         </div>

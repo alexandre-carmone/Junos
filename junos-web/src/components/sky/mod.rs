@@ -102,6 +102,9 @@ pub struct SkyToggles {
     pub dso_images_brightness: RwSignal<f64>,
     pub milky_way:          RwSignal<bool>,
     pub milky_way_opacity:  RwSignal<f64>,
+    /// `LiteModeCtx`: no Tycho-2 fetch, no deep-sky sprites, the small
+    /// Milky Way panorama.
+    pub lite:               RwSignal<bool>,
 }
 
 impl SkyToggles {
@@ -126,6 +129,7 @@ impl SkyToggles {
             solved_image_on: self.solved_image.get(),
             dso_images_on: self.dso_images.get(),
             milky_way_on: self.milky_way.get(),
+            lite: self.lite.get(),
         }
     }
 
@@ -564,6 +568,9 @@ pub fn SkyTab(
         dso_images_brightness: persisted("sky_dso_images_brightness", 1.0),
         milky_way:          persisted("sky_show_milky_way", true),
         milky_way_opacity:  persisted("sky_milky_way_opacity", 0.6),
+        lite:               use_context::<crate::LiteModeCtx>()
+                                .map(|c| c.0)
+                                .unwrap_or_else(|| RwSignal::new(false)),
     };
     let dso_mag_limit = toggles.dso_mag_limit;
 
@@ -818,10 +825,12 @@ pub fn SkyTab(
     // `tycho.bin` (13 MB) is fetched the first time the view zooms in past
     // `junos.bin`'s depth; the render Effect then keeps `deep_field` on the
     // tiles around the view. A missing file just leaves the base catalog.
+    // Not in low-bandwidth mode: the Effect re-runs when the pill flips back.
     let deep_cat_sig = RwSignal::new(None::<Arc<DeepStarCatalog>>);
     let deep_requested = StoredValue::new(false);
+    let lite = toggles.lite;
     Effect::new(move || {
-        if deep_requested.get_value() || star_mag_limit(fov_radius.get()) <= DEEP_FROM_MAG {
+        if deep_requested.get_value() || lite.get() || star_mag_limit(fov_radius.get()) <= DEEP_FROM_MAG {
             return;
         }
         deep_requested.set_value(true);

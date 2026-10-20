@@ -18,7 +18,7 @@ impl SkyLayer for AllskyLayer {
         let Some(gpu) = gpu else { return };
         let Some(cache_cell) = f.dso_images else { return };
         let Ok(mut cache) = cache_cell.try_borrow_mut() else { return };
-        gpu.allsky = cache.allsky_image(f.scene.is_mobile);
+        gpu.allsky = cache.allsky_image(f.scene.is_mobile || f.toggles.lite);
         gpu.show_milky_way = true;
         gpu.milky_way_opacity = f.state.milky_way_opacity as f32;
     }

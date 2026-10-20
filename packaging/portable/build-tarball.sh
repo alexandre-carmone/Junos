@@ -46,6 +46,7 @@ fi
 # ── Build ───────────────────────────────────────────────────────────────────
 echo ">> building frontend (trunk, release)"
 ( cd junos-web && trunk build --release )
+./scripts/precompress_dist.sh junos-web/dist
 
 echo ">> building junos-server (release)"
 cargo build --release -p junos-server

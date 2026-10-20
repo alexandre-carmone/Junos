@@ -2,3 +2,15 @@
 members = ["junos-server", "junos-web"]
 default-members = ["junos-server"]
 resolver = "2"
+
+# The wasm bundle's profile (Trunk: `data-cargo-profile` in junos-web/index.html;
+# Nix: `--profile wasm-release`). Kept apart from `release` so the server is
+# not built with fat LTO (slow) or `panic = "abort"` (a task panic would take
+# the whole relay down instead of one task). Size matters more than speed in
+# the browser: the bundle is downloaded over the observatory's wifi.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"

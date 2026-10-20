@@ -81,10 +81,10 @@ impl CatalogData {
     }
 }
 
+/// `?v=` is the catalog's version for the browser cache (`net.rs`, and the
+/// server marks `*.bin` immutable): bump it whenever `junos.bin` changes.
 pub async fn fetch_catalog() -> Option<Arc<CatalogData>> {
-    let bytes = gloo_net::http::Request::get("/junos.bin")
-        .send().await.ok()?
-        .binary().await.ok()?;
+    let bytes = crate::net::cached_bytes("/junos.bin?v=1").await?;
     CatalogData::parse(&bytes).map(Arc::new)
 }
 

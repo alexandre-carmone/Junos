@@ -5,6 +5,7 @@
 //! and we fan-out messages between them and the currently connected KStars session.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,6 +15,60 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 /// Broadcast capacity: number of in-flight messages buffered for slow browsers
 /// before they start getting lagged errors.
 const BROADCAST_CAP: usize = 512;
+
+/// Which Ekos view a preview frame belongs to, from the media uuid prefix
+/// (`kstars/ekos/ekoslive/media.cpp:752-753`, `:587`): `+F` focus, `+A`
+/// align / polar align, `+G` guide, anything else the capture preview. The
+/// browser subscribes per kind (`proxy.rs`, `junos_media_filter`) so a phone
+/// on the Profiles tab is not sent every guide frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FrameKind {
+    Focus,
+    Align,
+    Guide,
+    Capture,
+}
+
+impl FrameKind {
+    pub const ALL: [FrameKind; 4] = [Self::Focus, Self::Align, Self::Guide, Self::Capture];
+
+    pub fn from_uuid(uuid: &str) -> Self {
+        if uuid.starts_with("+F") {
+            Self::Focus
+        } else if uuid.starts_with("+A") {
+            Self::Align
+        } else if uuid.starts_with("+G") {
+            Self::Guide
+        } else {
+            Self::Capture
+        }
+    }
+
+    /// The wire spelling the browser uses in `junos_media_filter.kinds`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "+F" => Some(Self::Focus),
+            "+A" => Some(Self::Align),
+            "+G" => Some(Self::Guide),
+            "capture" => Some(Self::Capture),
+            _ => None,
+        }
+    }
+}
+
+/// One frame on the KStars → browsers broadcast. Previews carry their kind so
+/// a browser task can filter them without re-parsing the JSON, and the lite
+/// variant (`kstars_ws::lite_jpeg`, built only while some browser asked for
+/// it) next to the full one.
+#[derive(Debug)]
+pub enum Outbound {
+    Text(String),
+    Preview {
+        kind: FrameKind,
+        full: String,
+        lite: Option<String>,
+    },
+}
 
 /// Per-session command queue capacity (browser → KStars).
 pub const CMD_CAP: usize = 256;
@@ -71,8 +126,9 @@ struct ReplayCache {
     /// the coordinates (message.cpp emits `new_mount_state` from several sites
     /// with partial payloads).
     last_mount_coords: Option<String>,
-    /// Latest `new_preview_image` (decoded from a media frame).
-    last_preview: Option<String>,
+    /// Latest preview per kind, so a browser gets the current frame of a
+    /// view the moment it subscribes to it (tab switch or reconnect).
+    last_preview: HashMap<FrameKind, Arc<Outbound>>,
     /// Recent `new_guide_state` messages within `GUIDE_WINDOW`, in arrival order.
     guide_history: VecDeque<(Instant, String)>,
 }
@@ -131,6 +187,8 @@ impl ReplayCache {
     /// Ordered messages to replay to a newly-connected browser. Coord-bearing
     /// mount state comes after the status-only one so the client (which merges
     /// partial payloads) ends up with RA/Dec; guide history is chronological.
+    /// Previews are not here: they go out per kind once the browser has said
+    /// which views it shows (`Hub::last_preview`).
     fn snapshot(&mut self) -> Vec<String> {
         self.prune_guide(Instant::now());
         let mut out = Vec::new();
@@ -143,18 +201,20 @@ impl ReplayCache {
             out.push(m.clone());
         }
         out.extend(self.guide_history.iter().map(|(_, m)| m.clone()));
-        if let Some(p) = &self.last_preview {
-            out.push(p.clone());
-        }
         out
     }
 }
 
 #[derive(Clone)]
 pub struct Hub {
-    /// Text frames from KStars (message channel + decoded media frames)
-    /// fanned out to all connected browsers.
-    pub browser_tx: broadcast::Sender<String>,
+    /// Frames from KStars (message channel + decoded media frames) fanned
+    /// out to all connected browsers. Previews are filtered per browser in
+    /// `proxy.rs`.
+    pub browser_tx: broadcast::Sender<Arc<Outbound>>,
+
+    /// Browsers currently asking for lite previews. `kstars_ws.rs` only
+    /// re-encodes a frame while this is non-zero.
+    lite_subscribers: Arc<AtomicUsize>,
 
     /// Current outbound pipe to the KStars message channel.
     /// `None` while no KStars session is connected. Set by the `/message/ekos`
@@ -181,6 +241,7 @@ impl Hub {
         let (browser_tx, _) = broadcast::channel(BROADCAST_CAP);
         Self {
             browser_tx,
+            lite_subscribers: Arc::new(AtomicUsize::new(0)),
             kstars_msg_tx: Arc::new(Mutex::new(None)),
             last_connection_state: Arc::new(Mutex::new(None)),
             last_site_location: Arc::new(Mutex::new(None)),
@@ -189,8 +250,24 @@ impl Hub {
     }
 
     /// Subscribe a new browser to the broadcast of KStars events.
-    pub fn subscribe(&self) -> broadcast::Receiver<String> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Arc<Outbound>> {
         self.browser_tx.subscribe()
+    }
+
+    /// Fan a text frame out to every browser.
+    pub fn broadcast_text(&self, text: String) {
+        let _ = self.browser_tx.send(Arc::new(Outbound::Text(text)));
+    }
+
+    /// Whether any browser currently wants lite previews.
+    pub fn lite_wanted(&self) -> bool {
+        self.lite_subscribers.load(Ordering::Relaxed) > 0
+    }
+
+    /// The lite-subscriber counter, for `proxy.rs` to hold while a browser
+    /// asks for lite previews.
+    pub fn lite_subscribers(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.lite_subscribers)
     }
 
     /// Fold a KStars text frame into the replay snapshot. Cheap no-op for
@@ -199,13 +276,21 @@ impl Hub {
         self.replay.lock().await.capture(text);
     }
 
-    /// Record the latest decoded preview image for replay on browser connect.
-    pub async fn capture_preview(&self, msg: &str) {
-        self.replay.lock().await.last_preview = Some(msg.to_string());
+    /// Record the latest decoded preview of its kind, for the next browser
+    /// that subscribes to that view.
+    pub async fn capture_preview(&self, frame: Arc<Outbound>) {
+        if let Outbound::Preview { kind, .. } = frame.as_ref() {
+            self.replay.lock().await.last_preview.insert(*kind, frame.clone());
+        }
     }
 
-    /// Ordered messages to replay to a newly-connected browser (last preview,
-    /// recent guide metrics, FOV geometry). Empty when nothing is cached yet.
+    /// The latest preview of `kind`, if KStars has sent one this session.
+    pub async fn last_preview(&self, kind: FrameKind) -> Option<Arc<Outbound>> {
+        self.replay.lock().await.last_preview.get(&kind).cloned()
+    }
+
+    /// Ordered messages to replay to a newly-connected browser (recent guide
+    /// metrics, FOV geometry, module states). Empty when nothing is cached yet.
     pub async fn replay_snapshot(&self) -> Vec<String> {
         self.replay.lock().await.snapshot()
     }
@@ -346,15 +431,30 @@ mod tests {
         assert!(guides.last().unwrap().contains(&format!("{}", GUIDE_HISTORY_CAP + 49)));
     }
 
+    #[tokio::test]
+    async fn previews_are_kept_per_kind_and_left_out_of_the_snapshot() {
+        let hub = Hub::new();
+        let frame = |kind, tag: &str| {
+            Arc::new(Outbound::Preview { kind, full: tag.to_string(), lite: None })
+        };
+        hub.capture_preview(frame(FrameKind::Guide, "g1")).await;
+        hub.capture_preview(frame(FrameKind::Guide, "g2")).await;
+        hub.capture_preview(frame(FrameKind::Focus, "f1")).await;
+        hub.capture(r#"{"type":"new_camera_state","payload":{}}"#).await;
+
+        let Some(g) = hub.last_preview(FrameKind::Guide).await else { panic!("no guide frame") };
+        assert!(matches!(g.as_ref(), Outbound::Preview { full, .. } if full == "g2"));
+        assert!(hub.last_preview(FrameKind::Capture).await.is_none());
+        assert_eq!(types(&hub.replay_snapshot().await), vec!["new_camera_state"]);
+    }
+
     #[test]
-    fn preview_is_replayed_last() {
-        let mut c = ReplayCache::default();
-        c.last_preview = Some(r#"{"type":"new_preview_image","payload":{}}"#.to_string());
-        c.capture(r#"{"type":"new_camera_state","payload":{}}"#);
-        let snap = c.snapshot();
-        assert_eq!(
-            snap.last().and_then(|m| serde_json::from_str::<Value>(m).ok().and_then(|v| v["type"].as_str().map(str::to_string))),
-            Some("new_preview_image".to_string())
-        );
+    fn frame_kind_from_uuid_and_wire() {
+        assert_eq!(FrameKind::from_uuid("+F-abc"), FrameKind::Focus);
+        assert_eq!(FrameKind::from_uuid("+A"), FrameKind::Align);
+        assert_eq!(FrameKind::from_uuid("+G"), FrameKind::Guide);
+        assert_eq!(FrameKind::from_uuid("fb37-…"), FrameKind::Capture);
+        assert_eq!(FrameKind::parse("capture"), Some(FrameKind::Capture));
+        assert_eq!(FrameKind::parse("+X"), None);
     }
 }

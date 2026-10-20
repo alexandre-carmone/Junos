@@ -34,7 +34,7 @@ pub struct DsoImageLayer {
 
 impl SkyLayer for DsoImageLayer {
     fn enabled(&self, f: &Frame) -> bool {
-        f.toggles.dso_on && f.toggles.dso_images_on
+        f.toggles.dso_on && f.toggles.dso_images_on && !f.toggles.lite
     }
 
     fn prepare(&mut self, f: &mut Frame, gpu: Option<&mut GpuPrepare>) {

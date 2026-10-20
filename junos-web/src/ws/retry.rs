@@ -76,9 +76,23 @@ where
     });
 }
 
-/// Long-lived periodic refresh: re-requests key INDI properties every few
-/// seconds so the UI stays current even if KStars drops a push subscription.
+/// `document.hidden`: the page is in a background tab or the phone's screen
+/// is off. Nothing is drawn, so the refresh loops skip their sweep rather
+/// than keep the wifi busy with settings snapshots nobody sees.
+fn page_hidden() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .map(|d| d.hidden())
+        .unwrap_or(false)
+}
+
+/// Long-lived periodic refresh: re-requests key INDI properties every 20 s
+/// so the UI stays current even if KStars drops a push subscription.
 /// Complements `spawn_retry_property` (which handles fast bootstrap then stops).
+///
+/// 20 s, not 5: every sweep is ~30 requests each answered by a full settings
+/// snapshot, and KStars pushes most of this state on change anyway. Over a
+/// weak wifi link the sweeps competed with the preview frames.
 pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
     use gloo_timers::future::TimeoutFuture;
 
@@ -86,9 +100,9 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
 
     spawn_local(async move {
         loop {
-            TimeoutFuture::new(5_000).await;
+            TimeoutFuture::new(20_000).await;
 
-            if !online.get_untracked() {
+            if !online.get_untracked() || page_hidden() {
                 continue;
             }
             if store.optical_trains.with_untracked(|t| t.is_empty()) { continue; }
@@ -163,10 +177,11 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
 /// the planetarium mount reticle showing a stale position that never recovered
 /// — visibly wrong on-sky and still wrong after a plate-solve + sync.
 ///
-/// This loop owns EQUATORIAL_EOD_COORD: it re-polls every 1.5 s (so the marker
-/// tracks slews/syncs without the 5 s lag) and re-subscribes every ~12 s (so a
-/// dropped push self-heals). It resolves the mount device from the active
-/// optical train, falling back to the device name learned from prior
+/// This loop owns EQUATORIAL_EOD_COORD: it re-polls every 1.5 s while a tab
+/// that draws the mount is active (`store.mount_fast_poll`, set in `main.rs`:
+/// Sky, Mount, Polar Align), every 6 s otherwise, and re-subscribes every
+/// ~12 s (so a dropped push self-heals). It resolves the mount device from the
+/// active optical train, falling back to the device name learned from prior
 /// `new_mount_state`/coord pushes (`mount_status.device`) when the train has no
 /// mount set.
 pub(super) fn spawn_mount_coord_loop(send: SendCmd, store: DeviceStore) {
@@ -174,13 +189,15 @@ pub(super) fn spawn_mount_coord_loop(send: SendCmd, store: DeviceStore) {
 
     let online = store.online;
     let mount_status = store.mount_status;
+    let fast = store.mount_fast_poll;
 
     spawn_local(async move {
         let mut tick: u32 = 0;
         loop {
-            TimeoutFuture::new(1_500).await;
+            let fast_now = fast.get_untracked();
+            TimeoutFuture::new(if fast_now { 1_500 } else { 6_000 }).await;
 
-            if !online.get_untracked() {
+            if !online.get_untracked() || page_hidden() {
                 continue;
             }
 
@@ -204,8 +221,8 @@ pub(super) fn spawn_mount_coord_loop(send: SendCmd, store: DeviceStore) {
             }).to_string());
 
             // Re-subscribe every ~12 s so a silently-dropped push subscription
-            // recovers on its own; the 1.5 s poll guarantees freshness meanwhile.
-            if tick % 8 == 0 {
+            // recovers on its own; the poll guarantees freshness meanwhile.
+            if tick % (if fast_now { 8 } else { 2 }) == 0 {
                 send(serde_json::json!({
                     "type": "device_property_subscribe",
                     "payload": { "device": device, "properties": ["EQUATORIAL_EOD_COORD"] }

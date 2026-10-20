@@ -132,10 +132,10 @@ impl DeepStarCatalog {
     }
 }
 
+/// `?v=` is the catalog's version for the browser cache (`net.rs`, and the
+/// server marks `*.bin` immutable): bump it whenever `tycho.bin` is regenerated.
 pub async fn fetch_deep_stars() -> Option<Arc<DeepStarCatalog>> {
-    let bytes = gloo_net::http::Request::get("/tycho.bin")
-        .send().await.ok()?
-        .binary().await.ok()?;
+    let bytes = crate::net::cached_bytes("/tycho.bin?v=1").await?;
     DeepStarCatalog::parse(bytes).map(Arc::new)
 }
 

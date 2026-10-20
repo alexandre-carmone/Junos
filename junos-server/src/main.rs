@@ -5,6 +5,7 @@ mod auth;
 mod config;
 mod dso_tiles;
 mod files;
+mod http_cache;
 mod hub;
 mod kstars_ws;
 mod planning;
@@ -20,12 +21,14 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::{
     extract::State,
+    middleware,
     response::Json,
     routing::{delete, get, post},
     Router,
 };
 use clap::Parser;
 use serde_json::json;
+use tower_http::compression::{CompressionLayer, CompressionLevel};
 use tower_http::services::ServeDir;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -78,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
     dso_tiles::log_cache_state(&config.resolved_dso_tile_dir());
 
     let hub = Hub::new();
-    let app_manager = AppManager::new(hub.browser_tx.clone());
+    let app_manager = AppManager::new(hub.clone());
     app_manager.scan_existing().await;
     app_manager.clone().start_monitor();
 
@@ -90,8 +93,21 @@ async fn main() -> anyhow::Result<()> {
 
     let dist_dir = config.dist_dir.clone();
 
-    let app = Router::new()
+    // The three WebSocket routes stay outside the compression / cache layers:
+    // an upgrade has no body to compress and must not be cached.
+    let ws_routes = Router::new()
         .route("/ws", get(proxy::ws_handler))
+        .route("/message/ekos", get(kstars_ws::message_handler))
+        .route("/media/ekos", get(kstars_ws::media_handler));
+
+    // Everything else is compressed on the fly (gzip / brotli, level 4: the
+    // default brotli 11 would take seconds per MB on a Pi) unless the dist
+    // holds a pre-compressed sibling (`scripts/precompress_dist.sh` writes
+    // `.br` / `.gz` next to the wasm, js, css and catalogs), which
+    // `ServeDir` serves as-is. `http_cache::apply` adds the browser-cache
+    // policy for the static files. The default compression predicate skips
+    // `image/*`, so tiles and thumbnails pass through untouched.
+    let http_routes = Router::new()
         .route("/api/config", get(api_config))
         .route("/api/authenticate", post(auth::authenticate))
         .route("/api/apps/launch", post(apps::launch_handler))
@@ -103,8 +119,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/dso_tiles/index.json", get(dso_tiles::index))
         .route("/api/dso_tiles/:name",      get(dso_tiles::tile))
         .route("/api/dso_tiles/thumbs/:name", get(dso_tiles::thumb))
-        .route("/message/ekos", get(kstars_ws::message_handler))
-        .route("/media/ekos", get(kstars_ws::media_handler))
         .route("/api/files/list",     get(files::list))
         .route("/api/files/meta",     get(files::meta))
         .route("/api/files/thumb",    get(files::thumb))
@@ -122,7 +136,23 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/planning/raw",    get(planning::raw))
         .route("/api/planning/rename", post(planning::rename))
         .route("/api/planning/delete", delete(planning::delete))
-        .fallback_service(ServeDir::new(&dist_dir).append_index_html_on_directories(true))
+        .fallback_service(
+            ServeDir::new(&dist_dir)
+                .append_index_html_on_directories(true)
+                .precompressed_br()
+                .precompressed_gzip(),
+        )
+        .layer(middleware::from_fn(http_cache::apply))
+        .layer(
+            CompressionLayer::new()
+                .br(true)
+                .gzip(true)
+                .quality(CompressionLevel::Precise(4)),
+        );
+
+    let app = Router::new()
+        .merge(ws_routes)
+        .merge(http_routes)
         .with_state(state);
 
     // ── Bind before spawning ────────────────────────────────────────────

@@ -1322,5 +1322,7 @@
   "targets_adv_unknown": "Nature not catalogued: try Hα and broadband.",
   "targets_show_sky": "Show on Sky",
   "targets_goto": "Goto",
-  "targets_below_horizon": "Below the horizon now"
+  "targets_below_horizon": "Below the horizon now",
+  "lite_mode_label": "Lite",
+  "lite_mode_hint": "Low bandwidth: smaller previews, no Tycho-2 stars or deep-sky imagery"
 }

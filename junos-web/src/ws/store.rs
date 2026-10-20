@@ -12,6 +12,9 @@ pub struct DeviceStore {
     /// Ekos::Success, i.e. a profile is running and requests that gate on it
     /// will actually be handled. Driven by `new_connection_state.online`.
     pub online: RwSignal<bool>,
+    /// A tab that draws the mount position is active (set in `main.rs`), so
+    /// `retry.rs` polls the coordinates every 1.5 s instead of every 6 s.
+    pub mount_fast_poll: RwSignal<bool>,
     /// Server's $HOME, injected by junos-server/proxy.rs on connect.
     /// Used to predict .esq file paths written via scheduler_save_sequence_file.
     pub home_dir: RwSignal<String>,
@@ -138,6 +141,7 @@ impl DeviceStore {
         Self {
             connected: RwSignal::new(false),
             online: RwSignal::new(false),
+            mount_fast_poll: RwSignal::new(true),
             home_dir: RwSignal::new(String::new()),
             mount_status: RwSignal::new(None),
             camera_status: RwSignal::new(None),

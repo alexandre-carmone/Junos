@@ -1412,5 +1412,7 @@
   "targets_adv_unknown": "Nature non cataloguée : essayer Hα et large bande.",
   "targets_show_sky": "Voir dans le ciel",
   "targets_goto": "Pointer",
-  "targets_below_horizon": "Sous l'horizon maintenant"
+  "targets_below_horizon": "Sous l'horizon maintenant",
+  "lite_mode_label": "Lite",
+  "lite_mode_hint": "Bas débit : aperçus réduits, sans étoiles Tycho-2 ni images du ciel profond"
 }
