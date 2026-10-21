@@ -32,6 +32,7 @@ use leptos::prelude::*;
 use serde_json::json;
 
 use crate::compat::{CameraSnapshot, CaptureSnapshot, FilterWheelSnapshot};
+use crate::components::filter_settings::{filter_chip, FilterSettingsSheet};
 use crate::components::form::{sheet, CARD, CARD_TITLE, CHIP, FOOTER, LABEL, NUM};
 use crate::components::sky::persisted;
 use crate::components::sequence_editor::{build_esq_xml, SeqEnd, SeqFrame, SeqLimits, SequenceEditor};
@@ -136,14 +137,18 @@ pub fn ImagingTab(
     let hist_adu = persisted("imaging_histogram_adu", false);
     let hist_stats = persisted("imaging_histogram_stats", false);
     let editor_open = RwSignal::new(false);
+    let filters_open = RwSignal::new(false);
     let detail = RwSignal::new(None::<usize>);
     let esc = window_event_listener(leptos::ev::keydown, move |e| {
         if e.key() == "Escape" {
             zoom_open.set(false);
             editor_open.set(false);
+            filters_open.set(false);
             detail.set(None);
         }
     });
+    // Offset / AF hint of a queue job's filter, from the Filter Settings table.
+    let filter_ctx = use_context::<crate::FilterCtx>();
     on_cleanup(move || esc.remove());
     // The detailed job left the queue.
     Effect::new(move |_| {
@@ -314,6 +319,7 @@ pub fn ImagingTab(
                 <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Imaging)></span>
                 <span class="shrink-0 font-semibold text-text-blue-bright">{move || tr().tab_imaging}</span>
                 <span class="min-w-0 truncate text-sm text-text-muted">{move || device.get()}</span>
+                {filter_chip(filters_open, lang)}
                 <span class=move || format!("{} ml-auto shrink-0", status_badge(&status.get()))>
                     {move || { let s = status.get(); if s.is_empty() { tr().idle.to_string() } else { s } }}
                 </span>
@@ -420,7 +426,10 @@ pub fn ImagingTab(
                                 }.into_any()
                             } else {
                                 q.iter().enumerate()
-                                    .map(|(i, job)| jobs::job_card(i, job, live, tr, open_job, remove))
+                                    .map(|(i, job)| {
+                                        let hint = filter_ctx.and_then(|c| c.hint(job["Filter"].as_str().unwrap_or("")));
+                                        jobs::job_card(i, job, live, hint, tr, open_job, remove)
+                                    })
                                     .collect::<Vec<_>>()
                                     .into_any()
                             })
@@ -492,6 +501,7 @@ pub fn ImagingTab(
             <Show when=move || detail.get().is_some()>
                 {sheet(move || tr().imaging_job_detail, move || detail.set(None), detail_body())}
             </Show>
+            <FilterSettingsSheet open=filters_open send=send.clone() />
             {frame_zoom(preview.into(), zoom_open, lang)}
         </div>
     }

@@ -288,6 +288,16 @@ translations! {
     sky_horizon_hint, sky_horizon_name, sky_horizon_undo, sky_horizon_clear, sky_horizon_save,
     sky_horizon_need_points, sky_horizon_offline, sky_horizon_disabled, horizon_behind, horizon_goto_anyway,
     targets_above_mask, chart_masked,
+    fw_slot, fw_exposure, fw_autofocus, fw_lock,
+    fw_lock_none, fw_lock_help, fw_flat_sync_focus, fw_build_offsets,
+    fw_unsaved, fw_no_table, fw_err_label_empty, fw_err_label_dup,
+    fw_move_busy, fw_steps, mount_solve_use_current_filter, bfo_title,
+    bfo_run, bfo_stop, bfo_save, bfo_back,
+    bfo_ref_filter, bfo_adapt_focus, bfo_selected, bfo_runs,
+    bfo_current_offset, bfo_af_runs, bfo_average, bfo_new_offset,
+    bfo_save_row, bfo_phase_idle, bfo_phase_running, bfo_phase_stopped,
+    bfo_phase_done, bfo_ref_hint, bfo_rerun_desktop, bfo_af_failed_desktop,
+    bfo_multi_wheel, bfo_no_wheel, bfo_saved, bfo_focus_locked,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

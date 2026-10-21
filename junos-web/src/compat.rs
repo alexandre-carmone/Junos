@@ -49,10 +49,20 @@ pub struct CameraSnapshot {
     pub frame_type_options:      Vec<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FilterWheelSnapshot {
     pub device:       String,
     pub filter_names: Vec<String>,
+    /// 1-based, from INDI `FILTER_SLOT`.
+    pub current_slot: Option<i32>,
+}
+
+impl FilterWheelSnapshot {
+    /// Label of the filter the wheel sits on.
+    pub fn current_name(&self) -> Option<&str> {
+        let i = usize::try_from(self.current_slot? - 1).ok()?;
+        self.filter_names.get(i).map(String::as_str)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -224,6 +234,7 @@ pub fn derive_filter_wheel(store: &DeviceStore) -> Signal<FilterWheelSnapshot> {
             Some(s) => FilterWheelSnapshot {
                 device: s.device,
                 filter_names: s.filter_names,
+                current_slot: s.current_slot,
             },
             None => FilterWheelSnapshot::default(),
         }

@@ -4,6 +4,8 @@ pub mod coord_input;
 pub mod devices;
 pub mod dialog_modal;
 pub mod files;
+pub mod filter_offsets;
+pub mod filter_settings;
 pub mod form;
 pub mod frame_type;
 pub mod focus;

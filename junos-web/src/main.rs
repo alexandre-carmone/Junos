@@ -128,6 +128,53 @@ pub struct ServiceBusyCtx {
     pub mount_busy:  Signal<Option<&'static str>>,
 }
 
+/// The filter wheel for every camera-using tab: the Capture train's INDI
+/// wheel (names, position) and Ekos' Filter Settings table (exposure, focus
+/// offset, autofocus, lock per slot), plus the Build Filter Offsets state.
+/// Context rather than props: read by the Imaging / Focus / Mount headers,
+/// the Focus picker, the shared sequence cards and the Imaging queue.
+#[derive(Clone, Copy)]
+pub struct FilterCtx {
+    pub wheel: Signal<compat::FilterWheelSnapshot>,
+    pub table: RwSignal<Option<ws::FilterManagerData>>,
+    pub flat_sync_focus: RwSignal<Option<bool>>,
+    /// The Filter settings sheet shows the Build offsets wizard instead of
+    /// the table while this is on.
+    pub build_offsets_open: RwSignal<bool>,
+    pub offsets: RwSignal<Option<ws::FilterOffsetsData>>,
+    pub offsets_progress: RwSignal<Option<ws::FilterOffsetsProgress>>,
+    pub offsets_phase: RwSignal<ws::BfoPhase>,
+    /// The Focus module's state string — the wizard spots a failed autofocus
+    /// (KStars then asks on the desktop) through it.
+    pub focus_state: Signal<String>,
+    /// All INDI devices: the wizard names the wheel KStars' handler picks.
+    pub devices: RwSignal<Vec<ws::DeviceInfo>>,
+}
+
+impl FilterCtx {
+    /// What switching to `label` does besides moving the wheel, from the
+    /// table: "+120 · AF" (offset and autofocus), "−45", "AF"; `None` for an
+    /// unknown filter or one with neither.
+    pub fn hint(&self, label: &str) -> Option<String> {
+        if label.is_empty() {
+            return None;
+        }
+        self.table.with(|t| t.as_ref()?.row(label).and_then(filter_hint))
+    }
+}
+
+/// See [`FilterCtx::hint`].
+pub fn filter_hint(row: &ws::FilterRow) -> Option<String> {
+    let mut parts = Vec::new();
+    if row.offset != 0 {
+        parts.push(if row.offset > 0 { format!("+{}", row.offset) } else { format!("\u{2212}{}", -row.offset) });
+    }
+    if row.autofocus {
+        parts.push("AF".to_string());
+    }
+    (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
+}
+
 #[component]
 fn App() -> impl IntoView {
     console_error_panic_hook::set_once();
@@ -289,6 +336,22 @@ fn App() -> impl IntoView {
     // mid-slew fired `mount_goto_rade` and aborted the running slew.
     let (mount_busy, camera_busy) = compat::derive_service_busy(&store);
     provide_context(ServiceBusyCtx { camera_busy, mount_busy });
+
+    // ── Filter wheel ──────────────────────────────────────────────────────
+    provide_context(FilterCtx {
+        wheel: compat::derive_filter_wheel(&store),
+        table: store.filter_manager,
+        flat_sync_focus: store.flat_sync_focus,
+        build_offsets_open: RwSignal::new(false),
+        offsets: store.filter_offsets,
+        offsets_progress: store.filter_offsets_progress,
+        offsets_phase: store.filter_offsets_phase,
+        focus_state: {
+            let fs = store.focus_status;
+            Signal::derive(move || fs.with(|f| f.as_ref().map(|f| f.status.clone()).unwrap_or_default()))
+        },
+        devices: store.devices,
+    });
 
     // ── Horizon mask ──────────────────────────────────────────────────────
     // KStars' answer wins over the cached copy as soon as it lands; every

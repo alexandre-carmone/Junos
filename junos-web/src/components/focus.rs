@@ -22,6 +22,7 @@ use wasm_bindgen::{closure::Closure, JsCast};
 use web_sys::{HtmlCanvasElement, CanvasRenderingContext2d, MouseEvent};
 
 use crate::compat::FocusSnapshot;
+use crate::components::filter_settings::{filter_chip, FilterSettingsSheet};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{Lang, Translations, t};
 use crate::ws::SendCmd;
@@ -97,6 +98,9 @@ fn enum_options_for(key: &str) -> Option<&'static [&'static str]> {
 /// The `focus_get_all_settings` keys the settings sheet shows, in order, with
 /// their label. Other keys are ignored.
 const SETTINGS: &[(&str, fn(&Translations) -> &'static str)] = &[
+    // First: picking a filter makes KStars reload that filter's exposure
+    // (focus.cpp:6095), which the next row then shows.
+    ("focusFilter",          |t| t.field_filter),
     ("focusExposure",        |t| t.focus_param_exposure),
     ("focusBinning",         |t| t.focus_param_binning),
     ("focusGain",            |t| t.gain),
@@ -123,6 +127,12 @@ pub fn FocusTab(
 
     let step_size = RwSignal::new(100_i64);
     let settings_open = RwSignal::new(false);
+    let filters_open = RwSignal::new(false);
+    // The wheel's names for the `focusFilter` picker; Autofocus is held while
+    // Build Filter Offsets runs (KStars refuses it, focus.cpp:1192).
+    let filter_ctx = use_context::<crate::FilterCtx>();
+    let filter_names = Memo::new(move |_| filter_ctx.map(|c| c.wheel.with(|w| w.filter_names.clone())).unwrap_or_default());
+    let bfo_running = Memo::new(move |_| filter_ctx.is_some_and(|c| c.offsets_phase.get() == crate::ws::BfoPhase::Running));
     let status = Memo::new(move |_| focus.with(|f| f.status.clone()));
     // A Memo so the open settings sheet only re-renders when the settings
     // change, not on every HFR update (which would eat a half-typed value).
@@ -141,8 +151,9 @@ pub fn FocusTab(
     {
         let cb = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
             move |e: web_sys::KeyboardEvent| {
-                if e.key() == "Escape" && settings_open.get_untracked() {
+                if e.key() == "Escape" {
                     settings_open.set(false);
+                    filters_open.set(false);
                 }
             },
         );
@@ -730,6 +741,7 @@ pub fn FocusTab(
                 <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Focus)></span>
                 <span class="shrink-0 font-semibold text-text-blue-bright">{move || tr().tab_focus}</span>
                 <span class="min-w-0 truncate text-sm text-text-muted">{move || focus.with(|f| f.device.clone())}</span>
+                {filter_chip(filters_open, lang)}
                 <span class=move || format!("{} ml-auto shrink-0", status_badge(&status.get()))>
                     {move || {
                         let s = status.get();
@@ -814,6 +826,8 @@ pub fn FocusTab(
                                 } else {
                                     "btn btn-danger w-full h-12 text-base"
                                 }
+                                disabled=move || bfo_running.get()
+                                title=move || if bfo_running.get() { tr().bfo_focus_locked } else { "" }
                                 on:click=on_autofocus
                             >
                                 {move || if is_idle(&status.get()) {
@@ -913,10 +927,18 @@ pub fn FocusTab(
                     {move || {
                         let tr = tr();
                         let send = send_sv.get_value();
+                        let names = filter_names.get();
                         let rows: Vec<AnyView> = settings.with(|s| SETTINGS
                             .iter()
                             .filter_map(|&(key, label)| {
-                                s.get(key).map(|v| setting_row(key, label(tr), v.clone(), send.clone()))
+                                let opts = match key {
+                                    // No wheel: no row (KStars' combo is empty too).
+                                    "focusFilter" => return (!names.is_empty()).then(|| {
+                                        setting_row(key, label(tr), s.get(key).cloned().unwrap_or(serde_json::Value::String(String::new())), Some(names.clone()), send.clone())
+                                    }),
+                                    _ => enum_options_for(key).map(|o| o.iter().map(|s| s.to_string()).collect()),
+                                };
+                                s.get(key).map(|v| setting_row(key, label(tr), v.clone(), opts, send.clone()))
                             })
                             .collect());
                         if rows.is_empty() {
@@ -929,6 +951,7 @@ pub fn FocusTab(
                     }}
                 </div>
             </Show>
+            <FilterSettingsSheet open=filters_open send=send_sv.get_value() />
         </div>
     }
 }
@@ -950,24 +973,33 @@ fn stat_tile(
 }
 
 /// One settings row: label left, control right. The control follows the
-/// value's JSON type, except combo-box keys, which always get a `<select>`.
-fn setting_row(key: &'static str, label: &'static str, val: serde_json::Value, send: SendCmd) -> AnyView {
+/// value's JSON type, except combo-box keys (`opts`), which get a `<select>`.
+/// `focusFilter` only sets the module's choice — KStars moves the wheel when
+/// it next captures, with the filter's offset — then the settings are re-read
+/// for the exposure KStars reloads with it.
+fn setting_row(key: &'static str, label: &'static str, val: serde_json::Value, opts: Option<Vec<String>>, send: SendCmd) -> AnyView {
     use serde_json::Value;
     const INPUT: &str = "input input--sm font-mono w-[150px] shrink-0 max-md:h-9";
-    let set = move |v: Value| dispatch_setting(&send, "focus_set_all_settings", None, key, v);
+    let set = move |v: Value| {
+        dispatch_setting(&send, "focus_set_all_settings", None, key, v);
+        if key == "focusFilter" {
+            let s = send.clone();
+            gloo_timers::callback::Timeout::new(500, move || send_cmd(&s, "focus_get_all_settings", serde_json::json!({}))).forget();
+        }
+    };
     let text = |v: &Value| match v {
         Value::String(s) => s.clone(),
         other => other.to_string(),
     };
 
-    let field = match (enum_options_for(key), &val) {
+    let field = match (opts, &val) {
         (Some(opts), _) => {
             let current = text(&val);
             // Keep an unexpected current value selectable rather than drop it.
-            let extra = (!current.is_empty() && !opts.contains(&current.as_str())).then(|| current.clone());
+            let extra = (!current.is_empty() && !opts.contains(&current)).then(|| current.clone());
             let options = extra
                 .into_iter()
-                .chain(opts.iter().map(|o| o.to_string()))
+                .chain(opts)
                 .map(|o| view! { <option value=o.clone() selected={o == current}>{o.clone()}</option> })
                 .collect::<Vec<_>>();
             view! {

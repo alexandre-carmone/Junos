@@ -232,3 +232,24 @@ pub(super) fn spawn_mount_coord_loop(send: SendCmd, store: DeviceStore) {
         }
     });
 }
+
+/// Build Filter Offsets follows: KStars only answers
+/// `filter_offset_get_all_settings` (message.cpp:6065), the pushes carry the
+/// progress but not the table, so while a run is on (`filter_offsets_phase`
+/// Running) the table is asked for every 3 s — app-level, so a run started
+/// from the sheet still ends in the store once the sheet is closed.
+pub(super) fn spawn_filter_offsets_loop(send: SendCmd, store: DeviceStore) {
+    use gloo_timers::future::TimeoutFuture;
+
+    spawn_local(async move {
+        loop {
+            TimeoutFuture::new(3_000).await;
+            if !store.online.get_untracked() || page_hidden() {
+                continue;
+            }
+            if store.filter_offsets_phase.get_untracked() == super::BfoPhase::Running {
+                send(r#"{"type":"filter_offset_get_all_settings","payload":{}}"#.to_string());
+            }
+        }
+    });
+}

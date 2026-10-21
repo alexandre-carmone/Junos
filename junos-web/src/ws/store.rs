@@ -21,6 +21,19 @@ pub struct DeviceStore {
     pub mount_status: RwSignal<Option<MountStatusData>>,
     pub camera_status: RwSignal<Option<CameraStatusData>>,
     pub filter_wheel_status: RwSignal<Option<FilterWheelStatusData>>,
+    /// Ekos' Filter Settings table for the Capture main camera's wheel
+    /// (`fm_get_data`). `None` until it answers, or when that camera has no
+    /// wheel. KStars never pushes it: the bootstrap and the 20 s sweep ask,
+    /// and the sheet re-asks after each `fm_set_data`.
+    pub filter_manager: RwSignal<Option<FilterManagerData>>,
+    /// KStars' `FlatSyncFocus` option ("capture flats at the same focus as
+    /// lights"), from `option_get`.
+    pub flat_sync_focus: RwSignal<Option<bool>>,
+    /// Build Filter Offsets: the table (`filter_offset_get_all_settings`),
+    /// the latest progress push and the phase derived from both.
+    pub filter_offsets: RwSignal<Option<FilterOffsetsData>>,
+    pub filter_offsets_progress: RwSignal<Option<FilterOffsetsProgress>>,
+    pub filter_offsets_phase: RwSignal<BfoPhase>,
     pub telescope_settings: RwSignal<TelescopeSettingsData>,
     pub optical_trains: RwSignal<Vec<OpticalTrain>>,
     pub scopes: RwSignal<Vec<ScopeInfo>>,
@@ -141,6 +154,22 @@ impl DeviceStore {
             .map_or(true, |c| c == device)
     }
 
+    /// Same for the filter wheel: the Capture train's wheel, else the one
+    /// `ws/mod.rs` seeded, else any. Without it a second wheel browsed in
+    /// the Devices tab (which subscribes to all its properties) overwrote
+    /// the names and the slot.
+    fn is_capture_wheel(&self, device: &str) -> bool {
+        self.module_train_untracked("1")
+            .map(|t| t.filterwheel)
+            .filter(|w| !w.is_empty() && w != "--")
+            .or_else(|| {
+                self.filter_wheel_status
+                    .with_untracked(|o| o.as_ref().map(|f| f.device.clone()))
+                    .filter(|d| !d.is_empty())
+            })
+            .map_or(true, |w| w == device)
+    }
+
     pub(super) fn new() -> Self {
         Self {
             connected: RwSignal::new(false),
@@ -150,6 +179,11 @@ impl DeviceStore {
             mount_status: RwSignal::new(None),
             camera_status: RwSignal::new(None),
             filter_wheel_status: RwSignal::new(None),
+            filter_manager: RwSignal::new(None),
+            flat_sync_focus: RwSignal::new(None),
+            filter_offsets: RwSignal::new(None),
+            filter_offsets_progress: RwSignal::new(None),
+            filter_offsets_phase: RwSignal::new(BfoPhase::Idle),
             telescope_settings: RwSignal::new(TelescopeSettingsData::default()),
             optical_trains: RwSignal::new(Vec::new()),
             scopes: RwSignal::new(Vec::new()),
@@ -267,6 +301,11 @@ impl DeviceStore {
                     self.mount_status.set(None);
                     self.camera_status.set(None);
                     self.filter_wheel_status.set(None);
+                    self.filter_manager.set(None);
+                    self.flat_sync_focus.set(None);
+                    self.filter_offsets.set(None);
+                    self.filter_offsets_progress.set(None);
+                    self.filter_offsets_phase.set(BfoPhase::Idle);
                     self.focus_status.set(None);
                     self.focus_preview_url.set(None);
                     self.focus_hfr_history.set(Vec::new());
@@ -631,6 +670,10 @@ impl DeviceStore {
                             }
                         });
                     }
+                } else if (prop == "FILTER_NAME" || prop == "FILTER_SLOT")
+                    && payload["device"].as_str().is_some_and(|d| !d.is_empty() && !self.is_capture_wheel(d))
+                {
+                    // Another wheel's property (Devices tab) — not ours.
                 } else if prop == "FILTER_NAME" {
                     // Text property — `texts:[{name, text}, …]`. The `text`
                     // field is the user-visible filter label (e.g. "Ha", "OIII").
@@ -833,6 +876,65 @@ impl DeviceStore {
             // Debounced settings snapshot reply (see message.cpp:734).
             "focus_get_all_settings" => {
                 self.focus_settings.set(payload.clone());
+            }
+
+            // Ekos' Filter Settings table (filtermanager.cpp:952). `{}` when
+            // the Capture main camera has no wheel — keep the last table then
+            // only if the wheel is gone too, so a transient `{}` during
+            // startup doesn't blank the sheet.
+            "fm_get_data" => {
+                match FilterManagerData::from_json(payload).filter(|d| !d.filters.is_empty()) {
+                    Some(d) => self.filter_manager.set(Some(d)),
+                    None => {
+                        if self.filter_wheel_status.with_untracked(|f| f.as_ref().map_or(true, |f| f.filter_names.is_empty())) {
+                            self.filter_manager.set(None);
+                        }
+                    }
+                }
+            }
+
+            // Build Filter Offsets table (buildfilteroffsets.cpp:1085). Only
+            // ever a reply — the wizard polls it while a run is on.
+            "filter_offset_get_all_settings" => {
+                if let Some(d) = FilterOffsetsData::from_json(payload) {
+                    if d.table_in_edit_mode {
+                        self.filter_offsets_phase.set(BfoPhase::Done);
+                    } else if !d.has_results() && self.filter_offsets_phase.get_untracked() == BfoPhase::Done {
+                        // The desktop dialog re-initialised the table.
+                        self.filter_offsets_phase.set(BfoPhase::Idle);
+                    }
+                    self.filter_offsets.set(Some(d));
+                }
+            }
+
+            // `{current, total, status}` on every status change; `total == 0`
+            // is the remote-stop acknowledgement (buildfilteroffsets.cpp:521).
+            "filter_offset_progress" => {
+                let prog = FilterOffsetsProgress {
+                    current: payload["current"].as_i64().unwrap_or(0),
+                    total: payload["total"].as_i64().unwrap_or(0),
+                    status: payload["status"].as_str().unwrap_or("").to_string(),
+                };
+                if prog.total == 0 {
+                    self.filter_offsets_phase.set(BfoPhase::Stopped);
+                } else if self.filter_offsets_phase.get_untracked() != BfoPhase::Done {
+                    self.filter_offsets_phase.set(BfoPhase::Running);
+                }
+                self.filter_offsets_progress.set(Some(prog));
+            }
+
+            // `{filter, newOffset, average}` after each filter's runs — patch
+            // the row at once; the next poll brings the full table.
+            "filter_offset_calculated" => {
+                let Some(name) = payload["filter"].as_str() else { return };
+                self.filter_offsets.update(|opt| {
+                    let Some(d) = opt.as_mut() else { return };
+                    if let Some(row) = d.filters.iter_mut().find(|f| f.filter == name) {
+                        if let Some(v) = payload["newOffset"].as_i64() { row.new_offset = v; }
+                        if let Some(v) = payload["average"].as_i64() { row.average = v; }
+                        row.save = true;
+                    }
+                });
             }
 
             // Camera state: temperature (see message.cpp:446 sendTemperature).
@@ -1119,6 +1221,12 @@ impl DeviceStore {
                             let Some(name) = el["name"].as_str() else {
                                 continue;
                             };
+                            if name == "FlatSyncFocus" {
+                                if let Some(b) = el["value"].as_bool() {
+                                    self.flat_sync_focus.set(Some(b));
+                                }
+                                continue;
+                            }
                             if !GUIDE_KEYS.contains(&name) {
                                 continue;
                             }

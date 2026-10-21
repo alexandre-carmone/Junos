@@ -23,11 +23,13 @@ fn status_cls(status: &str) -> &'static str {
 }
 
 /// One job card; a tap opens its details. The running job shows the live
-/// frame count (`seqv` / `seqr` of `new_capture_state`).
+/// frame count (`seqv` / `seqr` of `new_capture_state`). `hint` is what the
+/// job's filter does to focus ("+120 · AF", `FilterCtx::hint`).
 pub(super) fn job_card(
     i: usize,
     job: &Value,
     live: (Option<i64>, Option<i64>),
+    hint: Option<String>,
     tr: &'static Translations,
     open: Callback<usize>,
     remove: Callback<usize>,
@@ -67,7 +69,10 @@ pub(super) fn job_card(
                 <span class="shrink-0 font-mono text-xs text-text-faint">{format!("#{}", i + 1)}</span>
                 <span class="inline-flex shrink-0" style:color=color inner_html=icon></span>
                 <span class="shrink-0 font-semibold text-text-blue-bright">{kind}</span>
-                <span class="flex-1 min-w-0 truncate font-mono text-sm text-text-dim">{summary}</span>
+                <span class="flex-1 min-w-0 truncate font-mono text-sm text-text-dim">
+                    {summary}
+                    {hint.map(|h| view! { <span class="text-xs text-text-muted">{format!(" ({h})")}</span> })}
+                </span>
                 <button class="btn-icon shrink-0 -mr-1 text-text-muted" title=tr.imaging_remove_job
                         on:click=move |ev| { ev.stop_propagation(); remove.run(i); }>
                     "\u{2716}"

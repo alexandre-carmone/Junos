@@ -31,6 +31,7 @@ use wasm_bindgen::{closure::Closure, JsCast};
 
 use crate::compat::{FilterWheelSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot};
 use crate::components::coord_input::{dms_string_to_degrees, hms_string_to_hours, CoordInput, CoordMode};
+use crate::components::filter_settings::{filter_chip, FilterSettingsSheet};
 use crate::components::form::{
     check_row, setting_row, sheet, CARD, CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, SELECT,
 };
@@ -323,6 +324,7 @@ pub fn MountTab(
 
     let settings_open = RwSignal::new(false);
     let log_open = RwSignal::new(false);
+    let filters_open = RwSignal::new(false);
     // Escape closes the sheets. forget() the closure (one persistent listener
     // per mount); calls into a disposed RwSignal are a no-op in leptos 0.7, so
     // leftover listeners after a tab switch are harmless.
@@ -331,6 +333,7 @@ pub fn MountTab(
             if e.key() == "Escape" {
                 settings_open.set(false);
                 log_open.set(false);
+                filters_open.set(false);
             }
         });
         if let Some(win) = web_sys::window() {
@@ -340,6 +343,7 @@ pub fn MountTab(
     }
 
     // ── Actions ──────────────────────────────────────────────────────────
+    let send_sheet = send.clone();
     let s_plain = send.clone();
     let plain = move |ty: &'static str| {
         let s = s_plain.clone();
@@ -494,6 +498,9 @@ pub fn MountTab(
         "rotator_control": hint_rotator.get_untracked(),
     }));
     let c = Ctx { send: send.clone(), align, lang };
+    // Copy handle on `c` for the reactive blocks inside the body (a `move`
+    // closure capturing `c` itself would make the body FnOnce).
+    let c_sv = StoredValue::new(c.clone());
 
     let settings_body = move || {
         let (h1, h2, h3, h4) = (send_hints.clone(), send_hints.clone(), send_hints.clone(), send_hints.clone());
@@ -522,8 +529,20 @@ pub fn MountTab(
                     {num_row(&c, "alignExposure", |t| t.align_exposure, 0.1, 300.0, 0.1)}
                     {select_row(&c, "alignBinning", |t| t.mount_solve_binning,
                                 || BINNING_OPTIONS.map(String::from).to_vec())}
-                    {select_row(&c, "alignFilter", |t| t.mount_solve_filter,
-                                move || filter_wheel.with(|f| f.filter_names.clone()))}
+                    // The solve filter: whatever the wheel sits on, or a fixed
+                    // one. Either way KStars applies it (with its offset, no
+                    // autofocus) when it next captures — nothing moves here.
+                    {bool_row(&c, "alignUseCurrentFilter", |t| t.mount_solve_use_current_filter)}
+                    <Show when=move || !align.with(|s| s["alignUseCurrentFilter"].as_bool().unwrap_or(false))>
+                        {select_row(&c_sv.get_value(), "alignFilter", |t| t.mount_solve_filter,
+                                    move || filter_wheel.with(|f| f.filter_names.clone()))}
+                    </Show>
+                    <Show when=move || filter_wheel.with(|f| !f.filter_names.is_empty())>
+                        <button type="button" class="btn btn-ghost h-10 md:h-9 w-full"
+                                on:click=move |_| filters_open.set(true)>
+                            {move || tr().fw_config_title}
+                        </button>
+                    </Show>
                     {num_row(&c, "alignGain", |t| t.mount_solve_gain, 0.0, 10000.0, 0.1)}
                     {text_row(&c, "alignISO", |t| t.mount_solve_iso)}
                     {bool_row(&c, "alignDarkFrame", |t| t.mount_solve_dark_frame)}
@@ -603,6 +622,7 @@ pub fn MountTab(
                 <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Mount)></span>
                 <span class="shrink-0 font-semibold text-text-blue-bright">{move || tr().tab_mount}</span>
                 <span class="min-w-0 truncate text-sm text-text-muted">{move || device.get()}</span>
+                {filter_chip(filters_open, lang)}
                 <span class=move || format!("{} ml-auto shrink-0", badge.get().1)>{move || badge.get().0}</span>
                 <button class="btn-icon shrink-0 text-text-muted" title=move || tr().mount_settings
                         on:click=move |_| settings_open.set(true)>
@@ -807,6 +827,8 @@ pub fn MountTab(
             <Show when=move || log_open.get()>
                 {sheet(move || tr().mount_solve_log, move || log_open.set(false), log_body())}
             </Show>
+            // Last, so it layers over the plate-solve sheet it opens from.
+            <FilterSettingsSheet open=filters_open send=send_sheet />
         </div>
     }
 }

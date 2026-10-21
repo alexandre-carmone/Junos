@@ -121,10 +121,14 @@ pub fn JobCard(
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
+    // What the row's filter does to focus ("+120 · AF"), from Ekos' Filter
+    // Settings table — display only.
+    let filter_ctx = use_context::<crate::FilterCtx>();
 
     // Reactive copy of this row. `unwrap_or_default` covers the instant
     // between a row being removed and its card being unmounted.
     let frame = move || frames.with(|fs| fs.get(idx).cloned().unwrap_or_default());
+    let filter_hint = move || filter_ctx.and_then(|c| c.hint(&frame().filter));
     let rows = move || frames.with(Vec::len);
     // Memo: only the cards whose open state actually changes re-render.
     let is_open = Memo::new(move |_| open.get() == Some(idx));
@@ -155,7 +159,10 @@ pub fn JobCard(
             <span class="inline-flex shrink-0"
                   style=move || format!("color:{}", frame_type_visual(&frame().frame_type).1)
                   inner_html=move || frame_type_visual(&frame().frame_type).0 />
-            <span class="flex-1 min-w-0 truncate text-md text-text">{title}</span>
+            <span class="flex-1 min-w-0 truncate text-md text-text">
+                {title}
+                <span class="font-mono text-xs text-text-muted">{move || filter_hint().map(|h| format!(" ({h})"))}</span>
+            </span>
             <span class="font-mono text-sm text-text-muted whitespace-nowrap">{exp_count}</span>
             <span class="font-mono text-sm text-text-dim whitespace-nowrap min-w-[56px] text-right">{duration}</span>
             <span class="text-text-blue">{move || if is_open.get() { "\u{25B4}" } else { "\u{25BE}" }}</span>
@@ -172,12 +179,17 @@ pub fn JobCard(
     );
 
     let no_change = Signal::derive(move || tr().seq_no_change.to_string());
-    let filter = move || labeled(move || tr().field_filter, choice_input(
-        move || filter_wheel.with(|fw| fw.filter_names.clone()),
-        move || frame().filter,
-        move |v| update_row(frames, idx, |f| f.filter = v),
-        Some(no_change),
-    ));
+    let filter = move || view! {
+        {labeled(move || tr().field_filter, choice_input(
+            move || filter_wheel.with(|fw| fw.filter_names.clone()),
+            move || frame().filter,
+            move |v| update_row(frames, idx, |f| f.filter = v),
+            Some(no_change),
+        ))}
+        <Show when=move || filter_hint().is_some()>
+            <span class="font-mono text-xs text-text-muted -mt-1">{move || filter_hint().unwrap_or_default()}</span>
+        </Show>
+    };
 
     let exposure = move || labeled(move || tr().field_exposure_s, text_input(
         "decimal",

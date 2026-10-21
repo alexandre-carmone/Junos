@@ -96,6 +96,10 @@ const STICKY_TYPES: &[&str] = &[
     "new_livestacker_state",
     "get_scopes",
     "train_get_all",
+    // Ekos' Filter Settings table: a reply to the browser's own request
+    // (message.cpp:1818 answers under the request's type), never a push, so
+    // a reconnecting browser would otherwise wait for its bootstrap.
+    "fm_get_data",
 ];
 
 /// INDI properties whose last `device_property_{set,get}` reply is kept per
@@ -107,7 +111,7 @@ const STICKY_TYPES: &[&str] = &[
 /// textToJson}` all build `{device, name, state, …}`), and the key the client
 /// reads in `ws/store.rs::apply_ekos_event`. Only BLOB payloads carry a
 /// `property` key (`indistd.cpp:1058`), and no BLOB is listed here.
-const STICKY_PROPS: &[&str] = &["CCD_INFO", "EQUATORIAL_EOD_COORD"];
+const STICKY_PROPS: &[&str] = &["CCD_INFO", "EQUATORIAL_EOD_COORD", "FILTER_SLOT", "FILTER_NAME"];
 
 /// Server-side snapshot of the most recent KStars state, replayed to every
 /// browser on connect so a dropped/refreshed browser recovers the last preview
@@ -378,6 +382,13 @@ mod tests {
             1,
             "a `name`-keyed property reply must be retained"
         );
+
+        // The filter wheel's slot is kept per device, so two wheels don't
+        // collide.
+        let mut c = ReplayCache::default();
+        c.capture(r#"{"type":"device_property_get","payload":{"device":"Filter Simulator","name":"FILTER_SLOT","state":0,"numbers":[{"name":"FILTER_SLOT_VALUE","value":2}]}}"#);
+        c.capture(r#"{"type":"device_property_get","payload":{"device":"Filter Wheel 2","name":"FILTER_SLOT","state":0,"numbers":[{"name":"FILTER_SLOT_VALUE","value":5}]}}"#);
+        assert_eq!(c.snapshot().iter().filter(|m| m.contains("FILTER_SLOT")).count(), 2);
 
         // A `property`-keyed payload is a BLOB descriptor, not a property
         // value; it must not populate the replay cache.

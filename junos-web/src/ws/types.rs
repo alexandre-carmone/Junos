@@ -69,6 +69,192 @@ pub struct FilterWheelStatusData {
     pub current_slot:  Option<i32>,
 }
 
+/// One row of the Capture main camera's Filter Manager table — Ekos'
+/// "Filter Settings" (`fm_get_data`, filtermanager.cpp:952-989). Every
+/// column is kept because `fm_set_data` (:991) overwrites each column of
+/// each row it receives: rows always round-trip whole.
+#[allow(dead_code)] // wire shape — the last-AF columns are only round-tripped
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FilterRow {
+    /// 0-based slot; never edited (an out-of-range index crashes KStars).
+    pub index: usize,
+    pub label: String,
+    /// Default exposure for this filter, s (0.001–3600).
+    pub exposure: f64,
+    /// Focus offset relative to the lock / reference filter, steps (±500000).
+    pub offset: i64,
+    /// Run autofocus after switching to this filter.
+    pub autofocus: bool,
+    /// Filter to focus with instead; `"--"` = none.
+    pub lock: String,
+    pub lastafsolution: i64,
+    pub lastaftemp: f64,
+    pub lastafalt: f64,
+    /// `yyyy-MM-dd hh:mm:ss`; a missing value is stored by KStars as the
+    /// literal format string, so it is always sent back verbatim.
+    pub lastafdt: String,
+    pub tickspertemp: f64,
+    pub ticksperalt: f64,
+    pub wavelength: i64,
+}
+
+impl FilterRow {
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
+        Some(Self {
+            index: v["index"].as_u64()? as usize,
+            label: s("label"),
+            exposure: v["exposure"].as_f64().unwrap_or(1.0),
+            offset: v["offset"].as_i64().unwrap_or(0),
+            autofocus: v["autofocus"].as_bool().unwrap_or(false),
+            lock: if v["lock"].as_str().is_some_and(|l| !l.is_empty()) { s("lock") } else { "--".into() },
+            lastafsolution: v["lastafsolution"].as_i64().unwrap_or(0),
+            lastaftemp: v["lastaftemp"].as_f64().unwrap_or(-100.0),
+            lastafalt: v["lastafalt"].as_f64().unwrap_or(-100.0),
+            lastafdt: s("lastafdt"),
+            tickspertemp: v["tickspertemp"].as_f64().unwrap_or(0.0),
+            ticksperalt: v["ticksperalt"].as_f64().unwrap_or(0.0),
+            wavelength: v["wavelength"].as_i64().unwrap_or(500),
+        })
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "index": self.index,
+            "label": self.label,
+            "exposure": self.exposure,
+            "offset": self.offset,
+            "autofocus": self.autofocus,
+            "lock": self.lock,
+            "lastafsolution": self.lastafsolution,
+            "lastaftemp": self.lastaftemp,
+            "lastafalt": self.lastafalt,
+            "lastafdt": self.lastafdt,
+            "tickspertemp": self.tickspertemp,
+            "ticksperalt": self.ticksperalt,
+            "wavelength": self.wavelength,
+        })
+    }
+}
+
+/// The Filter Manager table of the Capture main camera's wheel.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FilterManagerData {
+    /// INDI name of the wheel; `fm_set_data` is ignored unless it matches.
+    pub device: String,
+    pub filters: Vec<FilterRow>,
+}
+
+impl FilterManagerData {
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        let device = v["device"].as_str()?.to_string();
+        let filters = v["filters"].as_array()?.iter().filter_map(FilterRow::from_json).collect();
+        Some(Self { device, filters })
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "device": self.device,
+            "filters": self.filters.iter().map(FilterRow::to_json).collect::<Vec<_>>(),
+        })
+    }
+
+    pub fn row(&self, label: &str) -> Option<&FilterRow> {
+        self.filters.iter().find(|f| f.label == label)
+    }
+}
+
+/// One filter of the Build Filter Offsets table
+/// (`filter_offset_get_all_settings`, buildfilteroffsets.cpp:1085-1152).
+#[allow(dead_code)] // wire shape — `lock` and `save` are shown, never edited
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FilterOffsetRow {
+    pub filter: String,
+    pub selected: bool,
+    pub offset: i64,
+    pub lock: String,
+    pub num_focus_runs: u32,
+    /// Focuser position found by each autofocus run so far.
+    pub af_runs: Vec<i64>,
+    pub average: i64,
+    pub new_offset: i64,
+    pub save: bool,
+}
+
+impl FilterOffsetRow {
+    pub fn from_json(v: &serde_json::Value) -> Self {
+        Self {
+            filter: v["filter"].as_str().unwrap_or("").to_string(),
+            selected: v["selected"].as_bool().unwrap_or(false),
+            offset: v["offset"].as_i64().unwrap_or(0),
+            lock: v["lock"].as_str().unwrap_or("--").to_string(),
+            num_focus_runs: v["numFocusRuns"].as_u64().unwrap_or(0) as u32,
+            af_runs: v["afRuns"].as_array().map(|a| a.iter().filter_map(|x| x.as_i64()).collect()).unwrap_or_default(),
+            average: v["average"].as_i64().unwrap_or(0),
+            new_offset: v["newOffset"].as_i64().unwrap_or(0),
+            save: v["save"].as_i64().unwrap_or(0) != 0,
+        }
+    }
+}
+
+/// The Build Filter Offsets wizard's state as KStars reports it.
+#[allow(dead_code)] // wire shape — `in_build_offsets` is kept for completeness
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FilterOffsetsData {
+    pub filters: Vec<FilterOffsetRow>,
+    pub ref_filter: String,
+    pub adapt_focus: bool,
+    /// Set when a run starts and never cleared (buildfilteroffsets.cpp:505) —
+    /// not "running". `table_in_edit_mode` marks a finished run.
+    pub in_build_offsets: bool,
+    pub table_in_edit_mode: bool,
+    pub progress: i64,
+    pub progress_max: i64,
+    /// Localised status text — display, never match.
+    pub status: String,
+}
+
+impl FilterOffsetsData {
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        let filters = v["filters"].as_array()?.iter().map(FilterOffsetRow::from_json).collect();
+        Some(Self {
+            filters,
+            ref_filter: v["refFilter"].as_str().unwrap_or("").to_string(),
+            adapt_focus: v["adaptFocus"].as_bool().unwrap_or(false),
+            in_build_offsets: v["inBuildOffsets"].as_bool().unwrap_or(false),
+            table_in_edit_mode: v["tableInEditMode"].as_bool().unwrap_or(false),
+            progress: v["progress"].as_i64().unwrap_or(0),
+            progress_max: v["progressMax"].as_i64().unwrap_or(0),
+            status: v["status"].as_str().unwrap_or("").to_string(),
+        })
+    }
+
+    /// Whether a run already happened in this KStars session: its results
+    /// stay until the desktop dialog re-initialises the table.
+    pub fn has_results(&self) -> bool {
+        self.table_in_edit_mode || self.filters.iter().any(|f| !f.af_runs.is_empty())
+    }
+}
+
+/// `filter_offset_progress {current, total, status}` (message.cpp:6086).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FilterOffsetsProgress {
+    pub current: i64,
+    pub total: i64,
+    pub status: String,
+}
+
+/// Where the Build Filter Offsets run stands, derived in the store from the
+/// replies and pushes (KStars has no single "running" flag on the wire).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BfoPhase {
+    #[default]
+    Idle,
+    Running,
+    Stopped,
+    Done,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CaptureStatusData {
     pub status: String,

@@ -39,7 +39,7 @@ use wasm_bindgen_futures::spawn_local;
 pub use store::DeviceStore;
 pub use types::*;
 
-use retry::{spawn_mount_coord_loop, spawn_refresh_loop, spawn_retry_property, spawn_retry_property_with};
+use retry::{spawn_filter_offsets_loop, spawn_mount_coord_loop, spawn_refresh_loop, spawn_retry_property, spawn_retry_property_with};
 
 /// Type-erased command sink. Components dispatch raw Ekos Live JSON strings.
 pub type SendCmd = Arc<dyn Fn(String) + Send + Sync>;
@@ -62,9 +62,14 @@ pub(crate) const BOOTSTRAP_CMDS: &[&str] = &[
     r#"{"type":"scheduler_get_all_settings","payload":{}}"#,
     r#"{"type":"scheduler_get_jobs","payload":{}}"#,
     r#"{"type":"livestacker_get_all_settings","payload":{}}"#,
+    // Ekos' Filter Settings table. Never pushed (FilterManager::updated()
+    // reaches nothing), so the sweep is also how a `{}` answered before the
+    // camera's FilterManager existed gets corrected.
+    r#"{"type":"fm_get_data","payload":{}}"#,
     // Guider-backend settings live in global KStars Options::, not in
-    // guide_get_all_settings. See message.cpp:1418.
-    r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"}]}}"#,
+    // guide_get_all_settings. See message.cpp:1418. FlatSyncFocus is the
+    // Filter Settings dialog's "flats at the lights' focus" checkbox.
+    r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"},{"name":"FlatSyncFocus"}]}}"#,
 ];
 
 pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
@@ -358,6 +363,9 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
                 filter_sig.update(|opt| {
                     opt.get_or_insert_with(FilterWheelStatusData::default).device = train.filterwheel.clone();
                 });
+                // The Filter Settings table follows the Capture wheel, and
+                // its FilterManager may only exist now.
+                send_for_effect(r#"{"type":"fm_get_data","payload":{}}"#.to_string());
                 spawn_retry_property_with(
                     send_for_effect.clone(),
                     train.filterwheel.clone(),
@@ -435,6 +443,7 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
     spawn_refresh_loop(send_fn.clone(), store.clone());
     // Dedicated fast loop for mount RA/Dec freshness + self-healing re-subscribe.
     spawn_mount_coord_loop(send_fn.clone(), store.clone());
+    spawn_filter_offsets_loop(send_fn.clone(), store.clone());
 
     // Reconnect loop. The socket is re-opened whenever it drops (server restart,
     // KStars relay bounce, sleep/wake, Wi-Fi blip) so the browser recovers without
