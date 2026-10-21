@@ -92,29 +92,31 @@ impl DsoTileIndex {
 
     /// Every cached tile whose square plausibly intersects a square field of
     /// `fov_deg` centred on (`ra_deg`, `dec_deg`) — all J2000. The Framing
-    /// Assistant stamps these onto one canvas to build an "adapted" preview of
-    /// the whole zone, filling any uncovered sky with black.
+    /// Assistant draws these straight onto its canvas, so the whole zone shows
+    /// as one adapted preview with any uncovered sky left black. Each hit
+    /// comes with its index in `tiles`, the key the image cache uses.
     ///
     /// Ordered nearest-centre first and capped at [`MAX_COMPOSITE_TILES`] so a
     /// very wide zone can't pull dozens of multi-megabyte tiles; the tiles
     /// closest to the zone centre are the ones that matter for framing.
-    pub fn find_overlapping(&self, ra_deg: f64, dec_deg: f64, fov_deg: f64) -> Vec<&DsoTile> {
+    pub fn find_overlapping(&self, ra_deg: f64, dec_deg: f64, fov_deg: f64) -> Vec<(usize, &DsoTile)> {
         // Circular over-estimate of "two squares intersect": their centres are
         // within the sum of their half-diagonals. Generous on purpose — a tile
         // included but barely touching just contributes a sliver, whereas one
         // wrongly excluded leaves a black gap.
-        let mut hits: Vec<(f64, &DsoTile)> = self
+        let mut hits: Vec<(f64, usize, &DsoTile)> = self
             .tiles
             .iter()
-            .filter_map(|t| {
+            .enumerate()
+            .filter_map(|(i, t)| {
                 let sep = angular_sep_deg(ra_deg, dec_deg, t.ra, t.dec);
                 let reach = (fov_deg + t.fov) * 0.5 * std::f64::consts::SQRT_2;
-                (sep <= reach).then_some((sep, t))
+                (sep <= reach).then_some((sep, i, t))
             })
             .collect();
         hits.sort_by(|a, b| a.0.total_cmp(&b.0));
         hits.truncate(MAX_COMPOSITE_TILES);
-        hits.into_iter().map(|(_, t)| t).collect()
+        hits.into_iter().map(|(_, i, t)| (i, t)).collect()
     }
 }
 
@@ -154,8 +156,8 @@ mod tests {
         DsoTile { name: name.into(), path: format!("{name}.jpg"), ra, dec, fov, thumb_fov: None }
     }
 
-    fn names(tiles: Vec<&DsoTile>) -> Vec<&str> {
-        tiles.into_iter().map(|t| t.name.as_str()).collect()
+    fn names(tiles: Vec<(usize, &DsoTile)>) -> Vec<&str> {
+        tiles.into_iter().map(|(_, t)| t.name.as_str()).collect()
     }
 
     #[test]

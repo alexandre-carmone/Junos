@@ -5,41 +5,53 @@
 //! it, then hands the whole plan off to the Mosaic planner tab.
 //!
 //! The preview is built **entirely from the offline cache** (`crate::dso_tiles`
-//! — pre-downloaded hips2fits tiles, one per catalog object). `load_preview`
-//! collects every cached tile overlapping the selected zone and stamps them
-//! onto one black offscreen canvas (`PinnedImage`), so an arbitrary zone —
-//! wider than any single tile, or spanning several objects — renders as one
-//! adapted image with uncovered sky left black. Nothing hits the network; a
-//! zone with no cached coverage is simply the grid over black.
+//! — pre-downloaded hips2fits tiles, one per catalog object). Every redraw
+//! looks up the cached tiles overlapping the view and draws the ones already
+//! decoded straight onto the canvas at their tangent-plane offset, so an
+//! arbitrary zone — wider than any single tile, or spanning several objects —
+//! renders as one adapted image with uncovered sky left black. Tiles still
+//! loading appear as they land (a `DsoImageCache`, the sky's own, bounded and
+//! epoch-bumping); nothing is ever rebuilt and nothing hits the network.
+//!
+//! The canvas is the primary control: drag the grid to move the mosaic, drag
+//! the sky to pan the view, wheel / pinch to zoom about the pointer, twist two
+//! fingers or drag the handle above the grid to rotate, double-tap to place
+//! the grid. The sidebar adds a nudge pad with a step picker, rotation and
+//! grid controls; the keyboard mirrors them (see `on_key`).
 //!
 //! Two invariants worth knowing before editing:
 //!
-//! * **Epoch.** `FramingState::params.center` is of-date (JNow), matching both
-//!   the right-click menu's coords and `MosaicPlannerState::params.center`. It is
-//!   converted to J2000 only to query the cache (tiles are ICRS/J2000) and
-//!   from J2000 only when accepting a catalog search hit.
+//! * **Epoch.** `FramingState::params.center` and the view centre are of-date
+//!   (JNow), matching both the right-click menu's coords and
+//!   `MosaicPlannerState::params.center`. They are converted to J2000 only to
+//!   query and place the cache's tiles (ICRS) and from J2000 only when
+//!   accepting a catalog search hit.
 //! * **Geometry.** Tile layout comes from `super::derive_planner_mosaic_plan`
 //!   — the same function that feeds the on-sky `MosaicLayer` and, through the
 //!   planner, KStars. Camera/focal inputs are read live from the same signals
 //!   the Mosaic tab uses, never overridden here, so what's previewed is what
 //!   gets sent.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::f64::consts::{PI, TAU};
 use std::rc::Rc;
 
 use leptos::prelude::*;
-use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
-use web_sys::HtmlImageElement;
+use web_sys::{PointerEvent, WheelEvent};
 
 use crate::astro;
 use crate::catalog::CatalogData;
 use crate::compat::CameraSnapshot;
+use crate::components::form::{slider_row, stepper, CARD_TITLE, CHIP};
 use crate::coords::{J2000, JNow};
 use crate::dso_catalog::DsoCatalogData;
 use crate::i18n::{t, Lang};
 use crate::{ActiveTabCtx, MosaicPlannerCtx, Tab};
 
+use super::actions::{fmt_dec, fmt_ra};
+use super::dso_images::DsoImageCache;
 use super::object_search::search_objects;
 use crate::dom::event_target_value;
 
@@ -51,51 +63,33 @@ pub struct FramingState {
     pub params: super::MosaicParams,
 }
 
-/// The composited preview: an offscreen canvas holding every cached tile that
-/// overlaps the zone, stamped onto black, pinned to the zone center it was
-/// built for. The grid projects against *this* center, not the live one, so
-/// dragging slides the grid across a static image instead of recompositing.
-struct PinnedImage {
-    canvas: web_sys::HtmlCanvasElement,
-    /// JNow center the composite was built for (== the mosaic center).
-    ra_deg: f64,
-    dec_deg: f64,
-    /// Angular span of the (square) composite.
-    fov_deg: f64,
-}
-
 const SIDEBAR_ROW: &str = "flex items-center justify-between gap-sp-2";
 const LABEL: &str = "text-text-muted";
 const NUM_INPUT: &str = "input input--sm font-mono w-[92px]";
+const PAD_BTN: &str = "btn-icon btn-icon--lg select-none [touch-action:none]";
 
-/// Extra sky around the mosaic bounding box, applied to its diagonal (so any
-/// position angle stays covered).
+/// Extra sky around the mosaic bounding box when fitting the view, applied to
+/// its diagonal (so any position angle stays in frame).
 const PREVIEW_MARGIN: f64 = 1.3;
-/// Side of the offscreen composite the tiles are stamped onto. Independent of
-/// the visible canvas (which is sized to its parent); this just sets how much
-/// detail the composite retains when scaled down for display.
-const COMPOSITE_PX: u32 = 1536;
-/// Preview field bounds. No server clamp binds anymore (everything is served
-/// from the local cache), so the ceiling only exists to keep the composite
-/// pixel scale and tile count sane for very wide zones.
+/// View bounds, degrees across the shorter canvas side. The ceiling only
+/// exists to keep the tile count sane for very wide zones.
 const FOV_MIN_DEG: f64 = 0.02;
 const FOV_MAX_DEG: f64 = 40.0;
-
-/// A square offscreen canvas and its 2D context, for compositing tiles before
-/// they're blitted onto the visible preview canvas.
-fn offscreen_canvas(px: u32) -> Option<(web_sys::HtmlCanvasElement, web_sys::CanvasRenderingContext2d)> {
-    let doc = web_sys::window()?.document()?;
-    let canvas: web_sys::HtmlCanvasElement =
-        doc.create_element("canvas").ok()?.dyn_into().ok()?;
-    canvas.set_width(px);
-    canvas.set_height(px);
-    let ctx = canvas
-        .get_context("2d")
-        .ok()??
-        .dyn_into::<web_sys::CanvasRenderingContext2d>()
-        .ok()?;
-    Some((canvas, ctx))
-}
+/// Field shown while no camera gives a tile size yet.
+const DEFAULT_FOV_DEG: f64 = 2.0;
+/// Decoded full tiles kept at most (each is a multi-megapixel JPEG).
+const CACHE_CAP: usize = 24;
+const CACHE_CAP_MOBILE: usize = 12;
+/// Pointer travel (CSS px) below which a press is a tap, not a drag.
+const TAP_SLOP: f64 = 8.0;
+/// Second tap within this window and radius places the mosaic.
+const DOUBLE_TAP_MS: f64 = 350.0;
+const DOUBLE_TAP_PX: f64 = 24.0;
+/// Rotation handle: stalk length above the bounding box and knob radius.
+const HANDLE_STALK: f64 = 28.0;
+const HANDLE_R: f64 = 7.0;
+/// Wheel travel per degree of Shift+wheel rotation.
+const WHEEL_PER_DEG: f64 = 30.0;
 
 /// Angular span (arcmin) of the whole mosaic bounding box, before rotation.
 /// Mirrors the offsets `derive_planner_mosaic_plan` computes.
@@ -116,12 +110,173 @@ pub(crate) fn mosaic_span_am(
     )
 }
 
+/// Difference of two RA-like angles folded into (−180, 180].
+fn wrap180(d: f64) -> f64 {
+    let w = (d + 180.0).rem_euclid(360.0) - 180.0;
+    if w == -180.0 { 180.0 } else { w }
+}
+
+/// Position angle folded into (−180, 180].
+fn norm_pa(pa: f64) -> f64 {
+    wrap180(pa)
+}
+
+/// The preview's projection: a tangent plane about the view centre, north up
+/// and east left, `ppd` pixels per degree. Built once per draw / per event.
+#[derive(Clone, Copy)]
+struct Viewport {
+    cx: f64,
+    cy: f64,
+    ppd: f64,
+    ra: f64,
+    dec: f64,
+    cos_dec: f64,
+}
+
+impl Viewport {
+    fn new(w: f64, h: f64, (ra, dec): (f64, f64), fov_deg: f64) -> Self {
+        Self {
+            cx: w / 2.0,
+            cy: h / 2.0,
+            ppd: w.min(h) / fov_deg,
+            ra,
+            dec,
+            cos_dec: dec.to_radians().cos().abs().max(0.01),
+        }
+    }
+
+    /// +RA (east) goes LEFT, +Dec (north) goes UP.
+    fn sky_to_screen(&self, ra: f64, dec: f64) -> (f64, f64) {
+        (
+            self.cx - wrap180(ra - self.ra) * self.cos_dec * self.ppd,
+            self.cy - (dec - self.dec) * self.ppd,
+        )
+    }
+
+    fn screen_to_sky(&self, sx: f64, sy: f64) -> (f64, f64) {
+        (
+            (self.ra - (sx - self.cx) / self.ppd / self.cos_dec).rem_euclid(360.0),
+            (self.dec - (sy - self.cy) / self.ppd).clamp(-89.9, 89.9),
+        )
+    }
+}
+
+/// The mosaic on screen: centre, half-extents of its bounding box, screen
+/// rotation and the rotation handle's knob.
+#[derive(Clone, Copy)]
+struct MosaicGeom {
+    mx: f64,
+    my: f64,
+    hw: f64,
+    hh: f64,
+    /// Screen rotation (radians, y down) = −PA.
+    rot: f64,
+    hx: f64,
+    hy: f64,
+}
+
+fn mosaic_geom(
+    vp: &Viewport,
+    center: (f64, f64),
+    tile_fov: (f64, f64),
+    grid_w: u32,
+    grid_h: u32,
+    overlap: f64,
+    pa: f64,
+) -> MosaicGeom {
+    let (mx, my) = vp.sky_to_screen(center.0, center.1);
+    let (sw_am, sh_am) = mosaic_span_am(tile_fov.0, tile_fov.1, grid_w, grid_h, overlap);
+    let hw = sw_am / 60.0 * vp.ppd / 2.0;
+    let hh = sh_am / 60.0 * vp.ppd / 2.0;
+    let rot = -pa.to_radians();
+    // The knob sits at local (0, −d), rotated by `rot`.
+    let d = hh + HANDLE_STALK;
+    MosaicGeom { mx, my, hw, hh, rot, hx: mx + d * rot.sin(), hy: my - d * rot.cos() }
+}
+
+/// What a press on the canvas takes hold of.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum Grab {
+    #[default]
+    None,
+    Sky,
+    Mosaic,
+    Handle,
+    /// Two pointers: pinch / twist / pan, no single-pointer mode.
+    Pinch,
+}
+
+fn grab_at(g: Option<MosaicGeom>, x: f64, y: f64, touch: bool) -> Grab {
+    let Some(g) = g else { return Grab::Sky };
+    let knob_r = if touch { 24.0 } else { 16.0 };
+    if (x - g.hx).hypot(y - g.hy) <= knob_r {
+        return Grab::Handle;
+    }
+    let (dx, dy) = (x - g.mx, y - g.my);
+    let (s, c) = g.rot.sin_cos();
+    let lx = c * dx + s * dy;
+    let ly = -s * dx + c * dy;
+    if lx.abs() <= g.hw + 6.0 && ly.abs() <= g.hh + 6.0 { Grab::Mosaic } else { Grab::Sky }
+}
+
+/// A `btn-icon` that fires once on press, then repeats while held.
+fn hold_button(
+    glyph: &'static str,
+    title: impl Fn() -> String + Send + 'static,
+    on_step: impl Fn() + Clone + 'static,
+) -> impl IntoView {
+    let delay = StoredValue::new_local(Rc::new(RefCell::new(None::<gloo_timers::callback::Timeout>)));
+    let repeat = StoredValue::new_local(Rc::new(RefCell::new(None::<gloo_timers::callback::Interval>)));
+    let stop = move || {
+        delay.with_value(|d| *d.borrow_mut() = None);
+        repeat.with_value(|r| *r.borrow_mut() = None);
+    };
+    let start = move |ev: PointerEvent| {
+        if ev.button() != 0 {
+            return;
+        }
+        ev.prevent_default();
+        stop();
+        on_step();
+        let step = on_step.clone();
+        let timeout = gloo_timers::callback::Timeout::new(400, move || {
+            let step = step.clone();
+            let interval = gloo_timers::callback::Interval::new(120, move || step());
+            repeat.with_value(|r| *r.borrow_mut() = Some(interval));
+        });
+        delay.with_value(|d| *d.borrow_mut() = Some(timeout));
+    };
+    on_cleanup(stop);
+    view! {
+        <button type="button" class=PAD_BTN title=move || title()
+                on:pointerdown=start
+                on:pointerup=move |_| stop()
+                on:pointerleave=move |_| stop()
+                on:pointercancel=move |_| stop()
+                on:contextmenu=|ev: web_sys::MouseEvent| ev.prevent_default()>
+            {glyph}
+        </button>
+    }
+}
+
+/// One choice of a step picker.
+fn step_chip(label: &'static str, value: f64, sel: RwSignal<f64>) -> impl IntoView {
+    view! {
+        <button type="button"
+                class=move || if sel.get() == value { format!("{CHIP} btn--active") } else { CHIP.to_string() }
+                on:click=move |_| sel.set(value)>
+            {label}
+        </button>
+    }
+}
+
 #[component]
 pub fn FramingOverlay(
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] focal_length_mm: Signal<Option<f64>>,
     catalog_sig: RwSignal<Option<std::sync::Arc<CatalogData>>>,
     dso_catalog_sig: RwSignal<Option<std::sync::Arc<DsoCatalogData>>>,
+    #[prop(optional)] is_mobile: bool,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
@@ -137,22 +292,34 @@ pub fn FramingOverlay(
         .unwrap_or_else(|| RwSignal::new(None));
 
     let search_text = RwSignal::new(String::new());
+    // Tiles in flight / drawn this frame, both set from the draw itself.
     let loading = RwSignal::new(false);
-    let load_error = RwSignal::new(false);
-    // How many cached tiles the current composite is built from (0 = all black).
     let tiles_used = RwSignal::new(0usize);
-    // Bumped after each composite so the redraw Effect re-runs on a new image.
-    let image_epoch = RwSignal::new(0u32);
-    // Bumped each time a compose is kicked off; a batch that finishes stale
-    // (its generation superseded) is discarded instead of clobbering a newer
-    // one. Guards rapid Reload / reopen.
-    let load_gen = StoredValue::new(0u32);
+    // Bumped by the cache when a tile lands, so the draw Effect reruns.
+    let tiles_epoch = RwSignal::new(0u32);
+    let cache: Rc<RefCell<DsoImageCache>> = Rc::new(RefCell::new(DsoImageCache::with_cap(
+        tiles_epoch,
+        if is_mobile { CACHE_CAP_MOBILE } else { CACHE_CAP },
+    )));
+    let cache = StoredValue::new_local(cache);
+
+    // The view: where the preview looks (JNow) and how wide, independent of
+    // the mosaic centre so the sky can be panned under a fixed grid.
+    let view_center = RwSignal::new((0.0_f64, 0.0_f64));
+    let view_fov = RwSignal::new(DEFAULT_FOV_DEG);
+
+    // Fine-adjust steps: nudge (arcmin) and rotation (degrees).
+    let nudge_step_am = RwSignal::new(10.0_f64);
+    let rot_step = RwSignal::new(1.0_f64);
+
+    // Pointer state for the cursor only.
+    let hover = RwSignal::new(Grab::None);
+    let dragging = RwSignal::new(false);
 
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
-    let pinned: Rc<RefCell<Option<PinnedImage>>> = Rc::new(RefCell::new(None));
 
     // Derived FOV of a single tile, from the same live signals the Mosaic tab
-    // uses. `None` gates both the preview and the send.
+    // uses. `None` gates both the grid and the send.
     let tile_fov = Signal::derive(move || {
         let cam = camera.get();
         let fl = focal_length_mm.get()?;
@@ -165,105 +332,269 @@ pub fn FramingOverlay(
         ))
     });
 
-    // ── Canvas draw ──────────────────────────────────────────────────────
-    let redraw = {
-        let pinned = Rc::clone(&pinned);
-        move || {
-            let Some(canvas) = canvas_ref.get_untracked() else { return };
-            let el: web_sys::HtmlCanvasElement = canvas.into();
-            let Some(parent) = el.parent_element() else { return };
-            let w = parent.client_width() as f64;
-            let h = parent.client_height() as f64;
-            if w <= 0.0 || h <= 0.0 {
-                return;
-            }
-            let dpr = web_sys::window()
-                .map(|win| win.device_pixel_ratio().min(3.0))
-                .unwrap_or(1.0);
-            let w_phys = (w * dpr).round() as u32;
-            let h_phys = (h * dpr).round() as u32;
-            if el.width() != w_phys {
-                el.set_width(w_phys);
-            }
-            if el.height() != h_phys {
-                el.set_height(h_phys);
-            }
-            let Ok(Some(ctx)) = el.get_context("2d") else { return };
-            let Ok(ctx) = ctx.dyn_into::<web_sys::CanvasRenderingContext2d>() else { return };
-            let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
-            ctx.set_fill_style_str("#05070d");
-            ctx.fill_rect(0.0, 0.0, w, h);
+    // ── Geometry helpers (all untracked) ─────────────────────────────────
+    let canvas_size = move || -> Option<(f64, f64)> {
+        let canvas = canvas_ref.get_untracked()?;
+        let el: web_sys::HtmlCanvasElement = canvas.into();
+        let parent = el.parent_element()?;
+        let (w, h) = (parent.client_width() as f64, parent.client_height() as f64);
+        (w > 0.0 && h > 0.0).then_some((w, h))
+    };
+    let viewport = move || -> Option<Viewport> {
+        let (w, h) = canvas_size()?;
+        Some(Viewport::new(w, h, view_center.get_untracked(), view_fov.get_untracked()))
+    };
+    let geometry = move |vp: &Viewport| -> Option<MosaicGeom> {
+        Some(mosaic_geom(
+            vp,
+            framing.params.center.get_untracked()?,
+            tile_fov.get_untracked()?,
+            framing.params.grid_w.get_untracked(),
+            framing.params.grid_h.get_untracked(),
+            framing.params.overlap.get_untracked(),
+            framing.params.pa.get_untracked(),
+        ))
+    };
+    // Client → canvas CSS px.
+    let to_canvas = move |client_x: f64, client_y: f64| -> Option<(f64, f64)> {
+        let canvas = canvas_ref.get_untracked()?;
+        let el: web_sys::HtmlCanvasElement = canvas.into();
+        let r = el.get_bounding_client_rect();
+        Some((client_x - r.left(), client_y - r.top()))
+    };
 
-            let cx = w / 2.0;
-            let cy = h / 2.0;
-
-            // The composite is square; draw it "contain"-style so it never
-            // distorts, and derive the sky scale from the drawn extent.
-            let borrow = pinned.borrow();
-            let Some(pin) = borrow.as_ref() else { return };
-            let draw_size = w.min(h);
-            let _ = ctx.draw_image_with_html_canvas_element_and_dw_and_dh(
-                &pin.canvas,
-                cx - draw_size / 2.0,
-                cy - draw_size / 2.0,
-                draw_size,
-                draw_size,
-            );
-            let px_per_deg = draw_size / pin.fov_deg;
-
-            let Some((fov_w_deg, fov_h_deg)) = tile_fov.get_untracked() else { return };
-            let Some(plan) = super::derive_planner_mosaic_plan(
-                true,
-                framing.params.center.get_untracked(),
-                focal_length_mm.get_untracked(),
-                &camera.get_untracked(),
-                framing.params.grid_w.get_untracked(),
-                framing.params.grid_h.get_untracked(),
-                framing.params.overlap.get_untracked(),
-                framing.params.pa.get_untracked(),
-                &framing.params.target.get_untracked(),
-            ) else {
-                return;
-            };
-
-            let cos_dec = pin.dec_deg.to_radians().cos();
-            // `derive_planner_mosaic_plan` already rotated the tile *positions*
-            // around the mosaic centre (KStars rotatePoint, ang = -PA). To keep
-            // the mosaic a rigid body — the whole grid rotating together rather
-            // than each rectangle spinning in place — each rectangle must rotate
-            // the same way its centre moved, which in this east-left/north-up
-            // screen frame is -PA.
-            let rot = -plan.pa_deg.to_radians();
-            let rect_w = fov_w_deg * px_per_deg;
-            let rect_h = fov_h_deg * px_per_deg;
-
-            for (i, tile) in plan.tiles.iter().enumerate() {
-                // Tangent-plane offset from the pinned image centre. hips2fits
-                // TAN with no rotation is North-up/East-left, so +RA (east)
-                // goes LEFT and +Dec (north) goes UP.
-                let dx_deg = (tile.ra_deg - pin.ra_deg) * cos_dec;
-                let dy_deg = tile.dec_deg - pin.dec_deg;
-                let tx = cx - dx_deg * px_per_deg;
-                let ty = cy - dy_deg * px_per_deg;
-
-                ctx.save();
-                let _ = ctx.translate(tx, ty);
-                let _ = ctx.rotate(rot);
-                ctx.set_stroke_style_str("rgba(80,180,255,0.95)");
-                ctx.set_line_width(2.0);
-                ctx.stroke_rect(-rect_w / 2.0, -rect_h / 2.0, rect_w, rect_h);
-                if plan.tiles.len() > 1 {
-                    ctx.set_fill_style_str("rgba(80,180,255,0.95)");
-                    ctx.set_font("12px monospace");
-                    let _ = ctx.fill_text(&(i + 1).to_string(), -rect_w / 2.0 + 4.0, -rect_h / 2.0 + 14.0);
-                }
-                ctx.restore();
-            }
+    // The field that shows the whole mosaic with a margin.
+    let fit_fov = move || -> f64 {
+        let Some((fw, fh)) = tile_fov.get_untracked() else { return DEFAULT_FOV_DEG };
+        let (sw_am, sh_am) = mosaic_span_am(
+            fw,
+            fh,
+            framing.params.grid_w.get_untracked(),
+            framing.params.grid_h.get_untracked(),
+            framing.params.overlap.get_untracked(),
+        );
+        let diag_deg = sw_am.hypot(sh_am) / 60.0;
+        (diag_deg * PREVIEW_MARGIN).clamp(FOV_MIN_DEG, FOV_MAX_DEG)
+    };
+    let fit_view = move || {
+        if let Some(c) = framing.params.center.get_untracked() {
+            view_center.set(c);
         }
+        view_fov.set(fit_fov());
+    };
+
+    // ── Edits ────────────────────────────────────────────────────────────
+    let set_pa = move |pa: f64| framing.params.pa.set(norm_pa(pa));
+    let rotate_by = move |d: f64| set_pa(framing.params.pa.get_untracked() + d);
+    // Move the mosaic by (east, north) arcmin.
+    let nudge = move |east_am: f64, north_am: f64| {
+        let Some((ra, dec)) = framing.params.center.get_untracked() else { return };
+        let cos_dec = dec.to_radians().cos().abs().max(0.01);
+        framing.params.center.set(Some((
+            (ra + east_am / 60.0 / cos_dec).rem_euclid(360.0),
+            (dec + north_am / 60.0).clamp(-89.9, 89.9),
+        )));
+    };
+    // Pan the view by (east, north) degrees.
+    let pan_view = move |east_deg: f64, north_deg: f64| {
+        view_center.update(|(ra, dec)| {
+            *ra = (*ra + east_deg).rem_euclid(360.0);
+            *dec = (*dec + north_deg).clamp(-89.9, 89.9);
+        });
+    };
+    // Scale the field by `f` keeping the sky under canvas point (x, y) still.
+    let zoom_about = move |f: f64, x: f64, y: f64| {
+        let Some(vp) = viewport() else { return };
+        let (pra, pdec) = vp.screen_to_sky(x, y);
+        let fov = (view_fov.get_untracked() * f).clamp(FOV_MIN_DEG, FOV_MAX_DEG);
+        view_fov.set(fov);
+        let Some((w, h)) = canvas_size() else { return };
+        let vp2 = Viewport::new(w, h, (vp.ra, vp.dec), fov);
+        let (qra, qdec) = vp2.screen_to_sky(x, y);
+        pan_view(wrap180(pra - qra), pdec - qdec);
+    };
+    let zoom_center = move |f: f64| {
+        let Some((w, h)) = canvas_size() else { return };
+        zoom_about(f, w / 2.0, h / 2.0);
+    };
+
+    // ── Canvas draw ──────────────────────────────────────────────────────
+    let redraw = move || {
+        let Some(canvas) = canvas_ref.get_untracked() else { return };
+        let el: web_sys::HtmlCanvasElement = canvas.into();
+        let Some((w, h)) = canvas_size() else { return };
+        let dpr = web_sys::window()
+            .map(|win| win.device_pixel_ratio().min(3.0))
+            .unwrap_or(1.0);
+        let w_phys = (w * dpr).round() as u32;
+        let h_phys = (h * dpr).round() as u32;
+        if el.width() != w_phys {
+            el.set_width(w_phys);
+        }
+        if el.height() != h_phys {
+            el.set_height(h_phys);
+        }
+        let Ok(Some(ctx)) = el.get_context("2d") else { return };
+        let Ok(ctx) = ctx.dyn_into::<web_sys::CanvasRenderingContext2d>() else { return };
+        let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+        ctx.set_fill_style_str("#05070d");
+        ctx.fill_rect(0.0, 0.0, w, h);
+
+        let vc = view_center.get_untracked();
+        let fov = view_fov.get_untracked();
+        let vp = Viewport::new(w, h, vc, fov);
+
+        // ── Imagery: every decoded cached tile overlapping the canvas ──
+        let jd = astro::now_jd();
+        let j2000 = JNow::new(vc.0, vc.1).to_j2000(jd);
+        let aspect = w.max(h) / w.min(h);
+        let mut drawn = 0usize;
+        let mut in_flight = 0usize;
+        if let Some(idx) = tile_index.get_untracked() {
+            cache.with_value(|cache| {
+                let Ok(mut cache) = cache.try_borrow_mut() else { return };
+                cache.set_index(Some(idx.clone()));
+                cache.begin_frame();
+                for (i, tile) in idx.find_overlapping(j2000.ra_deg, j2000.dec_deg, fov * aspect * 1.2) {
+                    let Some(img) = cache.image(i as u32, &tile.url()) else { continue };
+                    let c = J2000::new(tile.ra, tile.dec).to_jnow(jd);
+                    let (sx, sy) = vp.sky_to_screen(c.ra_deg, c.dec_deg);
+                    let side = tile.fov * vp.ppd;
+                    let _ = ctx.draw_image_with_html_image_element_and_dw_and_dh(
+                        &img, sx - side / 2.0, sy - side / 2.0, side, side,
+                    );
+                    drawn += 1;
+                }
+                in_flight = cache.loading_count();
+            });
+        }
+        if tiles_used.get_untracked() != drawn {
+            tiles_used.set(drawn);
+        }
+        if loading.get_untracked() != (in_flight > 0) {
+            loading.set(in_flight > 0);
+        }
+
+        // ── Compass, field read-out, scale bar ──
+        ctx.set_fill_style_str("rgba(200,215,235,0.85)");
+        ctx.set_font("11px monospace");
+        let _ = ctx.fill_text("N \u{2191}  E \u{2190}", 10.0, 16.0);
+        let _ = ctx.fill_text(&format!("{} {}", t(lang.get_untracked()).framing_field, fmt_field(fov)), 10.0, 30.0);
+        {
+            let want_px = w / 5.0;
+            let bar_deg = [1.0 / 60.0, 5.0 / 60.0, 10.0 / 60.0, 0.5, 1.0, 5.0]
+                .into_iter()
+                .min_by(|a, b| (a * vp.ppd - want_px).abs().total_cmp(&(b * vp.ppd - want_px).abs()))
+                .unwrap_or(1.0);
+            let bar_px = bar_deg * vp.ppd;
+            let y = h - 14.0;
+            ctx.set_stroke_style_str("rgba(200,215,235,0.85)");
+            ctx.set_line_width(1.5);
+            ctx.begin_path();
+            ctx.move_to(10.0, y);
+            ctx.line_to(10.0 + bar_px, y);
+            ctx.move_to(10.0, y - 4.0);
+            ctx.line_to(10.0, y + 4.0);
+            ctx.move_to(10.0 + bar_px, y - 4.0);
+            ctx.line_to(10.0 + bar_px, y + 4.0);
+            ctx.stroke();
+            let _ = ctx.fill_text(&fmt_field(bar_deg), 10.0, y - 7.0);
+        }
+
+        // ── Mosaic grid ──
+        let Some((fov_w_deg, fov_h_deg)) = tile_fov.get_untracked() else { return };
+        let Some(center) = framing.params.center.get_untracked() else { return };
+        let Some(plan) = super::derive_planner_mosaic_plan(
+            true,
+            Some(center),
+            focal_length_mm.get_untracked(),
+            &camera.get_untracked(),
+            framing.params.grid_w.get_untracked(),
+            framing.params.grid_h.get_untracked(),
+            framing.params.overlap.get_untracked(),
+            framing.params.pa.get_untracked(),
+            &framing.params.target.get_untracked(),
+        ) else {
+            return;
+        };
+
+        // `derive_planner_mosaic_plan` already rotated the tile *positions*
+        // around the mosaic centre (KStars rotatePoint, ang = -PA). To keep
+        // the mosaic a rigid body — the whole grid rotating together rather
+        // than each rectangle spinning in place — each rectangle must rotate
+        // the same way its centre moved, which in this east-left/north-up
+        // screen frame is -PA.
+        let rot = -plan.pa_deg.to_radians();
+        let rect_w = fov_w_deg * vp.ppd;
+        let rect_h = fov_h_deg * vp.ppd;
+
+        for (i, tile) in plan.tiles.iter().enumerate() {
+            let (tx, ty) = vp.sky_to_screen(tile.ra_deg, tile.dec_deg);
+            ctx.save();
+            let _ = ctx.translate(tx, ty);
+            let _ = ctx.rotate(rot);
+            ctx.set_stroke_style_str("rgba(80,180,255,0.95)");
+            ctx.set_line_width(2.0);
+            ctx.stroke_rect(-rect_w / 2.0, -rect_h / 2.0, rect_w, rect_h);
+            if plan.tiles.len() > 1 {
+                ctx.set_fill_style_str("rgba(80,180,255,0.95)");
+                ctx.set_font("12px monospace");
+                let _ = ctx.fill_text(&(i + 1).to_string(), -rect_w / 2.0 + 4.0, -rect_h / 2.0 + 14.0);
+            }
+            ctx.restore();
+        }
+
+        // ── Bounding box + rotation handle ──
+        let g = mosaic_geom(
+            &vp,
+            center,
+            (fov_w_deg, fov_h_deg),
+            framing.params.grid_w.get_untracked(),
+            framing.params.grid_h.get_untracked(),
+            framing.params.overlap.get_untracked(),
+            framing.params.pa.get_untracked(),
+        );
+        ctx.save();
+        let _ = ctx.translate(g.mx, g.my);
+        let _ = ctx.rotate(g.rot);
+        ctx.set_stroke_style_str("rgba(80,180,255,0.45)");
+        ctx.set_line_width(1.0);
+        let _ = ctx.set_line_dash(&js_sys::Array::of2(&4.0.into(), &4.0.into()));
+        ctx.stroke_rect(-g.hw, -g.hh, g.hw * 2.0, g.hh * 2.0);
+        let _ = ctx.set_line_dash(&js_sys::Array::new());
+        ctx.set_stroke_style_str("rgba(80,180,255,0.9)");
+        ctx.set_line_width(1.5);
+        ctx.begin_path();
+        ctx.move_to(0.0, -g.hh);
+        ctx.line_to(0.0, -g.hh - HANDLE_STALK);
+        ctx.stroke();
+        ctx.restore();
+        let knob_hot = matches!(hover.get_untracked(), Grab::Handle);
+        ctx.begin_path();
+        let _ = ctx.arc(g.hx, g.hy, if knob_hot { HANDLE_R + 2.0 } else { HANDLE_R }, 0.0, TAU);
+        ctx.set_fill_style_str(if knob_hot { "rgba(80,180,255,1)" } else { "rgba(10,20,40,0.9)" });
+        ctx.fill();
+        ctx.set_stroke_style_str("rgba(80,180,255,0.95)");
+        ctx.set_line_width(2.0);
+        ctx.stroke();
+        ctx.set_fill_style_str("rgba(80,180,255,0.95)");
+        ctx.set_font("12px monospace");
+        let _ = ctx.fill_text(&format!("PA {:.0}\u{00b0}", plan.pa_deg), g.hx + HANDLE_R + 6.0, g.hy + 4.0);
     };
     let redraw = StoredValue::new_local(redraw);
 
-    // Redraw on any state change (no refetch).
+    // Redraw on any state change, at most once per animation frame.
+    let redraw_pending = StoredValue::new(false);
+    let schedule_redraw = move || {
+        if redraw_pending.get_value() {
+            return;
+        }
+        redraw_pending.set_value(true);
+        request_animation_frame(move || {
+            redraw_pending.set_value(false);
+            redraw.with_value(|f| f());
+        });
+    };
     Effect::new(move |_| {
         framing.open.track();
         framing.params.center.track();
@@ -271,225 +602,178 @@ pub fn FramingOverlay(
         framing.params.grid_h.track();
         framing.params.overlap.track();
         framing.params.pa.track();
-        image_epoch.track();
+        view_center.track();
+        view_fov.track();
+        tiles_epoch.track();
+        tile_index.track();
         tile_fov.track();
+        hover.track();
         // The canvas only exists once `open` is true and <Show> has mounted it.
-        request_animation_frame(move || redraw.with_value(|f| f()));
+        schedule_redraw();
     });
 
     // Keep the canvas correct across window resizes.
-    {
-        let cb = Closure::<dyn FnMut()>::new(move || redraw.with_value(|f| f()));
-        if let Some(win) = web_sys::window() {
-            let _ = win
-                .add_event_listener_with_callback("resize", cb.as_ref().unchecked_ref());
-        }
-        cb.forget();
-    }
+    let resize = window_event_listener(leptos::ev::resize, move |_| schedule_redraw());
+    on_cleanup(move || resize.remove());
 
-    // ── Compose preview from cached tiles ────────────────────────────────
-    // Gather every cached tile overlapping the zone, stamp each onto one black
-    // offscreen canvas at its tangent-plane offset, and pin that composite to
-    // the zone centre. Uncovered sky stays black; nothing hits the network.
-    let load_preview = {
-        let pinned = Rc::clone(&pinned);
-        move || {
-            let Some((ra_jnow, dec_jnow)) = framing.params.center.get_untracked() else { return };
-            let Some((fov_w_deg, fov_h_deg)) = tile_fov.get_untracked() else { return };
-            let (span_w_am, span_h_am) = mosaic_span_am(
-                fov_w_deg,
-                fov_h_deg,
-                framing.params.grid_w.get_untracked(),
-                framing.params.grid_h.get_untracked(),
-                framing.params.overlap.get_untracked(),
-            );
-            // Use the bbox diagonal so any position angle stays covered.
-            let diag_deg = (span_w_am * span_w_am + span_h_am * span_h_am).sqrt() / 60.0;
-            let fov = (diag_deg * PREVIEW_MARGIN).clamp(FOV_MIN_DEG, FOV_MAX_DEG);
-
-            // The cache is J2000/ICRS; the zone centre is of-date.
-            let jd = astro::now_jd();
-            let j2000 = JNow::new(ra_jnow, dec_jnow).to_j2000(jd);
-            let cos_dec = j2000.dec_deg.to_radians().cos();
-
-            // Snapshot the overlapping tiles out of the Arc so the borrow isn't
-            // held across the async image loads.
-            let tiles: Vec<(String, f64, f64, f64)> = tile_index
-                .get_untracked()
-                .map(|idx| {
-                    idx.find_overlapping(j2000.ra_deg, j2000.dec_deg, fov)
-                        .into_iter()
-                        .map(|t| (t.url(), t.ra, t.dec, t.fov))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            // New generation — a batch that finishes after this call was
-            // superseded (e.g. rapid Reload) discards its result.
-            let generation = load_gen.get_value().wrapping_add(1);
-            load_gen.set_value(generation);
-
-            loading.set(true);
-            load_error.set(false);
-
-            let Some((canvas, cctx)) = offscreen_canvas(COMPOSITE_PX) else {
-                loading.set(false);
-                load_error.set(true);
-                return;
-            };
-            cctx.set_fill_style_str("#000");
-            cctx.fill_rect(0.0, 0.0, COMPOSITE_PX as f64, COMPOSITE_PX as f64);
-
-            let ppd = COMPOSITE_PX as f64 / fov;
-            let mid = COMPOSITE_PX as f64 / 2.0;
-
-            // Pin the finished composite and wake the redraw. Rc so both the
-            // per-tile onload/onerror closures can call it.
-            let finalize: Rc<dyn Fn(usize)> = {
-                let pinned = Rc::clone(&pinned);
-                Rc::new(move |n_used: usize| {
-                    if load_gen.get_value() != generation {
-                        return; // superseded by a newer load
-                    }
-                    pinned.borrow_mut().replace(PinnedImage {
-                        canvas: canvas.clone(),
-                        ra_deg: ra_jnow,
-                        dec_deg: dec_jnow,
-                        fov_deg: fov,
-                    });
-                    tiles_used.set(n_used);
-                    loading.set(false);
-                    image_epoch.update(|v| *v += 1);
-                })
-            };
-
-            // Zero coverage → an all-black preview, immediately.
-            if tiles.is_empty() {
-                finalize(0);
-                return;
-            }
-
-            // Each tile resolves (loaded or errored) independently; the last one
-            // to settle finalizes with however many actually stamped.
-            let pending = Rc::new(Cell::new(tiles.len()));
-            let used = Rc::new(Cell::new(0usize));
-
-            for (url, t_ra, t_dec, t_fov) in tiles {
-                let Ok(img) = HtmlImageElement::new() else {
-                    let left = pending.get() - 1;
-                    pending.set(left);
-                    if left == 0 {
-                        finalize(used.get());
-                    }
-                    continue;
-                };
-
-                // Tangent-plane offset of the tile centre from the zone centre.
-                // +RA (east) goes LEFT, +Dec (north) UP — same convention the
-                // grid loop uses, so imagery and grid stay registered.
-                let dx = (t_ra - j2000.ra_deg) * cos_dec;
-                let dy = t_dec - j2000.dec_deg;
-                let size = t_fov * ppd;
-                let x = mid - dx * ppd - size / 2.0;
-                let y = mid - dy * ppd - size / 2.0;
-
-                let img_cl = img.clone();
-                let cctx_cl = cctx.clone();
-                let pending_l = Rc::clone(&pending);
-                let used_l = Rc::clone(&used);
-                let finalize_l = Rc::clone(&finalize);
-                let onload = Closure::<dyn FnMut()>::new(move || {
-                    let _ = cctx_cl.draw_image_with_html_image_element_and_dw_and_dh(
-                        &img_cl, x, y, size, size,
-                    );
-                    used_l.set(used_l.get() + 1);
-                    let left = pending_l.get() - 1;
-                    pending_l.set(left);
-                    if left == 0 {
-                        finalize_l(used_l.get());
-                    }
-                });
-
-                let pending_e = Rc::clone(&pending);
-                let used_e = Rc::clone(&used);
-                let finalize_e = Rc::clone(&finalize);
-                let onerror = Closure::<dyn FnMut()>::new(move || {
-                    // A missing tile just leaves its patch black.
-                    let left = pending_e.get() - 1;
-                    pending_e.set(left);
-                    if left == 0 {
-                        finalize_e(used_e.get());
-                    }
-                });
-
-                img.set_onload(Some(onload.as_ref().unchecked_ref()));
-                img.set_onerror(Some(onerror.as_ref().unchecked_ref()));
-                onload.forget();
-                onerror.forget();
-                img.set_src(&url);
-            }
-        }
-    };
-    let load_preview = StoredValue::new_local(load_preview);
-
-    // Auto-load when the overlay opens (right-click hands us a centre).
+    // Opening frames the mosaic handed over by the target card.
     Effect::new(move |_| {
         if framing.open.get() {
-            load_preview.with_value(|f| f());
+            fit_view();
         }
     });
 
-    // ── Drag to move the centre ──────────────────────────────────────────
-    let dragging = StoredValue::new(false);
-    let drag_last = StoredValue::new((0.0_f64, 0.0_f64));
-    let pinned_for_drag = Rc::clone(&pinned);
-    let pinned_for_drag = StoredValue::new_local(pinned_for_drag);
+    // ── Pointer gestures ─────────────────────────────────────────────────
+    // Pointers down (id → canvas x, y), what the first one grabbed, the path
+    // travelled (tap vs drag), the previous pinch (distance, angle, midpoint)
+    // and the last tap (time, x, y) for double-tap placement.
+    let ptrs = StoredValue::new(HashMap::<i32, (f64, f64)>::new());
+    let grab = StoredValue::new(Grab::None);
+    let path = StoredValue::new(0.0_f64);
+    let pinch_prev = StoredValue::new(None::<(f64, f64, (f64, f64))>);
+    let last_tap = StoredValue::new(None::<(f64, f64, f64)>);
+    let wheel_rot = StoredValue::new(0.0_f64);
 
-    let on_mousedown = move |ev: web_sys::MouseEvent| {
+    let on_down = move |ev: PointerEvent| {
         if ev.button() != 0 {
             return;
         }
-        dragging.set_value(true);
-        drag_last.set_value((ev.client_x() as f64, ev.client_y() as f64));
+        ev.prevent_default();
+        if let Some(el) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+            let _ = el.set_pointer_capture(ev.pointer_id());
+        }
+        let Some((x, y)) = to_canvas(ev.client_x() as f64, ev.client_y() as f64) else { return };
+        ptrs.update_value(|m| { m.insert(ev.pointer_id(), (x, y)); });
+        let n = ptrs.with_value(|m| m.len());
+        if n == 1 {
+            let g = viewport().and_then(|vp| geometry(&vp));
+            grab.set_value(grab_at(g, x, y, ev.pointer_type() == "touch"));
+            path.set_value(0.0);
+        } else {
+            grab.set_value(Grab::Pinch);
+            pinch_prev.set_value(None);
+        }
+        dragging.set(true);
     };
-    let on_mousemove = move |ev: web_sys::MouseEvent| {
-        if !dragging.get_value() {
+    let on_move = move |ev: PointerEvent| {
+        let id = ev.pointer_id();
+        let Some((x, y)) = to_canvas(ev.client_x() as f64, ev.client_y() as f64) else { return };
+        let Some((ox, oy)) = ptrs.with_value(|m| m.get(&id).copied()) else {
+            // Hovering: only the cursor follows.
+            if ev.pointer_type() == "mouse" {
+                let g = viewport().and_then(|vp| geometry(&vp));
+                let h = grab_at(g, x, y, false);
+                if hover.get_untracked() != h {
+                    hover.set(h);
+                }
+            }
+            return;
+        };
+        ptrs.update_value(|m| { m.insert(id, (x, y)); });
+        let pts = ptrs.with_value(|m| m.values().copied().collect::<Vec<_>>());
+        match (grab.get_value(), pts.as_slice()) {
+            (Grab::Pinch, &[(ax, ay), (bx, by)]) => {
+                let dist = (ax - bx).hypot(ay - by);
+                let angle = (by - ay).atan2(bx - ax);
+                let mid = ((ax + bx) / 2.0, (ay + by) / 2.0);
+                if let Some((pd, pangle, pmid)) = pinch_prev.get_value() {
+                    if pd > 0.0 && dist > 0.0 {
+                        zoom_about(pd / dist, mid.0, mid.1);
+                    }
+                    let mut da = angle - pangle;
+                    if da > PI { da -= TAU } else if da < -PI { da += TAU }
+                    if da != 0.0 {
+                        rotate_by(-da.to_degrees());
+                    }
+                    if let Some(vp) = viewport() {
+                        let (ra1, dec1) = vp.screen_to_sky(pmid.0, pmid.1);
+                        let (ra2, dec2) = vp.screen_to_sky(mid.0, mid.1);
+                        pan_view(wrap180(ra1 - ra2), dec1 - dec2);
+                    }
+                }
+                pinch_prev.set_value(Some((dist, angle, mid)));
+            }
+            (mode, &[_]) => {
+                path.update_value(|p| *p += (x - ox).hypot(y - oy));
+                if path.get_value() < TAP_SLOP {
+                    return;
+                }
+                let Some(vp) = viewport() else { return };
+                match mode {
+                    Grab::Mosaic => {
+                        let (ra1, dec1) = vp.screen_to_sky(ox, oy);
+                        let (ra2, dec2) = vp.screen_to_sky(x, y);
+                        let Some((ra, dec)) = framing.params.center.get_untracked() else { return };
+                        framing.params.center.set(Some((
+                            (ra + wrap180(ra2 - ra1)).rem_euclid(360.0),
+                            (dec + dec2 - dec1).clamp(-89.9, 89.9),
+                        )));
+                    }
+                    Grab::Sky => {
+                        let (ra1, dec1) = vp.screen_to_sky(ox, oy);
+                        let (ra2, dec2) = vp.screen_to_sky(x, y);
+                        pan_view(wrap180(ra1 - ra2), dec1 - dec2);
+                    }
+                    Grab::Handle => {
+                        let Some(g) = geometry(&vp) else { return };
+                        let theta = (y - g.my).atan2(x - g.mx);
+                        set_pa(-(theta + PI / 2.0).to_degrees());
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    };
+    let on_up = move |ev: PointerEvent| {
+        let id = ev.pointer_id();
+        let Some((x, y)) = ptrs.try_update_value(|m| m.remove(&id)).flatten() else { return };
+        let mode = grab.get_value();
+        let was_tap = matches!(mode, Grab::Sky | Grab::Mosaic | Grab::Handle) && path.get_value() < TAP_SLOP;
+        // Whatever remains down starts no new mode: lifting a finger after a
+        // pinch ends the gesture, like the sky.
+        grab.set_value(Grab::None);
+        pinch_prev.set_value(None);
+        if ptrs.with_value(|m| m.is_empty()) {
+            dragging.set(false);
+        }
+        if !was_tap {
+            last_tap.set_value(None);
             return;
         }
-        let (lx, ly) = drag_last.get_value();
-        let dx = ev.client_x() as f64 - lx;
-        let dy = ev.client_y() as f64 - ly;
-        drag_last.set_value((ev.client_x() as f64, ev.client_y() as f64));
-        let Some((ra, dec)) = framing.params.center.get_untracked() else { return };
-        let px_per_deg = pinned_for_drag.with_value(|p| {
-            let borrow = p.borrow();
-            let pin = borrow.as_ref()?;
-            let canvas = canvas_ref.get_untracked()?;
-            let el: web_sys::HtmlCanvasElement = canvas.into();
-            let parent = el.parent_element()?;
-            let draw_size = (parent.client_width() as f64).min(parent.client_height() as f64);
-            Some(draw_size / pin.fov_deg)
-        });
-        let Some(px_per_deg) = px_per_deg else { return };
-        if px_per_deg <= 0.0 {
+        let now = js_sys::Date::now();
+        match last_tap.get_value() {
+            Some((t0, x0, y0)) if now - t0 <= DOUBLE_TAP_MS && (x - x0).hypot(y - y0) <= DOUBLE_TAP_PX => {
+                last_tap.set_value(None);
+                if let Some(vp) = viewport() {
+                    framing.params.center.set(Some(vp.screen_to_sky(x, y)));
+                }
+            }
+            _ => last_tap.set_value(Some((now, x, y))),
+        }
+    };
+    let on_wheel = move |ev: WheelEvent| {
+        ev.prevent_default();
+        if ev.shift_key() {
+            // Trackpads send many small deltas, mice one notch of ~100.
+            wheel_rot.update_value(|acc| *acc += ev.delta_y());
+            let steps = (wheel_rot.get_value() / WHEEL_PER_DEG).trunc();
+            if steps != 0.0 {
+                wheel_rot.update_value(|acc| *acc -= steps * WHEEL_PER_DEG);
+                rotate_by(-steps);
+            }
             return;
         }
-        // Inverse of the draw projection: screen +x is west, +y is south.
-        let cos_dec = dec.to_radians().cos().abs().max(0.01);
-        let new_ra = ra - (dx / px_per_deg) / cos_dec;
-        let new_dec = (dec - dy / px_per_deg).clamp(-89.9, 89.9);
-        framing.params.center.set(Some((new_ra.rem_euclid(360.0), new_dec)));
+        let Some((x, y)) = to_canvas(ev.client_x() as f64, ev.client_y() as f64) else { return };
+        zoom_about(if ev.delta_y() < 0.0 { 1.0 / 1.15 } else { 1.15 }, x, y);
     };
-    let on_mouseup = move |_: web_sys::MouseEvent| dragging.set_value(false);
 
-    // ── Actions ──────────────────────────────────────────────────────────
+    // ── Keyboard ─────────────────────────────────────────────────────────
     let close = move || framing.open.set(false);
-
     let can_send = Signal::derive(move || {
         framing.params.center.get().is_some() && tile_fov.get().is_some()
     });
-
-    let send_to_planner = move |_: web_sys::MouseEvent| {
+    let send_to_planner = move || {
         let Some(planner) = planner_ctx.map(|c| c.0) else { return };
         if framing.params.center.get_untracked().is_none() { return; }
         // Same geometry, same epoch (JNow) on both sides — copy verbatim.
@@ -500,6 +784,43 @@ pub fn FramingOverlay(
             ctx.0.set(Tab::Mosaic);
         }
     };
+    let keys = window_event_listener(leptos::ev::keydown, move |e| {
+        if !framing.open.get_untracked() {
+            return;
+        }
+        let in_field = e
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|el| matches!(el.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT"));
+        if in_field {
+            if e.key() == "Escape" {
+                close();
+            }
+            return;
+        }
+        let step = nudge_step_am.get_untracked();
+        let quarter = view_fov.get_untracked() / 4.0;
+        let cos_dec = view_center.get_untracked().1.to_radians().cos().abs().max(0.01);
+        let shift = e.shift_key();
+        let handled = match e.key().as_str() {
+            "ArrowUp" => { if shift { pan_view(0.0, quarter) } else { nudge(0.0, step) } true }
+            "ArrowDown" => { if shift { pan_view(0.0, -quarter) } else { nudge(0.0, -step) } true }
+            "ArrowLeft" => { if shift { pan_view(quarter / cos_dec, 0.0) } else { nudge(step, 0.0) } true }
+            "ArrowRight" => { if shift { pan_view(-quarter / cos_dec, 0.0) } else { nudge(-step, 0.0) } true }
+            "q" | "Q" | "[" => { rotate_by(if shift { -15.0 } else { -1.0 }); true }
+            "e" | "E" | "]" => { rotate_by(if shift { 15.0 } else { 1.0 }); true }
+            "+" | "=" => { zoom_center(1.0 / 1.5); true }
+            "-" | "_" => { zoom_center(1.5); true }
+            "0" => { fit_view(); true }
+            "Escape" => { close(); true }
+            "Enter" => { if can_send.get_untracked() { send_to_planner() } true }
+            _ => false,
+        };
+        if handled {
+            e.prevent_default();
+        }
+    });
+    on_cleanup(move || keys.remove());
 
     view! {
         <Show when=move || framing.open.get()>
@@ -523,23 +844,35 @@ pub fn FramingOverlay(
 
                     // ── Body: canvas + sidebar ──────────────────────────
                     <div class="flex-1 min-h-0 flex max-[759px]:flex-col">
-                        <div class="flex-1 min-h-0 min-w-0 relative bg-black">
+                        <div class="flex-1 min-h-0 min-w-0 relative bg-black max-[759px]:flex-none max-[759px]:h-[52vh]">
                             <canvas
                                 node_ref=canvas_ref
-                                class="absolute top-0 left-0 w-full h-full block cursor-move"
-                                on:mousedown=on_mousedown
-                                on:mousemove=on_mousemove
-                                on:mouseup=on_mouseup
-                                on:mouseleave=on_mouseup
+                                class="absolute top-0 left-0 w-full h-full block select-none [touch-action:none]"
+                                class:cursor-grab=move || !dragging.get() && matches!(hover.get(), Grab::None | Grab::Sky)
+                                class:cursor-move=move || !dragging.get() && hover.get() == Grab::Mosaic
+                                class:cursor-crosshair=move || !dragging.get() && hover.get() == Grab::Handle
+                                class:cursor-grabbing=move || dragging.get()
+                                on:pointerdown=on_down
+                                on:pointermove=on_move
+                                on:pointerup=on_up
+                                on:pointercancel=on_up
+                                on:lostpointercapture=on_up
+                                on:pointerleave=move |_| hover.set(Grab::None)
+                                on:wheel=on_wheel
+                                on:contextmenu=|ev: web_sys::MouseEvent| ev.prevent_default()
                             />
+                            // Zoom / fit, clear of the gestures beneath.
+                            <div class="absolute top-2 right-2 flex flex-col gap-1">
+                                <button type="button" class="btn-icon" title=move || tr().framing_zoom_in
+                                        on:click=move |_| zoom_center(1.0 / 1.5)>"+"</button>
+                                <button type="button" class="btn-icon" title=move || tr().framing_zoom_out
+                                        on:click=move |_| zoom_center(1.5)>"\u{2212}"</button>
+                                <button type="button" class="btn-icon" title=move || tr().framing_fit
+                                        on:click=move |_| fit_view()>"\u{2922}"</button>
+                            </div>
                             {move || loading.get().then(|| view! {
                                 <div class="absolute top-2 left-1/2 -translate-x-1/2 py-1 px-3 bg-bg-panel-glass border border-border-accent rounded-md font-mono text-xs text-text-blue pointer-events-none">
                                     {move || tr().framing_loading}
-                                </div>
-                            })}
-                            {move || load_error.get().then(|| view! {
-                                <div class="absolute top-2 left-1/2 -translate-x-1/2 py-1 px-3 bg-bg-panel-glass border rounded-md font-mono text-xs pointer-events-none" style="color:#f66;border-color:#f66">
-                                    {move || tr().framing_load_error}
                                 </div>
                             })}
                             {move || tile_fov.get().is_none().then(|| view! {
@@ -549,7 +882,7 @@ pub fn FramingOverlay(
                             })}
                         </div>
 
-                        <div class="w-[280px] max-[759px]:w-full shrink-0 border-l max-[759px]:border-l-0 max-[759px]:border-t border-border-base overflow-y-auto p-sp-3 flex flex-col gap-sp-2 text-[12px]">
+                        <div class="w-[300px] max-[759px]:w-full shrink-0 max-[759px]:shrink max-[759px]:flex-1 max-[759px]:min-h-0 border-l max-[759px]:border-l-0 max-[759px]:border-t border-border-base overflow-y-auto p-sp-3 flex flex-col gap-sp-2 text-[12px]">
                             // Catalog search
                             <input type="text"
                                 class="input input--sm font-mono w-full"
@@ -571,14 +904,14 @@ pub fn FramingOverlay(
                                     let (ra_j2000, dec_j2000) = (hit.ra_deg, hit.dec_deg);
                                     view! {
                                         <div
-                                            class="py-[3px] px-sp-2 cursor-pointer text-text border-b border-[#1a1a2a] text-[12px]"
+                                            class="py-[6px] px-sp-2 cursor-pointer text-text border-b border-[#1a1a2a] text-[12px]"
                                             on:click=move |_| {
                                                 // Catalog is J2000; our centre is of-date.
                                                 let jnow = J2000::new(ra_j2000, dec_j2000).to_jnow(astro::now_jd());
                                                 framing.params.center.set(Some((jnow.ra_deg, jnow.dec_deg)));
                                                 framing.params.target.set(label.clone());
                                                 search_text.set(String::new());
-                                                load_preview.with_value(|f| f());
+                                                fit_view();
                                             }
                                         >
                                             {hit.name.clone()}
@@ -600,7 +933,11 @@ pub fn FramingOverlay(
                                 />
                             </div>
 
-                            // Centre coords (of-date)
+                            // ── Centre (of-date) ──
+                            <div class=format!("{CARD_TITLE} pt-sp-2")>{move || tr().framing_center}</div>
+                            <div class="font-mono text-text-blue text-[13px] text-center">
+                                {move || framing.params.center.get().map(|(ra, dec)| format!("{}  {}", fmt_ra(ra), fmt_dec(dec))).unwrap_or_else(|| "\u{2014}".into())}
+                            </div>
                             <div class=SIDEBAR_ROW>
                                 <span class=LABEL>{move || tr().framing_ra}</span>
                                 <input type="number" step="0.0001" class=NUM_INPUT
@@ -625,52 +962,47 @@ pub fn FramingOverlay(
                                     }
                                 />
                             </div>
-
-                            // Mosaic grid
-                            <div class=SIDEBAR_ROW>
-                                <span class=LABEL>{move || tr().framing_grid}</span>
-                                <div class="flex gap-1 items-center">
-                                    <input type="number" min="1" max="10" class="input input--sm font-mono w-[42px] text-center"
-                                        prop:value=move || framing.params.grid_w.get().to_string()
-                                        on:input=move |e| {
-                                            if let Ok(n) = event_target_value(&e).parse::<u32>() {
-                                                framing.params.grid_w.set(n.clamp(1, 10));
-                                            }
-                                        }
-                                    />
-                                    <span class="text-text-faint">{"\u{00d7}"}</span>
-                                    <input type="number" min="1" max="10" class="input input--sm font-mono w-[42px] text-center"
-                                        prop:value=move || framing.params.grid_h.get().to_string()
-                                        on:input=move |e| {
-                                            if let Ok(n) = event_target_value(&e).parse::<u32>() {
-                                                framing.params.grid_h.set(n.clamp(1, 10));
-                                            }
-                                        }
-                                    />
+                            // Nudge pad: N up, E left (+RA), W right, S down.
+                            <div class="flex items-center justify-between gap-sp-2">
+                                <div class="grid grid-cols-3 grid-rows-3 gap-1 w-max">
+                                    <span></span>
+                                    {hold_button("N \u{2191}", move || tr().framing_nudge.to_string(), move || nudge(0.0, nudge_step_am.get_untracked()))}
+                                    <span></span>
+                                    {hold_button("\u{2190} E", move || tr().framing_nudge.to_string(), move || nudge(nudge_step_am.get_untracked(), 0.0))}
+                                    <span class="flex items-center justify-center font-mono text-[11px] text-text-muted">
+                                        {move || fmt_step(nudge_step_am.get())}
+                                    </span>
+                                    {hold_button("W \u{2192}", move || tr().framing_nudge.to_string(), move || nudge(-nudge_step_am.get_untracked(), 0.0))}
+                                    <span></span>
+                                    {hold_button("S \u{2193}", move || tr().framing_nudge.to_string(), move || nudge(0.0, -nudge_step_am.get_untracked()))}
+                                    <span></span>
+                                </div>
+                                <div class="flex flex-col gap-1 items-end">
+                                    <span class=LABEL>{move || tr().framing_step}</span>
+                                    {step_chip("1\u{2032}", 1.0, nudge_step_am)}
+                                    {step_chip("10\u{2032}", 10.0, nudge_step_am)}
+                                    {step_chip("1\u{00b0}", 60.0, nudge_step_am)}
                                 </div>
                             </div>
-                            <div class=SIDEBAR_ROW>
-                                <span class=LABEL>{move || tr().framing_overlap}</span>
-                                <input type="number" min="0" max="50" class=NUM_INPUT
-                                    prop:value=move || format!("{:.0}", framing.params.overlap.get())
-                                    on:input=move |e| {
-                                        if let Ok(n) = event_target_value(&e).parse::<f64>() {
-                                            framing.params.overlap.set(n.clamp(0.0, 50.0));
-                                        }
-                                    }
-                                />
+
+                            // ── Rotation ──
+                            <div class=format!("{CARD_TITLE} pt-sp-2")>{move || tr().framing_rotation}</div>
+                            {slider_row(move || tr().mosaic_pa_label, framing.params.pa, -180.0, 180.0, "\u{00b0}")}
+                            <div class="flex items-center gap-1 flex-wrap">
+                                {hold_button("\u{27f2}", move || tr().framing_rotate_ccw.to_string(), move || rotate_by(-rot_step.get_untracked()))}
+                                {hold_button("\u{27f3}", move || tr().framing_rotate_cw.to_string(), move || rotate_by(rot_step.get_untracked()))}
+                                {step_chip("1\u{00b0}", 1.0, rot_step)}
+                                {step_chip("15\u{00b0}", 15.0, rot_step)}
+                                <span class="flex-1"></span>
+                                <button type="button" class=CHIP on:click=move |_| set_pa(0.0)>"0\u{00b0}"</button>
+                                <button type="button" class=CHIP on:click=move |_| set_pa(90.0)>"90\u{00b0}"</button>
                             </div>
-                            <div class=SIDEBAR_ROW>
-                                <span class=LABEL>{move || tr().framing_pa}</span>
-                                <input type="number" step="1" class=NUM_INPUT
-                                    prop:value=move || format!("{:.0}", framing.params.pa.get())
-                                    on:input=move |e| {
-                                        if let Ok(n) = event_target_value(&e).parse::<f64>() {
-                                            framing.params.pa.set(n);
-                                        }
-                                    }
-                                />
-                            </div>
+
+                            // ── Grid ──
+                            <div class=format!("{CARD_TITLE} pt-sp-2")>{move || tr().framing_grid}</div>
+                            {stepper(move || tr().framing_cols, framing.params.grid_w)}
+                            {stepper(move || tr().framing_rows, framing.params.grid_h)}
+                            {slider_row(move || tr().mosaic_overlap_label, framing.params.overlap, 0.0, 50.0, "%")}
 
                             // Read-only derived field sizes
                             {move || tile_fov.get().map(|(fw, fh)| {
@@ -688,10 +1020,9 @@ pub fn FramingOverlay(
                                 }
                             })}
 
-                            // How many cached tiles the composite is built from
-                            // — 0 means the zone isn't covered and the preview
-                            // is all black.
-                            {move || (!loading.get() && !load_error.get()).then(|| {
+                            // How many cached tiles are on screen — 0 means
+                            // the zone isn't covered and the preview is black.
+                            {move || (!loading.get()).then(|| {
                                 let n = tiles_used.get();
                                 let label = if n == 0 {
                                     tr().framing_src_none.to_string()
@@ -701,13 +1032,9 @@ pub fn FramingOverlay(
                                 view! { <div class="text-text-muted text-[11px]">{label}</div> }
                             })}
 
-                            <button
-                                class="btn btn--sm btn-ghost text-text-blue"
-                                disabled=move || framing.params.center.get().is_none() || loading.get() || tile_fov.get().is_none()
-                                on:click=move |_| load_preview.with_value(|f| f())
-                            >
-                                {move || tr().framing_reload}
-                            </button>
+                            <div class="text-text-faint text-[11px] leading-snug pt-sp-1">
+                                {move || tr().framing_hint}
+                            </div>
                         </div>
                     </div>
 
@@ -719,7 +1046,7 @@ pub fn FramingOverlay(
                         <button
                             class="btn btn--sm btn-primary"
                             disabled=move || !can_send.get()
-                            on:click=send_to_planner
+                            on:click=move |_| send_to_planner()
                         >
                             {move || tr().framing_send_mosaic}
                         </button>
@@ -728,4 +1055,20 @@ pub fn FramingOverlay(
             </div>
         </Show>
     }
+}
+
+/// "2.4°" / "35′" / "48″" for an angle in degrees.
+fn fmt_field(deg: f64) -> String {
+    if deg >= 1.0 {
+        format!("{deg:.1}\u{00b0}")
+    } else if deg >= 1.0 / 60.0 {
+        format!("{:.0}\u{2032}", deg * 60.0)
+    } else {
+        format!("{:.0}\u{2033}", deg * 3600.0)
+    }
+}
+
+/// A nudge step in arcmin, as the pad shows it.
+fn fmt_step(am: f64) -> String {
+    fmt_field(am / 60.0)
 }

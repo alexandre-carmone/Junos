@@ -21,7 +21,7 @@ use leptos::prelude::*;
 
 use crate::astro;
 use crate::compat::{CameraSnapshot, FilterWheelSnapshot};
-use crate::components::form::{CARD, CARD_TITLE, FOOTER, JobOptions, LABEL, NUM, ROW};
+use crate::components::form::{CARD, CARD_TITLE, FOOTER, JobOptions, ROW, slider_row, stepper};
 use crate::components::scheduler::resolve_completion_condition;
 use crate::components::sequence_editor::{SeqEnd, SeqFrame, SeqLimits, SequenceEditor, build_esq_xml, fmt_duration};
 use crate::components::sky::{derive_planner_mosaic_plan, fmt_dec, fmt_ra, mosaic_span_am};
@@ -361,48 +361,6 @@ pub fn MosaicTab(
                     {move || tr().mosaic_send_scheduler}
                 </button>
             </div>
-        </div>
-    }
-}
-
-/// − n + stepper for a grid dimension (1–10).
-fn stepper(label: impl Fn() -> &'static str + Send + 'static, n: RwSignal<u32>) -> impl IntoView {
-    view! {
-        <div class=ROW>
-            <span class=format!("{LABEL} flex-1")>{move || label()}</span>
-            <button type="button" class="btn-icon" disabled=move || { n.get() <= 1 }
-                    on:click=move |_| n.update(|v| *v = v.saturating_sub(1).max(1))>"\u{2212}"</button>
-            <span class="w-7 text-center font-mono text-base">{move || n.get()}</span>
-            <button type="button" class="btn-icon" disabled=move || { n.get() >= 10 }
-                    on:click=move |_| n.update(|v| *v = (*v + 1).min(10))>"+"</button>
-        </div>
-    }
-}
-
-/// Label · slider · number input, both bound to one value (overlap %, PA °).
-fn slider_row(
-    label: impl Fn() -> &'static str + Send + 'static,
-    v: RwSignal<f64>,
-    min: f64,
-    max: f64,
-    unit: &'static str,
-) -> impl IntoView {
-    let set = move |ev: web_sys::Event| {
-        if let Ok(x) = event_target_value(&ev).parse::<f64>() {
-            v.set(x.clamp(min, max));
-        }
-    };
-    view! {
-        <div class=ROW>
-            <span class=format!("{LABEL} w-24 shrink-0")>{move || label()}</span>
-            <input type="range" min=min.to_string() max=max.to_string() step="1"
-                   class="flex-1 min-w-0 accent-accent-cyan"
-                   prop:value=move || v.get().to_string()
-                   on:input=set />
-            <input type="number" min=min.to_string() max=max.to_string() step="1" class=NUM
-                   prop:value=move || format!("{:.0}", v.get())
-                   on:input=set />
-            <span class="w-3 text-sm text-text-muted">{unit}</span>
         </div>
     }
 }

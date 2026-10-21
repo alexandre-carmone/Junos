@@ -1651,6 +1651,7 @@ pub fn SkyTab(
                 focal_length_mm=focal_length_mm
                 catalog_sig=catalog_sig
                 dso_catalog_sig=dso_catalog_sig
+                is_mobile=mobile_profile.is_mobile
             />
 
             // ── Target card (tap, right-click, long-press) ─────────────────

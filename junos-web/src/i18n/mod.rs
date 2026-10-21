@@ -224,6 +224,9 @@ translations! {
     framing_center, framing_ra, framing_dec, framing_tile_fov, framing_total_fov,
     framing_send_mosaic, framing_reload, framing_no_fov,
     framing_src_cache, framing_src_live, framing_src_none,
+    framing_nudge, framing_step, framing_fit, framing_zoom_in, framing_zoom_out,
+    framing_rotate_ccw, framing_rotate_cw, framing_field, framing_cols, framing_rows,
+    framing_hint,
     // Scheduler startup/shutdown queue editor
     sched_q_edit, sched_q_custom_path, sched_q_slot_pre_startup, sched_q_slot_post_startup, sched_q_slot_pre_shutdown,
     sched_q_slot_post_shutdown, sched_q_name, sched_q_title, sched_q_start_from, sched_q_preset_empty,

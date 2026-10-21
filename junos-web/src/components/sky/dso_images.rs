@@ -108,6 +108,12 @@ pub struct DsoImageCache {
 impl DsoImageCache {
     /// `epoch` is bumped on every load completion so the sky redraws.
     pub fn new(epoch: RwSignal<u32>, is_mobile: bool) -> Self {
+        Self::with_cap(epoch, if is_mobile { 64 } else { 128 })
+    }
+
+    /// A cache holding at most `max_decoded` images — the Framing Assistant
+    /// keeps a much smaller one, since it loads full tiles, not sprites.
+    pub fn with_cap(epoch: RwSignal<u32>, max_decoded: usize) -> Self {
         Self {
             index: None,
             tile_of: HashMap::new(),
@@ -115,10 +121,15 @@ impl DsoImageCache {
             loading: Rc::new(Cell::new(0)),
             frame: 0,
             epoch,
-            max_decoded: if is_mobile { 64 } else { 128 },
+            max_decoded,
             allsky: None,
             allsky_small_tried: false,
         }
+    }
+
+    /// Images currently in flight.
+    pub fn loading_count(&self) -> usize {
+        self.loading.get()
     }
 
     /// Point the cache at the server's tile index (once it has arrived).
