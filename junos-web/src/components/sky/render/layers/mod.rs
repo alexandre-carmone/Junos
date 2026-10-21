@@ -10,6 +10,7 @@ pub mod dso_image;
 pub mod fov_reticle;
 pub mod grids;
 pub mod ground;
+pub mod horizon_mask;
 pub mod mosaic;
 pub mod mount_crosshair;
 pub mod scheduler_jobs;

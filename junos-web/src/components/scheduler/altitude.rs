@@ -8,6 +8,8 @@
 //! don't scale) and the labels are HTML on top. A tap or hover reads the time
 //! and altitudes at that point.
 
+use std::sync::Arc;
+
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -17,6 +19,7 @@ use crate::components::form::CARD_TITLE;
 use crate::components::sky::clock;
 use crate::coords::J2000;
 use crate::ephemeris;
+use crate::horizon::HorizonMask;
 use crate::i18n::Translations;
 
 const HOUR_MS: f64 = 3_600_000.0;
@@ -72,11 +75,17 @@ fn alt_jnow(ra_deg: f64, dec_deg: f64, jd: f64, site: &SiteSnapshot) -> f64 {
     astro::eq_to_altaz(ra_deg, dec_deg, lst, site.latitude).0
 }
 
-/// Altitude (°) of a J2000 position at `ms`.
-pub fn altitude(ra_deg: f64, dec_deg: f64, ms: f64, site: &SiteSnapshot) -> f64 {
+/// Altitude and azimuth (°) of a J2000 position at `ms`.
+pub fn altaz(ra_deg: f64, dec_deg: f64, ms: f64, site: &SiteSnapshot) -> (f64, f64) {
     let jd = clock::ms_to_jd(ms);
     let p = J2000::new(ra_deg, dec_deg).to_jnow(jd);
-    alt_jnow(p.ra_deg, p.dec_deg, jd, site)
+    let lst = astro::lst_deg(astro::gmst_deg(jd), site.longitude);
+    astro::eq_to_altaz(p.ra_deg, p.dec_deg, lst, site.latitude)
+}
+
+/// Altitude (°) of a J2000 position at `ms`.
+pub fn altitude(ra_deg: f64, dec_deg: f64, ms: f64, site: &SiteSnapshot) -> f64 {
+    altaz(ra_deg, dec_deg, ms, site).0
 }
 
 fn moon_altitude(ms: f64, site: &SiteSnapshot) -> f64 {
@@ -106,11 +115,14 @@ pub struct Track {
     pub label: Option<String>,
 }
 
+/// `mask`: the horizon mask to shade along the night at the (single)
+/// track's azimuth — the hours it hides the target.
 pub fn altitude_chart(
     night: Night,
     site: SiteSnapshot,
     tracks: Vec<Track>,
     min_alt: Option<f64>,
+    mask: Option<Arc<HorizonMask>>,
     tr: &'static Translations,
 ) -> impl IntoView + use<> {
     let Night { start, end, dusk, dawn } = night;
@@ -168,6 +180,33 @@ pub fn altitude_chart(
             {format!("{alt:.0}\u{00b0}")}
         </span>
     };
+
+    // The mask's altitude at the target's azimuth through the night, as a
+    // filled strip from the ground up; one track only, like the band.
+    let mask = mask.filter(|m| m.is_active() && tracks.len() == 1);
+    let mask_alt = {
+        let (mask, site) = (mask.clone(), site.clone());
+        move |k: &Track, t: f64| -> Option<f64> {
+            let m = mask.as_ref()?;
+            let (_, az) = altaz(k.ra_deg, k.dec_deg, t, &site);
+            Some(m.altitude_at(az).max(0.0))
+        }
+    };
+    let mask_strip = tracks.first().and_then(|k| {
+        let top: Vec<(f64, f64)> = samples(start, end, STEP_MS)
+            .map(|t| mask_alt(k, t).map(|a| (t, a)))
+            .collect::<Option<_>>()?;
+        if top.iter().all(|(_, a)| *a <= 0.0) {
+            return None;
+        }
+        let mut d = path(&top);
+        d.push_str(&format!(" L{:.1} {:.2} L{:.1} {:.2} Z", x(end), y(0.0), x(start), y(0.0)));
+        Some(view! {
+            <path d=d fill="var(--state-warn)" fill-opacity="0.15" />
+            <path d=path(&top) fill="none" stroke="var(--state-warn)" stroke-opacity="0.7" stroke-width="1"
+                  vector-effect="non-scaling-stroke" />
+        })
+    });
 
     let mid_jd = clock::ms_to_jd(0.5 * (start + end));
     let moon_pct = ephemeris::moon(mid_jd).phase.unwrap_or(0.0) * 100.0;
@@ -231,10 +270,12 @@ pub fn altitude_chart(
         let t = start + f * (end - start);
         let alts = tracks.iter().map(|k| {
             let alt = altitude(k.ra_deg, k.dec_deg, t, &site);
-            match &k.label {
+            let masked = mask_alt(k, t).is_some_and(|m| alt < m);
+            let s = match &k.label {
                 Some(l) => format!("{l} {alt:.0}\u{00b0}"),
                 None => format!("{alt:.0}\u{00b0}"),
-            }
+            };
+            if masked { format!("{s} ({})", tr.chart_masked) } else { s }
         });
         let moon = format!("\u{263e} {:.0}\u{00b0}", moon_altitude(t, &site));
         std::iter::once(hhmm(t)).chain(alts).chain(std::iter::once(moon)).collect::<Vec<_>>().join(" \u{00b7} ")
@@ -256,6 +297,7 @@ pub fn altitude_chart(
                 <svg viewBox=format!("0 0 {W} {H}") preserveAspectRatio="none" class="absolute inset-0 w-full h-full">
                     {twilight}
                     <rect y=y(0.0) width=W height={H - y(0.0)} fill="var(--border-strong)" fill-opacity="0.7" />
+                    {mask_strip}
                     {vlines}
                     {hline(30.0, "var(--border)")}
                     {hline(60.0, "var(--border)")}

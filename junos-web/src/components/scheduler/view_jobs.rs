@@ -44,7 +44,7 @@ pub fn SchedulerJobs(
                 (!list.is_empty()).then(|| {
                     let site = site.get();
                     let tracks = list.iter().enumerate().map(|(i, j)| job_track(i, j)).collect();
-                    view! { <div class="shrink-0">{altitude_chart(Night::tonight(&site), site, tracks, None, tr())}</div> }
+                    view! { <div class="shrink-0">{altitude_chart(Night::tonight(&site), site, tracks, None, None, tr())}</div> }
                 })
             }}
             <div class="flex flex-col gap-2 md:flex-1 md:min-h-0 md:overflow-y-auto [overscroll-behavior:contain]">

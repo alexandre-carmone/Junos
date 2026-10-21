@@ -11,6 +11,7 @@ use crate::components::sky::{fmt_dec, fmt_ra, goto_rade_msg};
 use crate::compat::SiteSnapshot;
 use crate::coords::J2000;
 use crate::dso_catalog::Dso;
+use crate::horizon;
 use crate::i18n::Translations;
 use crate::ws::SendCmd;
 use crate::{ActiveTabCtx, FramingCtx, SchedulerPrefillCtx, ServiceBusyCtx, SkyFocus, SkyFocusCtx, Tab};
@@ -93,7 +94,15 @@ pub fn detail_body<C: Fn() + Copy + Send + Sync + 'static>(
     let busy = use_context::<ServiceBusyCtx>();
     let mount_busy = Signal::derive(move || busy.and_then(|b| b.mount_busy.get()));
     let below = altitude(ra, dec, js_sys::Date::now(), &site) < 0.0;
+    // Behind the horizon mask: the first tap asks, the second sends.
+    let mask = use_context::<crate::HorizonCtx>().map(|c| c.0.get_untracked()).unwrap_or_default();
+    let blocked = { let p = jnow(); horizon::blocks_now(&mask, p.ra_deg, p.dec_deg, &site) };
+    let goto_armed = RwSignal::new(false);
     let on_goto = move |_| {
+        if blocked && !goto_armed.get_untracked() {
+            horizon::arm_confirm(goto_armed);
+            return;
+        }
         let p = jnow();
         send(goto_rade_msg(p.ra_deg, p.dec_deg));
         close();
@@ -124,7 +133,8 @@ pub fn detail_body<C: Fn() + Copy + Send + Sync + 'static>(
         <div class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
             {fact(tr.targets_at_start, format!("{:.0}\u{00b0}", c.alt_start))}
             {fact(tr.targets_peak, format!("{:.0}\u{00b0} \u{00b7} {}", c.peak_alt, hhmm(c.peak_ms)))}
-            {fact(tr.targets_above, format!("{min_alt:.0}\u{00b0}: {} \u{2192} {} \u{00b7} {}",
+            {fact(tr.targets_above, format!("{min_alt:.0}\u{00b0}{}: {} \u{2192} {} \u{00b7} {}",
+                                            if mask.is_active() { format!(" {}", tr.targets_above_mask) } else { String::new() },
                                             hhmm(c.up_from), hhmm(c.up_to), fmt_minutes(c.up_minutes)))}
             {fact(tr.targets_moon_dist, moon)}
         </div>
@@ -134,6 +144,7 @@ pub fn detail_body<C: Fn() + Copy + Send + Sync + 'static>(
         site,
         vec![Track { ra_deg: ra, dec_deg: dec, window: Some((c.up_from, c.up_to)), label: None }],
         Some(min_alt),
+        mask.is_active().then(|| mask.clone()),
         tr,
     );
 
@@ -160,12 +171,13 @@ pub fn detail_body<C: Fn() + Copy + Send + Sync + 'static>(
         <div class=format!("{FOOTER} flex-wrap gap-2")>
             <button class=format!("{btn} btn-primary") on:click=on_sky>{tr.targets_show_sky}</button>
             <button class=btn on:click=on_framing>{tr.sky_framing}</button>
-            <button class=btn
+            <button class=move || if goto_armed.get() { format!("{btn} border-state-warn text-state-warn") } else { btn.to_string() }
                     disabled=move || below || mount_busy.get().is_some()
-                    title=move || if below { tr.targets_below_horizon } else { "" }
+                    title=move || if below { tr.targets_below_horizon } else if blocked { tr.horizon_behind } else { "" }
                     on:click=on_goto>
                 {move || match mount_busy.get() {
                     Some(svc) => format!("{} ({svc})", tr.targets_goto),
+                    None if goto_armed.get() => tr.horizon_goto_anyway.to_string(),
                     None => tr.targets_goto.to_string(),
                 }}
             </button>

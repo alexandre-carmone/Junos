@@ -17,11 +17,12 @@ use crate::components::sequence_editor::{build_esq_xml, fmt_duration, has_calibr
 use crate::components::sky::clock;
 use crate::dom::event_target_value;
 use crate::dso_catalog::DsoCatalogData;
+use crate::horizon::HorizonMask;
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 
-use super::altitude::{self, altitude, altitude_chart, hhmm, job_ms, samples, Night};
+use super::altitude::{self, altaz, altitude, altitude_chart, hhmm, job_ms, samples, Night};
 use super::labels::sanitize_name;
 use super::mapping::resolve_completion_condition;
 
@@ -153,6 +154,9 @@ struct Plan {
     dec: f64,
     night: Night,
     min_alt: Option<f64>,
+    /// The horizon mask, when the job enforces it (`JobOptions.horizon`) and
+    /// there is one — KStars will hold the job behind it too.
+    mask: Option<Arc<HorizonMask>>,
     /// The session's start: the reference, else the start condition's estimate.
     start: Option<f64>,
     session: Option<(f64, f64)>,
@@ -177,21 +181,26 @@ fn altitude_card(
         let (sel, time) = (f.alt_ref.get(), f.alt_ref_time.get());
         jobs.with(|js| site.with(|s| reference(&sel, &time, js, s)))
     });
+    let horizon = use_context::<crate::HorizonCtx>().map(|c| c.0);
     let plan = Memo::new(move |_| {
         let (ra, dec) = target_deg(&f.ra.get(), &f.dec.get())?;
         let site = site.get();
         let reference = refr.with(|r| r.1);
         let night = reference.map_or_else(|| Night::tonight(&site), |t| Night::containing(t, &site));
-        let alt = |t: f64| altitude(ra, dec, t, &site);
         let o = f.opts;
         let min_alt = if o.use_alt.get() { o.min_alt.get().trim().parse::<f64>().ok() } else { None };
+        let mask = horizon.map(|h| h.get()).filter(|m| o.horizon.get() && m.is_active());
+        let visible = |t: f64| {
+            let (alt, az) = altaz(ra, dec, t, &site);
+            min_alt.is_none_or(|m| alt >= m) && mask.as_ref().is_none_or(|m| m.is_visible(az, alt))
+        };
 
         let asap = o.start_cond.get() != "at";
         let start = match reference {
             Some(t) => Some(t),
             None if asap => {
                 let from = js_sys::Date::now().max(if o.twilight.get() { night.dusk.unwrap_or(night.start) } else { night.start });
-                samples(from, night.end, PLAN_STEP_MS).find(|t| min_alt.is_none_or(|m| alt(*t) >= m))
+                samples(from, night.end, PLAN_STEP_MS).find(|t| visible(*t))
             }
             None => local_ms(&o.start_at.get()),
         };
@@ -205,13 +214,13 @@ fn altitude_card(
             };
             (b > a).then_some((a, b))
         });
-        Some(Plan { ra, dec, night, min_alt, start, session, no_slot: reference.is_none() && asap && start.is_none() })
+        Some(Plan { ra, dec, night, min_alt, mask, start, session, no_slot: reference.is_none() && asap && start.is_none() })
     });
     let has_target = Memo::new(move |_| plan.with(Option::is_some));
 
     let chart = move || plan.get().map(|p| {
         let track = altitude::Track { ra_deg: p.ra, dec_deg: p.dec, window: p.session, label: None };
-        altitude_chart(p.night, site.get(), vec![track], p.min_alt, t(lang.get()))
+        altitude_chart(p.night, site.get(), vec![track], p.min_alt, p.mask.clone(), t(lang.get()))
     });
 
     let lines = move || plan.get().map(|p| {
@@ -220,10 +229,20 @@ fn altitude_card(
         let alt = |t: f64| altitude(p.ra, p.dec, t, &site);
         let warn = |s: String| view! { <span class="text-state-warn">{format!("\u{26a0} {s}")}</span> };
         let no_slot = p.no_slot.then(|| p.min_alt.map(|m| warn(format!("{} {m:.0}\u{00b0}", tr.sched_alt_no_slot))));
+        // The first session sample under the minimum altitude, else the first
+        // one the horizon mask hides.
         let below = p.session.and_then(|(a, b)| {
-            let m = p.min_alt?;
-            let t = samples(a, b, PLAN_STEP_MS).find(|t| alt(*t) < m)?;
-            Some(warn(format!("{} {m:.0}\u{00b0} \u{00b7} {}", tr.sched_alt_below, hhmm(t))))
+            if let Some(m) = p.min_alt {
+                if let Some(t) = samples(a, b, PLAN_STEP_MS).find(|t| alt(*t) < m) {
+                    return Some(warn(format!("{} {m:.0}\u{00b0} \u{00b7} {}", tr.sched_alt_below, hhmm(t))));
+                }
+            }
+            let mask = p.mask.as_ref()?;
+            let t = samples(a, b, PLAN_STEP_MS).find(|t| {
+                let (alt, az) = altaz(p.ra, p.dec, *t, &site);
+                !mask.is_visible(az, alt)
+            })?;
+            Some(warn(format!("{} \u{00b7} {}", tr.horizon_behind, hhmm(t))))
         });
         let past_dawn = p.session.and_then(|(_, b)| {
             let dawn = p.night.dawn.filter(|d| b > *d)?;

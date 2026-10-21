@@ -1335,5 +1335,22 @@
   "targets_goto": "Goto",
   "targets_below_horizon": "Below the horizon now",
   "lite_mode_label": "Lite",
-  "lite_mode_hint": "Low bandwidth: smaller previews, no Tycho-2 stars or deep-sky imagery"
+  "lite_mode_hint": "Low bandwidth: smaller previews, no Tycho-2 stars or deep-sky imagery",
+  "layer_horizon": "Horizon",
+  "sky_horizon_mask": "Horizon mask",
+  "sky_horizon_regions_none": "No horizon in KStars yet — draw one with New region.",
+  "sky_horizon_new": "New region",
+  "sky_horizon_edit": "Edit on the sky",
+  "sky_horizon_hint": "Tap the top of each obstruction · drag a point · hold to remove",
+  "sky_horizon_name": "Region name",
+  "sky_horizon_undo": "Undo",
+  "sky_horizon_clear": "Clear",
+  "sky_horizon_save": "Save",
+  "sky_horizon_need_points": "At least two points are needed",
+  "sky_horizon_offline": "Connect KStars to edit the horizon",
+  "sky_horizon_disabled": "disabled",
+  "horizon_behind": "Behind the horizon mask",
+  "horizon_goto_anyway": "Behind the mask — Goto anyway?",
+  "targets_above_mask": "and the horizon mask",
+  "chart_masked": "masked"
 }

@@ -31,6 +31,10 @@ pub struct DeviceStore {
     /// `None` until KStars answers on connect; the planetarium falls back to
     /// its local (Paris) default until then, then adopts this as authoritative.
     pub site: RwSignal<Option<SiteInfo>>,
+    /// KStars' Artificial Horizon, from `artificial_horizon_get` (primed on
+    /// connect, re-fetched after every edit). `None` until KStars answers;
+    /// `main.rs` copies it into `HorizonCtx`.
+    pub horizon: RwSignal<Option<crate::horizon::HorizonMask>>,
     /// Per-module optical-train assignment, from `train_get_profiles`. Raw map
     /// `{ "<ProfileSettings enum>": <trainId>, … }` (0=Primary 1=Capture
     /// 2=Focus 3=Mount 4=Guide 5=Align 6=DarkLibrary).
@@ -175,6 +179,7 @@ impl DeviceStore {
             scheduler_settings: RwSignal::new(serde_json::Value::Null),
             scheduler_jobs: RwSignal::new(Vec::new()),
             mosaic_tiles: RwSignal::new(None),
+            horizon: RwSignal::new(None),
             livestacker_state: RwSignal::new(None),
             livestacker_settings: RwSignal::new(serde_json::Value::Null),
             profiles: RwSignal::new(Vec::new()),
@@ -237,6 +242,14 @@ impl DeviceStore {
             "astro_get_location" => {
                 if payload.is_object() {
                     self.site.set(Some(SiteInfo::from_json(payload)));
+                }
+            }
+
+            // KStars' Artificial Horizon regions (an array payload). Not
+            // gated on Ekos-online (message.cpp:416).
+            "artificial_horizon_get" => {
+                if let Some(mask) = crate::horizon::HorizonMask::from_reply(payload) {
+                    self.horizon.set(Some(mask));
                 }
             }
 

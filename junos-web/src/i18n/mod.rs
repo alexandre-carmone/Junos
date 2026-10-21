@@ -284,6 +284,10 @@ translations! {
     targets_strength_3, targets_adv_broadband, targets_adv_broadband_ha, targets_adv_ha, targets_adv_dual,
     targets_adv_oiii, targets_adv_mixed, targets_adv_unknown, targets_show_sky, targets_goto,
     targets_below_horizon, lite_mode_label, lite_mode_hint,
+    layer_horizon, sky_horizon_mask, sky_horizon_regions_none, sky_horizon_new, sky_horizon_edit,
+    sky_horizon_hint, sky_horizon_name, sky_horizon_undo, sky_horizon_clear, sky_horizon_save,
+    sky_horizon_need_points, sky_horizon_offline, sky_horizon_disabled, horizon_behind, horizon_goto_anyway,
+    targets_above_mask, chart_masked,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

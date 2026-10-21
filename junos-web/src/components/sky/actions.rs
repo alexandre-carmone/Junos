@@ -13,6 +13,7 @@ use crate::compat::SiteSnapshot;
 use crate::coords::JNow;
 use crate::dso_catalog::DsoType;
 use crate::i18n::{Lang, t};
+use crate::horizon;
 use crate::ws::SendCmd;
 use crate::{ActiveTabCtx, SchedulerPrefillCtx, Tab};
 
@@ -101,6 +102,7 @@ pub fn SkyTargetCard(
     let prefill_ctx = use_context::<SchedulerPrefillCtx>();
     let active_tab_ctx = use_context::<ActiveTabCtx>();
     let framing_ctx = use_context::<crate::FramingCtx>();
+    let horizon_ctx = use_context::<crate::HorizonCtx>().map(|c| c.0);
 
     let busy_ctx = use_context::<crate::ServiceBusyCtx>();
     let mount_busy = Signal::derive(move || busy_ctx.and_then(|c| c.mount_busy.get()));
@@ -124,14 +126,14 @@ pub fn SkyTargetCard(
         }
     };
     let send_for_goto = Arc::clone(&send);
-    let on_goto = move |_| {
+    let on_goto = move |_: web_sys::MouseEvent| {
         if let Some(tg) = target.get_untracked() {
             send_for_goto(goto_rade_msg(tg.ra_jnow_deg, tg.dec_jnow_deg));
             target.set(None);
         }
     };
     let send_for_align = Arc::clone(&send);
-    let on_align = move |_| {
+    let on_align = move |_: web_sys::MouseEvent| {
         if let Some(tg) = target.get_untracked() {
             // Send the goto now, then mark a pending request. An Effect in
             // mod.rs watches the mount-slewing signal and fires `align_solve`
@@ -183,6 +185,32 @@ pub fn SkyTargetCard(
                 parts.join(" \u{00b7} ")
             });
             let (ra, dec) = (tg.ra_jnow_deg, tg.dec_jnow_deg);
+            // Behind the horizon mask (now, not at the displayed time): the
+            // first tap on Goto / Goto & Align asks, the second sends. The
+            // arm signal is born with the card, so a new target disarms it.
+            let blocked = horizon_ctx.is_some_and(|h| h.with(|m| horizon::blocks_now(m, ra, dec, &site.get_untracked())));
+            let goto_armed = RwSignal::new(false);
+            let align_armed = RwSignal::new(false);
+            let goto_now = on_goto.clone();
+            let on_goto_confirm = move |ev: web_sys::MouseEvent| {
+                if blocked && !goto_armed.get_untracked() {
+                    horizon::arm_confirm(goto_armed);
+                    return;
+                }
+                goto_armed.set(false);
+                goto_now(ev);
+            };
+            let align_now = on_align.clone();
+            let on_align_confirm = move |ev: web_sys::MouseEvent| {
+                if blocked && !align_armed.get_untracked() {
+                    horizon::arm_confirm(align_armed);
+                    return;
+                }
+                align_armed.set(false);
+                align_now(ev);
+            };
+            let warn_cls = format!("{btn} border-state-warn text-state-warn");
+            let (goto_warn, align_warn) = (warn_cls.clone(), warn_cls);
             view! {
                 <div class="panel absolute z-[80] inset-x-0 bottom-0 rounded-b-none \
                             pb-[max(0.75rem,env(safe-area-inset-bottom))] \
@@ -215,19 +243,23 @@ pub fn SkyTargetCard(
                     </div>
                     <div class="flex flex-wrap gap-1.5 mt-1 font-ui">
                         <button class=btn on:click=on_center>{tr_.center_here}</button>
-                        <button class=format!("{btn} btn-primary")
+                        <button class=move || if goto_armed.get() { goto_warn.clone() } else { format!("{btn} btn-primary") }
                                 disabled=move || goto_disabled.get()
-                                on:click=on_goto.clone()>
+                                title=if blocked { tr_.horizon_behind } else { "" }
+                                on:click=on_goto_confirm>
                             {move || match goto_disabled.get().then(|| mount_busy.get()).flatten() {
                                 Some(svc) => format!("{} ({})", tr().goto_here, svc),
+                                None if goto_armed.get() => tr().horizon_goto_anyway.to_string(),
                                 None => tr().goto_here.to_string(),
                             }}
                         </button>
-                        <button class=btn
+                        <button class=move || if align_armed.get() { align_warn.clone() } else { btn.to_string() }
                                 disabled=move || align_disabled.get()
-                                on:click=on_align.clone()>
+                                title=if blocked { tr_.horizon_behind } else { "" }
+                                on:click=on_align_confirm>
                             {move || match mount_busy.get().or_else(|| camera_busy.get()) {
                                 Some(svc) => format!("{} ({})", tr().goto_and_align, svc),
+                                None if align_armed.get() => tr().horizon_goto_anyway.to_string(),
                                 None => tr().goto_and_align.to_string(),
                             }}
                         </button>

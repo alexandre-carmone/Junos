@@ -15,6 +15,7 @@ use super::layers::dso_image::DsoImageLayer;
 use super::layers::fov_reticle::FovReticleLayer;
 use super::layers::grids::{AltAzGridLayer, EclipticLayer, EqGridLayer, MeridianLayer};
 use super::layers::ground::GroundLayer;
+use super::layers::horizon_mask::HorizonMaskLayer;
 use super::layers::mosaic::MosaicLayer;
 use super::layers::mount_crosshair::MountCrosshairLayer;
 use super::layers::scheduler_jobs::SchedulerJobsLayer;
@@ -52,6 +53,8 @@ impl RenderPipeline {
         p.register(Box::new(DsoImageLayer::default()));
         // Ground, behind everything else drawn as lines.
         p.register(Box::new(GroundLayer));
+        // The horizon mask (walls, trees), shaded over the ground.
+        p.register(Box::new(HorizonMaskLayer));
         // Line grids (alt-az / meridian / equatorial / ecliptic).
         p.register(Box::new(AltAzGridLayer));
         p.register(Box::new(MeridianLayer));

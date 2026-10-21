@@ -44,6 +44,7 @@ use crate::{ActiveTabCtx, Tab};
 use crate::astro;
 use crate::catalog::CatalogData;
 use crate::coords::J2000;
+use crate::dom::event_target_value;
 use crate::dso_catalog::DsoCatalogData;
 use crate::star_tiles::{fetch_deep_stars, DeepStarCatalog};
 use self::deep_stars::{DeepStarField, DEEP_FROM_MAG};
@@ -58,6 +59,8 @@ use framing::FramingOverlay;
 pub use framing::FramingState;
 pub(crate) use actions::{fmt_dec, fmt_ra, goto_rade_msg};
 pub(crate) use framing::mosaic_span_am;
+use crate::horizon::{self, HorizonDraft, HorizonMask};
+use render::layers::horizon_mask::HANDLE_R;
 use render::{HitItem, HitKind, MosaicPlanRender, MosaicTileRender, SchedulerJobRender};
 use render::layer::{Catalogs, Frame};
 use render::params::{LayerToggles, OverlayState, PipelineMode, SceneParams, SolvedImage, ViewParams};
@@ -102,6 +105,7 @@ pub struct SkyToggles {
     pub dso_images_brightness: RwSignal<f64>,
     pub milky_way:          RwSignal<bool>,
     pub milky_way_opacity:  RwSignal<f64>,
+    pub horizon_mask:       RwSignal<bool>,
     /// `LiteModeCtx`: no Tycho-2 fetch, no deep-sky sprites, the small
     /// Milky Way panorama.
     pub lite:               RwSignal<bool>,
@@ -129,6 +133,7 @@ impl SkyToggles {
             solved_image_on: self.solved_image.get(),
             dso_images_on: self.dso_images.get(),
             milky_way_on: self.milky_way.get(),
+            horizon_mask_on: self.horizon_mask.get(),
             lite: self.lite.get(),
         }
     }
@@ -195,7 +200,7 @@ fn reticle_focal_mm(
     from_fov().or(nominal).or_else(from_pix)
 }
 
-fn local_storage() -> Option<web_sys::Storage> {
+pub(crate) fn local_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok().flatten()
 }
 
@@ -499,6 +504,8 @@ pub fn SkyTab(
     center_az: RwSignal<f64>,
     fov_radius: RwSignal<f64>,
     follow_mount: RwSignal<bool>,
+    /// KStars attached to the relay — editing the horizon mask writes to it.
+    connected: RwSignal<bool>,
 ) -> impl IntoView {
     // ── Mobile profile (one-shot — no signal needed) ──────────────────────
     let mobile_profile = detect_mobile_profile();
@@ -568,6 +575,7 @@ pub fn SkyTab(
         dso_images_brightness: persisted("sky_dso_images_brightness", 1.0),
         milky_way:          persisted("sky_show_milky_way", true),
         milky_way_opacity:  persisted("sky_milky_way_opacity", 0.6),
+        horizon_mask:       persisted("sky_show_horizon_mask", true),
         lite:               use_context::<crate::LiteModeCtx>()
                                 .map(|c| c.0)
                                 .unwrap_or_else(|| RwSignal::new(false)),
@@ -584,6 +592,13 @@ pub fn SkyTab(
 
     // Layers panel (bottom sheet on phones, floating panel on md+).
     let layers_open = RwSignal::new(false);
+
+    // The horizon mask (walls, trees) and the region being drawn on the sky,
+    // when the layers panel started an edit. See `crate::horizon`.
+    let horizon_ctx = use_context::<crate::HorizonCtx>()
+        .map(|c| c.0)
+        .unwrap_or_else(|| RwSignal::new(Arc::new(HorizonMask::default())));
+    let horizon_draft = RwSignal::new(None::<HorizonDraft>);
 
     // Drag state. `drag_dist` tracks total movement so a short drag still
     // fires a click (hit-test) on mouseup, while a real pan suppresses it.
@@ -897,6 +912,8 @@ pub fn SkyTab(
         let _ = dso_images_epoch.get();
         let dso_images_brightness = toggles.dso_images_brightness.get();
         let milky_way_opacity = toggles.milky_way_opacity.get();
+        let horizon_mask = horizon_ctx.get();
+        let horizon_draft_now = horizon_draft.get();
         // The tile index lands once; subscribing here redraws when it does.
         let dso_tiles = dso_tiles_ctx.and_then(|c| c.get());
         if let Ok(mut cache) = dso_images_for_render.try_borrow_mut() {
@@ -1185,6 +1202,8 @@ pub fn SkyTab(
             scheduler_jobs: scheduler_jobs_data,
             mosaic_kstars: mosaic_kstars_render,
             mosaic_plan:   mosaic_plan_render,
+            horizon: horizon_mask,
+            horizon_draft: horizon_draft_now,
             dso_gx: dso_filter.gx, dso_oc: dso_filter.oc, dso_gc: dso_filter.gc,
             dso_nb: dso_filter.nb, dso_pn: dso_filter.pn, dso_snr: dso_filter.snr,
             dso_gal: dso_filter.gal, dso_dn: dso_filter.dn, dso_mag,
@@ -1328,35 +1347,89 @@ pub fn SkyTab(
     };
     let to_canvas_xy = move |ev: &MouseEvent| to_canvas(ev.client_x() as f64, ev.client_y() as f64);
 
-    // Canvas CSS px → JNow RA/Dec (deg) at the displayed time. Same
-    // projection as the render Effect (canvas height floored at 500 px).
-    let screen_to_radec = move |x: f64, y: f64| -> (f64, f64) {
+    // Canvas size and projection radius, as the render Effect sees them
+    // (canvas height floored at 500 px).
+    let view_geometry = move || -> (f64, f64, f64) {
         let (w, h) = overlay_ref
             .get_untracked()
             .and_then(|el| el.parent_element())
             .map(|p| (p.client_width() as f64, p.client_height().max(500) as f64))
             .unwrap_or((800.0, 600.0));
-        let s = site.get_untracked();
-        let lst = astro::lst_deg(astro::gmst_deg(clock.get_untracked().jd()), s.longitude);
-        let r = h.min(w) / 2.0;
-        let (alt, az) = astro::unproject(
+        (w, h, h.min(w) / 2.0)
+    };
+    // Canvas CSS px → Alt/Az (deg).
+    let screen_to_altaz = move |x: f64, y: f64| -> (f64, f64) {
+        let (w, h, r) = view_geometry();
+        astro::unproject(
             (x - w / 2.0) / r,
             -(y - h / 2.0) / r,
             center_alt.get_untracked(),
             center_az.get_untracked(),
             fov_radius.get_untracked(),
-        );
+        )
+    };
+    // Canvas CSS px → JNow RA/Dec (deg) at the displayed time.
+    let screen_to_radec = move |x: f64, y: f64| -> (f64, f64) {
+        let s = site.get_untracked();
+        let lst = astro::lst_deg(astro::gmst_deg(clock.get_untracked().jd()), s.longitude);
+        let (alt, az) = screen_to_altaz(x, y);
         astro::altaz_to_eq(alt, az, lst, s.latitude)
     };
+    // Alt/Az (deg) → canvas CSS px, `None` off the projection.
+    let altaz_to_screen = move |alt: f64, az: f64| -> Option<(f64, f64)> {
+        let (w, h, r) = view_geometry();
+        astro::project(alt, az, center_alt.get_untracked(), center_az.get_untracked(), fov_radius.get_untracked())
+            .map(|(x, y)| (w / 2.0 + x * r, h / 2.0 - y * r))
+    };
+    // The draft handle under (x, y), if any.
+    let handle_at = move |x: f64, y: f64, min_r: f64| -> Option<usize> {
+        horizon_draft.with_untracked(|d| {
+            let d = d.as_ref()?;
+            let r2 = min_r.max(HANDLE_R * 2.0).powi(2);
+            d.points
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (az, alt))| altaz_to_screen(*alt, *az).map(|(sx, sy)| (i, (sx - x).powi(2) + (sy - y).powi(2))))
+                .filter(|(_, d2)| *d2 <= r2)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(i, _)| i)
+        })
+    };
 
-    // Leaving the sky abandons a pending Mosaic "Pick on Sky".
+    // Leaving the sky abandons a pending Mosaic "Pick on Sky" and a horizon
+    // mask being drawn.
     if let Some(ctx) = tab_ctx {
         Effect::new(move |_| {
-            if ctx.0.get() != Tab::Sky && planner.picking_center.get_untracked() {
-                planner.picking_center.set(false);
+            if ctx.0.get() != Tab::Sky {
+                if planner.picking_center.get_untracked() {
+                    planner.picking_center.set(false);
+                }
+                if horizon_draft.with_untracked(Option::is_some) {
+                    horizon_draft.set(None);
+                }
             }
         });
     }
+
+    // Horizon mask editing: Save writes the region to KStars
+    // (`artificial_horizon_import`, no reply) and re-reads the whole mask;
+    // the context takes the region at once so the sky repaints.
+    let send_for_horizon = Arc::clone(&send);
+    let save_horizon = move |_| {
+        let Some(d) = horizon_draft.get_untracked() else { return };
+        if !d.can_save() || !connected.get_untracked() {
+            return;
+        }
+        let region = d.region();
+        send_for_horizon(horizon::cmd_import(&region));
+        send_for_horizon(horizon::cmd_get());
+        horizon_ctx.update(|m| {
+            let mut next = (**m).clone();
+            next.upsert(region);
+            *m = Arc::new(next);
+        });
+        horizon_draft.set(None);
+    };
     let cancel_pick = move |_| {
         planner.picking_center.set(false);
         if let Some(ctx) = tab_ctx {
@@ -1368,6 +1441,19 @@ pub fn SkyTab(
     // under the pointer (or close it on empty sky).
     let hit_items_for_tap = Rc::clone(&hit_items);
     let on_tap = move |x: f64, y: f64, min_r: f64| {
+        // Drawing the horizon mask: a tap on empty sky adds a point at the
+        // top of the obstruction; one on a handle just selects it.
+        if horizon_draft.with_untracked(Option::is_some) {
+            if handle_at(x, y, min_r).is_none() {
+                let (alt, az) = screen_to_altaz(x, y);
+                horizon_draft.update(|d| {
+                    if let Some(d) = d {
+                        d.add(az, alt);
+                    }
+                });
+            }
+            return;
+        }
         if planner.picking_center.get_untracked() {
             planner.params.center.set(Some(screen_to_radec(x, y)));
             planner.picking_center.set(false);
@@ -1385,6 +1471,19 @@ pub fn SkyTab(
     // to the object under it when there is one.
     let hit_items_for_press = Rc::clone(&hit_items);
     let on_press = move |x: f64, y: f64, min_r: f64| {
+        // Drawing the horizon mask: a hold on a handle removes it. The touch
+        // path armed a drag on the same handle at `touchstart`; `remove`
+        // clears it so the following move doesn't push a stale index.
+        if horizon_draft.with_untracked(Option::is_some) {
+            if let Some(i) = handle_at(x, y, min_r) {
+                horizon_draft.update(|d| {
+                    if let Some(d) = d {
+                        d.remove(i);
+                    }
+                });
+            }
+            return;
+        }
         let (ra, dec) = screen_to_radec(x, y);
         let hit = hit_test(&hit_items_for_press.borrow(), x, y, min_r);
         target.set(Some(SkyTarget::new(ra, dec, hit)));
@@ -1400,12 +1499,46 @@ pub fn SkyTab(
         set_center_alt.update(|alt| *alt = (*alt + dy * deg_per_px).clamp(-90.0, 90.0));
     };
 
+    // ── Horizon handle drag ────────────────────────────────────────────────
+    // A press on a draft handle drags that point instead of panning. Every
+    // path that ends a drag (`dragging` → false) also ends this one.
+    let grab_handle = move |x: f64, y: f64, min_r: f64| {
+        if let Some(i) = handle_at(x, y, min_r) {
+            horizon_draft.update(|d| {
+                if let Some(d) = d {
+                    d.begin_move(i);
+                }
+            });
+        }
+    };
+    let handle_dragging = move || horizon_draft.with_untracked(|d| d.as_ref().is_some_and(|d| d.drag.is_some()));
+    let drag_handle_to = move |x: f64, y: f64| {
+        let (alt, az) = screen_to_altaz(x, y);
+        horizon_draft.update(|d| {
+            if let Some(d) = d {
+                d.move_to(az, alt);
+            }
+        });
+    };
+    let release_handle = move || {
+        if handle_dragging() {
+            horizon_draft.update(|d| {
+                if let Some(d) = d {
+                    d.end_move();
+                }
+            });
+        }
+    };
+
     // ── Mouse handlers ─────────────────────────────────────────────────────
     let on_mousedown = move |ev: MouseEvent| {
         if ev.button() == 0 {
             dragging.set_value(true);
             drag_last.set_value((ev.client_x() as f64, ev.client_y() as f64));
             drag_dist.set_value(0.0);
+            if let Some((x, y)) = to_canvas_xy(&ev) {
+                grab_handle(x, y, MOUSE_HIT_R);
+            }
         }
     };
 
@@ -1425,6 +1558,12 @@ pub fn SkyTab(
         // Only pan if the drag has exceeded a small threshold — otherwise
         // the mouseup below still triggers a hit-test (click-to-info).
         if drag_dist.get_value() < 4.0 { return; }
+        if handle_dragging() {
+            if let Some((x, y)) = to_canvas_xy(&ev) {
+                drag_handle_to(x, y);
+            }
+            return;
+        }
         pan(dx, dy);
     };
 
@@ -1432,6 +1571,7 @@ pub fn SkyTab(
     let on_mouseup = move |ev: MouseEvent| {
         let was_down = dragging.get_value();
         dragging.set_value(false);
+        release_handle();
         // If the pointer barely moved, treat this as a click → hit-test.
         if !was_down || drag_dist.get_value() >= 4.0 || ev.button() != 0 { return; }
         if let Some((x, y)) = to_canvas_xy(&ev) {
@@ -1441,6 +1581,7 @@ pub fn SkyTab(
 
     let on_mouseleave = move |_: MouseEvent| {
         dragging.set_value(false);
+        release_handle();
         mouse_pos.set(None);
     };
 
@@ -1483,6 +1624,9 @@ pub fn SkyTab(
             drag_dist.set_value(0.0);
             pinch_start_dist.set_value(0.0);
             longpress_fired.set_value(false);
+            if let Some((x, y)) = to_canvas(tx, ty) {
+                grab_handle(x, y, TOUCH_HIT_R);
+            }
             let press = press_for_touch.clone();
             *lp_timer_start.borrow_mut() = Some(gloo_timers::callback::Timeout::new(500, move || {
                 longpress_fired.set_value(true);
@@ -1493,6 +1637,7 @@ pub fn SkyTab(
         } else if touches.length() == 2 {
             *lp_timer_start.borrow_mut() = None;
             dragging.set_value(false);
+            release_handle();
             let t0 = touches.get(0).unwrap();
             let t1 = touches.get(1).unwrap();
             let dx = t0.client_x() as f64 - t1.client_x() as f64;
@@ -1515,6 +1660,12 @@ pub fn SkyTab(
             drag_dist.update_value(|d| *d += (dx * dx + dy * dy).sqrt());
             if drag_dist.get_value() < TAP_SLOP { return; }
             *lp_timer_move.borrow_mut() = None; // a real drag cancels the long-press
+            if handle_dragging() {
+                if let Some((x, y)) = to_canvas(t.client_x() as f64, t.client_y() as f64) {
+                    drag_handle_to(x, y);
+                }
+                return;
+            }
             pan(dx, dy);
         } else if touches.length() == 2 {
             let t0 = touches.get(0).unwrap();
@@ -1541,6 +1692,7 @@ pub fn SkyTab(
             && drag_dist.get_value() < TAP_SLOP
             && !longpress_fired.get_value();
         dragging.set_value(false);
+        release_handle();
         pinch_start_dist.set_value(0.0);
         if is_tap {
             let (cx, cy) = drag_last.get_value();
@@ -1578,8 +1730,44 @@ pub fn SkyTab(
                 on:touchstart=on_touchstart
                 on:touchmove=on_touchmove
                 on:touchend=on_touchend
-                on:touchcancel=move |_: TouchEvent| { *longpress_timer.borrow_mut() = None; dragging.set_value(false); pinch_start_dist.set_value(0.0); }
+                on:touchcancel=move |_: TouchEvent| { *longpress_timer.borrow_mut() = None; dragging.set_value(false); release_handle(); pinch_start_dist.set_value(0.0); }
             />
+
+            // ── Horizon mask editing banner ────────────────────────────────
+            {move || horizon_draft.get().map(|d| {
+                let can_save = d.can_save();
+                let online = connected.get();
+                let save_title = if !online {
+                    tr().sky_horizon_offline
+                } else if !can_save {
+                    tr().sky_horizon_need_points
+                } else {
+                    ""
+                };
+                let update = |f: fn(&mut HorizonDraft)| move |_| horizon_draft.update(|d| if let Some(d) = d { f(d) });
+                view! {
+                    <div class="absolute z-[100] top-[max(0.5rem,env(safe-area-inset-top))] mt-14 left-1/2 -translate-x-1/2 \
+                                w-max max-w-[calc(100%-1rem)] flex flex-wrap items-center gap-2 py-1.5 px-2 \
+                                bg-bg-banner border border-accent-cyan-dim text-accent-cyan text-sm rounded-md">
+                        <span class="hidden md:inline min-w-0 pl-2">{move || tr().sky_horizon_hint}</span>
+                        <input type="text" class="input input--sm w-[9rem]" placeholder=move || tr().sky_horizon_name
+                               prop:value=d.name.clone()
+                               on:input=move |ev| {
+                                   let v = event_target_value(&ev);
+                                   horizon_draft.update(|d| if let Some(d) = d { d.name = v });
+                               } />
+                        <span class="font-mono text-text-muted">{format!("{} pt", d.points.len())}</span>
+                        <button class="btn btn--sm btn-ghost shrink-0" disabled=d.history.is_empty()
+                                on:click=update(HorizonDraft::undo)>{move || tr().sky_horizon_undo}</button>
+                        <button class="btn btn--sm btn-ghost shrink-0" disabled=d.points.is_empty()
+                                on:click=update(HorizonDraft::clear)>{move || tr().sky_horizon_clear}</button>
+                        <button class="btn btn--sm btn-ghost shrink-0"
+                                on:click=move |_| horizon_draft.set(None)>{move || tr().cancel}</button>
+                        <button class="btn btn--sm btn-primary shrink-0" disabled=!(can_save && online) title=save_title
+                                on:click=save_horizon.clone()>{move || tr().sky_horizon_save}</button>
+                    </div>
+                }
+            })}
 
             // ── Mosaic center-pick banner ──────────────────────────────────
             // Sits just under the top bar (mt-14 clears its 44 px row).
@@ -1643,6 +1831,9 @@ pub fn SkyTab(
                 site=site
                 set_site_location=set_site_location
                 mount_device=mount_device
+                horizon_draft=horizon_draft
+                connected=connected
+                send=Arc::clone(&send)
             />
 
             // ── Framing assistant overlay (opened from the target card) ────

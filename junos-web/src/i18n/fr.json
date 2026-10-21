@@ -1425,5 +1425,22 @@
   "targets_goto": "Pointer",
   "targets_below_horizon": "Sous l'horizon maintenant",
   "lite_mode_label": "Lite",
-  "lite_mode_hint": "Bas débit : aperçus réduits, sans étoiles Tycho-2 ni images du ciel profond"
+  "lite_mode_hint": "Bas débit : aperçus réduits, sans étoiles Tycho-2 ni images du ciel profond",
+  "layer_horizon": "Horizon",
+  "sky_horizon_mask": "Masque d'horizon",
+  "sky_horizon_regions_none": "Aucun horizon dans KStars — tracez-en un avec Nouvelle zone.",
+  "sky_horizon_new": "Nouvelle zone",
+  "sky_horizon_edit": "Modifier sur le ciel",
+  "sky_horizon_hint": "Touchez le haut de chaque obstacle · glissez un point · maintenez pour retirer",
+  "sky_horizon_name": "Nom de la zone",
+  "sky_horizon_undo": "Annuler",
+  "sky_horizon_clear": "Effacer",
+  "sky_horizon_save": "Enregistrer",
+  "sky_horizon_need_points": "Il faut au moins deux points",
+  "sky_horizon_offline": "Connectez KStars pour modifier l'horizon",
+  "sky_horizon_disabled": "désactivée",
+  "horizon_behind": "Derrière le masque d'horizon",
+  "horizon_goto_anyway": "Derrière le masque — Goto quand même ?",
+  "targets_above_mask": "et le masque d'horizon",
+  "chart_masked": "masqué"
 }

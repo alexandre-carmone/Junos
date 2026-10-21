@@ -10,7 +10,9 @@ use wasm_bindgen::JsCast;
 
 use crate::compat::SiteSnapshot;
 use crate::dom::event_target_value;
+use crate::horizon::{self, HorizonDraft, HorizonMask};
 use crate::i18n::{Lang, Translations, t};
+use crate::ws::SendCmd;
 
 use super::SkyToggles;
 
@@ -50,9 +52,69 @@ pub fn SkyControls(
     #[prop(into)] site: Signal<SiteSnapshot>,
     set_site_location: Arc<dyn Fn(f64, f64) + Send + Sync>,
     #[prop(into)] mount_device: Signal<Option<String>>,
+    /// The horizon region being drawn on the sky; the panel starts an edit
+    /// (and closes) and the sky's banner ends it.
+    horizon_draft: RwSignal<Option<HorizonDraft>>,
+    /// KStars attached — the mask is stored there, so edits need it.
+    connected: RwSignal<bool>,
+    send: SendCmd,
 ) -> impl IntoView {
     let lang = lang_ctx();
     let tr = move || t(lang.get());
+
+    // ── Horizon mask regions (KStars' Artificial Horizon) ─────────────────
+    let horizon_ctx = use_context::<crate::HorizonCtx>()
+        .map(|c| c.0)
+        .unwrap_or_else(|| RwSignal::new(Arc::new(HorizonMask::default())));
+    let send_toggle = send.clone();
+    let toggle_region = move |name: String, enabled: bool| {
+        send_toggle(horizon::cmd_toggle(&name, enabled));
+        send_toggle(horizon::cmd_get());
+        horizon_ctx.update(|m| {
+            let mut next = (**m).clone();
+            next.set_enabled(&name, enabled);
+            *m = Arc::new(next);
+        });
+    };
+    let toggle_region = StoredValue::new(Arc::new(toggle_region) as Arc<dyn Fn(String, bool) + Send + Sync>);
+    let start_edit = move |draft: HorizonDraft| {
+        horizon_draft.set(Some(draft));
+        open.set(false);
+    };
+    let region_rows = move || {
+        let mask = horizon_ctx.get();
+        let online = connected.get();
+        if mask.regions.is_empty() {
+            return view! {
+                <div class="text-text-muted text-[11px]">{move || tr().sky_horizon_regions_none}</div>
+            }.into_any();
+        }
+        mask.regions.iter().map(|r| {
+            let (name, enabled, ceiling, n) = (r.name.clone(), r.enabled, r.ceiling, r.points.len());
+            let name_toggle = name.clone();
+            let region = r.clone();
+            view! {
+                <div class=SETTINGS_ROW>
+                    <label class="flex items-center gap-2 min-w-0">
+                        <input type="checkbox" class="accent-accent-cyan" prop:checked=enabled
+                               prop:disabled=!online
+                               on:change=move |ev| {
+                                   toggle_region.get_value()(name_toggle.clone(), crate::dom::event_target_checked(&ev));
+                               } />
+                        <span class="truncate text-text">{name}</span>
+                        <span class="font-mono text-text-muted text-xs shrink-0">
+                            {format!("{n} pt{}", if ceiling { " \u{00b7} \u{2312}" } else { "" })}
+                        </span>
+                    </label>
+                    <button class="btn-icon shrink-0" title=move || tr().sky_horizon_edit
+                            prop:disabled=!online
+                            on:click=move |_| start_edit(HorizonDraft::from_region(&region))>
+                        "\u{270e}"
+                    </button>
+                </div>
+            }
+        }).collect::<Vec<_>>().into_any()
+    };
 
     let s = site.get_untracked();
     let lat_str = RwSignal::new(format!("{:.4}", s.latitude));
@@ -228,6 +290,25 @@ pub fn SkyControls(
                         {move || format!("{:.0}%", toggles.solved_image_opacity.get() * 100.0)}
                     </span>
                 </label>
+
+                // ── Horizon mask: KStars' regions, each editable on the sky ──
+                <div class=GROUP>{move || tr().layer_horizon}</div>
+                <div class=ROW>
+                    <LayerChip on=toggles.horizon_mask label=|t| t.sky_horizon_mask />
+                    <button class=CONTROLS_BTN
+                            prop:disabled=move || !connected.get()
+                            title=move || if connected.get() { "" } else { tr().sky_horizon_offline }
+                            on:click=move |_| {
+                                let name = horizon_ctx.with_untracked(|m| m.fresh_name());
+                                start_edit(HorizonDraft::new(name));
+                            }>
+                        {move || tr().sky_horizon_new}
+                    </button>
+                </div>
+                {region_rows}
+                <Show when=move || !connected.get()>
+                    <div class="text-text-muted text-[11px]">{move || tr().sky_horizon_offline}</div>
+                </Show>
 
                 // ── Observer location (collapsed by default) ──────────────
                 <button class="flex items-center justify-between w-full min-h-0 h-9 mt-1 px-0 bg-transparent \

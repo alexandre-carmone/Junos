@@ -112,6 +112,9 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
             if connected_sig.get() {
                 prime_send(r#"{"type":"get_profiles","payload":{}}"#.to_string());
                 prime_send(r#"{"type":"get_drivers","payload":{}}"#.to_string());
+                // The horizon mask is also dispatched before the gate, and
+                // the relay never replays it (hub.rs STICKY_TYPES).
+                prime_send(crate::horizon::cmd_get());
                 // Note: the observer site (astro_get_location) is primed and
                 // cached by junos-server on KStars attach, then replayed to each
                 // browser on connect (proxy.rs) — no per-browser request needed.

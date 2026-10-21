@@ -14,6 +14,7 @@ use crate::components::sky::clock;
 use crate::coords::J2000;
 use crate::dso_catalog::Dso;
 use crate::ephemeris;
+use crate::horizon::HorizonMask;
 
 /// Sampling step, as the Scheduler's altitude chart.
 pub const STEP_MS: f64 = 600_000.0;
@@ -76,14 +77,16 @@ impl NightSky {
     }
 }
 
-/// One object that clears the minimum altitude during the window.
+/// One object that clears the minimum altitude — and the horizon mask —
+/// during the window.
 #[derive(Clone, Copy, PartialEq)]
 pub struct Candidate {
     /// Index into the catalog's `dsos`.
     pub idx: usize,
     /// Altitude at the start of the window, degrees.
     pub alt_start: f64,
-    /// Highest altitude in the window and when.
+    /// Highest *visible* altitude in the window and when — a culmination
+    /// behind a wall is worth nothing.
     pub peak_alt: f64,
     pub peak_ms: f64,
     /// First and last sample above the minimum altitude.
@@ -97,11 +100,15 @@ pub struct Candidate {
     pub moon_up: bool,
 }
 
-/// Every object above `min_alt` (degrees) at some sample of the window.
-pub fn evaluate(dsos: &[Dso], sky: &NightSky, min_alt: f64) -> Vec<Candidate> {
+/// Every object above `min_alt` (degrees) and the horizon mask at some
+/// sample of the window — KStars' own rule for a job
+/// (`SchedulerJob::satisfiesAltitudeConstraint`). The mask costs one
+/// azimuth per sample already above `min_alt`.
+pub fn evaluate(dsos: &[Dso], sky: &NightSky, min_alt: f64, mask: &HorizonMask) -> Vec<Candidate> {
     let (sl, cl) = sky.lat.to_radians().sin_cos();
     let sin_min = min_alt.to_radians().sin();
     let span = sky.end - sky.start;
+    let masked = mask.is_active();
     let mut out = Vec::new();
     for (idx, d) in dsos.iter().enumerate() {
         let p = J2000::new(d.ra_deg as f64, d.dec_deg as f64).to_jnow(sky.jd_mid);
@@ -115,16 +122,25 @@ pub fn evaluate(dsos: &[Dso], sky: &NightSky, min_alt: f64) -> Vec<Candidate> {
         let (mut peak, mut peak_i) = (f64::MIN, 0);
         let (mut first, mut last, mut count) = (None, 0, 0usize);
         for (i, lst) in sky.lst.iter().enumerate() {
-            let s = a + b * (lst - ra).cos();
+            let h = lst - ra;
+            let s = a + b * h.cos();
+            if s < sin_min {
+                continue;
+            }
+            if masked {
+                // Azimuth from north through east, as `astro::eq_to_altaz`.
+                let az = (-cd * h.sin()).atan2(sd * cl - cd * h.cos() * sl).rem_euclid(std::f64::consts::TAU);
+                if !mask.is_visible(az.to_degrees(), s.clamp(-1.0, 1.0).asin().to_degrees()) {
+                    continue;
+                }
+            }
             if s > peak {
                 peak = s;
                 peak_i = i;
             }
-            if s >= sin_min {
-                first.get_or_insert(i);
-                last = i;
-                count += 1;
-            }
+            first.get_or_insert(i);
+            last = i;
+            count += 1;
         }
         let Some(first) = first else { continue };
         let (mra, msd, mcd) = sky.moon[peak_i];

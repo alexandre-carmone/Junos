@@ -4,6 +4,9 @@
 //! plus a single `PipelineMode` enum that replaces what used to be six
 //! pairwise `_on_gpu` / `_on_dom` / `_on_cpu` booleans.
 
+use std::sync::Arc;
+
+use crate::horizon::{HorizonDraft, HorizonMask};
 use crate::i18n::Lang;
 
 use super::{MosaicPlanRender, SchedulerJobRender};
@@ -82,6 +85,7 @@ pub struct LayerToggles {
     pub solved_image_on: bool,
     pub dso_images_on: bool,
     pub milky_way_on: bool,
+    pub horizon_mask_on: bool,
     /// Low-bandwidth mode: no sprites, the small panorama.
     pub lite: bool,
 }
@@ -117,6 +121,10 @@ pub struct OverlayState {
     pub scheduler_jobs: Vec<SchedulerJobRender>,
     pub mosaic_kstars: Option<MosaicPlanRender>,
     pub mosaic_plan: Option<MosaicPlanRender>,
+
+    /// The horizon mask (`HorizonCtx`) and the region being drawn, if any.
+    pub horizon: Arc<HorizonMask>,
+    pub horizon_draft: Option<HorizonDraft>,
 
     pub dso_gx: bool,
     pub dso_oc: bool,

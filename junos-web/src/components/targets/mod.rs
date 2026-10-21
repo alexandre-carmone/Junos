@@ -167,11 +167,13 @@ pub fn TargetsTab(#[prop(into)] site: Signal<SiteSnapshot>, send: SendCmd) -> im
     });
 
     // ── Candidates, then the ranked list ─────────────────────────────────
+    let horizon = use_context::<crate::HorizonCtx>().map(|c| c.0);
     let candidates = Memo::new(move |_| {
         let cat = dso_catalog.get()?;
         let sky = sky.get();
+        let mask = horizon.map(|h| h.get()).unwrap_or_default();
         let t0 = js_sys::Date::now();
-        let out = evaluate(&cat.dsos, &sky, prefs.min_alt.get());
+        let out = evaluate(&cat.dsos, &sky, prefs.min_alt.get(), &mask);
         debug_log!("targets: {} candidates in {:.0} ms", out.len(), js_sys::Date::now() - t0);
         Some(out)
     });

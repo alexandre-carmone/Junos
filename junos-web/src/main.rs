@@ -21,6 +21,7 @@ mod dom;
 mod dso_catalog;
 mod dso_tiles;
 mod ephemeris;
+mod horizon;
 mod i18n;
 mod net;
 mod star_tiles;
@@ -111,6 +112,13 @@ pub struct SkyFocus {
 
 #[derive(Clone, Copy)]
 pub struct SkyFocusCtx(pub RwSignal<Option<SkyFocus>>);
+
+/// The horizon mask (`horizon.rs`): KStars' Artificial Horizon as last
+/// reported by `artificial_horizon_get`, seeded from localStorage so the sky
+/// and the planning tabs have it before KStars attaches. The Sky tab edits
+/// it and writes it back to KStars.
+#[derive(Clone, Copy)]
+pub struct HorizonCtx(pub RwSignal<Arc<horizon::HorizonMask>>);
 
 /// Names the device a long-running operation is holding, so the sky
 /// right-click menu can disable Goto / Goto & Align while it runs.
@@ -281,6 +289,21 @@ fn App() -> impl IntoView {
     // mid-slew fired `mount_goto_rade` and aborted the running slew.
     let (mount_busy, camera_busy) = compat::derive_service_busy(&store);
     provide_context(ServiceBusyCtx { camera_busy, mount_busy });
+
+    // ── Horizon mask ──────────────────────────────────────────────────────
+    // KStars' answer wins over the cached copy as soon as it lands; every
+    // value adopted here is written back so the next load starts from it.
+    let horizon_ctx = RwSignal::new(Arc::new(horizon::load_cached()));
+    provide_context(HorizonCtx(horizon_ctx));
+    {
+        let from_kstars = store.horizon;
+        Effect::new(move |_| {
+            if let Some(mask) = from_kstars.get() {
+                horizon_ctx.set(Arc::new(mask));
+            }
+        });
+        Effect::new(move |_| horizon_ctx.with(|m| horizon::save_cached(m)));
+    }
 
     // ── Mosaic planner shared state ───────────────────────────────────────
     let mosaic_planner = MosaicPlannerState {

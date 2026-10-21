@@ -29,13 +29,15 @@ use leptos::prelude::*;
 use serde_json::{json, Value};
 use wasm_bindgen::{closure::Closure, JsCast};
 
-use crate::compat::{FilterWheelSnapshot, MountSnapshot, SolveSnapshot};
-use crate::components::coord_input::{CoordInput, CoordMode};
+use crate::compat::{FilterWheelSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot};
+use crate::components::coord_input::{dms_string_to_degrees, hms_string_to_hours, CoordInput, CoordMode};
 use crate::components::form::{
     check_row, setting_row, sheet, CARD, CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, SELECT,
 };
 use crate::components::tab_wheel_icons::tab_icon;
+use crate::coords::J2000;
 use crate::dom::{event_target_checked, event_target_value};
+use crate::horizon;
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{dispatch_setting, send_cmd};
@@ -296,6 +298,8 @@ pub fn MountTab(
     solve: Signal<SolveSnapshot>,
     align_settings: RwSignal<Value>,
     filter_wheel: Signal<FilterWheelSnapshot>,
+    /// The observer site, for the horizon-mask check before a GoTo.
+    site: Signal<SiteSnapshot>,
     send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -418,6 +422,30 @@ pub fn MountTab(
         move |_| send_cmd(&s, ty, json!({
             "ra": ra.get_untracked(), "de": dec.get_untracked(), "isJ2000": j2000.get_untracked(),
         }))
+    };
+    // GoTo behind the horizon mask asks first ("Goto anyway?"), 5 s to
+    // confirm. By name, KStars resolves the target itself: no check.
+    let horizon_ctx = use_context::<crate::HorizonCtx>().map(|c| c.0);
+    let goto_armed = RwSignal::new(false);
+    let goto_blocked = move || -> bool {
+        let Some(h) = horizon_ctx else { return false };
+        let (mut ra_deg, mut dec_deg) = (hms_string_to_hours(&ra.get_untracked()) * 15.0, dms_string_to_degrees(&dec.get_untracked()));
+        if j2000.get_untracked() {
+            let p = J2000::new(ra_deg, dec_deg).to_jnow(crate::astro::now_jd());
+            (ra_deg, dec_deg) = (p.ra_deg, p.dec_deg);
+        }
+        h.with_untracked(|m| horizon::blocks_now(m, ra_deg, dec_deg, &site.get_untracked()))
+    };
+    let s_goto = send.clone();
+    let on_goto_rade = move |_| {
+        if goto_blocked() && !goto_armed.get_untracked() {
+            horizon::arm_confirm(goto_armed);
+            return;
+        }
+        goto_armed.set(false);
+        send_cmd(&s_goto, "mount_goto_rade", json!({
+            "ra": ra.get_untracked(), "de": dec.get_untracked(), "isJ2000": j2000.get_untracked(),
+        }));
     };
     let s_target = send.clone();
     let on_goto_target = move |ev: web_sys::SubmitEvent| {
@@ -683,8 +711,9 @@ pub fn MountTab(
                             <button class="btn btn-ghost h-11 px-4 ml-auto" on:click=rade("mount_sync_rade")>
                                 {move || tr().mount_sync_btn}
                             </button>
-                            <button class="btn btn-primary h-11 px-5" on:click=rade("mount_goto_rade")>
-                                {move || tr().mount_goto_btn}
+                            <button class=move || if goto_armed.get() { "btn h-11 px-5 border-state-warn text-state-warn" } else { "btn btn-primary h-11 px-5" }
+                                    on:click=on_goto_rade>
+                                {move || if goto_armed.get() { tr().horizon_goto_anyway } else { tr().mount_goto_btn }}
                             </button>
                         </div>
                         <form class="flex items-center gap-2 pt-1 border-t border-border-base" on:submit=on_goto_target>
