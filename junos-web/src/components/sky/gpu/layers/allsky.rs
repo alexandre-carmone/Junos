@@ -1,7 +1,7 @@
 //! All-sky Milky Way background.
 //!
-//! One plate-carrée panorama of the sky (`allsky.jpg` from the offline tile
-//! cache) in a mipmapped `texture_2d`, drawn as a full-screen triangle first
+//! One plate-carrée panorama of the sky (`allsky.jpg` from the sky-map
+//! mirror) in a mipmapped `texture_2d`, drawn as a full-screen triangle first
 //! in the render pass; the fragment shader inverts the star projection per
 //! pixel and samples it (`shaders/allsky.wgsl`). The texture is created on
 //! the first frame the decoded image is handed over and kept for the
@@ -104,7 +104,13 @@ impl AllskyLayer {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("allsky.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/allsky.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("../../shaders/sky_inverse.wgsl"),
+                    include_str!("../../shaders/allsky.wgsl"),
+                )
+                .into(),
+            ),
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("allsky_pl"),

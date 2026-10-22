@@ -3,14 +3,13 @@
 mod apps;
 mod auth;
 mod config;
-mod dso_tiles;
 mod files;
 mod http_cache;
 mod hub;
 mod kstars_ws;
 mod planning;
 mod proxy;
-mod skysurvey;
+mod skymap;
 mod starfind;
 mod taskqueue;
 mod tls;
@@ -42,6 +41,7 @@ pub struct AppState {
     pub hub:         Hub,
     pub config:      Arc<Config>,
     pub app_manager: AppManager,
+    pub skymap:      Arc<skymap::SkymapState>,
 }
 
 #[tokio::main]
@@ -78,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     info!("Scheduler task-queue dir: {}", config.resolved_taskqueue_dir().display());
-    dso_tiles::log_cache_state(&config.resolved_dso_tile_dir());
+    let skymap = Arc::new(skymap::SkymapState::new(&config.resolved_skymap_dir(), config.skymap_online));
 
     let hub = Hub::new();
     let app_manager = AppManager::new(hub.clone());
@@ -89,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
         hub,
         config: config.clone(),
         app_manager,
+        skymap,
     };
 
     let dist_dir = config.dist_dir.clone();
@@ -106,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
     // `.br` / `.gz` next to the wasm, js, css and catalogs), which
     // `ServeDir` serves as-is. `http_cache::apply` adds the browser-cache
     // policy for the static files. The default compression predicate skips
-    // `image/*`, so tiles and thumbnails pass through untouched.
+    // `image/*`, so the sky-map tiles pass through untouched.
     let http_routes = Router::new()
         .route("/api/config", get(api_config))
         .route("/api/authenticate", post(auth::authenticate))
@@ -115,10 +116,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/apps/state",  get(apps::state_handler))
         .route("/api/apps/power",  post(apps::power_handler))
         .route("/api/apps/guider", post(apps::guider_handler))
-        .route("/api/skysurvey",   get(skysurvey::skysurvey))
-        .route("/api/dso_tiles/index.json", get(dso_tiles::index))
-        .route("/api/dso_tiles/:name",      get(dso_tiles::tile))
-        .route("/api/dso_tiles/thumbs/:name", get(dso_tiles::thumb))
+        .route("/api/skymap/info",             get(skymap::info))
+        .route("/api/skymap/properties",       get(skymap::properties))
+        .route("/api/skymap/allsky.jpg",       get(skymap::allsky))
+        .route("/api/skymap/allsky_small.jpg", get(skymap::allsky_small))
+        .route("/api/skymap/:norder/:dir/:npix", get(skymap::tile))
         .route("/api/files/list",     get(files::list))
         .route("/api/files/meta",     get(files::meta))
         .route("/api/files/thumb",    get(files::thumb))

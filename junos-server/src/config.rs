@@ -47,13 +47,19 @@ pub struct Config {
     #[arg(long, env = "CAPTURES_DIR")]
     pub captures_dir: Option<PathBuf>,
 
-    /// Directory holding the offline DSO survey tiles served at
-    /// `/api/dso_tiles/*`, as written by `scripts/prefetch_dso_tiles.py`.
-    /// Defaults to `.cache/dso_tiles` next to the working directory. The
-    /// directory is optional — without it the Framing Assistant previews
-    /// uncovered sky as black.
-    #[arg(long, env = "DSO_TILE_DIR")]
-    pub dso_tile_dir: Option<PathBuf>,
+    /// Directory holding the offline sky map served at `/api/skymap/*`: a
+    /// local HiPS mirror of the DSS2 colour survey (plus the Milky Way
+    /// panorama), as written by `uv run scripts/fetch_skymap.py`. Defaults to
+    /// `.cache/skymap` next to the working directory. Optional — without it
+    /// the sky draws symbols over the panorama alone.
+    #[arg(long, env = "SKYMAP_DIR")]
+    pub skymap_dir: Option<PathBuf>,
+
+    /// Fetch a sky-map tile the mirror lacks from the CDS servers on demand
+    /// and store it in the mirror, so the map works before the download
+    /// finishes. Needs network access and a writable --skymap-dir.
+    #[arg(long, env = "SKYMAP_ONLINE")]
+    pub skymap_online: bool,
 
     /// KStars task-queue root written by the Scheduler's startup/shutdown
     /// queue editor (`/api/taskqueue/*`): collections go in `collections/`,
@@ -80,11 +86,11 @@ impl Config {
         PathBuf::from(".")
     }
 
-    /// Resolve the offline DSO tile cache: flag → `.cache/dso_tiles`.
-    pub fn resolved_dso_tile_dir(&self) -> PathBuf {
-        self.dso_tile_dir
+    /// Resolve the offline sky map mirror: flag → `.cache/skymap`.
+    pub fn resolved_skymap_dir(&self) -> PathBuf {
+        self.skymap_dir
             .clone()
-            .unwrap_or_else(|| PathBuf::from(".cache").join("dso_tiles"))
+            .unwrap_or_else(|| PathBuf::from(".cache").join("skymap"))
     }
 
     /// Resolve the KStars task-queue root:

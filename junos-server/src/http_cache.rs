@@ -12,7 +12,7 @@
 //!   per URL too.
 //! - `index.html` must always be revalidated or a deploy would never show up.
 //!
-//! `/api/*` responses are left to their handlers (`dso_tiles.rs`, `files.rs`
+//! `/api/*` responses are left to their handlers (`skymap.rs`, `files.rs`
 //! set their own policy).
 
 use axum::{
@@ -80,7 +80,8 @@ mod tests {
 
     #[test]
     fn api_and_unknown_files_are_left_alone() {
-        assert_eq!(cache_policy("/api/dso_tiles/index.json"), None);
+        assert_eq!(cache_policy("/api/skymap/info"), None);
+        assert_eq!(cache_policy("/api/skymap/Norder3/Dir0/Npix0.jpg"), None);
         assert_eq!(cache_policy("/api/files/raw"), None);
         assert_eq!(cache_policy("/favicon.ico"), None);
     }

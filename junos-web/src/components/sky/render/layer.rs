@@ -13,12 +13,13 @@ use web_sys::{CanvasRenderingContext2d, HtmlImageElement};
 
 use crate::catalog::CatalogData;
 use crate::dso_catalog::DsoCatalogData;
+use crate::skymap::SkyMapInfo;
 
-use super::super::dso_images::DsoImageCache;
 use super::super::dso_index::DsoIndex;
 use super::super::gpu::layers::dso::DsoInstance;
 use super::super::gpu::layers::lines::{LineSegment, LineView};
-use super::super::gpu::{FontAtlas, SpriteRequest, TextInstance};
+use super::super::gpu::{FontAtlas, SkymapPrepare, TextInstance};
+use super::super::tile_images::TileImageCache;
 use super::{HitItem, LayerToggles, OverlayState, PipelineMode, SceneParams, ViewParams};
 
 /// Borrowed catalog handles. Layers don't own catalog state — they read it.
@@ -38,8 +39,8 @@ pub struct GpuPrepare {
     pub lines: Vec<LineSegment>,
     pub dso: Vec<DsoInstance>,
     pub text: Vec<TextInstance>,
-    /// DSO image sprites wanted this frame (`DsoImageLayer`).
-    pub sprites: Vec<SpriteRequest>,
+    /// The sky-map tiles wanted this frame and how to draw them (`SkymapLayer`).
+    pub skymap: SkymapPrepare,
     /// The decoded Milky Way panorama, once it is (`AllskyLayer`).
     pub allsky: Option<HtmlImageElement>,
     pub show_milky_way: bool,
@@ -58,7 +59,7 @@ impl GpuPrepare {
             lines: Vec::with_capacity(2048),
             dso: Vec::with_capacity(512),
             text: Vec::with_capacity(256),
-            sprites: Vec::with_capacity(64),
+            skymap: SkymapPrepare::default(),
             allsky: None,
             show_milky_way: false,
             milky_way_opacity: 0.0,
@@ -71,7 +72,7 @@ impl GpuPrepare {
         self.lines.clear();
         self.dso.clear();
         self.text.clear();
-        self.sprites.clear();
+        self.skymap.clear();
         self.allsky = None;
         self.show_milky_way = false;
         self.milky_way_opacity = 0.0;
@@ -98,14 +99,14 @@ pub struct Frame<'a> {
     pub hit_items: &'a mut Vec<HitItem>,
     /// Slew trail samples (JD, RA deg, Dec deg) for the trail layer.
     pub slew_trail: &'a [(f64, f64, f64)],
-    /// Survey images (DSO sprites, Milky Way); `None` without a tile cache.
-    pub dso_images: Option<&'a RefCell<DsoImageCache>>,
-    /// Catalog indices whose image is drawn this frame, sorted — the symbol
-    /// layers skip the outline for these. Filled by `DsoImageLayer::prepare`.
-    pub imaged: Vec<u32>,
-    /// How many sprites the renderer can hold (0 in Canvas2D mode means
-    /// "no limit beyond the cache").
-    pub sprite_capacity: usize,
+    /// Survey images (sky-map tiles, Milky Way); `None` without a document.
+    pub tile_images: Option<&'a RefCell<TileImageCache>>,
+    /// The server's sky map, once `/api/skymap/info` has answered.
+    pub skymap: Option<&'a Arc<SkyMapInfo>>,
+    /// Set by `SkymapLayer::prepare` while the sky image is showing: objects
+    /// whose apparent semi-axis (CSS px) reaches this get no outline, the
+    /// picture shows them. `None` = outlines for all.
+    pub image_min_half_px: Option<f64>,
 }
 
 /// Equirectangular projection: equatorial plate-carrée → screen px.
@@ -115,6 +116,14 @@ pub struct Frame<'a> {
 /// is `Copy`.
 pub fn project_with(view: ViewParams, alt: f64, az: f64) -> Option<(f64, f64)> {
     crate::astro::project(alt, az, view.c_alt, view.c_az, view.fov)
+        .map(|(x, y)| (view.cx + x * view.scale, view.cy - y * view.scale))
+}
+
+/// `project_with` clipped at `max_sep_deg` from the view centre instead of
+/// 1.5 × the view radius — for footprints (sky-map cells) that reach past
+/// the canvas corners, which on a 16:9 screen lie 2 × the radius out.
+pub fn project_far_with(view: ViewParams, alt: f64, az: f64, max_sep_deg: f64) -> Option<(f64, f64)> {
+    crate::astro::project_to(alt, az, view.c_alt, view.c_az, view.fov, max_sep_deg)
         .map(|(x, y)| (view.cx + x * view.scale, view.cy - y * view.scale))
 }
 

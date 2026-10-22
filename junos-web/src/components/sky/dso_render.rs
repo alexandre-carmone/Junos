@@ -29,9 +29,9 @@ pub struct DsoBuildParams<'a> {
     pub is_mobile:   bool,
     pub kind_filter: KindFilter,
     pub lang:        Lang,
-    /// Sorted catalog indices drawn as images this frame — no outline for
-    /// these, only the label.
-    pub imaged:      &'a [u32],
+    /// While the sky image shows, objects whose semi-axis (px) reaches this
+    /// get no outline, only the label (`Frame::image_min_half_px`).
+    pub image_min_half_px: Option<f64>,
 }
 
 #[derive(Copy, Clone)]
@@ -187,7 +187,7 @@ pub fn build(
         );
 
         let color = kind_color(dso.kind);
-        if p.imaged.binary_search(&(di as u32)).is_err() {
+        if !p.image_min_half_px.is_some_and(|m| shape.half_w >= m) {
             out_dso.push(DsoInstance {
                 pos_x: sx as f32,
                 pos_y: sy as f32,

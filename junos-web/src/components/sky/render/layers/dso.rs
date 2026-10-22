@@ -48,7 +48,7 @@ impl SkyLayer for DsoLayer {
                 dn: f.state.dso_dn,
             },
             lang: f.scene.cur_lang,
-            imaged: &f.imaged,
+            image_min_half_px: f.image_min_half_px,
         };
         let mut scratch_text: Vec<TextInstance> = Vec::new();
         dso_render::build(params, None, &mut gpu.dso, &mut scratch_text);
@@ -80,7 +80,7 @@ impl SkyLayer for DsoLayer {
                 dn: f.state.dso_dn,
             },
             lang: f.scene.cur_lang,
-            imaged: &f.imaged,
+            image_min_half_px: f.image_min_half_px,
         };
         let mut scratch_dso = Vec::new();
         dso_render::build(params, Some(atlas), &mut scratch_dso, out);

@@ -6,7 +6,7 @@ pub mod allsky;
 pub mod center_crosshair;
 pub mod constellation_names;
 pub mod dso;
-pub mod dso_image;
+pub mod skymap;
 pub mod fov_reticle;
 pub mod grids;
 pub mod ground;

@@ -19,11 +19,12 @@ mod coords;
 mod components;
 mod dom;
 mod dso_catalog;
-mod dso_tiles;
 mod ephemeris;
+mod healpix;
 mod horizon;
 mod i18n;
 mod net;
+mod skymap;
 mod star_tiles;
 mod ws;
 mod ws_helpers;
@@ -50,8 +51,8 @@ pub struct ActiveTabCtx(pub RwSignal<Tab>);
 
 /// The "Low bandwidth" switch (the `Lite` pill next to EN/FR, persisted to
 /// localStorage `junos_lite`). On: the relay re-encodes previews at 960 px /
-/// q70 (`junos_media_filter`), the sky skips `tycho.bin` and the deep-sky
-/// sprites, and takes the small Milky Way panorama.
+/// q70 (`junos_media_filter`), the sky skips `tycho.bin`, takes the sky map
+/// two orders coarser and the small Milky Way panorama.
 #[derive(Clone, Copy)]
 pub struct LiteModeCtx(pub RwSignal<bool>);
 
@@ -83,10 +84,11 @@ pub struct MosaicPlannerCtx(pub MosaicPlannerState);
 #[derive(Clone, Copy)]
 pub struct FramingCtx(pub FramingState);
 
-/// Index of pre-downloaded DSO survey tiles, or `None` until `/api/dso_tiles`
-/// answers. Lets the Framing Assistant preview a target with no internet.
+/// The server's sky map (`/api/skymap/info`: a local DSS2 HiPS mirror), or
+/// `None` while unanswered or when the server has none. The sky, the Framing
+/// Assistant and the Targets thumbnails stream tiles from it — no internet.
 #[derive(Clone, Copy)]
-pub struct DsoTilesCtx(pub RwSignal<Option<Arc<dso_tiles::DsoTileIndex>>>);
+pub struct SkyMapCtx(pub RwSignal<Option<Arc<skymap::SkyMapInfo>>>);
 
 /// Prefill data passed from the sky right-click menu to the scheduler job builder.
 /// Set to Some((name, ra_deg, dec_deg)), J2000, when the user clicks "Add to Scheduler".
@@ -201,20 +203,19 @@ fn App() -> impl IntoView {
             }
         }
     });
-    // Offline survey tiles for the Framing Assistant. Optional: with an
-    // absent or empty cache, an uncovered zone previews as the grid over
-    // black. Framing never hits the network.
-    let dso_tiles_sig = RwSignal::new(None::<Arc<dso_tiles::DsoTileIndex>>);
+    // The server's sky map. Optional: without a mirror the sky draws symbols
+    // over the panorama and the Framing Assistant previews the grid alone.
+    let skymap_sig = RwSignal::new(None::<Arc<skymap::SkyMapInfo>>);
     wasm_bindgen_futures::spawn_local({
-        let s = dso_tiles_sig;
+        let s = skymap_sig;
         async move {
-            if let Some(idx) = dso_tiles::fetch_dso_tile_index().await { s.set(Some(idx)); }
+            if let Some(info) = skymap::fetch_skymap_info().await { s.set(Some(info)); }
         }
     });
     provide_context(catalog_sig);
     provide_context(dso_catalog_sig);
     provide_context(dso_index_sig);
-    provide_context(DsoTilesCtx(dso_tiles_sig));
+    provide_context(SkyMapCtx(skymap_sig));
 
     // ── WebSocket ─────────────────────────────────────────────────────────
     let (store, send) = ws::use_junos_ws();

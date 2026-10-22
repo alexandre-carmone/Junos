@@ -4,14 +4,13 @@
 //! survey preview of the region with the camera's mosaic tile grid drawn over
 //! it, then hands the whole plan off to the Mosaic planner tab.
 //!
-//! The preview is built **entirely from the offline cache** (`crate::dso_tiles`
-//! — pre-downloaded hips2fits tiles, one per catalog object). Every redraw
-//! looks up the cached tiles overlapping the view and draws the ones already
-//! decoded straight onto the canvas at their tangent-plane offset, so an
-//! arbitrary zone — wider than any single tile, or spanning several objects —
-//! renders as one adapted image with uncovered sky left black. Tiles still
-//! loading appear as they land (a `DsoImageCache`, the sky's own, bounded and
-//! epoch-bumping); nothing is ever rebuilt and nothing hits the network.
+//! The preview is the server's **sky map** (`crate::skymap`, a local DSS2
+//! HiPS mirror) reprojected onto this tangent plane by a `SkyMapSampler`
+//! (`skymap_sampler.rs`): every redraw renders the field at a bounded
+//! internal size from the tiles already decoded and scales it onto the
+//! canvas, with coarser parent tiles filling in while the finer ones load
+//! (the sampler's own `TileImageCache`, epoch-bumping). Nothing hits the
+//! internet; without a mirror the preview is the grid over black.
 //!
 //! The canvas is the primary control: drag the grid to move the mosaic, drag
 //! the sky to pan the view, wheel / pinch to zoom about the pointer, twist two
@@ -24,8 +23,10 @@
 //! * **Epoch.** `FramingState::params.center` and the view centre are of-date
 //!   (JNow), matching both the right-click menu's coords and
 //!   `MosaicPlannerState::params.center`. They are converted to J2000 only to
-//!   query and place the cache's tiles (ICRS) and from J2000 only when
-//!   accepting a catalog search hit.
+//!   render the sky-map cutout (ICRS) and from J2000 only when accepting a
+//!   catalog search hit. The cutout is J2000-north-up while the grid is
+//!   JNow-north-up; the difference is the precession rotation, far below a
+//!   degree away from the pole.
 //! * **Geometry.** Tile layout comes from `super::derive_planner_mosaic_plan`
 //!   — the same function that feeds the on-sky `MosaicLayer` and, through the
 //!   planner, KStars. Camera/focal inputs are read live from the same signals
@@ -51,7 +52,7 @@ use crate::i18n::{t, Lang};
 use crate::{ActiveTabCtx, MosaicPlannerCtx, Tab};
 
 use super::actions::{fmt_dec, fmt_ra};
-use super::dso_images::DsoImageCache;
+use super::skymap_sampler::{CutoutSpec, SkyMapSampler};
 use super::object_search::search_objects;
 use crate::dom::event_target_value;
 
@@ -77,9 +78,15 @@ const FOV_MIN_DEG: f64 = 0.02;
 const FOV_MAX_DEG: f64 = 40.0;
 /// Field shown while no camera gives a tile size yet.
 const DEFAULT_FOV_DEG: f64 = 2.0;
-/// Decoded full tiles kept at most (each is a multi-megapixel JPEG).
-const CACHE_CAP: usize = 24;
-const CACHE_CAP_MOBILE: usize = 12;
+/// Decoded tiles and extracted pixel buffers (1 MiB each) kept at most.
+const CACHE_CAP: usize = 64;
+const CACHE_CAP_MOBILE: usize = 32;
+const PX_CAP: usize = 32;
+const PX_CAP_MOBILE: usize = 16;
+/// Internal render size of the preview (pixels), ~100 ns each; the result is
+/// scaled onto the canvas.
+const PREVIEW_PX: f64 = 500_000.0;
+const PREVIEW_PX_MOBILE: f64 = 250_000.0;
 /// Pointer travel (CSS px) below which a press is a tap, not a drag.
 const TAP_SLOP: f64 = 8.0;
 /// Second tap within this window and radius places the mosaic.
@@ -121,8 +128,11 @@ fn norm_pa(pa: f64) -> f64 {
     wrap180(pa)
 }
 
-/// The preview's projection: a tangent plane about the view centre, north up
-/// and east left, `ppd` pixels per degree. Built once per draw / per event.
+/// The preview's projection: a tangent plane (TAN) about the view centre,
+/// north up and east left, `ppd` pixels per degree — the same gnomonic map
+/// the sky-map cutout is rendered with (`astro::frame_point_eq`), so the
+/// grid sits on the same stars at the field's edges. Built once per draw /
+/// per event.
 #[derive(Clone, Copy)]
 struct Viewport {
     cx: f64,
@@ -130,34 +140,26 @@ struct Viewport {
     ppd: f64,
     ra: f64,
     dec: f64,
-    cos_dec: f64,
 }
 
 impl Viewport {
     fn new(w: f64, h: f64, (ra, dec): (f64, f64), fov_deg: f64) -> Self {
-        Self {
-            cx: w / 2.0,
-            cy: h / 2.0,
-            ppd: w.min(h) / fov_deg,
-            ra,
-            dec,
-            cos_dec: dec.to_radians().cos().abs().max(0.01),
+        Self { cx: w / 2.0, cy: h / 2.0, ppd: w.min(h) / fov_deg, ra, dec }
+    }
+
+    /// +RA (east) goes LEFT, +Dec (north) goes UP. A point off the tangent
+    /// plane (90° away or more) lands far off screen.
+    fn sky_to_screen(&self, ra: f64, dec: f64) -> (f64, f64) {
+        match astro::frame_offset_of(self.ra, self.dec, 0.0, ra, dec) {
+            Some((right, up)) => (self.cx + right * self.ppd, self.cy - up * self.ppd),
+            None => (self.cx - 1e6, self.cy - 1e6),
         }
     }
 
-    /// +RA (east) goes LEFT, +Dec (north) goes UP.
-    fn sky_to_screen(&self, ra: f64, dec: f64) -> (f64, f64) {
-        (
-            self.cx - wrap180(ra - self.ra) * self.cos_dec * self.ppd,
-            self.cy - (dec - self.dec) * self.ppd,
-        )
-    }
-
     fn screen_to_sky(&self, sx: f64, sy: f64) -> (f64, f64) {
-        (
-            (self.ra - (sx - self.cx) / self.ppd / self.cos_dec).rem_euclid(360.0),
-            (self.dec - (sy - self.cy) / self.ppd).clamp(-89.9, 89.9),
-        )
+        let (ra, dec) =
+            astro::frame_point_eq(self.ra, self.dec, 0.0, (sx - self.cx) / self.ppd, (self.cy - sy) / self.ppd);
+        (ra, dec.clamp(-89.9, 89.9))
     }
 }
 
@@ -285,23 +287,25 @@ pub fn FramingOverlay(
     let planner_ctx = use_context::<MosaicPlannerCtx>();
     let tab_ctx = use_context::<ActiveTabCtx>();
 
-    // Optional — an unpopulated tile cache leaves this `None` forever, in which
-    // case every preview is just the grid over black.
-    let tile_index = use_context::<crate::DsoTilesCtx>()
+    // Optional — a server without a sky map leaves this `None` forever, in
+    // which case every preview is just the grid over black.
+    let skymap = use_context::<crate::SkyMapCtx>()
         .map(|c| c.0)
         .unwrap_or_else(|| RwSignal::new(None));
+    let lite = use_context::<crate::LiteModeCtx>()
+        .map(|c| c.0)
+        .unwrap_or_else(|| RwSignal::new(false));
 
     let search_text = RwSignal::new(String::new());
-    // Tiles in flight / drawn this frame, both set from the draw itself.
+    // Tiles in flight / drawn and the order rendered, all set from the draw.
     let loading = RwSignal::new(false);
     let tiles_used = RwSignal::new(0usize);
-    // Bumped by the cache when a tile lands, so the draw Effect reruns.
+    let order_used = RwSignal::new(0u8);
+    // Bumped by the sampler's cache when a tile lands, so the draw reruns.
     let tiles_epoch = RwSignal::new(0u32);
-    let cache: Rc<RefCell<DsoImageCache>> = Rc::new(RefCell::new(DsoImageCache::with_cap(
-        tiles_epoch,
-        if is_mobile { CACHE_CAP_MOBILE } else { CACHE_CAP },
-    )));
-    let cache = StoredValue::new_local(cache);
+    // Created on the first draw once the server has described its map.
+    let sampler: Rc<RefCell<Option<SkyMapSampler>>> = Rc::new(RefCell::new(None));
+    let sampler = StoredValue::new_local(sampler);
 
     // The view: where the preview looks (JNow) and how wide, independent of
     // the mosaic centre so the sky can be panned under a fixed grid.
@@ -444,32 +448,48 @@ pub fn FramingOverlay(
         let fov = view_fov.get_untracked();
         let vp = Viewport::new(w, h, vc, fov);
 
-        // ── Imagery: every decoded cached tile overlapping the canvas ──
+        // ── Imagery: the sky map reprojected onto this tangent plane ──
         let jd = astro::now_jd();
         let j2000 = JNow::new(vc.0, vc.1).to_j2000(jd);
-        let aspect = w.max(h) / w.min(h);
         let mut drawn = 0usize;
         let mut in_flight = 0usize;
-        if let Some(idx) = tile_index.get_untracked() {
-            cache.with_value(|cache| {
-                let Ok(mut cache) = cache.try_borrow_mut() else { return };
-                cache.set_index(Some(idx.clone()));
-                cache.begin_frame();
-                for (i, tile) in idx.find_overlapping(j2000.ra_deg, j2000.dec_deg, fov * aspect * 1.2) {
-                    let Some(img) = cache.image(i as u32, &tile.url()) else { continue };
-                    let c = J2000::new(tile.ra, tile.dec).to_jnow(jd);
-                    let (sx, sy) = vp.sky_to_screen(c.ra_deg, c.dec_deg);
-                    let side = tile.fov * vp.ppd;
-                    let _ = ctx.draw_image_with_html_image_element_and_dw_and_dh(
-                        &img, sx - side / 2.0, sy - side / 2.0, side, side,
+        let mut order = 0u8;
+        if let Some(info) = skymap.get_untracked() {
+            sampler.with_value(|s| {
+                let Ok(mut s) = s.try_borrow_mut() else { return };
+                if s.is_none() {
+                    *s = SkyMapSampler::new(
+                        tiles_epoch,
+                        info,
+                        lite.get_untracked(),
+                        if is_mobile { CACHE_CAP_MOBILE } else { CACHE_CAP },
+                        if is_mobile { PX_CAP_MOBILE } else { PX_CAP },
                     );
-                    drawn += 1;
                 }
-                in_flight = cache.loading_count();
+                let Some(s) = s.as_mut() else { return };
+                // Bounded internal size, scaled up onto the canvas.
+                let budget = if is_mobile { PREVIEW_PX_MOBILE } else { PREVIEW_PX };
+                let k = (budget / (f64::from(w_phys) * f64::from(h_phys))).sqrt().min(1.0);
+                let spec = CutoutSpec {
+                    ra_deg: j2000.ra_deg,
+                    dec_deg: j2000.dec_deg,
+                    fov_deg: fov,
+                    width: ((f64::from(w_phys) * k).round() as u32).max(1),
+                    height: ((f64::from(h_phys) * k).round() as u32).max(1),
+                    rot_deg: 0.0,
+                };
+                if let Some(st) = s.render_into(&ctx, &spec, 0.0, 0.0, w, h) {
+                    drawn = st.tiles_drawn;
+                    in_flight = st.loading;
+                    order = st.order;
+                }
             });
         }
         if tiles_used.get_untracked() != drawn {
             tiles_used.set(drawn);
+        }
+        if order_used.get_untracked() != order {
+            order_used.set(order);
         }
         if loading.get_untracked() != (in_flight > 0) {
             loading.set(in_flight > 0);
@@ -605,7 +625,7 @@ pub fn FramingOverlay(
         view_center.track();
         view_fov.track();
         tiles_epoch.track();
-        tile_index.track();
+        skymap.track();
         tile_fov.track();
         hover.track();
         // The canvas only exists once `open` is true and <Show> has mounted it.
@@ -1020,14 +1040,20 @@ pub fn FramingOverlay(
                                 }
                             })}
 
-                            // How many cached tiles are on screen — 0 means
-                            // the zone isn't covered and the preview is black.
+                            // The survey, the order rendered and how many of
+                            // its tiles are on screen — 0 means the mirror
+                            // doesn't cover the zone and the preview is black.
                             {move || (!loading.get()).then(|| {
                                 let n = tiles_used.get();
-                                let label = if n == 0 {
+                                let label = if skymap.get().is_none() {
+                                    tr().framing_no_skymap.to_string()
+                                } else if n == 0 {
                                     tr().framing_src_none.to_string()
                                 } else {
-                                    format!("{} \u{00b7} {}", tr().framing_src_cache, n)
+                                    format!(
+                                        "{} \u{00b7} {} {} \u{00b7} {} {}",
+                                        tr().framing_src_skymap, tr().framing_order, order_used.get(), n, tr().framing_tiles
+                                    )
                                 };
                                 view! { <div class="text-text-muted text-[11px]">{label}</div> }
                             })}

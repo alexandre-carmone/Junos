@@ -46,8 +46,9 @@ let
   capturesPath = if cfg.capturesDir != null then toString cfg.capturesDir else null;
   capturesArgs = optionals (capturesPath != null) [ "--captures-dir" capturesPath ];
 
-  dsoTilePath = if cfg.dsoTileDir != null then toString cfg.dsoTileDir else null;
-  dsoTileArgs = optionals (dsoTilePath != null) [ "--dso-tile-dir" dsoTilePath ];
+  skymapPath = if cfg.skymapDir != null then toString cfg.skymapDir else null;
+  skymapArgs = optionals (skymapPath != null) [ "--skymap-dir" skymapPath ]
+            ++ optional cfg.skymapOnline "--skymap-online";
 
   taskqueuePath = if cfg.taskqueueDir != null then toString cfg.taskqueueDir else null;
   taskqueueArgs = optionals (taskqueuePath != null) [ "--taskqueue-dir" taskqueuePath ];
@@ -60,7 +61,7 @@ let
     ++ optional (!cfg.enableHttps) "--no-https"
     ++ tlsArgs
     ++ capturesArgs
-    ++ dsoTileArgs
+    ++ skymapArgs
     ++ taskqueueArgs
     ++ map escapeShellArg cfg.extraArgs
   );
@@ -68,6 +69,10 @@ let
   generateCert = cfg.enableHttps && cfg.tls.autoGenerate && cfg.tls.cert == null;
 in
 {
+  imports = [
+    (mkRenamedOptionModule [ "services" "junos-web" "dsoTileDir" ] [ "services" "junos-web" "skymapDir" ])
+  ];
+
   options.services.junos-web = {
     enable = mkEnableOption "junos-web KStars Ekos Live LAN relay";
 
@@ -179,7 +184,7 @@ in
 
         ProtectHome/ProtectSystem still apply, so this does not hand the
         service the user's home — only the paths listed in capturesDir and
-        dsoTileDir are reachable.
+        skymapDir are reachable.
 
         Required by apps.enable, where it names the desktop user whose
         graphical session runs the service.
@@ -242,19 +247,31 @@ in
       '';
     };
 
-    dsoTileDir = mkOption {
+    skymapDir = mkOption {
       type = types.nullOr types.path;
       default = null;
-      example = "/srv/astro/dso_tiles";
+      example = "/srv/astro/skymap";
       description = ''
-        Directory holding the offline DSO survey tiles served at
-        `/api/dso_tiles/*`, as written by `scripts/prefetch_dso_tiles.py`.
-        When null the server falls back to `.cache/dso_tiles` under its
-        WorkingDirectory (${"/var/lib/junos-web"}, the StateDirectory) — set
-        this to point at a pre-populated cache stored elsewhere. The path is
-        added to ReadOnlyPaths (or bind-mounted when under /home) so the
-        hardened unit can reach it. The cache is optional — without it the
-        Framing Assistant simply always uses the live hips2fits proxy.
+        Directory holding the offline sky map served at `/api/skymap/*`: a
+        local HiPS mirror of the DSS2 colour survey plus the Milky Way
+        panorama, as written by `uv run scripts/fetch_skymap.py`. When null
+        the server uses `.cache/skymap` under its WorkingDirectory
+        (${"/var/lib/junos-web"}, the StateDirectory) — set this to point at
+        a mirror stored elsewhere. A path outside /home is already readable
+        under ProtectSystem=strict; one under /home is bind-mounted in. The
+        mirror is optional — without it the sky draws symbols over the
+        panorama alone and the Framing Assistant previews the grid over black.
+      '';
+    };
+
+    skymapOnline = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Fetch a sky-map tile the mirror lacks from the CDS servers on demand
+        and keep it, so the map works before the download finishes. Needs
+        network access and a writable skymapDir (it is then added to
+        ReadWritePaths).
       '';
     };
 
@@ -341,11 +358,12 @@ in
             # home) and bind-mount those paths so the service can reach them.
             # Non-home paths are already reachable read-only under
             # ProtectSystem=strict, so only captures and the task-queue dir
-            # (which need write) are listed there — the DSO cache is read-only.
+            # (which need write) are listed there — the sky map is read-only
+            # unless skymapOnline stores fetched tiles into it.
             # The task-queue dir is `-`-prefixed: KStars may not have created
             # it yet, and a missing path would otherwise fail the unit.
             underHome = p: p != null && hasPrefix "/home/" p;
-            homePaths = filter underHome [ capturesPath dsoTilePath ];
+            homePaths = filter underHome [ capturesPath skymapPath ];
             taskqueueUnderHome = underHome taskqueuePath;
             anyUnderHome = homePaths != [ ] || taskqueueUnderHome;
           in
@@ -354,6 +372,7 @@ in
 
             ReadWritePaths =
               optional (capturesPath != null && !(underHome capturesPath)) capturesPath
+              ++ optional (cfg.skymapOnline && skymapPath != null && !(underHome skymapPath)) skymapPath
               ++ optional (taskqueuePath != null && !taskqueueUnderHome) "-${taskqueuePath}";
             BindPaths = homePaths ++ optional taskqueueUnderHome "-${taskqueuePath}";
 

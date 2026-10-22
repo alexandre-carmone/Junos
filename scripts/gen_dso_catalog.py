@@ -1411,7 +1411,7 @@ def main():
     objects.sort(key=sort_key)
 
     # Names must stay unique once squashed to [a-z0-9] — that is the search
-    # key and the DSO tile file name (prefetch_dso_tiles.py `slug`).
+    # key and the DSO tile file name.
     seen = {}
     unique = []
     for o in objects:

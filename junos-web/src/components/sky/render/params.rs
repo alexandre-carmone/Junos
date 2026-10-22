@@ -47,6 +47,8 @@ pub struct ViewParams {
     pub cx: f64,
     pub cy: f64,
     pub scale: f64,
+    /// Device pixel ratio the canvases render at (physical px per CSS px).
+    pub dpr: f64,
 }
 
 /// Time, observer, magnitude limit, and language. Anything that doesn't
@@ -83,10 +85,10 @@ pub struct LayerToggles {
     pub dso_on: bool,
     pub scheduler_jobs_on: bool,
     pub solved_image_on: bool,
-    pub dso_images_on: bool,
+    pub skymap_on: bool,
     pub milky_way_on: bool,
     pub horizon_mask_on: bool,
-    /// Low-bandwidth mode: no sprites, the small panorama.
+    /// Low-bandwidth mode: the sky map two orders coarser, the small panorama.
     pub lite: bool,
 }
 
@@ -114,8 +116,8 @@ pub struct OverlayState {
     pub solved_image_opacity: f64,
     pub solve_age_ms: Option<f64>,
 
-    /// Gain applied to the DSO sprites (1.0 = the survey as is).
-    pub dso_images_brightness: f64,
+    /// Gain applied to the sky map (1.0 = the survey as is).
+    pub skymap_brightness: f64,
     pub milky_way_opacity: f64,
 
     pub scheduler_jobs: Vec<SchedulerJobRender>,

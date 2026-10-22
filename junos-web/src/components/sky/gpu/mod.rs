@@ -15,7 +15,7 @@ pub mod text;
 pub mod texture_upload;
 
 pub use layers::dso::DsoInstance;
-pub use layers::dso_image::SpriteRequest;
+pub use layers::skymap::SkymapPrepare;
 pub use layers::lines::{LineSegment, LineView};
 pub use text::{FontAtlas, TextInstance};
 
@@ -93,8 +93,8 @@ pub struct SkyRenderer {
     text:  Option<text::TextLayer>,
     // Both image layers need a scratch <canvas> to build mip chains; without
     // a document they are simply absent and the sky draws as before.
-    dso_images: Option<layers::dso_image::DsoImageLayer>,
-    allsky:     Option<layers::allsky::AllskyLayer>,
+    skymap: Option<layers::skymap::SkymapLayer>,
+    allsky: Option<layers::allsky::AllskyLayer>,
 
     star_count: u32,
     line_count: u32,
@@ -103,7 +103,7 @@ pub struct SkyRenderer {
 }
 
 impl SkyRenderer {
-    /// `is_mobile` picks smaller image textures (see `DsoImageLayer::new`).
+    /// `is_mobile` picks a smaller tile atlas (see `SkymapLayer::new`).
     pub async fn init(
         canvas: HtmlCanvasElement,
         star_data: Vec<[f32; 4]>,
@@ -453,7 +453,7 @@ impl SkyRenderer {
         // Text layer is optional: if atlas baking fails (no document, no
         // canvas, etc.) we degrade gracefully — labels remain on Canvas2D.
         let text = text::TextLayer::new(&device, &queue, format, &uniform_buf);
-        let dso_images = layers::dso_image::DsoImageLayer::new(&device, format, &uniform_buf, is_mobile);
+        let skymap = layers::skymap::SkymapLayer::new(&device, format, &uniform_buf, is_mobile);
         let allsky = layers::allsky::AllskyLayer::new(&device, format, &uniform_buf);
 
         Some(Self {
@@ -487,7 +487,7 @@ impl SkyRenderer {
             lines,
             dso,
             text,
-            dso_images,
+            skymap,
             allsky,
             star_count,
             line_count,
@@ -592,9 +592,10 @@ impl SkyRenderer {
         self.text.as_ref().map(|t| &t.atlas)
     }
 
-    /// How many DSO sprites can be resident at once (0 without the layer).
-    pub fn sprite_capacity(&self) -> usize {
-        self.dso_images.as_ref().map_or(0, |l| l.capacity_layers())
+    /// Sky-map tiles decoded but not yet uploaded — the sky keeps rendering
+    /// at full rate while this is non-zero so they land within a few frames.
+    pub fn skymap_pending(&self) -> bool {
+        self.skymap.as_ref().is_some_and(|l| l.pending() > 0)
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -618,8 +619,8 @@ impl SkyRenderer {
         self.upload_lines(&prep.lines);
         self.upload_dso(&prep.dso);
         self.upload_text(&prep.text);
-        if let Some(layer) = self.dso_images.as_mut() {
-            layer.upload(&self.device, &self.queue, &self.uniform_buf, &prep.sprites);
+        if let Some(layer) = self.skymap.as_mut() {
+            layer.upload(&self.queue, &prep.skymap);
         }
         if let Some(layer) = self.allsky.as_mut() {
             layer.upload(
@@ -719,12 +720,12 @@ impl SkyRenderer {
             });
 
             // Imagery first: the Milky Way panorama replaces the clear colour
-            // where it is loaded, then the DSO sprites add onto it. Everything
-            // after composites over them.
+            // where it is loaded, then the sky map fades in over it as the
+            // field narrows. Everything after composites over them.
             if let Some(layer) = self.allsky.as_ref() {
                 layer.draw(&mut rp);
             }
-            if let Some(layer) = self.dso_images.as_ref() {
+            if let Some(layer) = self.skymap.as_ref() {
                 layer.draw(&mut rp);
             }
 

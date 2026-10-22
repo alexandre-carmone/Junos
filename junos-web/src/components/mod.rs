@@ -18,6 +18,7 @@ pub mod profiles;
 pub mod scheduler;
 pub mod sequence_editor;
 pub mod sky;
+pub mod sky_thumb;
 pub mod tab_bar;
 pub mod tab_wheel;
 pub mod tab_wheel_icons;

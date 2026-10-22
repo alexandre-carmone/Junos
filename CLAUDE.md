@@ -17,7 +17,7 @@ Two crates:
 
 - `junos-server/`, `junos-web/` — the two workspace crates (see Architecture below).
 - `kstars/` — read-only upstream KStars C++ source, kept as the authoritative reference for the Ekos Live wire format. Never edit; grep heavily.
-- `scripts/` — `precompress_dist.sh` writes `.gz` (and `.br` when brotli is on PATH) siblings next to the dist's wasm / js / css / html / catalogs (not `tycho.bin`, incompressible) so the server serves them pre-compressed; every build path calls it (`just build-wasm`, `flake.nix`, the tarball script, the PKGBUILD). Then three generators. `prefetch_dso_tiles.py` is PEP-723 self-contained (`uv run scripts/prefetch_dso_tiles.py`) and writes the offline tile cache; `gen_dso_catalog.py` is plain `python3` and writes `junos-web/public/dso.bin`: OpenNGC (`openngc.csv` + `openngc_addendum.csv`) merged with Sharpless, vdB, Barnard, Lynds, Abell, Hickson, Arp and non-NGC cluster catalogs from VizieR/SIMBAD (cached in `scripts/dso_sources/`, offline unless `--refresh`), one entry per object via SIMBAD cross-ids then position, plus `dso_extra.csv` — the curated EN/FR common names, the exotic objects no catalog has, and emission-signature overrides (`lines` column, `Ha3 OIII2 SII1 RGB2`). Add a nickname, an object or a signature there, not in code. It also writes each object's IAU constellation (Roman's 1875 boundaries, VizieR VI/42, cross-checked against OpenNGC's `Const`) and its emission-line signature, derived from the kind and the catalogs' types (OpenNGC `HII`/`EmN`/`RfN`/`Neb`/`Cl+N` and Hubble type, SIMBAD otype, Sharpless vs vdB). `gen_star_tiles.py` (plain `python3`, Tycho-2 cached in `.cache/tycho2/`) writes `junos-web/public/tycho.bin`: every Tycho-2 star `junos.bin` lacks, in ~5° sky tiles. There is **no generator for `junos.bin`** — the base star catalog (names, constellation figures) is checked in and authoritative; regenerate `tycho.bin` if it ever changes. Don't regenerate outputs as part of unrelated code changes.
+- `scripts/` — `precompress_dist.sh` writes `.gz` (and `.br` when brotli is on PATH) siblings next to the dist's wasm / js / css / html / catalogs (not `tycho.bin`, incompressible) so the server serves them pre-compressed; every build path calls it (`just build-wasm`, `flake.nix`, the tarball script, the PKGBUILD). Then three generators. `fetch_skymap.py` is PEP-723 self-contained (`uv run scripts/fetch_skymap.py`) and mirrors the CDS `P/DSS2/color` HiPS tree (orders 0–7 by default) plus the Mellinger panorama into `.cache/skymap/` (see "Offline sky map"); `gen_dso_catalog.py` is plain `python3` and writes `junos-web/public/dso.bin`: OpenNGC (`openngc.csv` + `openngc_addendum.csv`) merged with Sharpless, vdB, Barnard, Lynds, Abell, Hickson, Arp and non-NGC cluster catalogs from VizieR/SIMBAD (cached in `scripts/dso_sources/`, offline unless `--refresh`), one entry per object via SIMBAD cross-ids then position, plus `dso_extra.csv` — the curated EN/FR common names, the exotic objects no catalog has, and emission-signature overrides (`lines` column, `Ha3 OIII2 SII1 RGB2`). Add a nickname, an object or a signature there, not in code. It also writes each object's IAU constellation (Roman's 1875 boundaries, VizieR VI/42, cross-checked against OpenNGC's `Const`) and its emission-line signature, derived from the kind and the catalogs' types (OpenNGC `HII`/`EmN`/`RfN`/`Neb`/`Cl+N` and Hubble type, SIMBAD otype, Sharpless vs vdB). `gen_star_tiles.py` (plain `python3`, Tycho-2 cached in `.cache/tycho2/`) writes `junos-web/public/tycho.bin`: every Tycho-2 star `junos.bin` lacks, in ~5° sky tiles. There is **no generator for `junos.bin`** — the base star catalog (names, constellation figures) is checked in and authoritative; regenerate `tycho.bin` if it ever changes. Don't regenerate outputs as part of unrelated code changes.
 - `packaging/` — Arch Linux package (`packaging/arch/`), portable tarball (`packaging/portable/`), and CI notes. `.github/workflows/` has `ci.yml` (mirrors `just check`) and `release.yml` (tag-triggered two-arch build).
 - `flake.nix` / `nix/` — Nix dev shell, packages, and the `services.junos-web` NixOS module. Already provided; don't propose adding one.
 
@@ -74,16 +74,15 @@ Pass `--no-https` to skip TLS for headless/CI runs. `config.rs` (clap, env-aware
 - `kstars_ws.rs` handles `GET /message/ekos` and `GET /media/ekos` (KStars connects to these as an Ekos Live "offline server"). On connect it sends KStars the `set_client_state` handshake (required — KStars drops every outbound event until it receives that) and publishes a synthetic `new_connection_state {connected:true}` to the hub. Inbound text is broadcast to browsers verbatim; binary media frames are decoded (in `spawn_blocking`) from the 512-byte metadata header plus JPEG/FITS payload and re-emitted as `new_preview_image` — an `Outbound::Preview` carrying the frame's kind, the full JSON and, while any browser asked for lite previews, a 960 px / q70 re-encode (`lite_jpeg`; KStars itself always sends 1920 px / q90, `media.h:124`). The focus star overlay is measured on the full frame and scaled onto the lite one.
 - `proxy.rs` handles `GET /ws` (browser side). On connect it tells the new browser the current KStars-attached state and replays the hub's snapshot, then loops: KStars events → browser, browser commands → KStars via the hub. Previews are filtered per browser: the client sends `{"type":"junos_media_filter","payload":{"kinds":["+G"],"max_width":960,"quality":70}}` (kinds ⊆ `+F` focus, `+A` align, `+G` guide, `capture`; `main.rs` derives it from the active tab and re-sends it on each `connected` rising edge) and gets only those kinds — nothing until it has sent one — in the lite variant when it asked for `max_width`. A newly wanted kind is served the hub's latest frame of that kind at once. `junos_*` messages are for the relay and never reach KStars.
 - `auth.rs` is a stub for `POST /api/authenticate` (no real auth — local relay only).
-- `config.rs` parses the clap `Config` (all long-only flags, each with an env var): `--http-addr`/`HTTP_ADDR`, `--https-addr`/`HTTPS_ADDR`, `--dist-dir`/`DIST_DIR`, `--captures-dir`/`CAPTURES_DIR`, `--dso-tile-dir`/`DSO_TILE_DIR`, `--taskqueue-dir`/`TASKQUEUE_DIR`, `--tls-cert`, `--tls-key`, `--no-https`. Also `resolved_captures_dir()` / `resolved_dso_tile_dir()` / `resolved_taskqueue_dir()`.
+- `config.rs` parses the clap `Config` (all long-only flags, each with an env var): `--http-addr`/`HTTP_ADDR`, `--https-addr`/`HTTPS_ADDR`, `--dist-dir`/`DIST_DIR`, `--captures-dir`/`CAPTURES_DIR`, `--skymap-dir`/`SKYMAP_DIR`, `--skymap-online`/`SKYMAP_ONLINE`, `--taskqueue-dir`/`TASKQUEUE_DIR`, `--tls-cert`, `--tls-key`, `--no-https`. Also `resolved_captures_dir()` / `resolved_skymap_dir()` / `resolved_taskqueue_dir()`.
 - `tls.rs` — cert/key resolution and self-signed generation into `.certs/` (`CN=junos-dev`, SANs = localhost + 127.0.0.1 + every non-loopback IPv4). Supplying only one of `--tls-cert`/`--tls-key` is a fatal error.
 - `files.rs` — the Files tab's backend: `/api/files/{list,meta,thumb,raw,download,rename,delete,resolve}`, FITS header parsing and thumbnailing. Sandboxed to the resolved captures dir by canonicalize checks. `starfind.rs` is the star detector `kstars_ws.rs` runs on focus frames for the Focus tab's star overlay.
 - `apps.rs` — `/api/apps/{launch,stop,state,power,guider}`: spawn and monitor KStars or PHD2 on the server host; `power {action: poweroff|reboot}` runs `systemctl <action>` as the server's user (logind + polkit decide — the NixOS module's `hostPower.enable` and the Arch polkit rule grant it to service installs); `guider {action: connect|disconnect}` runs `dbus-send` against KStars' `/KStars/Ekos/Guide` `connectGuider`/`disconnectGuider` — the Guide tab's Connect PHD2 button, since Ekos Live has no such command and `option_set GuiderType` changes nothing live (`Guide::processGuideOptions` is never called).
-- `dso_tiles.rs` — serves the offline DSO tile cache at `/api/dso_tiles/*` (see "Offline DSO tiles" below). `index.json` (650 KB) carries a weak ETag from its mtime + size and `no-cache`, so a reload revalidates to a 304.
+- `skymap.rs` — serves the offline sky map, a local HiPS mirror, at `/api/skymap/*` (see "Offline sky map" below): `info` (JSON, `no-cache` + weak ETag → 304; derived from a startup directory scan into `AppState.skymap` when `info.json` is missing), `properties`, `Norder{k}/Dir{d}/Npix{n}.jpg` tiles (`parse_tile` validates the three segments and rebuilds the path from the numbers; `immutable` for a year + strong ETag), `allsky.jpg` / `allsky_small.jpg` (a day). With `--skymap-online`, a missing tile is fetched from the CDS mirrors (reqwest, `Semaphore(4)`), stored in the tree and served; failure → 502 `no-store`.
 - `http_cache.rs` — the `Cache-Control` middleware for the static frontend: `index.html` → `no-cache`; the Trunk-hashed wasm / js / css and the three `*.bin` → `immutable` for a year (the catalogs are fetched with a `?v=` the client bumps on regeneration). `/api/*` is left to its handlers. `main.rs` puts every HTTP route under it and under tower-http's `CompressionLayer` (br/gzip, level 4), with `ServeDir::precompressed_{br,gzip}` serving the siblings `scripts/precompress_dist.sh` wrote; the three WebSocket routes sit outside both.
 - `taskqueue.rs` — `/api/taskqueue/{list,queue/:name,script/:name}`: reads/writes the KStars task-queue collections (`collections/*.json`, a `tasks` collection or an `items` queue) and their shell scripts (`scripts/*.sh`, chmod 0755) that the Scheduler's startup/shutdown queue editor builds. Slug names only; reserved `observatory_startup`/`observatory_shutdown`.
 - `planning.rs` — `/api/planning/{list,raw,rename,delete}` for Files › Planning: four flat folders keyed by `kind` — `schedules` (`~/.junos-schedules/*.esl`), `sequences` (`~/.junos-sequences/*.esq`), `queues` / `scripts` (the task-queue dir). Bare file names with the kind's extension, canonicalize-checked; only schedules can be renamed (the others are referenced by absolute path), reserved queues can't be deleted. `main.rs` creates both `~/.junos-*` folders at startup, since KStars' `QFile` won't — KStars is assumed to run on the same host as the same user.
 - `main.rs` — also serves `GET /api/config`, which reports the resolved captures dir. The frontend reads it once into `CaptureDirCtx` so the sequencer forms default to a folder the Files tab can browse.
-- `skysurvey.rs` — `/api/skysurvey`, a same-origin hips2fits proxy. Route still registered but no longer used by the framing path.
 
 There is **no protocol translation** in the server. Messages flow through opaque. All Ekos Live semantics live in the WASM client. The one exception is the `junos_*` control family (`junos_media_filter`, above), consumed by `proxy.rs`.
 
@@ -94,7 +93,7 @@ Leptos 0.7 CSR. Entry point `main.rs` → `App()` → tab wheel + active tab. Mo
 - `ws/` — the WebSocket spine (`mod.rs` owns `use_junos_ws()` and the cross-referencing Effects that derive `telescope_settings` from `scopes ∩ trains`; `store.rs` owns `DeviceStore` and `apply_ekos_event()`; `retry.rs` owns `spawn_retry_property()`, fired per device for `CCD_INFO` and `EQUATORIAL_EOD_COORD`, the 20 s settings sweep and the mount-coordinate poll — 1.5 s while Sky / Mount / Polar Align is active (`store.mount_fast_poll`), 6 s otherwise, both paused while `document.hidden`; `types.rs` the payload structs). `ws_helpers.rs` sits alongside it.
 - `net.rs` — `cached_bytes(url)`: the three catalogs go through the Cache API (`junos-catalogs`, keyed by the versioned URL, stale versions evicted, plain fetch on any failure) so a reload over weak wifi doesn't re-download 7–13 MB.
 - `compat.rs` — flat snapshot types (`MountSnapshot`, `CameraSnapshot`, `SiteSnapshot`, `SolveSnapshot`) derived from `DeviceStore`. The sky module imports these, not `DeviceStore`.
-- `main.rs` — wires catalogs, site location, language, the Leptos contexts `sky/actions.rs` reads (`ServiceBusyCtx`, `SchedulerPrefillCtx`, `FramingCtx`, `MosaicPlannerCtx`), `SkyFocusCtx` (another tab's "Show on Sky": SkyTab moves its clock, centres the object and opens its target card), `LiteModeCtx` (the `Lite` pill next to EN/FR in both switchers, localStorage `junos_lite`: lite previews from the relay, no `tycho.bin`, no deep-sky sprites, the small Milky Way panorama) and the Effect that sends `junos_media_filter` from the active tab, and the tab shell. Also defines `debug_log!`, a `leptos::logging::log!` that compiles out of release builds.
+- `main.rs` — wires catalogs, site location, language, the Leptos contexts `sky/actions.rs` reads (`ServiceBusyCtx`, `SchedulerPrefillCtx`, `FramingCtx`, `MosaicPlannerCtx`), `SkyFocusCtx` (another tab's "Show on Sky": SkyTab moves its clock, centres the object and opens its target card), `LiteModeCtx` (the `Lite` pill next to EN/FR in both switchers, localStorage `junos_lite`: lite previews from the relay, no `tycho.bin`, the sky map two orders coarser, the small Milky Way panorama) and the Effect that sends `junos_media_filter` from the active tab, and the tab shell. Also defines `debug_log!`, a `leptos::logging::log!` that compiles out of release builds.
 - `components/tabs.rs` — the `TabContent` router (mount/dismount policy). `components/tab_wheel.rs` (mobile wheel, owns `TABS`) and `components/tab_bar.rs` (desktop strip) are the two switchers; `components/tab_wheel_icons.rs` has the per-tab icons.
 - `components/sky/` — planetarium. Dual-canvas renderer (WebGPU bottom + Canvas2D overlay, fallback to all-Canvas2D). See below.
 - `components/{mount,focus,polar_align,mosaic_tab,devices,profiles}.rs` and `components/{guide,imaging,files,scheduler}/` — the other tabs. Each takes only the signals it needs plus `SendCmd`; never `DeviceStore` whole.
@@ -111,7 +110,7 @@ Leptos 0.7 CSR. Entry point `main.rs` → `App()` → tab wheel + active tab. Mo
 - `components/targets/` — tonight's best targets. The observing window is a night (date) and a start → end (dusk → dawn by default, now once dark), both editable. `compute.rs` samples it every 10 min (`NightSky`: LST and the Moon) and keeps every object above the minimum altitude (`evaluate` → `Candidate`: altitude at start, peak and when, time up, Moon distance at the peak), precessing each once so a sample is one cosine; `score` is the Best score, a weighted geometric mean of altitude, time up, Moon glare (scaled by illumination and by how broadband the object is), brightness and size, its weights user-set. `filters.rs` holds `TargetPrefs` (sort, categories, bands, constellation, limits, weights — all `persisted` `targets_*`) and the filters sheet; `bands.rs` the Hα/OIII/SII/broadband chips and advice from `Dso::lines`; `detail.rs` the target sheet (thumbnail, facts, the Scheduler's `altitude_chart`, wavelengths) with Show on Sky (`SkyFocusCtx`), Framing (`FramingCtx`, then the Sky tab, where the overlay lives), Goto and Add to Scheduler (J2000, which the add-job form expects). Same header / cards / pinned footer (count, Filters) as the other planning tabs; window | list from `md`.
 - `components/filter_settings.rs` + `components/filter_offsets.rs` — the shared **Filter settings** sheet, Ekos' "Filter Settings" dialog for the Capture train's wheel, opened from the header chip (current filter name, or "Filters") of Imaging, Focus and Mount and from a button in Mount › Plate solve. One card per slot (name, exposure, focus offset, autofocus on change, lock filter) edited in a local draft and saved whole with `fm_set_data`, then `fm_get_data` re-asked 500 ms later (no reply, no push); lock rules mirrored client-side (`normalize`); Move-to chips (`FILTER_SLOT`, disabled while the camera is busy); the `FlatSyncFocus` option; and the Build offsets wizard, which takes the sheet over while `FilterCtx::build_offsets_open` is on — `filter_offset_get_all_settings` (polled every 3 s by `ws/retry.rs::spawn_filter_offsets_loop` while the phase is Running), `filter_offset_set_all_settings`, `invoke_method` on `BuildFilterOffsets:<wheel>` for Run / Stop, and Save applies the computed offsets through `fm_set_data` so a filter can be left out. Everything reads `FilterCtx` (`main.rs`): the wheel snapshot, the table, the option and the wizard's state; `FilterCtx::hint` gives the "+120 · AF" caption the sequence cards and the Imaging queue show next to a filter. Focus' settings get a `focusFilter` row and Mount › Plate solve an `alignUseCurrentFilter` toggle — both only set the module's choice (KStars moves the wheel, with the offset, when it next captures); only the Imaging one-shot picker moves the wheel itself.
 - `components/{coord_input,dialog_modal,form,frame_type,zoom}.rs` and `components/sequence_editor/` — shared pieces, not tabs. `form.rs` holds the touch-sized form vocabulary (`CARD`, `ROW`, `FOOTER`, `setting_row`, `check_row`, `toggle_chip`, …), `sheet` (the bottom sheet / centered panel the tabs open over themselves) and `JobOptions` — steps, start/completion and constraints — that Mosaic and Scheduler both edit and send (`settings_json`). `dialog_modal.rs` surfaces KStars' blocking `dialog_get_info` prompts. `sequence_editor/` is the card-based capture-sequence builder shared by Imaging, Mosaic and Scheduler (`model.rs` row + validation, including the per-row dither, `limits.rs` the sequence-wide refocus / HFR / guide-drift limits, `esq.rs` XML, `card.rs` one job card, `limits_panel.rs` the "Focus & guiding" section, which follows Ekos' values from `capture_get_all_settings` until edited, `cover.rs` the panel / dust cap action after the last frame); `frame_type.rs` holds the frame-type pills it shares with the Imaging one-shot panel. `zoom.rs` is the full-screen pan/zoom frame (wheel/pinch, drag, double-click reset) used by Imaging and Files.
-- `dso_tiles.rs` — offline tile index fetcher (`/api/dso_tiles/index.json`) and `DsoTileIndex::find_overlapping`, consumed by the Framing Assistant.
+- `skymap.rs` — the server's sky map: `SkyMapInfo` (`/api/skymap/info`, fetched once into `SkyMapCtx` in `main.rs`; `None` without a mirror), `tile_url(order, npix)` (the HiPS path) and `tile_id` (the `u32` the image caches key tiles by). `healpix.rs` — HEALPix NESTED math, no deps: `hash_dxdy` (cell + in-cell offsets), `cell_center`, `cell_vertices` ([S, E, N, W]), `cone_cells` (recursive descent from the 12 base cells), `table_base`. Correct and ported to WGSL — reuse, do not reimplement.
 - `horizon.rs` — the horizon mask: the part of the sky walls and trees hide, as KStars' **Artificial Horizon** (named regions of `az alt` points, `skycomponents/artificialhorizoncomponent.h`). KStars is the store, over Ekos Live: `artificial_horizon_get` (reply: an array of `{name, enabled, ceiling, points}`), `artificial_horizon_import {data}` (KStars' text format, `Horizon <name>` then `az alt` lines; replaces the region of that name, no reply) and `artificial_horizon_toggle {region, enabled}` — all dispatched before the Ekos-start gate (`message.cpp:416`), so they only need KStars attached; there is no delete. `HorizonCtx` (`main.rs`) holds the last mask with a localStorage copy (`junos_horizon`), fetched on each `connected` edge (the relay never replays it). Visibility copies `SchedulerJob::satisfiesAltitudeConstraint`: above `min_alt` *and* above the highest enabled non-ceiling line at that azimuth (short-arc segments, linear where KStars follows a great circle; ceilings drawn, never block). Used by the sky (`render/layers/horizon_mask.rs`, Canvas2D in both modes; the layers panel's Horizon group lists the regions, New region / the pencil start a draft the sky edits — tap adds, drag moves, hold removes — and Save imports it), the Targets tab (`evaluate` keeps only visible samples; the peak is the best *visible* one), the altitude charts (`altitude_chart`'s `mask`: a strip along the night; the add-job estimate applies it when the job's `horizon` pill is on, which is the default) and a two-tap "Goto anyway?" on the Sky card, the Targets detail and the Mount tab (by RA/Dec only: a by-name Goto is resolved inside KStars).
 - `astro.rs` / `coords.rs` / `ephemeris.rs` — equatorial↔horizontal math (Julian date, GMST/LST, precession to/from J2000, `fov_deg(focal, sensor_px, pixel_um)`), and ephemerides for solar-system bodies. Correct — reuse, do not reimplement.
 - `catalog.rs`, `dso_catalog.rs` — async fetchers for `public/junos.bin` and `public/dso.bin` (each `Dso` carries its constellation `con` and its emission signature `lines`: Hα, OIII, SII, broadband, 0–3 each). `star_tiles.rs` parses `public/tycho.bin` (fetched lazily, see the planetarium notes) and picks the tiles under a view.
@@ -124,14 +123,14 @@ Leptos 0.7 CSR. Entry point `main.rs` → `App()` → tab wheel + active tab. Mo
 
 The most fully-featured surface. Treat as stable — make targeted edits when adding overlays or interactions; don't rewrite. Layout (phone-first): a top bar (search · follow-mount · layers), a bottom stack (HUD above the time bar), and two sheets that are bottom sheets on phones and floating panels on md+ (layers panel, target card), all kept `md:right-[72px]` clear of the desktop tab strip. Structure:
 
-- `mod.rs` — `SkyTab` component, canvas/GPU setup, event loop, gestures, localStorage persistence (`sky_center_alt`, `sky_center_az`, `sky_fov_radius`, `sky_follow_mount`, plus one `persisted(key, default)` signal per render toggle and `sky_dso_mag_limit`). Also owns the `DsoImageCache` (`dso_images.rs`) handed to every `Frame`. Gestures: click/tap → Mosaic pick-on-sky if armed, else the target card for the object under the pointer (`hit_test`); right-click / 500 ms long-press → the target card at the pressed point (snapped to an object); drag pans (and only then stops following the mount); pinch/wheel zooms. Touch handlers `preventDefault`, so taps are detected in `on_touchend`, not via mouse events.
+- `mod.rs` — `SkyTab` component, canvas/GPU setup, event loop, gestures, localStorage persistence (`sky_center_alt`, `sky_center_az`, `sky_fov_radius`, `sky_follow_mount`, plus one `persisted(key, default)` signal per render toggle and `sky_dso_mag_limit`). Also owns the `TileImageCache` (`tile_images.rs`: the LRU of decoded `<img>`s — sky-map tiles and the panorama — whose loads bump an epoch signal) handed to every `Frame`. Gestures: click/tap → Mosaic pick-on-sky if armed, else the target card for the object under the pointer (`hit_test`); right-click / 500 ms long-press → the target card at the pressed point (snapped to an object); drag pans (and only then stops following the mount); pinch/wheel zooms. Touch handlers `preventDefault`, so taps are detected in `on_touchend`, not via mouse events.
 - `clock.rs` — `SkyClock`, the sky's single time source (`sim = base + elapsed × rate`): everything that projects the sky reads `clock.jd()`, never `astro::now_jd()`. Also the local-time helpers (`night_hour`: HH:MM within the noon→noon night; `on_date`) and `night_twilights` (astronomical dusk/dawn, sun −18°).
 - `time_bar.rs` — the time bar: ‹ › step (1m/10m/1h/1d), ▶▶ time-lapse at one step per second, Now, date and hour pickers, dusk/dawn jumps. Amber border whenever the sky isn't live. Time is never persisted.
-- `render/` — Canvas2D overlay (`mod.rs`, `layer.rs`, `params.rs`, `pipeline.rs` + one module per layer in `render/layers/`: allsky, dso_image, stars, dso, grids, ground, horizon_mask, zenith, constellation_names, center_crosshair, mount_crosshair, fov_reticle, solve_marker, slew_trail, solar_system, mosaic, scheduler_jobs). GPU draw order is fixed in `gpu/mod.rs::render_inner`: clear → allsky → dso_image → lines → dso symbols → constellations → stars → text. Draws grid, horizon, constellations (falls back from GPU), DSO labels, `render_center_fov()` and `render_mount_fov()` — the two FOV rectangles. Both call `astro::fov_deg` with `RenderParams.{fl, cam_pixel_size_um, cam_sensor_width, cam_sensor_height, rotation_deg, mount_ra_h, mount_dec_deg}`.
+- `render/` — Canvas2D overlay (`mod.rs`, `layer.rs`, `params.rs`, `pipeline.rs` + one module per layer in `render/layers/`: allsky, skymap, stars, dso, grids, ground, horizon_mask, zenith, constellation_names, center_crosshair, mount_crosshair, fov_reticle, solve_marker, slew_trail, solar_system, mosaic, scheduler_jobs). GPU draw order is fixed in `gpu/mod.rs::render_inner`: clear → allsky → skymap → lines → dso symbols → constellations → stars → text. Draws grid, horizon, constellations (falls back from GPU), DSO labels, `render_center_fov()` and `render_mount_fov()` — the two FOV rectangles. Both call `astro::fov_deg` with `RenderParams.{fl, cam_pixel_size_um, cam_sensor_width, cam_sensor_height, rotation_deg, mount_ra_h, mount_dec_deg}`.
 - `controls.rs` — layers panel: one `LayerChip` per toggle in `SkyToggles` (grouped Sky / Grids / Deep sky / Equipment), the DSO mag slider, and the observer location.
 - `search.rs` — catalog object search (in the top bar).
 - `actions.rs` — the target card (`SkyTarget`): object or sky-position info (JNow, J2000, Alt/Az at the displayed time) and five actions: Center, `mount_goto_rade`, goto-then-`align_solve`, Framing assistant (`FramingCtx`), Add to Scheduler (`SchedulerPrefillCtx`), the last two pre-filled with the object name. Reads `ServiceBusyCtx` (to disable Goto / Goto & Align while a device is busy), `SchedulerPrefillCtx` and `FramingCtx` from the crate root — these newtypes live in `main.rs` and must be provided. `MosaicPlannerCtx` (also in `main.rs`) drives the Pick-on-Sky flow that hands a center off to the Mosaic tab.
-- `framing.rs` — the Framing Assistant modal (opened only from `actions.rs`, not a tab). See "Offline DSO tiles" below.
+- `framing.rs` — the Framing Assistant modal (opened only from `actions.rs`, not a tab). See "Offline sky map" below. `skymap_sampler.rs` — `SkyMapSampler`, the CPU cutout renderer it and `components/sky_thumb.rs` (the Targets thumbnails) share.
 - `deep_stars.rs` — the Tycho-2 layer. The star limit follows the zoom (`star_mag_limit` in `mod.rs`: the naked-eye sky when wide, 4 mag per tenfold zoom below 20°, capped at 12.5). Past `DEEP_FROM_MAG` the sky fetches `tycho.bin` once, and `DeepStarField` keeps the tiles within 1.5 × the field radius — uploaded to the GPU only when that tile set changes (`SkyRenderer::upload_deep_stars`: the base star pipelines with their own buffers), and drawn by `render_fallback_stars` in Canvas2D mode. Star size and brightness follow the magnitude relative to the limit, in `render.wgsl` and the fallback alike.
 - `hud.rs` (the only HUD, DOM, in GPU and Canvas2D-fallback mode alike), `picking.rs`, `object_search.rs`, `dso_index.rs`, `dso_render.rs`, `dso_shape.rs`, `solar_render.rs`, `utils.rs`, `gpu/`, `shaders/*.wgsl` — the remaining pieces.
 
@@ -191,76 +190,125 @@ JSON `{"type": "...", "payload": {...}}` over WebSocket. Authoritative reference
 
 In Leptos `view! {}`, style with Tailwind utilities in `class="…"`, and use `class:foo=move || cond` for state toggles. Inline `style=` is reserved for values that genuinely change per render — and even then prefer setting a CSS custom property consumed by a utility or token (see how `tab_wheel.rs` passes `--tw-rot`, `--tw-bx`, `--tw-cr`) rather than restating full property strings. Canvas2D paint strings (`ctx.fillStyle = …` in `sky/render/`) are *not* DOM CSS — leave them inline.
 
-## Offline DSO tiles (Framing Assistant, sky imagery)
+## Offline sky map (planetarium imagery, Framing Assistant, Targets thumbnails)
 
-The Framing Assistant previews a target **entirely from a local tile cache** —
-pre-downloaded hips2fits cutouts, one per catalog object. It never hits the
-network. The same cache feeds the planetarium's imagery (below). Generate it with:
+The sky's imagery is a **local mirror of the CDS `P/DSS2/color` HiPS**: the
+whole sky in HEALPix **nested** cells, one 512 × 512 JPEG per cell, orders 0
+(12 tiles, ~58°) to 9 (3.1 M tiles, ~0.8″/px); `hips_frame=equatorial`, i.e.
+ICRS/J2000. The tree is kept in CDS's exact layout — `properties`, then
+`Norder{k}/Dir{(n / 10000) * 10000}/Npix{n}.jpg`, `12·4^k` tiles per order —
+so `rsync`, `wget -r` and any HiPS client understand it. Sizes: order 6 ≈
+3.3 GB, 7 ≈ 13–20 GB (the default), 8 ≈ 53 GB, 9 ≈ 210 GB; the fine orders
+are meant for `--cone` runs around chosen targets, not the full sky. The
+browser is remote (a phone on wifi): it computes the cells under its view at
+the order matching its zoom and streams **only those tiles** (≤ ~25 per view,
+parents first), which the browser keeps for good (`immutable`). Generate with:
 
 ```bash
-uv run scripts/prefetch_dso_tiles.py            # every catalog object, hours
-uv run scripts/prefetch_dso_tiles.py --status   # coverage report, no downloads
-uv run scripts/prefetch_dso_tiles.py --limit 50 # smoke test
-uv run scripts/prefetch_dso_tiles.py --index-only  # rebuild index.json from disk
-uv run scripts/prefetch_dso_tiles.py --thumbs   # sprites (thumbs/) from the tiles on disk
-uv run scripts/prefetch_dso_tiles.py --allsky   # Milky Way panorama (allsky.jpg + allsky_small.jpg)
+uv run scripts/fetch_skymap.py --max-order 3      # smoke: 1,020 tiles, ~25 MB
+uv run scripts/fetch_skymap.py                    # orders 0..7
+uv run scripts/fetch_skymap.py --status           # per-order coverage, max_order, panorama
+uv run scripts/fetch_skymap.py --allsky           # Milky Way panorama (allsky.jpg + allsky_small.jpg)
+uv run scripts/fetch_skymap.py --min-order 8 --max-order 9 --cone 83.82 -5.39 3
+uv run scripts/fetch_skymap.py --prune-above 7 | --info-only | --selftest
 ```
 
-Output goes to `.cache/dso_tiles/` (gitignored — **not** `junos-web/public/`,
-unlike the other catalogs; ~10 GB at the current `TILE_PX`). Override the dir with
-the script's `--out` flag or `DSO_TILE_DIR` — note `--dso-tile-dir` is the
-*server's* flag, the script has no such option. Resumable: existing tiles are skipped
-regardless of size, so changing `TILE_PX` leaves a resolution mix — `--status`
-shows it, `--force` refetches.
+Output goes to `.cache/skymap/` (gitignored — **not** `junos-web/public/`).
+`--out` or `SKYMAP_DIR` (the server reads the same variable) moves it; note
+`--skymap-dir` is the *server's* flag. Resumable (existing tiles > 1 KB are
+skipped, `.part` + `os.replace`, Ctrl-C still writes `info.json`); tiles are
+static files on CDS's Apache (no per-request pause needed; `--pace 0.2
+--workers 4` is the gentle setting; a 404 is final, 429/5xx back off and
+rotate mirrors). The script writes **`info.json`** (also every 60 s during a
+run), which the server serves verbatim at `/api/skymap/info`:
 
-Tiles are DSS2 except for nebulae (`is_nebula`: `NEBULA_KINDS`, plus the
-clusters OpenNGC files as "Cl+N", recognised by their Sh2/LBN id): from `LARGE_NEBULA_ARCMIN`
-(10′) up they come from NSNS (`simg.de/P/NSNS/DR0_2/hbr8`, narrowband, northern
-sky, CC BY-NC-SA) when a transparent-pixel PNG probe shows it covers the whole
-tile; below, the best-framing Hubble image on AstroPix (scraped HTML — no API —
-whose AVM block places it) is warped onto the DSS2 tile, and the sprite is that
-image alone over a tighter field, which the index gives as `thumb_fov` (the sky
-sizes sprites by `DsoTile::thumb_side`). `sources.json` records what each tile
-holds, so a plain fetch run upgrades a DSS2 cache in place; lookups are cached
-in `nasa/`.
+```json
+{"survey":"CDS/P/DSS2/color","title":"DSS colored","frame":"equatorial",
+ "tile_width":512,"tile_format":"jpg","survey_max_order":9,"max_order":7,
+ "orders":{"0":12,"1":48,"…":0,"8":1204},"bytes":13968123456,"allsky":true,
+ "attribution":"Digitized Sky Survey - STScI/NASA, Colored & Healpixed by CDS",
+ "attribution_url":"http://archive.stsci.edu/dss/copyright.html","updated":"2026-10-25T10:12:33Z"}
+```
 
-`junos-server/src/dso_tiles.rs` serves the directory at `/api/dso_tiles/*`
-(`index.json`, `<slug>.jpg`, `thumbs/<slug>.jpg`, `allsky.jpg`, `allsky_small.jpg`;
-names are `[a-z0-9_]+.jpg` only). The cache is **optional** — a missing
-directory serves an empty index, an uncovered zone just previews as the mosaic
-grid over black, and the sky draws symbols only.
+`max_order` is the highest order such that every order up to it holds ≥ 99 %
+of its tiles — the zoom the client may rely on everywhere (`null` when even
+order 0 is incomplete); partial finer orders stay listed in `orders` so a
+client may try them and tolerate a 404. Without `info.json` the server
+derives the same shape from a startup scan. The mirror is **optional**:
+`max_order: null` → the sky draws symbols over the Milky Way panorama alone
+and the Framing Assistant previews the grid over black. `--skymap-online`
+fills missing tiles from CDS on demand.
 
-**Sky imagery.** `--thumbs` (Pillow, also run at the end of a fetch) writes a
-512 px copy of each tile with the sky background subtracted and a circular fade
-to black, and `--allsky` fetches one plate-carrée J2000 panorama
-(`CDS/P/Mellinger/color`, centred on RA 0h, north up, **east left**:
-`u = 0.5 − RA/360`). Both are drawn inside the WebGPU render pass, before the
-lines and stars: `gpu/layers/allsky.rs` (full-screen triangle, per-pixel inverse
-projection + inverse precession in `shaders/allsky.wgsl`) then
-`gpu/layers/dso_image.rs` (additive sprites from a mipmapped `texture_2d_array`,
-LRU slots, ≤ 2 uploads per frame). `components/sky/dso_images.rs` owns the
-decoded `<img>`s (bounded, loads bump an epoch signal); `render/layers/dso_image.rs`
-culls like `dso_render::build`, keeps objects with a tile whose sprite is ≥ 10 px,
-rotates them to sky north (`dso_shape::probe`) and lists them in `Frame.imaged`
-so the symbol layers skip their outline. `gpu/texture_upload.rs` builds the mip
-chains by canvas halving + `copyExternalImageToTexture` — that call **panics the
-wasm module on any validation error**, so keep its preconditions (decoded image,
-exact canvas size, `MipUploader::USAGE`). Canvas2D fallback: sprites via
-`lighter`, no Milky Way. Toggles: `sky_show_dso_images`, `sky_dso_images_brightness`,
-`sky_show_milky_way`, `sky_milky_way_opacity`.
+**HEALPix helpers live in three places** and must agree bit for bit: Python
+(`scripts/fetch_skymap.py`: `ang2pix_nest`, `pix2ang_nest`, `cone_pixels`,
+only for `--cone`), Rust (`junos-web/src/healpix.rs`) and WGSL
+(`components/sky/shaders/skymap.wgsl`, per pixel). All three are the
+healpix_cxx formulas (nested scheme, `phi = RA`, `z = sin Dec`, Morton bit
+spread of `(ix, iy)` under `face << 2k`). `--selftest` round-trips every cell
+of orders 0–4 and prints the shared vectors the Rust tests assert:
+`pix2ang_nest(3, 0) = (45.000000, 4.780192)`, `(3, 767) = (315.000000,
+−4.780192)`, `(7, 196607) = (315.000000, −0.298417)`, `(0, 4) = (0, 0)`,
+`(1, 47) = (315.000000, −19.471221)`; `ang2pix_nest(3, 83.82, −5.39) = 334`,
+`(7, 10.68, 41.27) = 10836`, `(5, 0.0, −89.5) = 8192`.
 
-Preview compositing lives in `junos-web/src/dso_tiles.rs::find_overlapping` +
-`components/sky/framing.rs::load_preview`: every cached tile overlapping the
-selected zone is stamped (simple TAN offset, no reprojection) onto one black
-offscreen canvas sized to the zone, so a zone wider than any single tile or
-spanning several objects renders as one adapted image with uncovered sky black.
-Tiles are J2000/ICRS; `framing.rs` works in JNow and converts at the boundary.
-The server's `/api/skysurvey` proxy is no longer used by the framing path (route
-left in place, unused).
+**Milky Way panorama.** `--allsky` fetches one plate-carrée J2000 panorama
+(`CDS/P/Mellinger/color`, via hips2fits, centred on RA 0h, north up, **east
+left**: `u = 0.5 − RA/360`), 4096 × 2048 plus a 2048 px `allsky_small.jpg`
+for phones / Lite, served at `/api/skymap/allsky*.jpg`. It stays the
+wide-field backdrop under the DSS2 layer.
+
+**Client side.** `main.rs` fetches `/api/skymap/info` once into `SkyMapCtx`.
+The sky draws the map in a **full-screen pass** (`gpu/layers/skymap.rs` +
+`shaders/skymap.wgsl`, after the panorama): per pixel, the shared inverse
+projection (`shaders/sky_inverse.wgsl`, concatenated in Rust in front of
+both `allsky.wgsl` and `skymap.wgsl` — WGSL has no includes) gives J2000,
+`hpx_hash_dxdy` the cell at the view's order, a storage-buffer table
+(`slot + 1` per cell, orders 0..=8 flattened at `table_base(o) + hash`,
+4 MiB) the resident layer of a 512² `texture_2d_array` atlas (64 layers on
+desktop, 40 on phones), and a missing tile falls back to its parent cell
+(shift the hash, fold the quadrant bits into dx/dy) down to three orders up —
+so a zoom never shows a hole. `render/layers/skymap.rs` is the CPU side:
+order = round(log2(58.63° · px/° / 512)) with hysteresis (−0.5 on phones),
+cells = `healpix::cone_cells` over the canvas diagonal, kept when the
+bounding box of their projected vertices meets the canvas — partially
+visible cells included; `project_far_with`, clipped at 90° rather than
+1.5 × the radius, since a 16:9 corner lies 2 × out — (≤ 48 / 32) plus
+their grandparents (≤ 8 / 6) requested **first**, images through the
+`TileImageCache` (6 concurrent loads), ≤ 4 atlas uploads per frame (the
+sky stays at full frame rate while any decoded tile waits)
+(`MipUploader`, whose `copyExternalImageToTexture` **panics the wasm on a
+validation error** — keep its preconditions). The layer crossfades in over
+the panorama between 25° and 10° of view radius (`crossfade`), so wide
+fields request no tiles at all; brightness is a slider; Lite caps the order
+at `max_order − 2`. While it shows, `Frame::image_min_half_px` makes the DSO
+layers skip the outline of objects ≥ 10 px (the picture shows them).
+Canvas2D fallback: each decoded tile is drawn as affine quads over its
+cell (S, W, E vertices; `source-over`, ≤ 40 tiles), a cell wider than 8°
+split into its 4ⁿ sub-cells with the matching image quadrants, so coarse
+parents land on the right stars too; a sub-quad off the canvas is skipped. **HiPS orientation**: dx
+runs from the cell's south vertex along S→E, dy along S→W, and the JPEG
+stores column ← dy, row ← dx (top-left = S, top-right = W, bottom-left = E,
+bottom-right = N) — one `uv = vec2(dy, dx)` line in the shader and one
+matching line in the sampler; verify against the Tycho-2 stars at ~1°
+fields (only one of the eight orientations aligns) after touching either.
+
+The Framing Assistant and the Targets thumbnails reproject on the CPU
+(`components/sky/skymap_sampler.rs`): a `CutoutSpec` (J2000 centre, field
+across the shorter side, size, rotation; north up / east left at 0, i.e.
+`astro::frame_point_eq`) is filled pixel by pixel — inverse TAN →
+`hash_dxdy` → the tile's texel from pixels extracted once per tile
+(`getImageData`, LRU) — with the same parent fallback, at a bounded
+internal size (0.5 Mpx desktop, 0.25 phones) scaled onto the canvas.
+`framing.rs`'s `Viewport` is the same TAN plane, so the mosaic grid sits on
+the same stars as the image; its label reads "DSS2 · order k · N tiles".
+`components/sky_thumb.rs` is a `<canvas>` rendered through the tab's shared
+sampler until every tile under the field is in; the Targets rows (128 px at
+48 CSS px) and the detail sheet (512 × 288) use it, the kind tag standing in
+without a map.
 
 ## Static assets
 
-`junos-web/public/` contains three binary catalogs: `junos.bin` (stars to V ~10), `tycho.bin` (the rest of Tycho-2, 2.2 M stars, 13 MB) and `dso.bin` (deep-sky). Trunk copies them into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes. Each is fetched with a `?v=N` (`fetch_catalog`, `fetch_deep_stars`, `fetch_dso_catalog`) that the server marks immutable and the browser keeps in the Cache API, so **any change to a catalog's bytes must bump its `?v=`** or browsers keep the old file. A `dso.bin` layout change touches three readers (`dso_catalog.rs`, `prefetch_dso_tiles.py`, the generator); it is at `v=3` (kind, then `lines` u8 and `con` 3 × ASCII). Most nebulae have no magnitude (99): the sky culls by `Dso::vis_mag`, a size-based stand-in, never by `mag`.
+`junos-web/public/` contains three binary catalogs: `junos.bin` (stars to V ~10), `tycho.bin` (the rest of Tycho-2, 2.2 M stars, 13 MB) and `dso.bin` (deep-sky). Trunk copies them into `dist/`. They are checked in — do not regenerate or re-encode them as part of code changes. Each is fetched with a `?v=N` (`fetch_catalog`, `fetch_deep_stars`, `fetch_dso_catalog`) that the server marks immutable and the browser keeps in the Cache API, so **any change to a catalog's bytes must bump its `?v=`** or browsers keep the old file. A `dso.bin` layout change touches two readers (`dso_catalog.rs`, the generator); it is at `v=3` (kind, then `lines` u8 and `con` 3 × ASCII). Most nebulae have no magnitude (99): the sky culls by `Dso::vis_mag`, a size-based stand-in, never by `mag`.
 
 ## Code style observed in this codebase
 

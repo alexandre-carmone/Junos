@@ -96,6 +96,10 @@ The service runs as the `astronaut` user with
 `WorkingDirectory=/var/lib/junos-web`; the self-signed TLS cert is generated
 into `/var/lib/junos-web/.certs/` on first start. It is not a `DynamicUser` —
 a random UID cannot enter a `0700` home dir, and the Files tab needs to.
+The offline sky map (the planetarium's DSS2 imagery) is read from
+`/var/lib/junos-web/.cache/skymap` by default: populate it as that user with
+`SKYMAP_DIR=/var/lib/junos-web/.cache/skymap uv run scripts/fetch_skymap.py`,
+or point `--skymap-dir` at a mirror stored elsewhere.
 
 ### Power off / Reboot from the browser
 

@@ -7,7 +7,9 @@ use leptos::prelude::*;
 
 use crate::components::form::{CARD, CARD_TITLE, FOOTER};
 use crate::components::scheduler::altitude::{altitude, altitude_chart, hhmm, Night, Track};
+use crate::components::sky::skymap_sampler::CutoutSpec;
 use crate::components::sky::{fmt_dec, fmt_ra, goto_rade_msg};
+use crate::components::sky_thumb::{SharedSampler, SkyThumb};
 use crate::compat::SiteSnapshot;
 use crate::coords::J2000;
 use crate::dso_catalog::Dso;
@@ -27,7 +29,10 @@ pub struct Detail<'a> {
     pub c: Candidate,
     pub label: String,
     pub con_name: Option<String>,
-    pub thumb: Option<String>,
+    /// The object's sky-map cutout, when the server has a map.
+    pub thumb: Option<CutoutSpec>,
+    pub thumb_sampler: SharedSampler,
+    pub thumb_epoch: RwSignal<u32>,
     pub score: f64,
     pub night: Night,
     pub site: SiteSnapshot,
@@ -40,7 +45,7 @@ pub fn detail_body<C: Fn() + Copy + Send + Sync + 'static>(
     send: SendCmd,
     close: C,
 ) -> impl IntoView + use<C> {
-    let Detail { dso, c, label, con_name, thumb, score, night, site, min_alt } = det;
+    let Detail { dso, c, label, con_name, thumb, thumb_sampler, thumb_epoch, score, night, site, min_alt } = det;
     let (ra, dec) = (dso.ra_deg as f64, dso.dec_deg as f64);
     let name = dso.name.clone();
 
@@ -151,8 +156,9 @@ pub fn detail_body<C: Fn() + Copy + Send + Sync + 'static>(
     let btn = "btn h-11 px-3 flex-1 min-w-[40%] md:min-w-0 whitespace-nowrap";
     view! {
         <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 flex flex-col gap-3">
-            {thumb.map(|src| view! {
-                <img src=src alt="" class="block w-full max-h-72 object-contain rounded-md bg-black" />
+            {thumb.map(|spec| view! {
+                <SkyThumb spec sampler=thumb_sampler epoch=thumb_epoch
+                          class="block w-full max-h-72 object-contain rounded-md bg-black" />
             })}
             <div class=CARD>
                 <span class="font-semibold text-text-blue-bright">{label}</span>

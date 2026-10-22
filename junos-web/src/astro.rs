@@ -113,6 +113,21 @@ pub fn project(
     center_az: f64,
     fov_radius: f64,
 ) -> Option<(f64, f64)> {
+    project_to(alt, az, center_alt, center_az, fov_radius, fov_radius * 1.5)
+}
+
+/// `project` with its own clip: `None` past `max_sep_deg` degrees from the
+/// centre (the projection itself is defined up to the antipode). The sky
+/// map uses it to place tiles whose vertices lie beyond the screen's
+/// corners — on a wide screen those sit well past 1.5 × `fov_radius`.
+pub fn project_to(
+    alt: f64,
+    az: f64,
+    center_alt: f64,
+    center_az: f64,
+    fov_radius: f64,
+    max_sep_deg: f64,
+) -> Option<(f64, f64)> {
     let (a, b) = (alt * DEG, az * DEG);
     let (ca, cb) = (center_alt * DEG, center_az * DEG);
 
@@ -120,7 +135,7 @@ pub fn project(
     let cos_c = a.sin() * ca.sin() + a.cos() * ca.cos() * (b - cb).cos();
     let c = cos_c.clamp(-1.0, 1.0).acos();
 
-    if c.to_degrees() > fov_radius * 1.5 {
+    if c.to_degrees() > max_sep_deg {
         return None;
     }
 

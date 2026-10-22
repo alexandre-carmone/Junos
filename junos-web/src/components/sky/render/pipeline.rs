@@ -11,7 +11,6 @@ use super::layers::allsky::AllskyLayer;
 use super::layers::center_crosshair::CenterCrosshairLayer;
 use super::layers::constellation_names::ConstellationNamesLayer;
 use super::layers::dso::DsoLayer;
-use super::layers::dso_image::DsoImageLayer;
 use super::layers::fov_reticle::FovReticleLayer;
 use super::layers::grids::{AltAzGridLayer, EclipticLayer, EqGridLayer, MeridianLayer};
 use super::layers::ground::GroundLayer;
@@ -19,6 +18,7 @@ use super::layers::horizon_mask::HorizonMaskLayer;
 use super::layers::mosaic::MosaicLayer;
 use super::layers::mount_crosshair::MountCrosshairLayer;
 use super::layers::scheduler_jobs::SchedulerJobsLayer;
+use super::layers::skymap::SkymapLayer;
 use super::layers::slew_trail::SlewTrailLayer;
 use super::layers::solar_system::SolarSystemLayer;
 use super::layers::solve_marker::SolveMarkerLayer;
@@ -48,9 +48,9 @@ impl RenderPipeline {
     pub fn standard() -> Self {
         let mut p = Self::empty();
         // Survey imagery under everything: the Milky Way panorama (GPU only)
-        // and the DSO sprites, which in fallback mode paint before the grids.
+        // and the sky map, which in fallback mode paints before the grids.
         p.register(Box::new(AllskyLayer));
-        p.register(Box::new(DsoImageLayer::default()));
+        p.register(Box::new(SkymapLayer::default()));
         // Ground, behind everything else drawn as lines.
         p.register(Box::new(GroundLayer));
         // The horizon mask (walls, trees), shaded over the ground.

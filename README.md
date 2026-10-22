@@ -250,7 +250,8 @@ Every option is a long flag with a matching environment variable.
 | `--tls-key` | `TLS_KEY` | auto-generated | Your own private key |
 | `--dist-dir` | `DIST_DIR` | `junos-web/dist` | Where the compiled frontend lives |
 | `--captures-dir` | `CAPTURES_DIR` | see below | Root of the Files tab |
-| `--dso-tile-dir` | `DSO_TILE_DIR` | `.cache/dso_tiles` | Offline DSO tile cache |
+| `--skymap-dir` | `SKYMAP_DIR` | `.cache/skymap` | Offline sky map (DSS2 HiPS mirror) |
+| `--skymap-online` | `SKYMAP_ONLINE` | off | Fetch missing sky-map tiles from CDS on demand |
 | `--taskqueue-dir` | `TASKQUEUE_DIR` | `~/.local/share/kstars/taskqueue` | Scheduler startup/shutdown queues and scripts |
 
 Notes:
@@ -274,36 +275,40 @@ Notes:
 - Both listeners serve the same routes. The HTTP/HTTPS split is a convention
   for who connects where, not a restriction.
 
-## Framing Assistant & offline DSO tiles
+## Sky map (offline DSS2 survey) & Framing Assistant
 
-The **Framing Assistant** plans a mosaic against a real image of the sky. It
-is not a tab: open it from the Sky tab by right-clicking (or long-pressing)
-a point and choosing **Framing assistant**. It shows your camera's tile grid
-over a survey preview of that region, lets you adjust the center, grid size,
-overlap and position angle, and then hands the plan to the Mosaic planner
-with **Send to Mosaic planner**.
+The planetarium draws the sky over a real image of it: a local mirror of the
+**DSS2 colour** survey as published by CDS in HiPS form — the whole sky cut
+into HEALPix cells, one 512 px JPEG per cell, at every zoom level ("order").
+The browser only ever streams the tiles under its current view at the order
+matching its zoom (a dozen or two per view, cached by the browser for good),
+so the mirror can be large on the server without ever being sent whole to a
+phone. The same map feeds the **Framing Assistant** (open it from the Sky
+tab by right-clicking or long-pressing a point: your camera's tile grid over
+the survey, adjustable centre, grid, overlap and position angle, then **Send
+to Mosaic planner**) and the Targets thumbnails. Wide fields keep the
+Mellinger Milky Way panorama as a backdrop; the DSS2 map fades in as you zoom.
 
-The preview is served **entirely from a local tile cache** — it never touches
-the network at runtime. The cache is **optional**: without it the Framing
-Assistant still works, and an uncovered region simply previews as the tile
-grid over black.
-
-To build it:
+The mirror is **optional**: without it the sky shows symbols over the
+panorama and the Framing Assistant previews the grid over black. To build it:
 
 ```bash
-uv run scripts/prefetch_dso_tiles.py --limit 50   # smoke test first
-uv run scripts/prefetch_dso_tiles.py              # ~7960 objects, takes hours
-uv run scripts/prefetch_dso_tiles.py --status     # coverage report, no downloads
+uv run scripts/fetch_skymap.py --max-order 3      # smoke test: 1,020 tiles, ~25 MB
+uv run scripts/fetch_skymap.py                    # orders 0–7 (~3″/px): ~262k tiles, 13–20 GB
+uv run scripts/fetch_skymap.py --status           # per-order coverage, no downloads
+uv run scripts/fetch_skymap.py --allsky           # the Milky Way panorama
+uv run scripts/fetch_skymap.py --min-order 8 --max-order 9 --cone 83.82 -5.39 3   # full resolution around Orion
 ```
 
-Tiles are downloaded from the CDS `hips2fits` service, one cutout per catalog
-object, into `.cache/dso_tiles/` (gitignored — this one is **not** checked in,
-unlike the star and DSO catalogs). Expect around **10 GB** at the current tile
-resolution. The download is resumable, so you can interrupt and re-run it;
-use `--out` (or the `DSO_TILE_DIR` environment variable) to put the cache
-somewhere else, and `--force` to refetch existing tiles.
-
-Point the server at it with `--dso-tile-dir` if you moved it.
+Tiles go to `.cache/skymap/` (gitignored — **not** checked in, unlike the
+star and DSO catalogs) in CDS's exact layout, so `rsync`ing a mirror from
+another machine works too. The download is resumable; `--out` (or the
+`SKYMAP_DIR` environment variable) puts it elsewhere, `--prune-above N` drops
+the finest orders to recover space. A full-sky order 8 (~53 GB) or 9
+(~210 GB) is not worth it — use `--cone` for the targets you image. Point the
+server at the mirror with `--skymap-dir` if you moved it, and add
+`--skymap-online` to let it fetch missing tiles from CDS on demand while the
+download is still running.
 
 ## How it works
 
@@ -330,7 +335,7 @@ The server does **no protocol translation** — messages flow through opaque.
 All Ekos Live semantics live in the WASM client. Beyond the relay, the server
 adds a handful of local HTTP APIs the browser cannot do on its own: the
 captures-folder browser (`/api/files/*`), FITS thumbnailing, star detection
-on focus frames, the offline DSO tile cache (`/api/dso_tiles/*`), and
+on focus frames, the offline sky map (`/api/skymap/*`), and
 launching KStars or PHD2 on the host, or powering it off (`/api/apps/*`).
 
 ## Repository layout
@@ -339,7 +344,7 @@ launching KStars or PHD2 on the host, or powering it off (`/api/apps/*`).
 - **`junos-web/`** — the Leptos + WebGPU browser app. Binary star and
   deep-sky catalogs live in `junos-web/public/`.
 - **`scripts/`** — `gen_dso_catalog.py` builds the deep-sky catalog;
-  `prefetch_dso_tiles.py` downloads the offline DSO tile cache.
+  `fetch_skymap.py` mirrors the DSS2 sky map and the Milky Way panorama.
 - **`packaging/`** — Arch Linux package, portable tarball, and CI notes.
 - **`nix/`**, **`flake.nix`** — dev shell, packages, and the NixOS module.
 - **`justfile`**, **`Dockerfile`** — build entry points.
@@ -396,5 +401,7 @@ projects. In particular:
   and full license text.
 
 - **Hipparcos / Tycho / AT-HYG** star catalogs and the **OpenNGC** deep-sky
-  catalog feed the binary catalogs in `junos-web/public/`. Deep-sky preview
-  tiles are cutouts from the **CDS hips2fits** service.
+  catalog feed the binary catalogs in `junos-web/public/`. Sky imagery is
+  the **Digitized Sky Survey** (STScI/NASA), coloured and HEALPixed by
+  **CDS** (`P/DSS2/color`), mirrored locally; the Milky Way panorama is
+  Axel Mellinger's, via the CDS hips2fits service.

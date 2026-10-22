@@ -1,29 +1,27 @@
-//! Browser-side cache of the planetarium's survey images: one sprite per
-//! deep-sky object (`/api/dso_tiles/thumbs/<slug>.jpg`) and the all-sky
-//! Milky Way panorama (`/api/dso_tiles/allsky.jpg`).
+//! Browser-side cache of the planetarium's survey images: the sky-map tiles
+//! (`/api/skymap/Norder…/Npix….jpg`, `crate::skymap`) and the all-sky Milky
+//! Way panorama (`/api/skymap/allsky.jpg`).
 //!
 //! The cache owns the decoded `HtmlImageElement`s, shared by both render
-//! paths: the GPU `DsoImageLayer` uploads them into its texture array, the
+//! paths: the GPU `SkymapLayer` uploads them into its texture array, the
 //! Canvas2D fallback `drawImage`s them directly. Loads are asynchronous; when
 //! one lands the cache bumps `epoch` so the render Effect reruns at once
 //! rather than on the next idle tick. Decoded images are LRU-bounded so a
 //! long pan session on a phone can't accumulate hundreds of megabytes.
 //!
-//! Which object has a tile at all comes from the server's `index.json`
-//! (`DsoTileIndex`, keyed by catalog name); an absent cache simply means no
-//! images are ever requested.
+//! Images are keyed by an opaque `u32` the caller chooses (`skymap::tile_id`
+//! for tiles).
 
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use leptos::prelude::*;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlImageElement;
 
-use crate::dso_tiles::{DsoTile, DsoTileIndex, ALLSKY_SMALL_URL, ALLSKY_URL};
+use super::render::layers::allsky::{ALLSKY_SMALL_URL, ALLSKY_URL};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum LoadState {
@@ -87,36 +85,33 @@ impl Drop for Slot {
     }
 }
 
-/// Simultaneous sprite fetches. The server reads each file synchronously, so
-/// a burst of dozens would just queue there and starve the first ones.
+/// Simultaneous fetches — the per-host HTTP/1.1 connection limit. More would
+/// just queue in the browser and delay the tiles nearest the view centre.
 const MAX_CONCURRENT: usize = 6;
 
-pub struct DsoImageCache {
-    index: Option<Arc<DsoTileIndex>>,
-    /// Catalog index → tile index, memoised (`None` = no tile for the object).
-    tile_of: HashMap<u32, Option<usize>>,
+pub struct TileImageCache {
     slots: HashMap<u32, Slot>,
     loading: Rc<Cell<usize>>,
     frame: u64,
     epoch: RwSignal<u32>,
-    /// Decoded sprites kept at most; beyond it the least recently drawn go.
+    /// Decoded images kept at most; beyond it the least recently drawn go.
     max_decoded: usize,
     allsky: Option<Slot>,
     allsky_small_tried: bool,
 }
 
-impl DsoImageCache {
-    /// `epoch` is bumped on every load completion so the sky redraws.
+impl TileImageCache {
+    /// `epoch` is bumped on every load completion so the sky redraws. The
+    /// sky's cache holds the cells of a view and their parents with room to
+    /// pan back; a decoded 512² tile is ~1 MiB of browser image memory.
     pub fn new(epoch: RwSignal<u32>, is_mobile: bool) -> Self {
         Self::with_cap(epoch, if is_mobile { 64 } else { 128 })
     }
 
     /// A cache holding at most `max_decoded` images — the Framing Assistant
-    /// keeps a much smaller one, since it loads full tiles, not sprites.
+    /// and the Targets thumbnails keep smaller ones.
     pub fn with_cap(epoch: RwSignal<u32>, max_decoded: usize) -> Self {
         Self {
-            index: None,
-            tile_of: HashMap::new(),
             slots: HashMap::new(),
             loading: Rc::new(Cell::new(0)),
             frame: 0,
@@ -132,24 +127,7 @@ impl DsoImageCache {
         self.loading.get()
     }
 
-    /// Point the cache at the server's tile index (once it has arrived).
-    pub fn set_index(&mut self, index: Option<Arc<DsoTileIndex>>) {
-        let same = match (&self.index, &index) {
-            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-            (None, None) => true,
-            _ => false,
-        };
-        if !same {
-            self.index = index;
-            self.tile_of.clear();
-        }
-    }
-
-    pub fn has_index(&self) -> bool {
-        self.index.as_ref().is_some_and(|i| !i.tiles.is_empty())
-    }
-
-    /// Advance the LRU clock and drop decoded sprites past the cap. Call once
+    /// Advance the LRU clock and drop decoded images past the cap. Call once
     /// per frame before any `image()` lookups.
     pub fn begin_frame(&mut self) {
         self.frame += 1;
@@ -170,15 +148,7 @@ impl DsoImageCache {
         }
     }
 
-    /// The cutout tile for catalog object `id` named `name`, if the cache
-    /// holds one.
-    pub fn tile_for(&mut self, id: u32, name: &str) -> Option<&DsoTile> {
-        let index = self.index.as_ref()?;
-        let ti = *self.tile_of.entry(id).or_insert_with(|| index.index_of(name));
-        ti.map(|i| &index.tiles[i])
-    }
-
-    /// The decoded sprite for `id`, or `None` while it loads (a load is
+    /// The decoded image for `id`, or `None` while it loads (a load is
     /// started here if none is in flight and the concurrency budget allows).
     pub fn image(&mut self, id: u32, url: &str) -> Option<HtmlImageElement> {
         let frame = self.frame;
@@ -196,7 +166,7 @@ impl DsoImageCache {
 
     /// The Milky Way panorama once decoded. The first call starts the load:
     /// the 2048 px file on phones, else the 4096 px one, falling back to the
-    /// small one if the large is missing (a cache built with an older script).
+    /// small one if the large is missing.
     pub fn allsky_image(&mut self, prefer_small: bool) -> Option<HtmlImageElement> {
         enum Next {
             Start(&'static str),

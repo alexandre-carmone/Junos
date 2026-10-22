@@ -5,7 +5,8 @@ junos-web/dist
 junos-web/styles/tailwind.css
 junos-web/bin/
 .certs
-# Offline DSO survey tiles (~10 GB) written by scripts/prefetch_dso_tiles.py
+# Local caches: the sky-map mirror (scripts/fetch_skymap.py, 13+ GB), the
+# Tycho-2 source (gen_star_tiles.py), INDIGO test state
 .cache
 result
 .claude

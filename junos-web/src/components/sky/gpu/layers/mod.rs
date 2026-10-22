@@ -2,5 +2,5 @@
 
 pub mod allsky;
 pub mod dso;
-pub mod dso_image;
+pub mod skymap;
 pub mod lines;

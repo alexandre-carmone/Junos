@@ -7,6 +7,11 @@ Wants=network-online.target
 # HTTP on :8090 because :8080 is already taken on the target host.
 # KStars' Ekos Live config must point at http://<host>:8090.
 # --captures-dir points the Files tab at the astronaut user's Pictures folder.
+# The offline sky map (a DSS2 HiPS mirror, `uv run scripts/fetch_skymap.py`)
+# is read from /var/lib/junos-web/.cache/skymap by default; add --skymap-dir
+# to use a mirror stored elsewhere, and SKYMAP_ONLINE=1 to let the server
+# fetch missing tiles from CDS on demand:
+#Environment=SKYMAP_ONLINE=1
 ExecStart=/usr/bin/junos-server --http-addr 0.0.0.0:8090 --https-addr 0.0.0.0:8443 --dist-dir /usr/share/junos-web/dist --captures-dir /home/astronaut/Pictures
 WorkingDirectory=/var/lib/junos-web
 StateDirectory=junos-web

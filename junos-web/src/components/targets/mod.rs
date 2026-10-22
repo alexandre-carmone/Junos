@@ -19,7 +19,9 @@ mod compute;
 mod detail;
 mod filters;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use leptos::prelude::*;
@@ -29,12 +31,14 @@ use crate::compat::SiteSnapshot;
 use crate::components::form::{sheet, CARD, CARD_TITLE, CHIP, FOOTER};
 use crate::components::scheduler::altitude::{hhmm, Night};
 use crate::components::sky::clock;
+use crate::components::sky::skymap_sampler::{CutoutSpec, SkyMapSampler};
+use crate::components::sky_thumb::{thumb_fov_deg, SharedSampler, SkyThumb};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::dom::event_target_value;
 use crate::dso_catalog::{Dso, DsoCatalogData, DsoType};
 use crate::i18n::{constellation_name, t, Lang, Translations};
 use crate::ws::SendCmd;
-use crate::{DsoTilesCtx, Tab};
+use crate::{LiteModeCtx, SkyMapCtx, Tab};
 
 use compute::{evaluate, score, Candidate, NightSky, STEP_MS};
 use detail::{detail_body, Detail};
@@ -118,7 +122,23 @@ pub fn TargetsTab(#[prop(into)] site: Signal<SiteSnapshot>, send: SendCmd) -> im
         .unwrap_or_else(|| RwSignal::new(None));
     let star_catalog = use_context::<RwSignal<Option<Arc<CatalogData>>>>()
         .unwrap_or_else(|| RwSignal::new(None));
-    let tiles = use_context::<DsoTilesCtx>().map(|c| c.0);
+    // Thumbnails: one sky-map sampler shared by every row, made once the
+    // server has described its map (`None` without one).
+    let skymap = use_context::<SkyMapCtx>().map(|c| c.0);
+    let lite = use_context::<LiteModeCtx>().map(|c| c.0);
+    let thumb_epoch = RwSignal::new(0u32);
+    let thumb_sampler: SharedSampler = StoredValue::new_local(Rc::new(RefCell::new(None)));
+    Effect::new(move |_| {
+        let Some(info) = skymap.and_then(|s| s.get()) else { return };
+        thumb_sampler.with_value(|s| {
+            if let Ok(mut s) = s.try_borrow_mut() {
+                if s.is_none() {
+                    let lite = lite.is_some_and(|l| l.get_untracked());
+                    *s = SkyMapSampler::new(thumb_epoch, info, lite, 32, 24);
+                }
+            }
+        });
+    });
 
     let prefs = TargetPrefs::new();
     let query = RwSignal::new(String::new());
@@ -332,26 +352,25 @@ pub fn TargetsTab(#[prop(into)] site: Signal<SiteSnapshot>, send: SendCmd) -> im
     };
 
     // ── The list ─────────────────────────────────────────────────────────
-    let thumb_of = move |d: &Dso| -> Option<(String, f64)> {
-        let idx = tiles?.get()?;
-        let tile = idx.by_name(&d.name)?;
-        // Zoom the sprite in on a small object (it sits in a ≥ 1° field).
-        let z = if d.size_arcmin > 0.0 {
-            (tile.thumb_side() * 60.0 / (d.size_arcmin as f64 * 1.6)).clamp(1.0, 6.0)
-        } else {
-            1.0
-        };
-        Some((tile.thumb_url(), z))
+    // A `w × h` px cutout of the object from the sky map, twice its size.
+    let thumb_spec = move |d: &Dso, w: u32, h: u32| -> Option<CutoutSpec> {
+        skymap?.get()?;
+        Some(CutoutSpec {
+            ra_deg: f64::from(d.ra_deg),
+            dec_deg: f64::from(d.dec_deg),
+            fov_deg: thumb_fov_deg(d.size_arcmin),
+            width: w,
+            height: h,
+            rot_deg: 0.0,
+        })
     };
     let row_view = move |rank: usize, r: Row, d: &Dso, tr: &'static Translations, lang: Lang, en: &HashMap<String, String>| {
         let c = r.c;
         let idx = c.idx;
-        let thumb = match thumb_of(d) {
-            Some((src, z)) => view! {
-                <span class="relative w-12 h-12 shrink-0 rounded-md overflow-hidden bg-black">
-                    <img src=src alt="" loading="lazy" class="w-full h-full object-cover scale-[var(--z)]"
-                         style=format!("--z:{z:.2}") />
-                </span>
+        let thumb = match thumb_spec(d, 128, 128) {
+            Some(spec) => view! {
+                <SkyThumb spec sampler=thumb_sampler epoch=thumb_epoch
+                          class="w-12 h-12 shrink-0 rounded-md bg-black" />
             }.into_any(),
             None => view! {
                 <span class="w-12 h-12 shrink-0 rounded-md bg-bg-input-deep border border-border-base \
@@ -431,7 +450,9 @@ pub fn TargetsTab(#[prop(into)] site: Signal<SiteSnapshot>, send: SendCmd) -> im
             c: row.c,
             label: d.display_label(lang),
             con_name: d.constellation().map(|a| con_name(a, lang, &en_cons.get())),
-            thumb: thumb_of(d).map(|(src, _)| src),
+            thumb: thumb_spec(d, 512, 288),
+            thumb_sampler,
+            thumb_epoch,
             score: row.score,
             night: night.get(),
             site: site.get(),
