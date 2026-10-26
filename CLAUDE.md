@@ -283,9 +283,14 @@ fields request no tiles at all; brightness is a slider; Lite caps the order
 at `max_order − 2`. While it shows, `Frame::image_min_half_px` makes the DSO
 layers skip the outline of objects ≥ 10 px (the picture shows them).
 Canvas2D fallback: each decoded tile is drawn as affine quads over its
-cell (S, W, E vertices; `source-over`, ≤ 40 tiles), a cell wider than 8°
-split into its 4ⁿ sub-cells with the matching image quadrants, so coarse
-parents land on the right stars too; a sub-quad off the canvas is skipped. **HiPS orientation**: dx
+cell (the least-squares fit of its four vertices; `source-over`, ≤ 40
+tiles), a quad split into its 4 sub-cells with the matching image
+quadrants while the fit misses a vertex or the cell centre by > 1.5 px
+(up to 6 splits, ≤ 1,024 quads a frame), since an affine map can't follow
+a HEALPix cell through the azimuthal projection — one quad per 3.7° cell
+sits 7 px (~3′) off, a visible shift against the catalog stars; a
+sub-quad off the canvas is skipped, and each quad bleeds 0.5 px so
+neighbours never show a seam. **HiPS orientation**: dx
 runs from the cell's south vertex along S→E, dy along S→W, and the JPEG
 stores column ← dy, row ← dx (top-left = S, top-right = W, bottom-left = E,
 bottom-right = N) — one `uv = vec2(dy, dx)` line in the shader and one

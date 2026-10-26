@@ -39,11 +39,29 @@ const ORDER_HYSTERESIS: f64 = 0.15;
 const MOBILE_ORDER_BIAS: f64 = -0.5;
 /// Canvas2D fallback: how many decoded tiles to draw per frame.
 const FALLBACK_MAX_TILES: usize = 40;
-/// Canvas2D fallback: a tile is drawn as affine quads no wider than this,
-/// so a coarse parent (orders 0–2) is split into 4ⁿ sub-quads, each from
-/// its own vertices — the azimuthal projection bends a 58° cell too much
-/// for one quad.
-const FALLBACK_QUAD_MAX_DEG: f64 = 8.0;
+/// Canvas2D fallback: a tile is drawn as affine quads, and a quad is split
+/// into its four sub-cells (each from its own vertices and image quadrant)
+/// while the affine fit misses a vertex or the cell centre by more than
+/// this many CSS px. An affine map can't follow a HEALPix cell through the
+/// azimuthal projection: at 40° of declination and the order's own scale
+/// one quad per cell is 7 px off for a 3.7° cell (order 4), 15 px for a
+/// 7° one — a visible gap between the picture's stars and the catalog's.
+/// Each split divides the misfit by ~4, so this tolerance means two splits
+/// (16 quads) per tile at orders 3–4, one at 5–6, none from 7 — the error
+/// then hides under a star symbol.
+const FALLBACK_QUAD_TOL_PX: f64 = 1.5;
+/// How many times a tile may be split (4ⁿ quads): six halves a 58° order-0
+/// cell down to 0.9°.
+const FALLBACK_MAX_SPLITS: u8 = 6;
+/// A quad this small on screen (CSS px, bounding box) is never split.
+const FALLBACK_MIN_QUAD_PX: f64 = 12.0;
+/// Splits per frame stop once this many quads have been drawn: beyond it a
+/// quad is drawn whole, however far off, so a wide field at 30 fps stays
+/// affordable (a few hundred quads is the usual case).
+const FALLBACK_QUAD_BUDGET: usize = 1024;
+/// Each quad is drawn this much larger (CSS px) along each axis, so the
+/// sub-pixel misfit between neighbouring quads never opens a hairline seam.
+const FALLBACK_QUAD_BLEED_PX: f64 = 0.5;
 /// Cell vertices farther than this from the view centre don't project: a
 /// cell that far is behind the viewer.
 const FAR_CLIP_DEG: f64 = 90.0;
@@ -277,71 +295,120 @@ impl SkyLayer for SkymapLayer {
         // tiles carry their own sky, hence source-over, not additive.
         let mut tiles: Vec<&TileRequest> = self.tiles.iter().collect();
         tiles.sort_by_key(|t| t.order);
+        let mut q = QuadDraw {
+            ctx,
+            to_screen: &to_screen,
+            wf: view.wf,
+            hf: view.hf,
+            budget: FALLBACK_QUAD_BUDGET,
+        };
         for t in tiles.into_iter().take(FALLBACK_MAX_TILES) {
             let (iw, ih) = (t.img.natural_width() as f64, t.img.natural_height() as f64);
             if iw <= 0.0 || ih <= 0.0 {
                 continue;
             }
-            let side = healpix::ORDER0_SIDE_DEG / (1u32 << t.order) as f64;
-            let depth = (side / FALLBACK_QUAD_MAX_DEG).log2().ceil().clamp(0.0, 3.0) as u8;
-            draw_cell_quads(ctx, &t.img, t.order, t.npix, (0.0, 0.0, iw, ih), depth, &to_screen, view.wf, view.hf);
+            q.cell(&t.img, t.order, t.npix, (0.0, 0.0, iw, ih), FALLBACK_MAX_SPLITS);
         }
         ctx.restore();
     }
 }
 
-/// Draw the part `src` (x, y, w, h in image pixels) of `img` over the cell
-/// (`order`, `hash`), as one affine quad when `depth` is 0, else as the four
-/// children's quads from the matching image quadrants. Image columns run
-/// S→W (dy), rows S→E (dx); a child's bit 0 is the east half, bit 1 the west.
-#[allow(clippy::too_many_arguments)]
-fn draw_cell_quads(
-    ctx: &CanvasRenderingContext2d,
-    img: &web_sys::HtmlImageElement,
-    order: u8,
-    hash: u32,
-    src: (f64, f64, f64, f64),
-    depth: u8,
-    to_screen: &dyn Fn(f64, f64) -> Option<(f64, f64)>,
+/// The affine map of a cell's (dy, dx) unit square onto the screen that
+/// fits its four projected vertices best (least squares): each axis is the
+/// mean of the two opposite edges and the centroid maps to the centroid. The
+/// parallelogram through S, E and W alone would put all the misfit on N.
+/// Returns the origin (where S lands), the dy axis (S→W, image columns) and
+/// the dx axis (S→E, image rows).
+fn fit_cell_affine(px: &[(f64, f64); 4]) -> ((f64, f64), (f64, f64), (f64, f64)) {
+    let [ps, pe, pn, pw] = *px;
+    let dy_axis = ((pw.0 - ps.0 + pn.0 - pe.0) * 0.5, (pw.1 - ps.1 + pn.1 - pe.1) * 0.5);
+    let dx_axis = ((pe.0 - ps.0 + pn.0 - pw.0) * 0.5, (pe.1 - ps.1 + pn.1 - pw.1) * 0.5);
+    let centroid = ((ps.0 + pe.0 + pn.0 + pw.0) * 0.25, (ps.1 + pe.1 + pn.1 + pw.1) * 0.25);
+    let origin = (
+        centroid.0 - (dy_axis.0 + dx_axis.0) * 0.5,
+        centroid.1 - (dy_axis.1 + dx_axis.1) * 0.5,
+    );
+    (origin, dy_axis, dx_axis)
+}
+
+/// The fallback's quad painter: one tile at a time, recursing into
+/// sub-cells where the affine fit is visibly off, under a per-frame budget.
+struct QuadDraw<'a> {
+    ctx: &'a CanvasRenderingContext2d,
+    to_screen: &'a dyn Fn(f64, f64) -> Option<(f64, f64)>,
     wf: f64,
     hf: f64,
-) {
-    let verts = healpix::cell_vertices(order, hash);
-    let mut px = [(0.0, 0.0); 4];
-    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-    for (i, (lon, lat)) in verts.iter().enumerate() {
-        // A vertex behind the viewer: nothing sensible to draw.
-        let Some(p) = to_screen(*lon, *lat) else { return };
-        px[i] = p;
-        x0 = x0.min(p.0);
-        y0 = y0.min(p.1);
-        x1 = x1.max(p.0);
-        y1 = y1.max(p.1);
-    }
-    if x1 < 0.0 || x0 > wf || y1 < 0.0 || y0 > hf {
-        return;
-    }
-    if depth > 0 {
-        let (sx, sy, sw, sh) = src;
-        let (hw, hh) = (sw / 2.0, sh / 2.0);
-        for q in 0..4u32 {
-            let qx = sx + if q & 2 != 0 { hw } else { 0.0 };
-            let qy = sy + if q & 1 != 0 { hh } else { 0.0 };
-            draw_cell_quads(ctx, img, order + 1, (hash << 2) | q, (qx, qy, hw, hh), depth - 1, to_screen, wf, hf);
+    budget: usize,
+}
+
+impl QuadDraw<'_> {
+    /// Draw the part `src` (x, y, w, h in image pixels) of `img` over the
+    /// cell (`order`, `hash`): as one affine quad when it fits within
+    /// `FALLBACK_QUAD_TOL_PX` at the four vertices and the centre (or when
+    /// no split is left, the quad is tiny or the budget is spent), else as
+    /// the four children's quads from the matching image quadrants. Image
+    /// columns run S→W (dy), rows S→E (dx); a child's bit 0 is the east
+    /// half, bit 1 the west.
+    fn cell(&mut self, img: &web_sys::HtmlImageElement, order: u8, hash: u32, src: (f64, f64, f64, f64), splits: u8) {
+        let verts = healpix::cell_vertices(order, hash);
+        let mut px = [(0.0, 0.0); 4];
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+        for (i, (lon, lat)) in verts.iter().enumerate() {
+            // A vertex behind the viewer: nothing sensible to draw.
+            let Some(p) = (self.to_screen)(*lon, *lat) else { return };
+            px[i] = p;
+            x0 = x0.min(p.0);
+            y0 = y0.min(p.1);
+            x1 = x1.max(p.0);
+            y1 = y1.max(p.1);
         }
-        return;
+        if x1 < 0.0 || x0 > self.wf || y1 < 0.0 || y0 > self.hf {
+            return;
+        }
+        let (origin, dy_axis, dx_axis) = fit_cell_affine(&px);
+
+        if splits > 0 && (x1 - x0).max(y1 - y0) > FALLBACK_MIN_QUAD_PX && self.budget >= 4 {
+            // Misfit: the vertices against the fit, and the cell centre
+            // against the parallelogram's — the bend inside the cell that
+            // no vertex shows.
+            let (clon, clat) = healpix::cell_center(order, hash);
+            let Some(pc) = (self.to_screen)(clon, clat) else { return };
+            let at = |u: f64, v: f64| (origin.0 + u * dy_axis.0 + v * dx_axis.0, origin.1 + u * dy_axis.1 + v * dx_axis.1);
+            let dist = |p: (f64, f64), q: (f64, f64)| (p.0 - q.0).hypot(p.1 - q.1);
+            let [ps, pe, pn, pw] = px;
+            let err = dist(ps, at(0.0, 0.0))
+                .max(dist(pe, at(0.0, 1.0)))
+                .max(dist(pn, at(1.0, 1.0)))
+                .max(dist(pw, at(1.0, 0.0)))
+                .max(dist(pc, at(0.5, 0.5)));
+            if err > FALLBACK_QUAD_TOL_PX {
+                let (sx, sy, sw, sh) = src;
+                let (hw, hh) = (sw / 2.0, sh / 2.0);
+                for q in 0..4u32 {
+                    let qx = sx + if q & 2 != 0 { hw } else { 0.0 };
+                    let qy = sy + if q & 1 != 0 { hh } else { 0.0 };
+                    self.cell(img, order + 1, (hash << 2) | q, (qx, qy, hw, hh), splits - 1);
+                }
+                return;
+            }
+        }
+
+        let (sx, sy, sw, sh) = src;
+        let (a, b) = (dy_axis.0 / sw, dy_axis.1 / sw);
+        let (c, d) = (dx_axis.0 / sh, dx_axis.1 / sh);
+        if (a * d - b * c).abs() < 1e-12 {
+            return;
+        }
+        // Bleed: a few image px beyond each edge, so neighbours overlap by
+        // ~FALLBACK_QUAD_BLEED_PX instead of leaving a seam.
+        let bleed_x = FALLBACK_QUAD_BLEED_PX * sw / dy_axis.0.hypot(dy_axis.1).max(1e-9);
+        let bleed_y = FALLBACK_QUAD_BLEED_PX * sh / dx_axis.0.hypot(dx_axis.1).max(1e-9);
+        self.budget = self.budget.saturating_sub(1);
+        self.ctx.save();
+        let _ = self.ctx.transform(a, b, c, d, origin.0, origin.1);
+        let _ = self.ctx.draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+            img, sx, sy, sw, sh, -bleed_x, -bleed_y, sw + 2.0 * bleed_x, sh + 2.0 * bleed_y,
+        );
+        self.ctx.restore();
     }
-    let [ps, pe, _n, pw] = px;
-    let (sx, sy, sw, sh) = src;
-    let (a, b) = ((pw.0 - ps.0) / sw, (pw.1 - ps.1) / sw);
-    let (c, d) = ((pe.0 - ps.0) / sh, (pe.1 - ps.1) / sh);
-    if (a * d - b * c).abs() < 1e-12 {
-        return;
-    }
-    ctx.save();
-    let _ = ctx.transform(a, b, c, d, ps.0, ps.1);
-    let _ = ctx.draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-        img, sx, sy, sw, sh, 0.0, 0.0, sw, sh,
-    );
-    ctx.restore();
 }
