@@ -81,6 +81,14 @@ gen-cert:
 arch-pkg arch="amd64":
     ./packaging/arch/build-local.sh {{arch}}
 
+# Pack the offline sky map (.cache/skymap or $SKYMAP_DIR) into
+# <skymap>/archive/ — one tar per HiPS Dir + manifest.json — which the
+# running server serves at /api/skymap/archive/ for
+# `python3 scripts/pack_skymap.py pull <url>` on another machine.
+# Incremental: re-run after a fetch_skymap.py run to pack only the new Dirs.
+skymap-pack *args:
+    python3 scripts/pack_skymap.py pack {{args}}
+
 # Download the Tailwind v3 standalone binary for the host arch (re-run to upgrade).
 setup-tailwind:
     mkdir -p junos-web/bin

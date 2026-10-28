@@ -310,6 +310,28 @@ server at the mirror with `--skymap-dir` if you moved it, and add
 `--skymap-online` to let it fetch missing tiles from CDS on demand while the
 download is still running.
 
+**Copying the mirror to another install** doesn't need a second crawl of
+CDS. Pack it once on the machine that has it, then pull it from there:
+
+```bash
+python3 scripts/pack_skymap.py pack             # → .cache/skymap/archive/ (one .tar per HiPS Dir + manifest.json)
+python3 scripts/pack_skymap.py status           # what a new pack would rewrite
+# on the other machine — the running server serves the archives at /api/skymap/archive/
+python3 scripts/pack_skymap.py pull http://observatory:8080/api/skymap/archive
+python3 scripts/pack_skymap.py pull http://observatory:8080/api/skymap/archive --max-order 6
+python3 scripts/pack_skymap.py pull /media/usb/skymap-archive            # or from a copied folder
+```
+
+`pack` is incremental: it fingerprints each `Norder{k}/Dir{d}` (tile
+count, bytes, newest mtime) and rewrites only the archives whose tiles
+changed since the manifest was written — re-run it after any
+`fetch_skymap.py` run and only the new Dirs are packed. `pull` resumes an
+interrupted download, verifies every sha256, writes the tiles into the
+HiPS tree and rebuilds `info.json` from what landed. The archives are plain
+uncompressed tars (JPEGs don't compress), so `tar -xf Norder7_Dir0.tar -C
+.cache/skymap` works by hand too. Use the HTTP port (8080) rather than the
+self-signed HTTPS one, or pass `--insecure`.
+
 ## How it works
 
 ```

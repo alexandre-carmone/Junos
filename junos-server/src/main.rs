@@ -152,8 +152,19 @@ async fn main() -> anyhow::Result<()> {
                 .quality(CompressionLevel::Precise(4)),
         );
 
+    // The packed sky map (`scripts/pack_skymap.py pack`): plain tar files
+    // under `<skymap-dir>/archive/`, served as-is for `pack_skymap.py pull`
+    // on another machine. Outside the compression layer — it would gzip a
+    // 1 GB tar of JPEGs on the fly for nothing — and `ServeDir` answers
+    // Range requests, so an interrupted pull resumes where it stopped.
+    let archive_routes = Router::new().nest_service(
+        "/api/skymap/archive",
+        ServeDir::new(config.resolved_skymap_dir().join("archive")),
+    );
+
     let app = Router::new()
         .merge(ws_routes)
+        .merge(archive_routes)
         .merge(http_routes)
         .with_state(state);
 

@@ -100,6 +100,10 @@ The offline sky map (the planetarium's DSS2 imagery) is read from
 `/var/lib/junos-web/.cache/skymap` by default: populate it as that user with
 `SKYMAP_DIR=/var/lib/junos-web/.cache/skymap uv run scripts/fetch_skymap.py`,
 or point `--skymap-dir` at a mirror stored elsewhere.
+A machine that already has the mirror can serve it packed instead
+(`python3 scripts/pack_skymap.py pack` there, then
+`python3 scripts/pack_skymap.py pull http://<that-host>:8080/api/skymap/archive`
+here, as `astronaut`).
 
 ### Power off / Reboot from the browser
 
