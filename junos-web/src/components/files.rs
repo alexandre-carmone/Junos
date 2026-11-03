@@ -1,35 +1,32 @@
-//! Files tab — browse the captures, view a frame with its FITS header, drive
-//! KStars' Live Stack, and read the Scheduler's planning files.
+//! Files tab — browse the captures, view a frame with its FITS header, and
+//! read the Scheduler's planning files.
 //!
-//! Layout (phone-first, like Imaging): a header (Planning · Live Stack ·
-//! refresh), a toolbar (path, search, sort, type pills), then the folder rows
-//! and the thumbnail grid, scrolling (`browser.rs`). A tap on a file opens the
-//! viewer (`viewer.rs`), a page over the list; Planning and Live Stack open as
-//! `sheet`s (`planning/`, `livestack.rs`, `settings.rs`). One `frame_zoom`
-//! serves the viewer and the stack.
+//! Layout (phone-first, like Imaging): a header (Planning · refresh), a
+//! toolbar (path, search, sort, type pills), then the folder rows and the
+//! thumbnail grid, scrolling (`browser.rs`). A tap on a file opens the viewer
+//! (`viewer.rs`), a page over the list; Planning opens as a `sheet`
+//! (`planning/`). The viewer's frame opens full screen in `frame_zoom`.
 //!
 //! Browsing is HTTP (`/api/files/*`, sandboxed to the server's captures root;
-//! `/api/planning/*` for the planning folders); Resolve & Slew, the loads and
-//! Live Stack go to KStars over the shared WS.
+//! `/api/planning/*` for the planning folders); Resolve & Slew and the loads
+//! go to KStars over the shared WS. The live stack lives in the Imaging tab;
+//! its session folders, `LiveStack/<stamp>/`, are browsed here like any other.
 
 mod actions;
 pub(crate) mod api;
 mod browser;
-mod livestack;
 pub(crate) mod planning;
-mod settings;
 mod types;
 mod utils;
 mod viewer;
 
 use leptos::prelude::*;
-use serde_json::Value;
 
 use crate::components::form::{sheet, CHIP};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::components::zoom::frame_zoom;
 use crate::i18n::{t, Lang};
-use crate::ws::{FileReply, LiveStackerState, SendCmd};
+use crate::ws::{FileReply, SendCmd};
 use crate::{CaptureDirCtx, RevealInFilesCtx, Tab};
 
 use api::{fetch_list, resolve_abs};
@@ -122,8 +119,6 @@ fn stored(key: &str) -> Option<String> {
 
 #[component]
 pub fn FilesTab(
-    livestacker_state: RwSignal<Option<LiveStackerState>>,
-    livestacker_settings: RwSignal<Value>,
     #[prop(into)] online: Signal<bool>,
     file_reply: RwSignal<Option<FileReply>>,
     send: SendCmd,
@@ -147,7 +142,6 @@ pub fn FilesTab(
     let sort_dir = RwSignal::new(SortDir::from_storage(stored("files_sort_dir")));
     let filter = RwSignal::new(FilterKind::from_storage(stored("files_filter")));
     let search = RwSignal::new(String::new());
-    let stack_open = RwSignal::new(false);
     let plan_open = RwSignal::new(false);
     let plan_file = RwSignal::new(None::<PlanFile>);
 
@@ -246,7 +240,6 @@ pub fn FilesTab(
         let zoomed = s.zoom_open.get_untracked();
         match e.key().as_str() {
             "Escape" if zoomed => s.zoom_open.set(false),
-            "Escape" if stack_open.get_untracked() => stack_open.set(false),
             "Escape" if plan_file.with_untracked(Option::is_some) => plan_file.set(None),
             "Escape" if plan_open.get_untracked() => plan_open.set(false),
             "Escape" => s.viewer.set(false),
@@ -257,10 +250,8 @@ pub fn FilesTab(
     });
     on_cleanup(move || keys.remove());
 
-    let stack_state = Memo::new(move |_| livestacker_state.with(|o| o.as_ref().map(|l| l.state.clone()).unwrap_or_default()));
     let send_viewer = StoredValue::new(send.clone());
-    let send_plan = StoredValue::new(send.clone());
-    let send_stack = StoredValue::new(send);
+    let send_plan = StoredValue::new(send);
 
     view! {
         <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
@@ -272,11 +263,6 @@ pub fn FilesTab(
                 <button type="button" class=format!("{CHIP} ml-auto shrink-0")
                         on:click=move |_| plan_open.set(true)>
                     {move || tr().plan_title}
-                </button>
-                <button type="button" class=format!("{CHIP} gap-2 shrink-0")
-                        on:click=move |_| stack_open.set(true)>
-                    <span class=move || format!("w-2 h-2 rounded-full {}", livestack::dot(&stack_state.get()))></span>
-                    {move || tr().livestack_title}
                 </button>
                 <button class="btn-icon shrink-0 text-text-muted" title=move || tr().files_refresh
                         on:click=move |_| s.reload()>
@@ -298,12 +284,6 @@ pub fn FilesTab(
             <Show when=move || plan_open.get()>
                 {sheet(move || tr().plan_title, move || { plan_open.set(false); plan_file.set(None); }, view! {
                     {planning(s, plan_file, send_plan.get_value())}
-                })}
-            </Show>
-            <Show when=move || stack_open.get()>
-                {sheet(move || tr().livestack_title, move || stack_open.set(false), view! {
-                    <livestack::LiveStack s=s open=stack_open state=livestacker_state
-                                          settings=livestacker_settings send=send_stack.get_value() />
                 })}
             </Show>
             {frame_zoom(s.zoom_url.into(), Signal::derive(|| None), s.zoom_open, lang)}

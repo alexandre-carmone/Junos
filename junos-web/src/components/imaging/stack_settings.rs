@@ -1,8 +1,9 @@
-//! Files tab: the Live Stack settings cards. Each field shows KStars' value
+//! Imaging tab: the Live stack settings sheet. Each field shows KStars' value
 //! (`livestacker_get_all_settings`) and sends its own key on change:
 //! `livestacker_set_all_settings` merges the keys it gets and echoes the
-//! whole map back (message.cpp:3404). The defaults are KStars' own, for keys
-//! it hasn't stored yet (message.cpp:3490).
+//! whole map back (message.cpp:3426). The defaults are KStars' own, for keys
+//! it hasn't stored yet (message.cpp:3510-3540). The folders and the mode
+//! are not here: the Stack button sets them at each Start.
 
 use leptos::prelude::*;
 use serde_json::{json, Value};
@@ -12,8 +13,6 @@ use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
-
-use super::Shared;
 
 type Label = fn(&'static Translations) -> &'static str;
 
@@ -34,19 +33,14 @@ impl Form {
         move || label(t(lang.get()))
     }
 
-    fn text(&self, key: &'static str) -> Signal<String> {
-        let settings = self.settings;
-        Signal::derive(move || settings.with(|v| v[key].as_str().unwrap_or_default().to_string()))
-    }
-
     /// A host path, sent on Enter / blur.
     fn path(&self, key: &'static str, label: Label) -> impl IntoView + use<> {
-        let (f, value) = (self.clone(), self.text(key));
+        let (f, settings) = (self.clone(), self.settings);
         view! {
             <label class="flex flex-col gap-1">
                 <span class=LABEL>{self.label(label)}</span>
                 <input type="text" class="input w-full h-11 md:h-9 font-mono text-sm" spellcheck="false"
-                       prop:value=move || value.get()
+                       prop:value=move || settings.with(|v| v[key].as_str().unwrap_or_default().to_string())
                        on:change=move |ev| f.put(key, event_target_value(&ev).trim().into()) />
             </label>
         }
@@ -91,39 +85,10 @@ impl Form {
     }
 }
 
-/// A stacking / output folder, with Use current folder and Open buttons.
-fn folder(f: &Form, s: Shared, open: RwSignal<bool>, key: &'static str, label: Label) -> impl IntoView + use<> {
-    let (put, value, lang) = (f.clone(), f.text(key), f.lang);
-    let tr = move || t(lang.get());
-    view! {
-        <div class="flex flex-col gap-2">
-            {f.path(key, label)}
-            <div class="grid grid-cols-2 gap-2">
-                <button class="btn btn-ghost h-11 md:h-9 px-2" disabled=move || s.root.with(String::is_empty)
-                        on:click=move |_| put.put(key, s.abs(&s.path.get_untracked()).into())>
-                    {move || tr().files_use_current}
-                </button>
-                <button class="btn btn-ghost h-11 md:h-9 px-2" disabled=move || value.with(String::is_empty)
-                        on:click=move |_| {
-                            s.reveal(value.get_untracked());
-                            open.set(false);
-                        }>
-                    {move || tr().files_open}
-                </button>
-            </div>
-        </div>
-    }
-}
-
-pub(super) fn cards(s: Shared, open: RwSignal<bool>, settings: RwSignal<Value>, send: SendCmd, lang: RwSignal<Lang>) -> impl IntoView {
+pub(super) fn cards(settings: RwSignal<Value>, send: SendCmd, lang: RwSignal<Lang>) -> impl IntoView {
     let f = Form { settings, send, lang };
     let title = |label: Label| view! { <span class=CARD_TITLE>{f.label(label)}</span> };
     view! {
-        <div class=CARD>
-            {title(|t| t.livestack_section_directories)}
-            {folder(&f, s, open, "stackingDirectory", |t| t.livestack_dir_in)}
-            {folder(&f, s, open, "outputDirectory", |t| t.livestack_dir_out)}
-        </div>
         <div class=CARD>
             {title(|t| t.livestack_section_stacking)}
             {f.select("alignMethod", 0, |t| t.livestack_align_method, vec![
@@ -148,7 +113,6 @@ pub(super) fn cards(s: Shared, open: RwSignal<bool>, settings: RwSignal<Value>, 
                 (3, |t| t.livestack_downscale_x4),
             ])}
             {f.number("numInMem", 10.0, "1", |t| t.livestack_num_in_mem)}
-            {f.check("looping", false, |t| t.livestack_looping)}
         </div>
         <div class=CARD>
             {title(|t| t.livestack_section_rejection)}
@@ -162,6 +126,7 @@ pub(super) fn cards(s: Shared, open: RwSignal<bool>, settings: RwSignal<Value>, 
             {f.number("sharpenAmt", 0.0, "0.1", |t| t.livestack_sharpen)}
             {f.number("denoiseAmt", 0.0, "0.1", |t| t.livestack_denoise)}
             {f.number("deconvAmt", 0.0, "0.1", |t| t.livestack_deconv)}
+            {f.number("gradientAmt", 0.0, "0.1", |t| t.livestack_gradient)}
         </div>
         <div class=CARD>
             {title(|t| t.livestack_section_calibration)}

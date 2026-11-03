@@ -37,9 +37,10 @@
 mod fields;
 mod histogram;
 mod jobs;
+mod stack_settings;
 
 use leptos::prelude::*;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::compat::{CameraSnapshot, CaptureSnapshot, FilterWheelSnapshot};
 use crate::components::filter_settings::{filter_chip, FilterSettingsSheet};
@@ -148,6 +149,8 @@ pub fn ImagingTab(
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
     livestacker_state: RwSignal<Option<LiveStackerState>>,
+    /// KStars' live stack settings map (`livestacker_get_all_settings`).
+    livestacker_settings: RwSignal<Value>,
     /// Ekos started — the `livestacker_*` commands are dropped before that.
     #[prop(into)] online: Signal<bool>,
     #[prop(into)] send: SendCmd,
@@ -200,12 +203,14 @@ pub fn ImagingTab(
     let clip_map = clip_overlay(hist, hist_clip.into());
     let editor_open = RwSignal::new(false);
     let filters_open = RwSignal::new(false);
+    let stack_settings_open = RwSignal::new(false);
     let detail = RwSignal::new(None::<usize>);
     let esc = window_event_listener(leptos::ev::keydown, move |e| {
         if e.key() == "Escape" {
             zoom_open.set(false);
             editor_open.set(false);
             filters_open.set(false);
+            stack_settings_open.set(false);
             detail.set(None);
         }
     });
@@ -284,6 +289,14 @@ pub fn ImagingTab(
                 loop_started.set(true);
             }
         });
+    };
+    // The settings sheet shows KStars' map; re-ask it on open, since the
+    // bootstrap may have asked before anything was stored.
+    let s_settings = send.clone();
+    let s_cards = send.clone();
+    let on_stack_settings = move |_| {
+        send_cmd(&s_settings, "livestacker_get_all_settings", json!({}));
+        stack_settings_open.set(true);
     };
     let mode_pill = move |value: &'static str, label: fn(&'static Translations) -> &'static str| view! {
         <button type="button"
@@ -534,6 +547,10 @@ pub fn ImagingTab(
                             <span class=move || stack_badge(&stack_state.get())>
                                 {move || { let s = stack_state.get(); if s.is_empty() { tr().idle.to_string() } else { s } }}
                             </span>
+                            <button class="btn-icon shrink-0 text-text-muted" title=move || tr().livestack_settings
+                                    on:click=on_stack_settings>
+                                <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
+                            </button>
                         </div>
                         <div class="grid grid-cols-3 gap-2">
                             {tile(move || tr().livestack_frames,
@@ -693,6 +710,13 @@ pub fn ImagingTab(
             </Show>
             <Show when=move || detail.get().is_some()>
                 {sheet(move || tr().imaging_job_detail, move || detail.set(None), detail_body())}
+            </Show>
+            <Show when=move || stack_settings_open.get()>
+                {sheet(move || tr().livestack_settings, move || stack_settings_open.set(false), view! {
+                    <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 flex flex-col gap-3">
+                        {stack_settings::cards(livestacker_settings, s_cards.clone(), lang)}
+                    </div>
+                })}
             </Show>
             <FilterSettingsSheet open=filters_open send=send.clone() />
             {frame_zoom(shown.into(), clip_map, zoom_open, lang)}

@@ -4,7 +4,7 @@ use gloo_net::http::{Request, Response};
 use serde_json::json;
 
 use super::types::{FileMeta, ListReply, ResolveReply};
-use super::utils::{is_image_ext, join, url_encode};
+use super::utils::url_encode;
 
 /// Pass a 2xx through; otherwise the status plus the server's
 /// `{"error": "..."}` reason when it sends one.
@@ -56,19 +56,4 @@ pub(crate) async fn mkdir(rel: &str) -> Result<(), String> {
 pub(super) async fn resolve_abs(abs: &str) -> Result<ResolveReply, String> {
     let url = format!("/api/files/resolve?abs={}", url_encode(abs));
     checked(Request::get(&url).send().await).await?.json().await.map_err(|e| e.to_string())
-}
-
-/// The newest image in an absolute host folder (the Live Stack output), as a
-/// sandbox-relative path with its mtime; `outside` is the error for a folder
-/// out of reach.
-pub(super) async fn newest_image_in_abs_dir(abs: &str, outside: &str) -> Result<Option<(String, u64)>, String> {
-    let resolved = resolve_abs(abs).await?;
-    if !resolved.in_sandbox {
-        return Err(outside.to_string());
-    }
-    let reply = fetch_list(&resolved.relative).await?;
-    Ok(reply.entries.iter()
-        .filter(|e| e.kind == "file" && is_image_ext(&e.ext))
-        .max_by_key(|e| e.mtime)
-        .map(|e| (join(&reply.path, &e.name), e.mtime)))
 }
