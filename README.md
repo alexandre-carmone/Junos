@@ -38,9 +38,11 @@ order:
 - **Focus** — autofocus with a live HFR v-curve, manual stepping, and the full
   settings pane.
 - **Imaging** — camera and cooling status, all exposure settings, a capture
-  **sequence queue**, and a live preview with pan and pinch-zoom.
+  **sequence queue**, a live preview with pan and pinch-zoom, and one-tap
+  **live stacking**: the stacked image takes the frame's place while KStars'
+  Live Stacker runs on the sequence's or the Loop's frames.
 - **Files** — browse the captures folder: thumbnails, FITS headers, rename
-  and delete, solve-and-slew-to-this-framing, and a **LiveStacker**.
+  and delete, and solve-and-slew-to-this-framing.
 - **Polar Align** — the Ekos polar alignment assistant, with azimuth and
   altitude error readout and correction guidance.
 - **Guide** — start/stop guiding on any backend (Internal, PHD2, LinGuider),
