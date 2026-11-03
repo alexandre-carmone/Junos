@@ -4,8 +4,13 @@
 //!
 //!   * `send_cmd` — wrap `{type, payload}` JSON and push it to `SendCmd`.
 //!   * `dispatch_setting` — single-key `*_set_all_settings` update, with or
-//!     without a `{settings:{…}}` wrapper (align uses the wrapper, the others
-//!     don't — see `message.cpp:673` vs the align handler).
+//!     without a `{settings:{…}}` wrapper (every module takes the flat map
+//!     today — see `message.cpp:673`; the wrapper is kept for callers that
+//!     need one).
+//!   * `option_set` / `option_get` — one global KStars `Options::` entry,
+//!     by its Q_PROPERTY name (`ws/mod.rs::BOOTSTRAP_CMDS` says how it is
+//!     spelled). `option_set` saves and answers nothing, so a caller re-asks
+//!     with `option_get`, whose reply lands in `DeviceStore::options`.
 //!   * `send_device_property_set` — INDI `device_property_set` with the
 //!     `elements` array shaped by the caller.
 //!
@@ -43,6 +48,18 @@ pub async fn file_command(
         }
     }
     None
+}
+
+/// `option_set {options:[{name, value}]}` — message.cpp:1654. No reply.
+pub fn option_set(send: &SendCmd, name: &str, value: Value) {
+    send_cmd(send, "option_set", json!({ "options": [{ "name": name, "value": value }] }));
+}
+
+/// `option_get {options:[{name}, …]}` — answered under the same type with
+/// `[{name, value}, …]` (message.cpp:1663).
+pub fn option_get(send: &SendCmd, names: &[&str]) {
+    let options: Vec<Value> = names.iter().map(|n| json!({ "name": n })).collect();
+    send_cmd(send, "option_get", json!({ "options": options }));
 }
 
 pub fn dispatch_setting(

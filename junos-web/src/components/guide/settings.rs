@@ -17,7 +17,7 @@ use crate::components::form::{CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, ROW};
 use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
-use crate::ws_helpers::{dispatch_setting, send_cmd};
+use crate::ws_helpers::{dispatch_setting, option_get, option_set, send_cmd};
 
 type LabelFn = fn(&Translations) -> &'static str;
 
@@ -57,17 +57,17 @@ fn settings_str(v: &Value, key: &str) -> Option<String> {
     })
 }
 
+/// The `Options::` entries this sheet shows.
+const GUIDE_OPTIONS: &[&str] = &["guiderType", "pHD2Host", "pHD2Port", "linGuiderHost", "linGuiderPort"];
+
 /// Set one `Options::` entry, then re-read the guide options.
 fn set_option(send: &SendCmd, name: &str, value: Value) {
-    send_cmd(send, "option_set", serde_json::json!({ "options": [{ "name": name, "value": value }] }));
+    option_set(send, name, value);
     refresh_options(send);
 }
 
 pub fn refresh_options(send: &SendCmd) {
-    send_cmd(send, "option_get", serde_json::json!({ "options": [
-        {"name": "guiderType"}, {"name": "pHD2Host"}, {"name": "pHD2Port"},
-        {"name": "linGuiderHost"}, {"name": "linGuiderPort"},
-    ]}));
+    option_get(send, GUIDE_OPTIONS);
 }
 
 /// `guide_set_calibration_settings` with the 8 fields its handler reads

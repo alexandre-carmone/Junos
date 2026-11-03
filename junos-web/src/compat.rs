@@ -385,7 +385,7 @@ pub fn derive_mosaic(store: &DeviceStore) -> Signal<MosaicSnapshot> {
 pub fn derive_guide(store: &DeviceStore) -> Signal<GuideSnapshot> {
     let status_sig   = store.guide_status;
     let settings_sig = store.guide_settings;
-    let options_sig  = store.guide_options;
+    let options_sig  = store.options;
     let preview_sig  = store.guide_preview_url;
     Signal::derive(move || {
         match status_sig.get() {

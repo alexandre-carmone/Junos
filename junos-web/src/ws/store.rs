@@ -74,9 +74,14 @@ pub struct DeviceStore {
     pub align_frame_pending: StoredValue<Option<AlignFrame>>,
     pub guide_status: RwSignal<Option<GuideStatusData>>,
     pub guide_settings: RwSignal<serde_json::Value>,
-    /// Flattened `{name: value, ...}` map of global KStars `Options::`
-    /// entries we care about (guiderType, pHD2Host/Port, linGuiderHost/Port).
-    pub guide_options: RwSignal<serde_json::Value>,
+    /// Global KStars `Options::` entries, `{name: value, …}` — every entry an
+    /// `option_get` reply ever carried (the guider backend and its hosts, the
+    /// plate solver's type / profile / astrometry hints, …).
+    pub options: RwSignal<serde_json::Value>,
+    /// The StellarSolver option profiles the Align module can solve with
+    /// (`get_stellarsolver_profiles` → `align`), by name; an index into this
+    /// list is `Options::solveOptionsProfile`. Read-only over Ekos Live.
+    pub stellarsolver_profiles: RwSignal<Vec<String>>,
     pub guide_preview_url: RwSignal<Option<String>>,
     pub scheduler_status: RwSignal<SchedulerStatusData>,
     pub scheduler_settings: RwSignal<serde_json::Value>,
@@ -207,7 +212,8 @@ impl DeviceStore {
             align_frame_pending: StoredValue::new(None),
             guide_status: RwSignal::new(None),
             guide_settings: RwSignal::new(serde_json::Value::Null),
-            guide_options: RwSignal::new(serde_json::Value::Null),
+            options: RwSignal::new(serde_json::Value::Null),
+            stellarsolver_profiles: RwSignal::new(Vec::new()),
             guide_preview_url: RwSignal::new(None),
             scheduler_status: RwSignal::new(SchedulerStatusData::default()),
             scheduler_settings: RwSignal::new(serde_json::Value::Null),
@@ -311,12 +317,13 @@ impl DeviceStore {
                     self.focus_hfr_history.set(Vec::new());
                     self.polar_state.set(PolarStateData::default());
                     self.align_settings.set(serde_json::Value::Null);
+                    self.stellarsolver_profiles.set(Vec::new());
                     self.align_solution.set(AlignSolutionData::default());
                     self.align_preview_url.set(None);
                     self.align_frame_pending.set_value(None);
                     self.guide_status.set(None);
                     self.guide_preview_url.set(None);
-                    // guide_settings / guide_options left intact so the
+                    // guide_settings / options left intact so the
                     // Guide tab doesn't flicker between blank and populated
                     // on transient disconnects.
                     self.scheduler_status.set(SchedulerStatusData::default());
@@ -1049,6 +1056,15 @@ impl DeviceStore {
                 self.align_settings.set(payload.clone());
             }
 
+            // The solver option profiles, `{align: [names], focus: [names]}`
+            // (message.cpp:481). Only the Align list is used.
+            "get_stellarsolver_profiles" => {
+                let names = payload["align"].as_array().map(|a| {
+                    a.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                }).unwrap_or_default();
+                self.stellarsolver_profiles.set(names);
+            }
+
             // Align state. KStars emits this from two places:
             //   - setAlignStatus  → {status}
             //   - setAlignSolution → {solution: {ra.Hours, de.Degrees, PA, pix, fov, ...}}
@@ -1197,19 +1213,11 @@ impl DeviceStore {
                 self.guide_settings.set(payload.clone());
             }
 
-            // Reply to option_get — array of {name, value}. Walk it and
-            // cache any guide-relevant keys. Ignore other keys so we don't
-            // stomp on future consumers that request their own options.
+            // Reply to option_get — array of {name, value}, merged into the
+            // `options` map so each tab finds what it asked for.
             "option_get" => {
-                const GUIDE_KEYS: &[&str] = &[
-                    "guiderType",
-                    "pHD2Host",
-                    "pHD2Port",
-                    "linGuiderHost",
-                    "linGuiderPort",
-                ];
                 if let Some(arr) = payload.as_array() {
-                    self.guide_options.update(|opt| {
+                    self.options.update(|opt| {
                         let map = match opt {
                             serde_json::Value::Object(m) => m,
                             _ => {
@@ -1225,10 +1233,6 @@ impl DeviceStore {
                                 if let Some(b) = el["value"].as_bool() {
                                     self.flat_sync_focus.set(Some(b));
                                 }
-                                continue;
-                            }
-                            if !GUIDE_KEYS.contains(&name) {
-                                continue;
                             }
                             if let Some(v) = el.get("value") {
                                 map.insert(name.to_string(), v.clone());

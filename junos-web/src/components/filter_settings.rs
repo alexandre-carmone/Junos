@@ -15,14 +15,14 @@
 
 use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::components::filter_offsets::build_offsets_view;
 use crate::components::form::{sheet, CARD, CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, NUM, ROW, SELECT};
 use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::{FilterManagerData, FilterRow, SendCmd};
-use crate::ws_helpers::{send_cmd, send_device_property_set};
+use crate::ws_helpers::{option_get, option_set, send_cmd, send_device_property_set};
 use crate::{FilterCtx, ServiceBusyCtx};
 
 /// KStars' `NULL_FILTER`: no lock.
@@ -137,8 +137,8 @@ fn table_body(ctx: FilterCtx, send: SendCmd, lang: RwSignal<Lang>) -> impl IntoV
     let set_flat = move |on: bool| {
         ctx.flat_sync_focus.set(Some(on));
         let s = send.get_value();
-        send_cmd(&s, "option_set", json!({"options": [{"name": "flatSyncFocus", "value": on}]}));
-        Timeout::new(500, move || send_cmd(&s, "option_get", json!({"options": [{"name": "flatSyncFocus"}]}))).forget();
+        option_set(&s, "flatSyncFocus", Value::Bool(on));
+        Timeout::new(500, move || option_get(&s, &["flatSyncFocus"])).forget();
     };
 
     view! {

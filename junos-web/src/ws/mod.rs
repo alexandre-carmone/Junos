@@ -57,6 +57,7 @@ pub(crate) const BOOTSTRAP_CMDS: &[&str] = &[
     r#"{"type":"capture_get_all_settings","payload":{}}"#,
     r#"{"type":"capture_get_sequences","payload":{}}"#,
     r#"{"type":"align_get_all_settings","payload":{}}"#,
+    r#"{"type":"get_stellarsolver_profiles","payload":{}}"#,
     r#"{"type":"guide_get_all_settings","payload":{}}"#,
     r#"{"type":"mount_get_all_settings","payload":{}}"#,
     r#"{"type":"scheduler_get_all_settings","payload":{}}"#,
@@ -66,13 +67,15 @@ pub(crate) const BOOTSTRAP_CMDS: &[&str] = &[
     // reaches nothing), so the sweep is also how a `{}` answered before the
     // camera's FilterManager existed gets corrected.
     r#"{"type":"fm_get_data","payload":{}}"#,
-    // Guider-backend settings live in global KStars Options::, not in
-    // guide_get_all_settings. See message.cpp:1418. FlatSyncFocus is the
-    // Filter Settings dialog's "flats at the lights' focus" checkbox.
+    // Global KStars Options:: the tabs show, none of them in a module's
+    // `*_get_all_settings`: the guider backend and its hosts (message.cpp:1418),
+    // FlatSyncFocus (the Filter Settings dialog's "flats at the lights'
+    // focus" checkbox), and the plate solver's type, StellarSolver profile
+    // and astrometry hints (read by Align at solve time, align_solver.cpp:553).
     // `option_get` / `option_set` take the Q_PROPERTY name kconfig_compiler
     // generates: the kcfg entry with its first letter lowercased (`PHD2Host`
     // → `pHD2Host`). A wrong name reads null and writes nowhere, silently.
-    r#"{"type":"option_get","payload":{"options":[{"name":"guiderType"},{"name":"pHD2Host"},{"name":"pHD2Port"},{"name":"linGuiderHost"},{"name":"linGuiderPort"},{"name":"flatSyncFocus"}]}}"#,
+    r#"{"type":"option_get","payload":{"options":[{"name":"guiderType"},{"name":"pHD2Host"},{"name":"pHD2Port"},{"name":"linGuiderHost"},{"name":"linGuiderPort"},{"name":"flatSyncFocus"},{"name":"solverType"},{"name":"solveOptionsProfile"},{"name":"astrometryUseImageScale"},{"name":"astrometryUsePosition"},{"name":"astrometryRotatorThreshold"},{"name":"astrometryUseRotator"}]}}"#,
 ];
 
 pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
