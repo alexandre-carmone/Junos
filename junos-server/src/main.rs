@@ -10,6 +10,7 @@ mod kstars_ws;
 mod planning;
 mod proxy;
 mod skymap;
+mod stack;
 mod starfind;
 mod taskqueue;
 mod tls;
@@ -42,6 +43,8 @@ pub struct AppState {
     pub config:      Arc<Config>,
     pub app_manager: AppManager,
     pub skymap:      Arc<skymap::SkymapState>,
+    /// The live stack relay (`stack.rs`), fed by the KStars message handler.
+    pub stack:       stack::StackWatch,
 }
 
 #[tokio::main]
@@ -85,11 +88,15 @@ async fn main() -> anyhow::Result<()> {
     app_manager.scan_existing().await;
     app_manager.clone().start_monitor();
 
+    let stack = stack::StackWatch::new();
+    stack.clone().spawn(hub.clone());
+
     let state = AppState {
         hub,
         config: config.clone(),
         app_manager,
         skymap,
+        stack,
     };
 
     let dist_dir = config.dist_dir.clone();

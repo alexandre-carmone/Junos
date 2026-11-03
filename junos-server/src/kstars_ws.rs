@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::hub::{FrameKind, Hub, Outbound, CMD_CAP};
+use crate::stack::StackWatch;
 use crate::starfind::Star;
 use crate::AppState;
 
@@ -34,8 +35,8 @@ const MAX_MEDIA_FRAME: usize = 64 * 1024 * 1024;
 /// `junos_media_filter`): KStars sends a fixed 1920 px / q90 JPEG
 /// (`media.h:124,128`, no option to lower it), which is 500–900 KB once
 /// base64'd; half the width at q70 is ~6× smaller.
-const LITE_MAX_WIDTH: u32 = 960;
-const LITE_QUALITY: u8 = 70;
+pub(crate) const LITE_MAX_WIDTH: u32 = 960;
+pub(crate) const LITE_QUALITY: u8 = 70;
 
 // ---------------------------------------------------------------------------
 // /message/ekos — text JSON channel
@@ -45,10 +46,10 @@ pub async fn message_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_message(socket, state.hub.clone()))
+    ws.on_upgrade(move |socket| handle_message(socket, state.hub.clone(), state.stack.clone()))
 }
 
-async fn handle_message(socket: WebSocket, hub: Hub) {
+async fn handle_message(socket: WebSocket, hub: Hub, stack: StackWatch) {
     let Some(socket) = ensure_single_message_session(&hub, socket).await else {
         return;
     };
@@ -129,6 +130,9 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
                         // a reconnecting browser recovers them (guide metrics,
                         // FOV geometry, module states).
                         hub.capture(&text).await;
+                        // The live stack relay follows the stacker's state
+                        // and output folder from the same traffic.
+                        stack.observe(&text, &hub).await;
                         hub.broadcast_text(text.to_string());
                     }
                     Some(Ok(Message::Ping(data))) => {
@@ -176,6 +180,7 @@ async fn handle_message(socket: WebSocket, hub: Hub) {
     }
 
     clear_kstars_sender(&hub).await;
+    stack.detach().await;
 
     hub.broadcast_text(connection_state_msg(false, None));
 
@@ -326,6 +331,28 @@ fn decode_media_frame(data: &[u8], want_lite: bool) -> Option<Outbound> {
     Some(Outbound::Preview { kind, full, lite })
 }
 
+/// The `+S` preview of a stacked frame `stack.rs` rendered: the same
+/// `new_preview_image` a media frame becomes, with the lite variant when a
+/// browser asked for one. `seq` makes each uuid new, so the browser's
+/// `<img>` always reloads.
+pub(crate) fn stack_preview(jpeg: &[u8], width: u32, height: u32, seq: u32, file: &str, want_lite: bool) -> Outbound {
+    let metadata = json!({
+        "uuid": format!("+S-{seq}"),
+        "ext": "jpg",
+        "resolution": format!("{width}x{height}"),
+        "size": jpeg.len(),
+        "stacked_frame": file,
+    });
+    let full = preview_json(&metadata, BASE64.encode(jpeg), None, 1.0);
+    let lite = if want_lite {
+        lite_jpeg(jpeg, LITE_MAX_WIDTH, LITE_QUALITY)
+            .map(|(bytes, ratio)| preview_json(&metadata, BASE64.encode(bytes), None, ratio))
+    } else {
+        None
+    };
+    Outbound::Preview { kind: FrameKind::Stack, full, lite }
+}
+
 /// The `new_preview_image` message for one encoding of a frame. `ratio` is
 /// that encoding's width over the full preview's, so the star overlay
 /// measured on the full frame lands on the same stars.
@@ -357,7 +384,7 @@ fn preview_json(metadata: &Value, data_b64: String, overlay: Option<&FocusOverla
 /// Re-encode a preview JPEG at most `max_width` wide and `quality`, for the
 /// low-bandwidth browsers. Returns the bytes and the width ratio to the
 /// original (1.0 when it was already narrow enough and only re-compressed).
-fn lite_jpeg(jpeg: &[u8], max_width: u32, quality: u8) -> Option<(Vec<u8>, f64)> {
+pub(crate) fn lite_jpeg(jpeg: &[u8], max_width: u32, quality: u8) -> Option<(Vec<u8>, f64)> {
     let img = image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg).ok()?;
     let (w, h) = (img.width(), img.height());
     if w == 0 || h == 0 {
@@ -533,6 +560,27 @@ mod tests {
         assert_eq!(scaled["payload"]["star_w"], 100);
         assert_eq!(scaled["payload"]["star_h"], 50);
         assert_eq!(scaled["payload"]["star_scale"], 40.0);
+    }
+
+    #[test]
+    fn stack_preview_is_a_stack_kind_new_preview_image() {
+        let jpeg = {
+            let mut buf = Vec::new();
+            image::GrayImage::from_fn(100, 50, |x, _| image::Luma([x as u8]))
+                .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+                .unwrap();
+            buf
+        };
+        let Outbound::Preview { kind, full, lite } = stack_preview(&jpeg, 100, 50, 3, "stacked_frame_0002.fits", true) else {
+            panic!("not a preview");
+        };
+        assert_eq!(kind, FrameKind::Stack);
+        let full: Value = serde_json::from_str(&full).unwrap();
+        assert_eq!(full["type"], "new_preview_image");
+        assert_eq!(full["payload"]["metadata"]["uuid"], "+S-3");
+        assert_eq!(full["payload"]["metadata"]["resolution"], "100x50");
+        assert_eq!(full["payload"]["metadata"]["stacked_frame"], "stacked_frame_0002.fits");
+        assert!(lite.is_some(), "lite variant requested");
     }
 
     #[test]

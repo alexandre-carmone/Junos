@@ -691,11 +691,23 @@ fn fits_to_dyn_image(bytes: &[u8], max_side: Option<u32>) -> Result<(image::Dyna
         (image::DynamicImage::ImageLuma8(img), false)
     };
 
+    // `thumbnail` fits the box both ways; never upscale a small frame.
     let img = match max_side {
-        Some(m) => img.thumbnail(m, m),
-        None => img,
+        Some(m) if img.width().max(img.height()) > m => img.thumbnail(m, m),
+        _ => img,
     };
     Ok((img, colour))
+}
+
+/// A FITS as a JPEG at most `max_side` px, with its dimensions: the live
+/// stack's preview (`stack.rs`). JPEG whatever the colour, since the lite
+/// re-encode only handles JPEG (`kstars_ws::lite_jpeg`).
+pub(crate) fn fits_to_jpeg(bytes: &[u8], max_side: u32, quality: u8) -> Result<(Vec<u8>, u32, u32), String> {
+    let (img, _) = fits_to_dyn_image(bytes, Some(max_side))?;
+    let mut out = Vec::new();
+    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
+    img.write_with_encoder(enc).map_err(|e| e.to_string())?;
+    Ok((out, img.width(), img.height()))
 }
 
 /// Renvoie `(octets, is_png)` : JPEG pour le mono (comportement historique),
@@ -1040,5 +1052,15 @@ mod tests {
         let (bytes, is_png) = fits_to_image(&fits, None).unwrap();
         assert!(is_png);
         assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
+    }
+
+    #[test]
+    fn fits_to_jpeg_scales_and_reports_the_size() {
+        let fits = make_fits(16, 8, 3, &[]);
+        let (bytes, w, h) = fits_to_jpeg(&fits, 8, 80).unwrap();
+        assert!(bytes.starts_with(&[0xFF, 0xD8, 0xFF]));
+        assert_eq!((w, h), (8, 4));
+        let (_, w, h) = fits_to_jpeg(&make_fits(8, 8, 1, &[]), 1920, 80).unwrap();
+        assert_eq!((w, h), (8, 8));
     }
 }

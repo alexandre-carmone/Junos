@@ -295,6 +295,12 @@ impl Hub {
         }
     }
 
+    /// Forget the latest preview of `kind`: a new live stack starts from
+    /// nothing, and a browser subscribing then must not get the old one.
+    pub async fn clear_preview(&self, kind: FrameKind) {
+        self.replay.lock().await.last_preview.remove(&kind);
+    }
+
     /// The latest preview of `kind`, if KStars has sent one this session.
     pub async fn last_preview(&self, kind: FrameKind) -> Option<Arc<Outbound>> {
         self.replay.lock().await.last_preview.get(&kind).cloned()
