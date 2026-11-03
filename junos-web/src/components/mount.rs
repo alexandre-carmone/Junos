@@ -4,8 +4,10 @@
 //! then cards — Position, Motion, GoTo, Plate solve — in one scrolling column
 //! on phones (two columns from `md`), and a pinned footer with Park / Unpark,
 //! Tracking and Stop, so Stop is always one tap away. Settings (meridian flip,
-//! solver) open as a sheet, each change sent at once; the solver timeline and
-//! log have their own sheet.
+//! solver) open as a sheet, each change sent at once, from the header's gear
+//! or the Plate solve card's; the solver timeline and log have their own
+//! sheet. The post-solve action (Sync / Slew / Nothing) sits on the card, as
+//! on Ekos' Align tab.
 //!
 //! Outbound (browser → KStars), message.cpp::processMountCommands and
 //! ::processAlignCommands:
@@ -501,6 +503,8 @@ pub fn MountTab(
     // Copy handle on `c` for the reactive blocks inside the body (a `move`
     // closure capturing `c` itself would make the body FnOnce).
     let c_sv = StoredValue::new(c.clone());
+    // The Plate solve card's chips; the sheet body takes `c` itself.
+    let c_card = c.clone();
 
     let settings_body = move || {
         let (h1, h2, h3, h4) = (send_hints.clone(), send_hints.clone(), send_hints.clone(), send_hints.clone());
@@ -550,8 +554,6 @@ pub fn MountTab(
                 {section(move || tr().mount_solve_params_solver, false, view! {
                     {num_row(&c, "alignAccuracyThreshold", |t| t.align_accuracy, 1.0, 1200.0, 1.0)}
                     {num_row(&c, "alignSettlingTime", |t| t.mount_solve_settling_ms, 0.0, 15000.0, 100.0)}
-                    <span class=format!("{LABEL} pt-2")>{move || tr().mount_solve_post_action}</span>
-                    {radio_chips(&c, &POST_ACTIONS)}
                     <span class=format!("{LABEL} pt-2")>{move || tr().mount_solve_solver_source}</span>
                     {radio_chips(&c, &SOLVERS)}
                 })}
@@ -758,6 +760,10 @@ pub fn MountTab(
                                     on:click=move |_| log_open.set(true)>
                                 <span class="inline-block w-5 h-5" inner_html=LOG_ICON></span>
                             </button>
+                            <button class="btn-icon shrink-0 text-text-muted" title=move || tr().mount_settings
+                                    on:click=move |_| settings_open.set(true)>
+                                <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
+                            </button>
                         </div>
                         {move || {
                             let tr = tr();
@@ -782,6 +788,10 @@ pub fn MountTab(
                                 }.into_any()
                             })
                         }}
+                        // What KStars does with the solution (Ekos' Sync /
+                        // Slew to Target / Nothing radios), where Ekos puts it.
+                        <span class="text-xs text-text-muted">{move || tr().mount_solve_post_action}</span>
+                        {radio_chips(&c_card, &POST_ACTIONS)}
                         <div class="flex gap-2">
                             <button class="btn btn-ghost h-11 flex-1"
                                     on:click=move |_| if let Some(el) = file_input.get() { el.click() }>
