@@ -124,7 +124,8 @@ pub fn TabContent(
         </Show>
         <Show when=mount_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
-                <MountTab mount=mount solve=solve align_settings=store.align_settings filter_wheel=filter_wheel site=site send=Arc::clone(&send_mount) />
+                <MountTab mount=mount solve=solve align_settings=store.align_settings options=store.options
+                          solver_profiles=store.stellarsolver_profiles filter_wheel=filter_wheel site=site send=Arc::clone(&send_mount) />
             </div>
         </Show>
         <Show when=focus_visible>

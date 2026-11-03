@@ -20,12 +20,19 @@
 //!   - align_solve, align_stop, align_load_and_slew {data: base64, ext}
 //!   - align_set_all_settings {<widgetName>: value} — flat; Align echoes its
 //!     settings back, which refreshes `align_settings`.
-//!   - align_set_astrometry_settings {scale, position, threshold,
-//!     rotator_control} — the handler sets all four `Options::` at once and
-//!     there is no getter, so they are kept here and always sent together.
+//!   - option_set / option_get for what is not an Align widget but a global
+//!     `Options::` entry, read by Align at solve time (align_solver.cpp:553):
+//!     the solver type (`solverType`, the `SSolver::SolverType` index), the
+//!     StellarSolver options profile (`solveOptionsProfile`, an index into
+//!     `get_stellarsolver_profiles`' `align` list — names only, a profile's
+//!     parameters are not reachable over Ekos Live) and the astrometry hints
+//!     (`astrometryUseImageScale`, `astrometryUsePosition`,
+//!     `astrometryRotatorThreshold`, `astrometryUseRotator`). KStars doesn't
+//!     echo `option_set`, so each one is followed by an `option_get`.
 //!
 //! Inbound: new_mount_state (partial payloads), mount_get_all_settings,
-//! new_align_state and align_get_all_settings — all folded by `ws/store.rs`.
+//! new_align_state, align_get_all_settings, option_get and
+//! get_stellarsolver_profiles — all folded by `ws/store.rs`.
 
 use leptos::prelude::*;
 use serde_json::{json, Value};
@@ -34,16 +41,14 @@ use wasm_bindgen::{closure::Closure, JsCast};
 use crate::compat::{FilterWheelSnapshot, MountSnapshot, SiteSnapshot, SolveSnapshot};
 use crate::components::coord_input::{dms_string_to_degrees, hms_string_to_hours, CoordInput, CoordMode};
 use crate::components::filter_settings::{filter_chip, FilterSettingsSheet};
-use crate::components::form::{
-    check_row, setting_row, sheet, CARD, CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, SELECT,
-};
+use crate::components::form::{setting_row, sheet, CARD, CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, SELECT};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::coords::J2000;
 use crate::dom::{event_target_checked, event_target_value};
 use crate::horizon;
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::SendCmd;
-use crate::ws_helpers::{dispatch_setting, send_cmd};
+use crate::ws_helpers::{dispatch_setting, option_get, option_set, send_cmd};
 use crate::Tab;
 
 type LabelFn = fn(&Translations) -> &'static str;
@@ -60,6 +65,20 @@ const POST_ACTIONS: [(&str, LabelFn); 3] = [
 const SOLVERS: [(&str, LabelFn); 2] = [
     ("localSolverR", |t| t.mount_solve_solver_local),
     ("remoteSolverR", |t| t.mount_solve_solver_remote),
+];
+/// `Options::solverType` values, in `SSolver::SolverType` order (the
+/// `kcfg_SolverType` combo of opsalign.ui).
+const SOLVER_TYPES: [LabelFn; 5] = [
+    |t| t.mount_solver_type_internal,
+    |t| t.mount_solver_type_astrometry,
+    |t| t.mount_solver_type_astap,
+    |t| t.mount_solver_type_watney,
+    |t| t.mount_solver_type_online,
+];
+/// The global `Options::` this tab shows; re-read after each `option_set`.
+const MOUNT_OPTIONS: &[&str] = &[
+    "solverType", "solveOptionsProfile",
+    "astrometryUseImageScale", "astrometryUsePosition", "astrometryRotatorThreshold", "astrometryUseRotator",
 ];
 
 /// Wide enough for the value beside Firefox's spinner (form.rs' NUM isn't).
@@ -177,13 +196,26 @@ fn section(title: impl Fn() -> &'static str + Send + 'static, open: bool, body: 
     }
 }
 
-// ── Align settings rows ───────────────────────────────────────────────────────
+// ── Settings rows ─────────────────────────────────────────────────────────────
 
-/// What every align settings row needs.
+/// Where a settings key lives.
+#[derive(Clone, Copy)]
+enum Src {
+    /// An Align widget: `align_set_all_settings`, echoed back by KStars.
+    Align,
+    /// A global `Options::` entry: `option_set`, then `option_get` since
+    /// KStars doesn't echo it.
+    Option,
+}
+
+/// What every settings row needs.
 #[derive(Clone)]
 struct Ctx {
     send: SendCmd,
+    /// The Align widget map (`align_get_all_settings`).
     align: Memo<Value>,
+    /// The global `Options::` map (`option_get`).
+    options: Memo<Value>,
     lang: RwSignal<Lang>,
 }
 
@@ -193,12 +225,25 @@ impl Ctx {
         move || label(t(lang.get()))
     }
 
-    fn set(&self, key: &str, value: Value) {
-        dispatch_setting(&self.send, "align_set_all_settings", None, key, value);
+    fn map(&self, src: Src) -> Memo<Value> {
+        match src {
+            Src::Align => self.align,
+            Src::Option => self.options,
+        }
     }
 
-    fn str_of(&self, key: &str) -> String {
-        self.align.with(|s| match s.get(key) {
+    fn set(&self, src: Src, key: &str, value: Value) {
+        match src {
+            Src::Align => dispatch_setting(&self.send, "align_set_all_settings", None, key, value),
+            Src::Option => {
+                option_set(&self.send, key, value);
+                option_get(&self.send, MOUNT_OPTIONS);
+            }
+        }
+    }
+
+    fn str_of(&self, src: Src, key: &str) -> String {
+        self.map(src).with(|s| match s.get(key) {
             Some(Value::String(v)) => v.clone(),
             Some(Value::Number(n)) => n.to_string(),
             _ => String::new(),
@@ -207,36 +252,36 @@ impl Ctx {
 }
 
 /// Number row; a whole `step` sends an integer (QSpinBox), else a float.
-fn num_row(c: &Ctx, key: &'static str, label: LabelFn, min: f64, max: f64, step: f64) -> impl IntoView + use<> {
-    let (cc, align) = (c.clone(), c.align);
+fn num_row(c: &Ctx, src: Src, key: &'static str, label: LabelFn, min: f64, max: f64, step: f64) -> impl IntoView + use<> {
+    let (cc, map) = (c.clone(), c.map(src));
     let int = step.fract() == 0.0;
     setting_row(c.label(label), view! {
         <input type="number" inputmode="decimal" class=NUM
                min=min.to_string() max=max.to_string() step=step.to_string()
-               prop:value=move || align.with(|s| s.get(key).and_then(Value::as_f64).map(|v| v.to_string()).unwrap_or_default())
+               prop:value=move || map.with(|s| s.get(key).and_then(Value::as_f64).map(|v| v.to_string()).unwrap_or_default())
                on:change=move |ev| {
                    let Ok(v) = event_target_value(&ev).parse::<f64>() else { return };
                    let v = v.clamp(min, max);
-                   cc.set(key, if int { Value::from(v.round() as i64) } else { Value::from(v) });
+                   cc.set(src, key, if int { Value::from(v.round() as i64) } else { Value::from(v) });
                } />
     })
 }
 
-fn bool_row(c: &Ctx, key: &'static str, label: LabelFn) -> impl IntoView + use<> {
-    let (cc, align) = (c.clone(), c.align);
+fn bool_row(c: &Ctx, src: Src, key: &'static str, label: LabelFn) -> impl IntoView + use<> {
+    let (cc, map) = (c.clone(), c.map(src));
     view! {
         <label class="flex items-center gap-3 min-h-[44px] md:min-h-9 cursor-pointer">
             <input type="checkbox" class=CHECK
-                   prop:checked=move || align.with(|s| s.get(key).and_then(Value::as_bool).unwrap_or(false))
-                   on:change=move |ev| cc.set(key, Value::Bool(event_target_checked(&ev))) />
+                   prop:checked=move || map.with(|s| s.get(key).and_then(Value::as_bool).unwrap_or(false))
+                   on:change=move |ev| cc.set(src, key, Value::Bool(event_target_checked(&ev))) />
             <span class=LABEL>{c.label(label)}</span>
         </label>
     }
 }
 
-/// Combo row; the current value is kept selectable when it isn't offered
-/// (blank while unset).
-fn select_row<F>(c: &Ctx, key: &'static str, label: LabelFn, options: F) -> impl IntoView + use<F>
+/// Combo row sending its text (a QComboBox); the current value is kept
+/// selectable when it isn't offered (blank while unset).
+fn select_row<F>(c: &Ctx, src: Src, key: &'static str, label: LabelFn, options: F) -> impl IntoView + use<F>
 where
     F: Fn() -> Vec<String> + Send + 'static,
 {
@@ -244,10 +289,10 @@ where
     setting_row(c.label(label), view! {
         <select class=SELECT on:change=move |ev| {
             let v = event_target_value(&ev);
-            if !v.is_empty() { cc.set(key, Value::String(v)); }
+            if !v.is_empty() { cc.set(src, key, Value::String(v)); }
         }>
             {move || {
-                let cur = cs.str_of(key);
+                let cur = cs.str_of(src, key);
                 let mut opts = options();
                 if !opts.contains(&cur) { opts.insert(0, cur.clone()); }
                 opts.into_iter().map(|o| {
@@ -259,12 +304,33 @@ where
     })
 }
 
-fn text_row(c: &Ctx, key: &'static str, label: LabelFn) -> impl IntoView + use<> {
+/// Combo row sending the picked index (a `UInt` `Options::` entry whose
+/// values are a fixed list).
+fn index_row<F>(c: &Ctx, key: &'static str, label: LabelFn, options: F) -> impl IntoView + use<F>
+where
+    F: Fn() -> Vec<String> + Send + 'static,
+{
+    let (cc, map) = (c.clone(), c.options);
+    setting_row(c.label(label), view! {
+        <select class=SELECT on:change=move |ev| {
+            if let Ok(i) = event_target_value(&ev).parse::<u64>() { cc.set(Src::Option, key, Value::from(i)); }
+        }>
+            {move || {
+                let cur = map.with(|s| s.get(key).and_then(Value::as_f64)).unwrap_or(0.0) as usize;
+                options().into_iter().enumerate().map(|(i, text)| {
+                    view! { <option value=i.to_string() prop:selected=move || i == cur>{text}</option> }
+                }).collect::<Vec<_>>()
+            }}
+        </select>
+    })
+}
+
+fn text_row(c: &Ctx, src: Src, key: &'static str, label: LabelFn) -> impl IntoView + use<> {
     let (cc, cs) = (c.clone(), c.clone());
     setting_row(c.label(label), view! {
         <input type="text" class="input input--sm font-mono w-[104px] shrink-0 max-md:h-9"
-               prop:value=move || cs.str_of(key)
-               on:change=move |ev| cc.set(key, Value::String(event_target_value(&ev).trim().to_string())) />
+               prop:value=move || cs.str_of(src, key)
+               on:change=move |ev| cc.set(src, key, Value::String(event_target_value(&ev).trim().to_string())) />
     })
 }
 
@@ -300,6 +366,10 @@ pub fn MountTab(
     mount: Signal<MountSnapshot>,
     solve: Signal<SolveSnapshot>,
     align_settings: RwSignal<Value>,
+    /// Global `Options::` entries (`DeviceStore::options`).
+    options: RwSignal<Value>,
+    /// The StellarSolver profile names Align can solve with.
+    solver_profiles: RwSignal<Vec<String>>,
     filter_wheel: Signal<FilterWheelSnapshot>,
     /// The observer site, for the horizon-mask check before a GoTo.
     site: Signal<SiteSnapshot>,
@@ -321,6 +391,7 @@ pub fn MountTab(
     let flip_on = Memo::new(move |_| snap.with(|m| m.meridian_flip_enabled.unwrap_or(false)));
     let flip_offset = Memo::new(move |_| snap.with(|m| m.meridian_flip_offset_deg));
     let align = Memo::new(move |_| align_settings.get());
+    let opts = Memo::new(move |_| options.get());
     let solve_status = Memo::new(move |_| solve.with(|s| s.status.clone().unwrap_or_default()));
     let solving = move || solve_status.with(|s| align_busy(s));
 
@@ -487,19 +558,7 @@ pub fn MountTab(
     };
     let set_flip = set_mount.clone();
     let set_offset = set_mount.clone();
-    // Astrometry hints, seeded with the kstars.kcfg defaults.
-    let hint_scale = RwSignal::new(true);
-    let hint_position = RwSignal::new(true);
-    let hint_threshold = RwSignal::new(30_i64);
-    let hint_rotator = RwSignal::new(true);
-    let s_hints = send.clone();
-    let send_hints = move || send_cmd(&s_hints, "align_set_astrometry_settings", json!({
-        "scale":           hint_scale.get_untracked(),
-        "position":        hint_position.get_untracked(),
-        "threshold":       hint_threshold.get_untracked(),
-        "rotator_control": hint_rotator.get_untracked(),
-    }));
-    let c = Ctx { send: send.clone(), align, lang };
+    let c = Ctx { send: send.clone(), align, options: opts, lang };
     // Copy handle on `c` for the reactive blocks inside the body (a `move`
     // closure capturing `c` itself would make the body FnOnce).
     let c_sv = StoredValue::new(c.clone());
@@ -507,7 +566,6 @@ pub fn MountTab(
     let c_card = c.clone();
 
     let settings_body = move || {
-        let (h1, h2, h3, h4) = (send_hints.clone(), send_hints.clone(), send_hints.clone(), send_hints.clone());
         let (set_flip, set_offset) = (set_flip.clone(), set_offset.clone());
         view! {
             <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 \
@@ -530,15 +588,15 @@ pub fn MountTab(
                     })}
                 })}
                 {section(move || tr().mount_solve_params_capture, true, view! {
-                    {num_row(&c, "alignExposure", |t| t.align_exposure, 0.1, 300.0, 0.1)}
-                    {select_row(&c, "alignBinning", |t| t.mount_solve_binning,
+                    {num_row(&c, Src::Align, "alignExposure", |t| t.align_exposure, 0.1, 300.0, 0.1)}
+                    {select_row(&c, Src::Align, "alignBinning", |t| t.mount_solve_binning,
                                 || BINNING_OPTIONS.map(String::from).to_vec())}
                     // The solve filter: whatever the wheel sits on, or a fixed
                     // one. Either way KStars applies it (with its offset, no
                     // autofocus) when it next captures — nothing moves here.
-                    {bool_row(&c, "alignUseCurrentFilter", |t| t.mount_solve_use_current_filter)}
+                    {bool_row(&c, Src::Align, "alignUseCurrentFilter", |t| t.mount_solve_use_current_filter)}
                     <Show when=move || !align.with(|s| s["alignUseCurrentFilter"].as_bool().unwrap_or(false))>
-                        {select_row(&c_sv.get_value(), "alignFilter", |t| t.mount_solve_filter,
+                        {select_row(&c_sv.get_value(), Src::Align, "alignFilter", |t| t.mount_solve_filter,
                                     move || filter_wheel.with(|f| f.filter_names.clone()))}
                     </Show>
                     <Show when=move || filter_wheel.with(|f| !f.filter_names.is_empty())>
@@ -547,29 +605,28 @@ pub fn MountTab(
                             {move || tr().fw_config_title}
                         </button>
                     </Show>
-                    {num_row(&c, "alignGain", |t| t.mount_solve_gain, 0.0, 10000.0, 0.1)}
-                    {text_row(&c, "alignISO", |t| t.mount_solve_iso)}
-                    {bool_row(&c, "alignDarkFrame", |t| t.mount_solve_dark_frame)}
+                    {num_row(&c, Src::Align, "alignGain", |t| t.mount_solve_gain, 0.0, 10000.0, 0.1)}
+                    {text_row(&c, Src::Align, "alignISO", |t| t.mount_solve_iso)}
+                    {bool_row(&c, Src::Align, "alignDarkFrame", |t| t.mount_solve_dark_frame)}
                 })}
                 {section(move || tr().mount_solve_params_solver, false, view! {
-                    {num_row(&c, "alignAccuracyThreshold", |t| t.align_accuracy, 1.0, 1200.0, 1.0)}
-                    {num_row(&c, "alignSettlingTime", |t| t.mount_solve_settling_ms, 0.0, 15000.0, 100.0)}
                     <span class=format!("{LABEL} pt-2")>{move || tr().mount_solve_solver_source}</span>
                     {radio_chips(&c, &SOLVERS)}
+                    {index_row(&c, "solverType", |t| t.mount_solve_solver_type,
+                               move || SOLVER_TYPES.map(|l| l(tr()).to_string()).to_vec())}
+                    // The profile list needs Ekos started; nothing to pick before.
+                    <Show when=move || solver_profiles.with(|p| !p.is_empty())>
+                        {index_row(&c_sv.get_value(), "solveOptionsProfile", |t| t.mount_solve_solver_profile,
+                                   move || solver_profiles.get())}
+                    </Show>
+                    {num_row(&c, Src::Align, "alignAccuracyThreshold", |t| t.align_accuracy, 1.0, 1200.0, 1.0)}
+                    {num_row(&c, Src::Align, "alignSettlingTime", |t| t.mount_solve_settling_ms, 0.0, 15000.0, 100.0)}
                 })}
                 {section(move || tr().mount_solve_params_astrometry, false, view! {
-                    {check_row(hint_scale, move || tr().mount_solve_use_scale, move |_| h1())}
-                    {check_row(hint_position, move || tr().mount_solve_use_position, move |_| h2())}
-                    {setting_row(move || tr().mount_solve_rotator_threshold, view! {
-                        <input type="number" inputmode="numeric" min="0" step="1" class=NUM
-                               prop:value=move || hint_threshold.get().to_string()
-                               on:change=move |ev| {
-                                   let Ok(v) = event_target_value(&ev).parse::<i64>() else { return };
-                                   hint_threshold.set(v.max(0));
-                                   h3();
-                               } />
-                    })}
-                    {check_row(hint_rotator, move || tr().mount_solve_rotator_control, move |_| h4())}
+                    {bool_row(&c, Src::Option, "astrometryUseImageScale", |t| t.mount_solve_use_scale)}
+                    {bool_row(&c, Src::Option, "astrometryUsePosition", |t| t.mount_solve_use_position)}
+                    {num_row(&c, Src::Option, "astrometryRotatorThreshold", |t| t.mount_solve_rotator_threshold, 0.0, 360.0, 1.0)}
+                    {bool_row(&c, Src::Option, "astrometryUseRotator", |t| t.mount_solve_rotator_control)}
                 })}
             </div>
         }

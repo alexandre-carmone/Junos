@@ -196,7 +196,9 @@ translations! {
     mount_solve_binning, mount_solve_filter, mount_solve_iso, mount_solve_gain,
     mount_solve_dark_frame, mount_solve_settling_ms, mount_solve_solver_source,
     mount_solve_solver_local, mount_solve_solver_remote, mount_solve_rotator_threshold,
-    mount_solve_rotator_control,
+    mount_solve_rotator_control, mount_solve_solver_type, mount_solve_solver_profile,
+    mount_solver_type_internal, mount_solver_type_astrometry, mount_solver_type_astap,
+    mount_solver_type_watney, mount_solver_type_online,
     // Plate-solve process overlay (Mount tab)
     mount_solve_process, mount_solve_timeline, mount_solve_log, mount_solve_no_log,
     mount_solve_download, mount_settings,
