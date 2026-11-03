@@ -7,6 +7,8 @@
 //! - `GET /thumb?path=<rel>&size=N` — JPEG thumbnail (cached on disk).
 //! - `GET /raw?path=<rel>[&as=preview]` — original bytes, or full-res JPEG
 //!   for FITS when `as=preview`.
+//! - `GET /download`, `POST /rename`, `DELETE /delete`, `GET /resolve?abs=`,
+//!   `POST /mkdir {path}` — see each handler.
 //!
 //! All paths are resolved relative to `Config::resolved_captures_dir()`. After
 //! joining we `canonicalize()` and reject any path that doesn't stay inside
@@ -888,6 +890,42 @@ pub async fn delete(
     }
 
     Ok(Json(json!({ "ok": true })))
+}
+
+// ── /mkdir ───────────────────────────────────────────────────────────────────
+//
+// Creates a folder (and its parents) inside the captures root. The Imaging
+// tab's live stack needs its stacking folder before `livestacker_start`:
+// KStars' `FITSDirWatcher` fails silently on a missing one and only creates
+// the *output* folder itself (`fitsview.cpp:809`). Idempotent.
+
+#[derive(Debug, Deserialize)]
+pub struct MkdirBody {
+    pub path: String,
+}
+
+pub async fn mkdir(
+    State(state): State<AppState>,
+    Json(body): Json<MkdirBody>,
+) -> Result<Json<Value>, StatusCode> {
+    let root = captures_root(&state).map_err(|e| e.status)?;
+    let rel = Path::new(body.path.trim_start_matches(['/', '\\']));
+    if rel.as_os_str().is_empty()
+        || !rel.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let target = root.join(rel);
+    std::fs::create_dir_all(&target).map_err(|e| {
+        warn!("mkdir {} failed: {e}", target.display());
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    // A symlink among the parents could have led outside; check the result.
+    let canonical = target.canonicalize().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !canonical.starts_with(&root) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    Ok(Json(json!({ "ok": true, "path": relative_to(&root, &canonical) })))
 }
 
 // ── /resolve ─────────────────────────────────────────────────────────────────
