@@ -336,3 +336,8 @@ without a map.
 - Both crates build warning-free; keep it that way. Where a struct mirrors a wire shape (`ws/types.rs`, `catalog.rs`, `files/types.rs`) or declares strings ahead of the UI (`i18n`), it carries one `#[allow(dead_code)]` and a comment saying why — annotate rather than prune those.
 - Debug traces go through `debug_log!`, not `leptos::logging::log!` directly, so they stay out of release builds.
 - Tab components should take only the specific signals they need plus `SendCmd`, never `DeviceStore` whole. Use Leptos context only for values that need to cross many components (see `*Ctx` newtypes in `main.rs`).
+
+## Working rules
+
+- **Keep it simple.** Don't over-engineer: the smallest code that does the job, plain comments, plain docs. No abstractions, options or generality beyond what the request needs.
+- **Structure the work as several commits.** The code is reviewed commit by commit: one logical change per commit (e.g. store/wire first, then the UI, then docs), each building and warning-free on its own, with a clear message.
