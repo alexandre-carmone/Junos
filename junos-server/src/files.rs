@@ -526,25 +526,27 @@ fn parse_fits_meta(rows: &[FitsCard]) -> Value {
 
 // ── FITS pixel decode → image (auto-stretched) ──────────────────────────────
 //
-// Renvoie `(octets, is_png)`. Les FITS mono sont auto-étirés en niveaux de gris
-// et encodés en JPEG (comportement historique). Les FITS OSC (mosaïque de Bayer,
-// carte `BAYERPAT` présente) sont débayerisés en couleur et encodés en PNG pour
-// éviter les artefacts JPEG sur des données fortement étirées.
+// Les FITS mono sont auto-étirés en niveaux de gris ; les FITS OSC (mosaïque
+// de Bayer, carte `BAYERPAT` présente) sont débayerisés et les cubes RGB
+// (NAXIS3 = 3, les empilements couleur du Live Stacker) rendus en couleur.
 
-/// Decoded first image plane of a FITS: pixel values as `f32` (BZERO/BSCALE
-/// applied), the plane dimensions, the parsed header, and NAXIS. Used by the
-/// preview renderer (`fits_to_image`).
+/// Decoded image planes of a FITS: pixel values as `f32` (BZERO/BSCALE
+/// applied), plane after plane, the plane dimensions, the number of planes
+/// read (1, or 3 for an RGB cube), the parsed header, and NAXIS. Used by the
+/// preview renderer (`fits_to_dyn_image`).
 struct FitsPlane {
     floats: Vec<f32>,
     w: usize,
     h: usize,
+    planes: usize,
     rows: Vec<FitsCard>,
     naxis: i64,
 }
 
-/// Parse the header and decode the first 2D image plane into `f32`. For NAXIS≥3
-/// cubes this reads only the first plane (`w*h` samples). Bayer data is left as
-/// the raw mosaic — callers that want colour debayer it themselves.
+/// Parse the header and decode the image into `f32`: the first 2D plane, or
+/// the three planes of a NAXIS≥3 cube with `NAXIS3 = 3` (an RGB image, as
+/// KStars' Live Stacker writes its colour stacks). Bayer data is left as the
+/// raw mosaic — callers that want colour debayer it themselves.
 fn decode_fits_plane(bytes: &[u8]) -> Result<FitsPlane, String> {
     let rows = parse_fits_header(bytes)?;
 
@@ -553,6 +555,7 @@ fn decode_fits_plane(bytes: &[u8]) -> Result<FitsPlane, String> {
     if naxis < 2 { return Err("not a 2D image".into()); }
     let w = header_i64(&rows, "NAXIS1").ok_or("missing NAXIS1")? as usize;
     let h = header_i64(&rows, "NAXIS2").ok_or("missing NAXIS2")? as usize;
+    let planes = if naxis >= 3 && header_i64(&rows, "NAXIS3") == Some(3) { 3 } else { 1 };
     let bzero  = header_f64(&rows, "BZERO").unwrap_or(0.0);
     let bscale = header_f64(&rows, "BSCALE").unwrap_or(1.0);
 
@@ -561,15 +564,15 @@ fn decode_fits_plane(bytes: &[u8]) -> Result<FitsPlane, String> {
     let data_start = ((header_end + FITS_BLOCK - 1) / FITS_BLOCK) * FITS_BLOCK;
 
     let bytes_per_px = (bitpix.unsigned_abs() as usize) / 8;
-    let plane_pixels = w * h;
-    let need = data_start + plane_pixels * bytes_per_px;
+    let samples = w * h * planes;
+    let need = data_start + samples * bytes_per_px;
     if bytes.len() < need {
         return Err(format!("truncated: need {need} have {}", bytes.len()));
     }
     let raw = &bytes[data_start..need];
 
     // Convert into f32 with BZERO/BSCALE applied.
-    let mut floats: Vec<f32> = Vec::with_capacity(plane_pixels);
+    let mut floats: Vec<f32> = Vec::with_capacity(samples);
     match bitpix {
         8 => {
             for &b in raw {
@@ -606,11 +609,48 @@ fn decode_fits_plane(bytes: &[u8]) -> Result<FitsPlane, String> {
         other => return Err(format!("unsupported BITPIX {other}")),
     }
 
-    Ok(FitsPlane { floats, w, h, rows, naxis })
+    Ok(FitsPlane { floats, w, h, planes, rows, naxis })
 }
 
-fn fits_to_image(bytes: &[u8], max_side: Option<u32>) -> Result<(Vec<u8>, bool), String> {
-    let FitsPlane { floats, w, h, rows, naxis } = decode_fits_plane(bytes)?;
+/// Auto-étirement par canal d'une image RGB entrelacée (clip par centiles) :
+/// approxime une balance des blancs, sinon les données OSC (vert dominant)
+/// tirent vers le vert.
+fn stretch_rgb(rgb: &[f32], w: usize, h: usize) -> Result<image::RgbImage, String> {
+    let npx = w * h;
+    let mut chan: [Vec<f32>; 3] = [
+        Vec::with_capacity(npx),
+        Vec::with_capacity(npx),
+        Vec::with_capacity(npx),
+    ];
+    for px in rgb.chunks_exact(3) {
+        chan[0].push(px[0]);
+        chan[1].push(px[1]);
+        chan[2].push(px[2]);
+    }
+    let ranges: Vec<(f32, f32)> = chan
+        .iter()
+        .map(|c| {
+            let (lo, hi) = percentile_range(c, 0.02, 0.995);
+            (lo, (hi - lo).max(1e-6))
+        })
+        .collect();
+
+    let mut u8buf = vec![0u8; npx * 3];
+    for (dst, src) in u8buf.chunks_exact_mut(3).zip(rgb.chunks_exact(3)) {
+        for c in 0..3 {
+            let (lo, span) = ranges[c];
+            let n = ((src[c] - lo) / span).clamp(0.0, 1.0);
+            dst[c] = (n * 255.0) as u8;
+        }
+    }
+    image::RgbImage::from_raw(w as u32, h as u32, u8buf).ok_or_else(|| "image build failed".into())
+}
+
+/// The auto-stretched picture of a FITS, at most `max_side` px when given:
+/// RGB (`true`) for a Bayer mosaic (débayerisation super-pixel 2×2, w/2 ×
+/// h/2) or a three-plane cube, grey otherwise.
+fn fits_to_dyn_image(bytes: &[u8], max_side: Option<u32>) -> Result<(image::DynamicImage, bool), String> {
+    let FitsPlane { floats, w, h, planes, rows, naxis } = decode_fits_plane(bytes)?;
     let plane_pixels = w * h;
 
     // Motif de Bayer : présent ⇒ image couleur OSC à débayeriser. On ne tente
@@ -623,75 +663,48 @@ fn fits_to_image(bytes: &[u8], max_side: Option<u32>) -> Result<(Vec<u8>, bool),
             .filter(|p| matches!(p.as_str(), "RGGB" | "BGGR" | "GRBG" | "GBRG"))
     };
 
-    if let Some(pat) = pattern {
-        // ── Couleur : débayerisation super-pixel 2×2 → RGB (w/2 × h/2). ──
-        let (rgb, cw, ch) = debayer_superpixel(&floats, w, h, &pat);
-        let npx = cw * ch;
-
-        // Auto-étirement par canal : approxime une balance des blancs, sinon
-        // les données OSC (vert dominant) tirent vers le vert.
-        let mut chan: [Vec<f32>; 3] = [
-            Vec::with_capacity(npx),
-            Vec::with_capacity(npx),
-            Vec::with_capacity(npx),
-        ];
-        for px in rgb.chunks_exact(3) {
-            chan[0].push(px[0]);
-            chan[1].push(px[1]);
-            chan[2].push(px[2]);
-        }
-        let ranges: Vec<(f32, f32)> = chan
-            .iter()
-            .map(|c| {
-                let (lo, hi) = percentile_range(c, 0.02, 0.995);
-                (lo, (hi - lo).max(1e-6))
-            })
-            .collect();
-
-        let mut u8buf = vec![0u8; npx * 3];
-        for (dst, src) in u8buf.chunks_exact_mut(3).zip(rgb.chunks_exact(3)) {
-            for c in 0..3 {
-                let (lo, span) = ranges[c];
-                let n = ((src[c] - lo) / span).clamp(0.0, 1.0);
-                dst[c] = (n * 255.0) as u8;
+    let (img, colour) = if planes == 3 {
+        // ── Cube RGB planaire → entrelacé. ──
+        let mut rgb = vec![0f32; plane_pixels * 3];
+        for c in 0..3 {
+            for (i, &v) in floats[c * plane_pixels..(c + 1) * plane_pixels].iter().enumerate() {
+                rgb[i * 3 + c] = v;
             }
         }
-
-        let img = image::RgbImage::from_raw(cw as u32, ch as u32, u8buf)
+        (image::DynamicImage::ImageRgb8(stretch_rgb(&rgb, w, h)?), true)
+    } else if let Some(pat) = pattern {
+        let (rgb, cw, ch) = debayer_superpixel(&floats, w, h, &pat);
+        (image::DynamicImage::ImageRgb8(stretch_rgb(&rgb, cw, ch)?), true)
+    } else {
+        // ── Mono : auto-stretch via percentile clip sur une vue sous-échantillonnée.
+        let (lo, hi) = percentile_range(&floats, 0.02, 0.995);
+        let span = (hi - lo).max(1e-6);
+        let mut u8buf = vec![0u8; plane_pixels];
+        for (dst, &v) in u8buf.iter_mut().zip(floats.iter()) {
+            let n = ((v - lo) / span).clamp(0.0, 1.0);
+            *dst = (n * 255.0) as u8;
+        }
+        let img = image::GrayImage::from_raw(w as u32, h as u32, u8buf)
             .ok_or("image build failed")?;
-        let dyn_img = image::DynamicImage::ImageRgb8(img);
-        let final_img = match max_side {
-            Some(m) => dyn_img.thumbnail(m, m),
-            None => dyn_img,
-        };
-        let mut out = Vec::new();
-        final_img
-            .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
-            .map_err(|e| e.to_string())?;
-        return Ok((out, true));
-    }
-
-    // ── Mono : auto-stretch via percentile clip sur une vue sous-échantillonnée.
-    let (lo, hi) = percentile_range(&floats, 0.02, 0.995);
-    let span = (hi - lo).max(1e-6);
-    let mut u8buf = vec![0u8; plane_pixels];
-    for (dst, &v) in u8buf.iter_mut().zip(floats.iter()) {
-        let n = ((v - lo) / span).clamp(0.0, 1.0);
-        *dst = (n * 255.0) as u8;
-    }
-
-    let img = image::GrayImage::from_raw(w as u32, h as u32, u8buf)
-        .ok_or("image build failed")?;
-    let dyn_img = image::DynamicImage::ImageLuma8(img);
-    let final_img = match max_side {
-        Some(m) => dyn_img.thumbnail(m, m),
-        None => dyn_img,
+        (image::DynamicImage::ImageLuma8(img), false)
     };
+
+    let img = match max_side {
+        Some(m) => img.thumbnail(m, m),
+        None => img,
+    };
+    Ok((img, colour))
+}
+
+/// Renvoie `(octets, is_png)` : JPEG pour le mono (comportement historique),
+/// PNG pour la couleur, pour éviter les artefacts JPEG sur des données
+/// fortement étirées.
+fn fits_to_image(bytes: &[u8], max_side: Option<u32>) -> Result<(Vec<u8>, bool), String> {
+    let (img, colour) = fits_to_dyn_image(bytes, max_side)?;
+    let format = if colour { image::ImageFormat::Png } else { image::ImageFormat::Jpeg };
     let mut out = Vec::new();
-    final_img
-        .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Jpeg)
-        .map_err(|e| e.to_string())?;
-    Ok((out, false))
+    img.write_to(&mut Cursor::new(&mut out), format).map_err(|e| e.to_string())?;
+    Ok((out, colour))
 }
 
 /// Débayerisation « super-pixel » : chaque cellule de Bayer 2×2 donne un pixel
@@ -929,8 +942,9 @@ pub async fn resolve_abs(
 mod tests {
     use super::*;
 
-    /// Build a minimal 8-bit 2D FITS with the given extra cards.
-    fn make_fits(w: usize, h: usize, extra: &[(&str, &str)]) -> Vec<u8> {
+    /// Build a minimal 8-bit FITS, a 2D image or a cube of `planes`, with
+    /// the given extra cards.
+    fn make_fits(w: usize, h: usize, planes: usize, extra: &[(&str, &str)]) -> Vec<u8> {
         fn card(key: &str, value: &str) -> Vec<u8> {
             let text = format!("{key:<8}= {value}");
             let mut rec = text.into_bytes();
@@ -940,9 +954,12 @@ mod tests {
         let mut hdr = Vec::new();
         hdr.extend(card("SIMPLE", "T"));
         hdr.extend(card("BITPIX", "8"));
-        hdr.extend(card("NAXIS", "2"));
+        hdr.extend(card("NAXIS", if planes > 1 { "3" } else { "2" }));
         hdr.extend(card("NAXIS1", &w.to_string()));
         hdr.extend(card("NAXIS2", &h.to_string()));
+        if planes > 1 {
+            hdr.extend(card("NAXIS3", &planes.to_string()));
+        }
         for (k, v) in extra {
             hdr.extend(card(k, v));
         }
@@ -953,7 +970,7 @@ mod tests {
         let pad = (hdr.len() + FITS_BLOCK - 1) / FITS_BLOCK * FITS_BLOCK - hdr.len();
         hdr.extend(std::iter::repeat(b' ').take(pad));
         // Ramp pixel data, padded to a full block.
-        let mut data: Vec<u8> = (0..w * h).map(|i| (i % 256) as u8).collect();
+        let mut data: Vec<u8> = (0..w * h * planes).map(|i| (i % 256) as u8).collect();
         let dpad = (data.len() + FITS_BLOCK - 1) / FITS_BLOCK * FITS_BLOCK - data.len();
         data.extend(std::iter::repeat(0u8).take(dpad));
         hdr.extend(data);
@@ -962,7 +979,7 @@ mod tests {
 
     #[test]
     fn mono_fits_renders_jpeg() {
-        let fits = make_fits(8, 8, &[]);
+        let fits = make_fits(8, 8, 1, &[]);
         let (bytes, is_png) = fits_to_image(&fits, None).unwrap();
         assert!(!is_png);
         assert!(bytes.starts_with(&[0xFF, 0xD8, 0xFF])); // JPEG SOI
@@ -970,9 +987,20 @@ mod tests {
 
     #[test]
     fn bayer_fits_debayers_to_png() {
-        let fits = make_fits(8, 8, &[("BAYERPAT", "'RGGB    '")]);
+        let fits = make_fits(8, 8, 1, &[("BAYERPAT", "'RGGB    '")]);
         let (bytes, is_png) = fits_to_image(&fits, None).unwrap();
         assert!(is_png);
         assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G'])); // PNG signature
+    }
+
+    #[test]
+    fn rgb_cube_fits_renders_colour() {
+        let fits = make_fits(8, 8, 3, &[]);
+        let (img, colour) = fits_to_dyn_image(&fits, None).unwrap();
+        assert!(colour);
+        assert_eq!((img.width(), img.height()), (8, 8));
+        let (bytes, is_png) = fits_to_image(&fits, None).unwrap();
+        assert!(is_png);
+        assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
     }
 }

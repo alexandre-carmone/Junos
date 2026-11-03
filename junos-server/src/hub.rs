@@ -18,19 +18,23 @@ const BROADCAST_CAP: usize = 512;
 
 /// Which Ekos view a preview frame belongs to, from the media uuid prefix
 /// (`kstars/ekos/ekoslive/media.cpp:752-753`, `:587`): `+F` focus, `+A`
-/// align / polar align, `+G` guide, anything else the capture preview. The
-/// browser subscribes per kind (`proxy.rs`, `junos_media_filter`) so a phone
-/// on the Profiles tab is not sent every guide frame.
+/// align / polar align, `+G` guide, anything else the capture preview — plus
+/// `+S`, the live stack the relay itself publishes (`stack.rs`). The browser
+/// subscribes per kind (`proxy.rs`, `junos_media_filter`) so a phone on the
+/// Profiles tab is not sent every guide frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FrameKind {
     Focus,
     Align,
     Guide,
     Capture,
+    /// The live stack, read from KStars' output folder by `stack.rs` — never
+    /// a KStars media frame.
+    Stack,
 }
 
 impl FrameKind {
-    pub const ALL: [FrameKind; 4] = [Self::Focus, Self::Align, Self::Guide, Self::Capture];
+    pub const ALL: [FrameKind; 5] = [Self::Focus, Self::Align, Self::Guide, Self::Capture, Self::Stack];
 
     pub fn from_uuid(uuid: &str) -> Self {
         if uuid.starts_with("+F") {
@@ -39,6 +43,8 @@ impl FrameKind {
             Self::Align
         } else if uuid.starts_with("+G") {
             Self::Guide
+        } else if uuid.starts_with("+S") {
+            Self::Stack
         } else {
             Self::Capture
         }
@@ -50,6 +56,7 @@ impl FrameKind {
             "+F" => Some(Self::Focus),
             "+A" => Some(Self::Align),
             "+G" => Some(Self::Guide),
+            "+S" => Some(Self::Stack),
             "capture" => Some(Self::Capture),
             _ => None,
         }
@@ -464,8 +471,10 @@ mod tests {
         assert_eq!(FrameKind::from_uuid("+F-abc"), FrameKind::Focus);
         assert_eq!(FrameKind::from_uuid("+A"), FrameKind::Align);
         assert_eq!(FrameKind::from_uuid("+G"), FrameKind::Guide);
+        assert_eq!(FrameKind::from_uuid("+S-0007"), FrameKind::Stack);
         assert_eq!(FrameKind::from_uuid("fb37-…"), FrameKind::Capture);
         assert_eq!(FrameKind::parse("capture"), Some(FrameKind::Capture));
+        assert_eq!(FrameKind::parse("+S"), Some(FrameKind::Stack));
         assert_eq!(FrameKind::parse("+X"), None);
     }
 }
