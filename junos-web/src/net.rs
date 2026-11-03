@@ -40,6 +40,13 @@ pub async fn cached_bytes(url: &str) -> Option<Vec<u8>> {
 async fn via_cache(url: &str) -> Result<Vec<u8>, JsValue> {
     let window = web_sys::window().ok_or("no window")?;
     let caches = window.caches()?;
+    // Outside a secure context (plain http from another host) the getter
+    // yields `undefined` rather than throwing; web_sys still hands back a
+    // `CacheStorage`, and the first call on it would throw inside the JS
+    // shim — uncaught, past this `Result`. Check before touching it.
+    if caches.is_undefined() {
+        return Err(JsValue::from_str("Cache API unavailable (insecure context)"));
+    }
     let cache: Cache = JsFuture::from(caches.open(CACHE_NAME)).await?.dyn_into()?;
 
     let hit = JsFuture::from(cache.match_with_str(url)).await?;
@@ -95,7 +102,12 @@ fn ask_persistent_storage() {
         return;
     }
     if let Some(window) = web_sys::window() {
-        let _ = window.navigator().storage().persist();
+        // Same insecure-context caveat as `caches`: `navigator.storage` is
+        // `undefined` there and `persist()` would throw in the shim.
+        let storage = window.navigator().storage();
+        if !storage.is_undefined() {
+            let _ = storage.persist();
+        }
     }
 }
 
