@@ -306,7 +306,7 @@ pub fn FilesTab(
                                           settings=livestacker_settings send=send_stack.get_value() />
                 })}
             </Show>
-            {frame_zoom(s.zoom_url.into(), s.zoom_open, lang)}
+            {frame_zoom(s.zoom_url.into(), Signal::derive(|| None), s.zoom_open, lang)}
 
             {move || s.flash.get().map(|msg| view! {
                 <div class="absolute left-1/2 -translate-x-1/2 z-[90] bottom-[max(5rem,calc(env(safe-area-inset-bottom)+4.5rem))] \

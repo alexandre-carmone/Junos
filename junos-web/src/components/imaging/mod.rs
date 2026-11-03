@@ -42,7 +42,7 @@ use crate::dom::event_target_value;
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{send_cmd, send_device_property_set};
-use histogram::{histogram_panel, toggle_button, Histogram};
+use histogram::{clip_overlay, histogram_panel, toggle_button, Histogram};
 use crate::{ActiveTabCtx, RevealInFilesCtx, Tab};
 
 const DASH: &str = "\u{2014}";
@@ -136,6 +136,8 @@ pub fn ImagingTab(
     let hist_log = persisted("imaging_histogram_log", false);
     let hist_adu = persisted("imaging_histogram_adu", false);
     let hist_stats = persisted("imaging_histogram_stats", false);
+    let hist_clip = persisted("imaging_histogram_clip", false);
+    let clip_map = clip_overlay(hist, hist_clip.into());
     let editor_open = RwSignal::new(false);
     let filters_open = RwSignal::new(false);
     let detail = RwSignal::new(None::<usize>);
@@ -342,9 +344,15 @@ pub fn ImagingTab(
                              class="max-w-full max-h-full object-contain cursor-zoom-in [image-rendering:pixelated]"
                              on:load=move |ev| hist.set(Histogram::from_load(&ev))
                              on:click=move |_| zoom_open.set(true) />
+                        // The clip map: same box, same fit, so it sits on the frame.
+                        <Show when=move || clip_map.with(Option::is_some)>
+                            <img class="absolute inset-0 w-full h-full object-contain pointer-events-none \
+                                        [image-rendering:pixelated]"
+                                 src=move || clip_map.get().unwrap_or_default() />
+                        </Show>
                         {toggle_button(show_hist, lang)}
                         <Show when=move || show_hist.get() && hist.with(Option::is_some)>
-                            {histogram_panel(hist, stats.into(), hist_adu, hist_log, hist_stats, lang)}
+                            {histogram_panel(hist, stats.into(), hist_adu, hist_log, hist_clip, hist_stats, lang)}
                         </Show>
                     </Show>
                 </div>
@@ -502,7 +510,7 @@ pub fn ImagingTab(
                 {sheet(move || tr().imaging_job_detail, move || detail.set(None), detail_body())}
             </Show>
             <FilterSettingsSheet open=filters_open send=send.clone() />
-            {frame_zoom(preview.into(), zoom_open, lang)}
+            {frame_zoom(preview.into(), clip_map, zoom_open, lang)}
         </div>
     }
 }

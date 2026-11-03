@@ -1,7 +1,8 @@
 //! A frame full screen: wheel / pinch zooms about the pointer, drag pans,
 //! double-click resets, and a click at fit size closes. Imaging shows KStars'
 //! transmitted preview (stretched JPEGs, media.cpp), Files the server's
-//! preview render of a capture.
+//! preview render of a capture. `overlay` is an image the size of the frame
+//! laid over it under the same transform (Imaging's clip map).
 
 use std::collections::HashMap;
 
@@ -11,7 +12,12 @@ use web_sys::{PointerEvent, WheelEvent};
 
 use crate::i18n::{t, Lang};
 
-pub fn frame_zoom(url: Signal<Option<String>>, open: RwSignal<bool>, lang: RwSignal<Lang>) -> impl IntoView {
+pub fn frame_zoom(
+    url: Signal<Option<String>>,
+    overlay: Signal<Option<String>>,
+    open: RwSignal<bool>,
+    lang: RwSignal<Lang>,
+) -> impl IntoView {
     // Image transform: scale (1 = fit) and translation from the centre, px.
     let scale = RwSignal::new(1.0_f64);
     let tx = RwSignal::new(0.0_f64);
@@ -104,6 +110,14 @@ pub fn frame_zoom(url: Signal<Option<String>>, open: RwSignal<bool>, lang: RwSig
                                 pointer-events-none select-none will-change-transform"
                          style:transform=move || format!("translate({}px,{}px) scale({})", tx.get(), ty.get(), scale.get())
                          src=move || url.get().unwrap_or_default() />
+                    // Fills the box as the frame does once contained, and both
+                    // transform about the box's centre, so they stay aligned.
+                    <Show when=move || overlay.with(Option::is_some)>
+                        <img class="absolute inset-0 w-full h-full object-contain [image-rendering:pixelated] \
+                                    pointer-events-none select-none will-change-transform"
+                             style:transform=move || format!("translate({}px,{}px) scale({})", tx.get(), ty.get(), scale.get())
+                             src=move || overlay.get().unwrap_or_default() />
+                    </Show>
                 </div>
                 <button class="btn-icon absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))]"
                         title=move || t(lang.get()).info_close on:click=move |_| open.set(false)>

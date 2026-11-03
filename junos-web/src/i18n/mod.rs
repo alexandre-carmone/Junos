@@ -118,6 +118,8 @@ translations! {
     imaging_hist_display, imaging_hist_display_title, imaging_hist_adu_title, imaging_hist_mode, imaging_hist_mode_title,
     imaging_hist_range, imaging_hist_snr_title, imaging_hist_clip_low, imaging_hist_clip_high, imaging_hist_clip_low_title,
     imaging_hist_clip_high_title, imaging_hist_more_title,
+    imaging_hist_sky, imaging_hist_sky_title, imaging_hist_stretch, imaging_hist_stretch_title, imaging_hist_clip,
+    imaging_hist_clip_title,
     field_exposure_s,
     field_frame_type, field_count, field_delay_s, field_bin_x, field_bin_y, field_format, field_encoding, field_gain,
     field_offset, field_iso, field_filter, field_filter_none, field_target_name, field_directory, field_enforce_temp, field_job_temp_c, seq_dest_folder, seq_duplicate, seq_delete, seq_move_up, seq_move_down, seq_more, seq_binning, seq_total, seq_frame_unit, seq_frames_unit, seq_no_change, seq_err_values,
