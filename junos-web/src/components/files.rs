@@ -13,7 +13,7 @@
 //! Live Stack go to KStars over the shared WS.
 
 mod actions;
-mod api;
+pub(crate) mod api;
 mod browser;
 mod livestack;
 pub(crate) mod planning;

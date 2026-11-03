@@ -18,6 +18,14 @@
 //!     capture_clear_sequences, capture_get_sequences
 //!   - device_property_set: CCD_COOLER / CCD_TEMPERATURE on the camera,
 //!     FILTER_SLOT on the filter wheel
+//!   - the live stack (message.cpp::processLiveStackerCommands), one tap:
+//!     livestacker_initialize, livestacker_set_all_settings {stackingDirectory,
+//!     outputDirectory, looping}, livestacker_start — plus capture_loop in loop
+//!     mode when nothing is capturing — and livestacker_stop. Sequence mode
+//!     stacks the running job's folder (KStars resolves it); loop mode has
+//!     KStars save each Loop frame into a session folder the tab creates
+//!     (`/api/files/mkdir`), `<captures>/LiveStack/<yyyy-mm-dd_HHMM>/`, the
+//!     stacked frames going to its `stacked/`.
 //!
 //! Inbound: new_capture_state (`status` is the untranslated `captureStates`
 //! label, ekos.h:69; `log` is newest first), new_camera_state,
@@ -41,11 +49,12 @@ use crate::components::sequence_editor::{build_esq_xml, SeqEnd, SeqFrame, SeqLim
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::components::zoom::frame_zoom;
 use crate::dom::event_target_value;
-use crate::i18n::{t, Lang};
+use crate::components::files::api::mkdir;
+use crate::i18n::{t, Lang, Translations};
 use crate::ws::{LiveStackerState, SendCmd};
 use crate::ws_helpers::{send_cmd, send_device_property_set};
 use histogram::{clip_overlay, histogram_panel, toggle_button, Histogram};
-use crate::{ActiveTabCtx, RevealInFilesCtx, Tab};
+use crate::{ActiveTabCtx, CaptureDirCtx, RevealInFilesCtx, Tab};
 
 const DASH: &str = "\u{2014}";
 const SAVE: &str = "capture_save_sequence_file";
@@ -73,6 +82,28 @@ pub(crate) fn status_is_active(status: &str) -> bool {
 /// `restarted` are moments inside a run.
 pub(crate) fn stack_running(state: &str) -> bool {
     matches!(state, "started" | "stacking" | "complete" | "restarted")
+}
+
+fn stack_badge(state: &str) -> &'static str {
+    match state {
+        s if stack_running(s) => "badge badge--ok",
+        "error" => "badge badge--err",
+        "initialized" | "stopped" => "badge badge--info",
+        _ => "badge",
+    }
+}
+
+/// An SNR for a tile; KStars sends 0 before the first measure.
+fn snr(v: f64) -> String {
+    if v.is_finite() && v > 0.0 { format!("{v:.1}") } else { DASH.into() }
+}
+
+/// `yyyy-mm-dd_HHMM`, local time: one folder per live stack session, so a
+/// later Start never re-stacks an earlier session's subs.
+fn session_stamp() -> String {
+    let d = js_sys::Date::new_0();
+    format!("{:04}-{:02}-{:02}_{:02}{:02}",
+            d.get_full_year(), d.get_month() + 1, d.get_date(), d.get_hours(), d.get_minutes())
 }
 
 fn status_badge(status: &str) -> &'static str {
@@ -117,6 +148,8 @@ pub fn ImagingTab(
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
     livestacker_state: RwSignal<Option<LiveStackerState>>,
+    /// Ekos started — the `livestacker_*` commands are dropped before that.
+    #[prop(into)] online: Signal<bool>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -148,6 +181,13 @@ pub fn ImagingTab(
     // KStars' raw statistics describe the capture frame only.
     let stats_shown = Memo::new(move |_| if showing_stack.get() { None } else { stats.get() });
     let stack_frames = Memo::new(move |_| livestacker_state.with(|o| o.as_ref().map_or(0, |l| l.frames_stacked)));
+    // Frame source: auto (the running sequence job, else Loop), or forced.
+    let stack_mode = persisted::<String>("imaging_stack_mode", "auto".into());
+    let capture_root = use_context::<CaptureDirCtx>().map(|c| c.0);
+    // Loop was started by Stack, so Stack also stops it.
+    let loop_started = RwSignal::new(false);
+    // The session folder could not be made.
+    let stack_error = RwSignal::new(None::<String>);
 
     let zoom_open = RwSignal::new(false);
     // Recounted each time the frame's <img> loads.
@@ -189,6 +229,70 @@ pub fn ImagingTab(
     let on_run = move |_| {
         let ty = if busy.get_untracked() { "capture_stop" } else { "capture_start" };
         send_cmd(&s_run, ty, json!({}));
+    };
+
+    // One tap: a fresh stacker (initialize closes the previous viewer; a bare
+    // start on a live one would double its progress signals), the folders
+    // and the mode, start — and Loop when nothing is capturing in loop mode.
+    // In sequence mode KStars swaps the stacking folder for the running
+    // job's, so the capture folder only has to be non-empty.
+    let s_stack = send.clone();
+    let on_stack = move |_| {
+        let send = s_stack.clone();
+        if stack_on.get_untracked() {
+            send_cmd(&send, "livestacker_stop", json!({}));
+            if loop_started.get_untracked() {
+                send_cmd(&send, "capture_stop", json!({}));
+                loop_started.set(false);
+            }
+            return;
+        }
+        let Some(root) = capture_root.map(|r| r.get_untracked()).filter(|r| !r.is_empty()) else { return };
+        let root = root.trim_end_matches('/').to_string();
+        let sequence_running = queue.with_untracked(|q| q.iter().any(|j| j["Status"] == "In Progress"));
+        let loop_mode = match stack_mode.get_untracked().as_str() {
+            "sequence" => false,
+            "loop" => true,
+            _ => !sequence_running,
+        };
+        let session = format!("LiveStack/{}", session_stamp());
+        let base = format!("{root}/{session}");
+        let stacking = if loop_mode {
+            base.clone()
+        } else {
+            let dir = settings.str("fileDirectoryT").trim().to_string();
+            if dir.is_empty() { root.clone() } else { dir }
+        };
+        let start_loop = loop_mode && !busy.get_untracked();
+        stack_error.set(None);
+        wasm_bindgen_futures::spawn_local(async move {
+            if loop_mode {
+                if let Err(e) = mkdir(&session).await {
+                    stack_error.set(Some(format!("{} ({e})", t(lang.get_untracked()).livestack_mkdir_failed)));
+                    return;
+                }
+            }
+            send_cmd(&send, "livestacker_initialize", json!({}));
+            send_cmd(&send, "livestacker_set_all_settings", json!({
+                "stackingDirectory": stacking,
+                "outputDirectory": format!("{base}/stacked"),
+                "looping": loop_mode,
+            }));
+            send_cmd(&send, "livestacker_start", json!({}));
+            if start_loop {
+                send_cmd(&send, "capture_loop", json!({}));
+                loop_started.set(true);
+            }
+        });
+    };
+    let mode_pill = move |value: &'static str, label: fn(&'static Translations) -> &'static str| view! {
+        <button type="button"
+                class=move || if stack_mode.with(|m| m == value) { format!("{CHIP} btn--active") } else { CHIP.to_string() }
+                aria-pressed=move || stack_mode.with(|m| m == value).to_string()
+                disabled=move || stack_on.get()
+                on:click=move |_| stack_mode.set(value.to_string())>
+            {move || label(tr())}
+        </button>
     };
 
     let reveal = use_context::<RevealInFilesCtx>();
@@ -423,6 +527,46 @@ pub fn ImagingTab(
                         }))}
                     </div>
 
+                    // Live stack: state, frames and SNR, the frame source.
+                    <div class=CARD>
+                        <div class="flex items-center gap-2">
+                            <span class=format!("{CARD_TITLE} flex-1")>{move || tr().livestack_title}</span>
+                            <span class=move || stack_badge(&stack_state.get())>
+                                {move || { let s = stack_state.get(); if s.is_empty() { tr().idle.to_string() } else { s } }}
+                            </span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2">
+                            {tile(move || tr().livestack_frames,
+                                move || livestacker_state.with(|o| o.as_ref()
+                                    .map_or_else(|| DASH.into(), |l| format!("{} / {}", l.frames_stacked, l.total_frames))),
+                                move || livestacker_state.with(|o| o.as_ref()
+                                    .map_or(0.0, |l| if l.total_frames > 0 { l.frames_stacked as f64 / l.total_frames as f64 } else { 0.0 })))}
+                            {tile(move || tr().livestack_snr,
+                                move || livestacker_state.with(|o| o.as_ref().map_or_else(|| DASH.into(), |l| snr(l.mean_snr))),
+                                || 0.0)}
+                            {tile(move || tr().livestack_snr_range,
+                                move || livestacker_state.with(|o| o.as_ref()
+                                    .map_or_else(|| DASH.into(), |l| format!("{} \u{2013} {}", snr(l.min_snr), snr(l.max_snr)))),
+                                || 0.0)}
+                        </div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class=format!("{LABEL} flex-1")>{move || tr().livestack_source}</span>
+                            {mode_pill("auto", |t| t.livestack_mode_auto)}
+                            {mode_pill("sequence", |t| t.livestack_mode_sequence)}
+                            {mode_pill("loop", |t| t.livestack_mode_loop)}
+                        </div>
+                        {move || {
+                            let l = livestacker_state.get().unwrap_or_default();
+                            let (text, class) = match (stack_error.get(), l.state.as_str(), l.message) {
+                                (Some(e), _, _) => (e, "text-sm text-state-err"),
+                                (None, "error", Some(m)) => (m, "text-sm text-state-err"),
+                                (None, "restarted", Some(m)) => (format!("{} \u{00B7} {m}", tr().livestack_restarted), "text-sm text-state-warn"),
+                                _ => return None,
+                            };
+                            Some(view! { <div class=class>{text}</div> })
+                        }}
+                    </div>
+
                     <div class=CARD>
                         <span class=CARD_TITLE>{move || tr().imaging_one_shot}</span>
                         {fields::capture_form(settings, camera, filter_wheel, lang)}
@@ -518,6 +662,16 @@ pub fn ImagingTab(
                 <button class="btn btn-ghost h-11 px-4 max-md:flex-1" disabled=move || busy.get()
                         on:click=plain("capture_loop")>
                     {move || tr().focus_loop_btn}
+                </button>
+                <button class=move || if stack_on.get() {
+                            "btn btn-danger h-11 px-4 max-md:flex-1"
+                        } else {
+                            "btn btn-ghost h-11 px-4 max-md:flex-1"
+                        }
+                        disabled=move || !online.get()
+                            || (!stack_on.get() && capture_root.map_or(true, |r| r.with(String::is_empty)))
+                        on:click=on_stack>
+                    {move || tr().livestack_button}
                 </button>
                 <button class=move || if busy.get() {
                             "btn btn-danger h-11 px-5 font-semibold max-md:flex-1"

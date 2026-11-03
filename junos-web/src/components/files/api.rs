@@ -44,6 +44,15 @@ pub(super) async fn delete_file(path: &str) -> Result<(), String> {
     checked(Request::delete(&url).send().await).await.map(drop)
 }
 
+/// Create a folder inside the captures root, parents included. The Imaging
+/// tab's live stack makes its session folder with it.
+pub(crate) async fn mkdir(rel: &str) -> Result<(), String> {
+    let req = Request::post("/api/files/mkdir")
+        .json(&json!({ "path": rel }))
+        .map_err(|e| e.to_string())?;
+    checked(req.send().await).await.map(drop)
+}
+
 pub(super) async fn resolve_abs(abs: &str) -> Result<ResolveReply, String> {
     let url = format!("/api/files/resolve?abs={}", url_encode(abs));
     checked(Request::get(&url).send().await).await?.json().await.map_err(|e| e.to_string())
