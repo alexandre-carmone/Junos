@@ -22,7 +22,9 @@
 //! Inbound: new_capture_state (`status` is the untranslated `captureStates`
 //! label, ekos.h:69; `log` is newest first), new_camera_state,
 //! capture_get_all_settings, capture_get_sequences, new_preview_image — all
-//! folded by `ws/store.rs`.
+//! folded by `ws/store.rs`. While a live stack runs (`new_livestacker_state`)
+//! the frame shows the stacked image the relay publishes as a `+S` preview:
+//! KStars sends no capture frames meanwhile (media.cpp:768).
 
 mod fields;
 mod histogram;
@@ -40,7 +42,7 @@ use crate::components::tab_wheel_icons::tab_icon;
 use crate::components::zoom::frame_zoom;
 use crate::dom::event_target_value;
 use crate::i18n::{t, Lang};
-use crate::ws::SendCmd;
+use crate::ws::{LiveStackerState, SendCmd};
 use crate::ws_helpers::{send_cmd, send_device_property_set};
 use histogram::{clip_overlay, histogram_panel, toggle_button, Histogram};
 use crate::{ActiveTabCtx, RevealInFilesCtx, Tab};
@@ -64,6 +66,13 @@ pub(crate) fn status_is_active(status: &str) -> bool {
         || s.contains("meridian")
         || s.contains("calibrat")
         || s.contains("waiting")
+}
+
+/// A live stack is on: KStars keeps the viewer and suppresses the capture
+/// previews from `started` until `stopped` / `closed`; `complete` and
+/// `restarted` are moments inside a run.
+pub(crate) fn stack_running(state: &str) -> bool {
+    matches!(state, "started" | "stacking" | "complete" | "restarted")
 }
 
 fn status_badge(status: &str) -> &'static str {
@@ -107,6 +116,7 @@ pub fn ImagingTab(
     #[prop(into)] capture: Signal<CaptureSnapshot>,
     #[prop(into)] camera: Signal<CameraSnapshot>,
     #[prop(into)] filter_wheel: Signal<FilterWheelSnapshot>,
+    livestacker_state: RwSignal<Option<LiveStackerState>>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -128,6 +138,16 @@ pub fn ImagingTab(
     let busy = Memo::new(move |_| {
         status.with(|s| status_is_active(s)) || queue.with(|q| q.iter().any(|j| j["Status"] == "In Progress"))
     });
+    // The live stack: its state, and its image in place of the capture
+    // preview while it runs (nothing else arrives meanwhile).
+    let stack_state = Memo::new(move |_| livestacker_state.with(|o| o.as_ref().map(|l| l.state.clone()).unwrap_or_default()));
+    let stack_on = Memo::new(move |_| stack_state.with(|s| stack_running(s)));
+    let stack_img = Memo::new(move |_| capture.with(|c| c.stack_preview.clone()));
+    let showing_stack = Memo::new(move |_| stack_on.get() && stack_img.with(Option::is_some));
+    let shown = Memo::new(move |_| if showing_stack.get() { stack_img.get() } else { preview.get() });
+    // KStars' raw statistics describe the capture frame only.
+    let stats_shown = Memo::new(move |_| if showing_stack.get() { None } else { stats.get() });
+    let stack_frames = Memo::new(move |_| livestacker_state.with(|o| o.as_ref().map_or(0, |l| l.frames_stacked)));
 
     let zoom_open = RwSignal::new(false);
     // Recounted each time the frame's <img> loads.
@@ -336,11 +356,11 @@ pub fn ImagingTab(
                 // Frame — pinned on phones; a tap opens it full screen.
                 <div class="relative shrink-0 h-[36dvh] min-h-[160px] overflow-hidden flex items-center justify-center \
                             bg-bg-input-deep border-b border-border-base md:h-auto md:min-h-0 md:border md:rounded-lg">
-                    <Show when=move || preview.with(Option::is_some)
+                    <Show when=move || shown.with(Option::is_some)
                           fallback=move || view! {
                               <div class="text-text-faint text-sm text-center px-6">{move || tr().imaging_no_frame}</div>
                           }>
-                        <img src=move || preview.get().unwrap_or_default() title=move || tr().imaging_view_fullres
+                        <img src=move || shown.get().unwrap_or_default() title=move || tr().imaging_view_fullres
                              class="max-w-full max-h-full object-contain cursor-zoom-in [image-rendering:pixelated]"
                              on:load=move |ev| hist.set(Histogram::from_load(&ev))
                              on:click=move |_| zoom_open.set(true) />
@@ -352,8 +372,19 @@ pub fn ImagingTab(
                         </Show>
                         {toggle_button(show_hist, lang)}
                         <Show when=move || show_hist.get() && hist.with(Option::is_some)>
-                            {histogram_panel(hist, stats.into(), hist_adu, hist_log, hist_clip, hist_stats, lang)}
+                            {histogram_panel(hist, stats_shown.into(), hist_adu, hist_log, hist_clip, hist_stats, lang)}
                         </Show>
+                    </Show>
+                    // Live stack tag: the stacked frame's count, or waiting for it.
+                    <Show when=move || stack_on.get()>
+                        <span class="absolute top-2 left-2 z-10 rounded-md border border-border-base bg-bg-elev-1/80 \
+                                     px-2 py-0.5 text-xs font-medium text-text-blue-bright pointer-events-none">
+                            {move || if showing_stack.get() {
+                                format!("{} \u{00B7} {}", tr().livestack_title, stack_frames.get())
+                            } else {
+                                tr().livestack_waiting.to_string()
+                            }}
+                        </span>
                     </Show>
                 </div>
 
@@ -510,7 +541,7 @@ pub fn ImagingTab(
                 {sheet(move || tr().imaging_job_detail, move || detail.set(None), detail_body())}
             </Show>
             <FilterSettingsSheet open=filters_open send=send.clone() />
-            {frame_zoom(preview.into(), clip_map, zoom_open, lang)}
+            {frame_zoom(shown.into(), clip_map, zoom_open, lang)}
         </div>
     }
 }

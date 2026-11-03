@@ -1028,6 +1028,7 @@
   "livestack_min_snr": "Min SNR",
   "livestack_max_snr": "Max SNR",
   "livestack_compact_label": "Stacker",
+  "livestack_waiting": "Waiting for the first stacked frame",
   "files_subtab_preview": "Preview",
   "files_subtab_controls": "Controls",
   "files_subtab_settings": "Settings",

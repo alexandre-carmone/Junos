@@ -976,10 +976,6 @@ impl IndiProperty {
     }
 }
 
-/// Aggregated state from `new_livestacker_state`. KStars sends two flavours:
-/// state-only updates (`{state:"..."}`) and stacking updates with stats. We
-/// merge both into this struct, preserving prior numeric fields when only the
-/// state changes.
 /// KStars' answer to a file command the browser sent: `scheduler_load_file`
 /// and `capture_load_sequence_file` reply `{result, path}`; `scheduler_save_file`
 /// replies with the saved file's text, and nothing at all when it fails.
@@ -990,6 +986,10 @@ pub struct FileReply {
     pub ok: bool,
 }
 
+/// Aggregated state from `new_livestacker_state`. KStars sends two flavours:
+/// state-only updates (`{state:"..."}`) and stacking updates with stats. We
+/// merge both into this struct, preserving prior numeric fields when only the
+/// state changes.
 #[derive(Debug, Clone, Default)]
 pub struct LiveStackerState {
     pub state:          String,

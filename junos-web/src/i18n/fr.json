@@ -1118,6 +1118,7 @@
   "livestack_min_snr": "SNR min",
   "livestack_max_snr": "SNR max",
   "livestack_compact_label": "Empilement",
+  "livestack_waiting": "En attente de la première image empilée",
   "files_subtab_preview": "Aperçu",
   "files_subtab_controls": "Contrôles",
   "files_subtab_settings": "Réglages",

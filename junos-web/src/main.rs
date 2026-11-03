@@ -422,7 +422,7 @@ fn App() -> impl IntoView {
                 Tab::Focus => &["+F"],
                 Tab::Guide => &["+G"],
                 Tab::PolarAlign => &["+A"],
-                Tab::Imaging => &["capture"],
+                Tab::Imaging => &["capture", "+S"],
                 _ => &[],
             };
             mount_fast_poll.set(matches!(tab, Tab::Sky | Tab::Mount | Tab::PolarAlign));

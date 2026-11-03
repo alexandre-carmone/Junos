@@ -89,6 +89,9 @@ pub struct DeviceStore {
     pub mosaic_tiles: RwSignal<Option<serde_json::Value>>,
     pub livestacker_state: RwSignal<Option<LiveStackerState>>,
     pub livestacker_settings: RwSignal<serde_json::Value>,
+    /// The live stack, published by the relay (`junos-server/src/stack.rs`)
+    /// as a `+S` preview; cleared when a stack starts.
+    pub stack_preview_url: RwSignal<Option<String>>,
     /// Equipment profile list, populated by `get_profiles` responses.
     /// Available before `online == true` — profile CRUD is dispatched
     /// before the Ekos-startup gate (message.cpp:249).
@@ -222,6 +225,7 @@ impl DeviceStore {
             horizon: RwSignal::new(None),
             livestacker_state: RwSignal::new(None),
             livestacker_settings: RwSignal::new(serde_json::Value::Null),
+            stack_preview_url: RwSignal::new(None),
             profiles: RwSignal::new(Vec::new()),
             selected_profile: RwSignal::new(None),
             drivers: RwSignal::new(Vec::new()),
@@ -330,6 +334,7 @@ impl DeviceStore {
                     self.scheduler_jobs.set(Vec::new());
                     self.mosaic_tiles.set(None);
                     self.livestacker_state.set(None);
+                    self.stack_preview_url.set(None);
                     self.indi_properties.set(std::collections::HashMap::new());
                     self.indi_messages.set(std::collections::HashMap::new());
                 }
@@ -1338,6 +1343,9 @@ impl DeviceStore {
                         self.align_preview_url.set(Some(url));
                     } else if uuid.starts_with("+G") {
                         self.guide_preview_url.set(Some(url));
+                    } else if uuid.starts_with("+S") {
+                        // The live stack, from the relay (never KStars).
+                        self.stack_preview_url.set(Some(url));
                     } else {
                         self.capture_preview_stats.set(parse_frame_stats(&payload["metadata"]));
                         self.capture_preview_url.set(Some(url));
@@ -1403,13 +1411,38 @@ impl DeviceStore {
             // LiveStacker push: either {state:"..."} or {state:"stacking", ok,
             // frames_stacked, total_frames, mean_snr, min_snr, max_snr}.
             // Merge — preserve previous numeric stats when only state changes.
+            // `complete` follows every stack update, a cancel and a failure
+            // (FITSView::resetStack), so it only counts while a stack runs;
+            // `started` is a fresh stack, `restarted` the next sequence job
+            // (its target and filter become the message).
             "new_livestacker_state" => {
+                let state = payload["state"].as_str().unwrap_or_default();
+                if state == "started" || state == "initialized" {
+                    self.stack_preview_url.set(None);
+                }
                 self.livestacker_state.update(|opt| {
                     let s = opt.get_or_insert_with(LiveStackerState::default);
-                    // A message belongs to its state (an error's reason).
-                    if let Some(v) = payload["state"].as_str() {
-                        s.state = v.to_string();
-                        s.message = payload["message"].as_str().map(str::to_string);
+                    match state {
+                        "" => {}
+                        "started" | "initialized" => {
+                            *s = LiveStackerState { state: state.to_string(), ..Default::default() };
+                        }
+                        "complete" if matches!(s.state.as_str(), "stopped" | "closed" | "initialized" | "error") => {}
+                        "restarted" => {
+                            s.state = state.to_string();
+                            s.message = match (payload["target"].as_str(), payload["filter"].as_str()) {
+                                (Some(t), Some(f)) if !f.is_empty() => Some(format!("{t} \u{00B7} {f}")),
+                                (Some(t), _) => Some(t.to_string()),
+                                _ => None,
+                            };
+                            s.frames_stacked = 0;
+                            s.total_frames = 0;
+                        }
+                        // A message belongs to its state (an error's reason).
+                        _ => {
+                            s.state = state.to_string();
+                            s.message = payload["message"].as_str().map(str::to_string);
+                        }
                     }
                     if let Some(v) = payload["ok"].as_bool() {
                         s.ok = v;

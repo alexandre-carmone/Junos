@@ -181,7 +181,7 @@ translations! {
     livestack_stack_mean, livestack_stack_sigma, livestack_stack_windsor, livestack_stack_imagemm,
     livestack_downscale_none, livestack_downscale_x2, livestack_downscale_x3, livestack_downscale_x4,
     livestack_weighting_equal, livestack_weighting_hfr, livestack_weighting_stars, livestack_reset,
-    livestack_min_snr, livestack_max_snr, livestack_compact_label,
+    livestack_min_snr, livestack_max_snr, livestack_compact_label, livestack_waiting,
     files_subtab_preview, files_subtab_controls, files_subtab_settings, files_folder_hint, files_close_preview,
     files_prev, files_next, files_section_file, files_use_current, files_open,
     focus_param_exposure, focus_param_binning, focus_param_iso, focus_param_iterations,

@@ -77,6 +77,8 @@ pub struct CaptureSnapshot {
     pub log: String,
     pub preview_url: Option<String>,
     pub preview_stats: Option<FrameStats>,
+    /// The live stack's latest frame (`DeviceStore::stack_preview_url`).
+    pub stack_preview: Option<String>,
     pub settings: serde_json::Value,
     pub sequence: serde_json::Value,
 }
@@ -247,6 +249,7 @@ pub fn derive_capture(store: &DeviceStore) -> Signal<CaptureSnapshot> {
     let seq_sig      = store.capture_sequence;
     let preview_sig  = store.capture_preview_url;
     let stats_sig    = store.capture_preview_stats;
+    let stack_sig    = store.stack_preview_url;
     Signal::derive(move || {
         let s = status_sig.get();
         CaptureSnapshot {
@@ -260,6 +263,7 @@ pub fn derive_capture(store: &DeviceStore) -> Signal<CaptureSnapshot> {
             log: s.log,
             preview_url: preview_sig.get(),
             preview_stats: stats_sig.get(),
+            stack_preview: stack_sig.get(),
             settings: settings_sig.get(),
             sequence: seq_sig.get(),
         }
