@@ -37,7 +37,7 @@ const GUIDE_ALGO_OPTS: &[&str] = &[
     "SEP Multi Star (recommended)",
 ];
 
-/// `Options::GuiderType` values.
+/// `Options::guiderType` values.
 pub const GUIDERS: [(i64, LabelFn); 3] = [
     (0, |t| t.guide_internal),
     (1, |t| t.guide_phd2_label),
@@ -65,8 +65,8 @@ fn set_option(send: &SendCmd, name: &str, value: Value) {
 
 pub fn refresh_options(send: &SendCmd) {
     send_cmd(send, "option_get", serde_json::json!({ "options": [
-        {"name": "GuiderType"}, {"name": "PHD2Host"}, {"name": "PHD2Port"},
-        {"name": "LinGuiderHost"}, {"name": "LinGuiderPort"},
+        {"name": "guiderType"}, {"name": "pHD2Host"}, {"name": "pHD2Port"},
+        {"name": "linGuiderHost"}, {"name": "linGuiderPort"},
     ]}));
 }
 
@@ -206,7 +206,7 @@ pub fn GuideSettings(
 ) -> impl IntoView {
     let tr = move || t(lang.get());
     let c = Ctx { send: send.clone(), settings, options, lang };
-    let guider = Memo::new(move |_| options.with(|o| settings_i64(o, "GuiderType").unwrap_or(0)));
+    let guider = Memo::new(move |_| options.with(|o| settings_i64(o, "guiderType").unwrap_or(0)));
 
     let s_save = send.clone();
     let on_save_cal = move |_| save_calibration(&s_save, &settings.get_untracked());
@@ -227,19 +227,19 @@ pub fn GuideSettings(
                         view! {
                             <button type="button"
                                     class=move || if guider.get() == v { format!("{CHIP} btn--active") } else { CHIP.to_string() }
-                                    on:click=move |_| set_option(&send, "GuiderType", Value::from(v))>
+                                    on:click=move |_| set_option(&send, "guiderType", Value::from(v))>
                                 {c.label(label)}
                             </button>
                         }
                     })}
                 </div>
                 <div class="flex flex-col" class:hidden=move || guider.get() != 1>
-                    {option_row(&c, "PHD2Host", |t| t.guide_host, false)}
-                    {option_row(&c, "PHD2Port", |t| t.guide_port, true)}
+                    {option_row(&c, "pHD2Host", |t| t.guide_host, false)}
+                    {option_row(&c, "pHD2Port", |t| t.guide_port, true)}
                 </div>
                 <div class="flex flex-col" class:hidden=move || guider.get() != 2>
-                    {option_row(&c, "LinGuiderHost", |t| t.guide_host, false)}
-                    {option_row(&c, "LinGuiderPort", |t| t.guide_port, true)}
+                    {option_row(&c, "linGuiderHost", |t| t.guide_host, false)}
+                    {option_row(&c, "linGuiderPort", |t| t.guide_port, true)}
                 </div>
             })}
 

@@ -137,8 +137,8 @@ fn table_body(ctx: FilterCtx, send: SendCmd, lang: RwSignal<Lang>) -> impl IntoV
     let set_flat = move |on: bool| {
         ctx.flat_sync_focus.set(Some(on));
         let s = send.get_value();
-        send_cmd(&s, "option_set", json!({"options": [{"name": "FlatSyncFocus", "value": on}]}));
-        Timeout::new(500, move || send_cmd(&s, "option_get", json!({"options": [{"name": "FlatSyncFocus"}]}))).forget();
+        send_cmd(&s, "option_set", json!({"options": [{"name": "flatSyncFocus", "value": on}]}));
+        Timeout::new(500, move || send_cmd(&s, "option_get", json!({"options": [{"name": "flatSyncFocus"}]}))).forget();
     };
 
     view! {

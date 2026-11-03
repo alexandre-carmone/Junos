@@ -75,7 +75,7 @@ pub struct DeviceStore {
     pub guide_status: RwSignal<Option<GuideStatusData>>,
     pub guide_settings: RwSignal<serde_json::Value>,
     /// Flattened `{name: value, ...}` map of global KStars `Options::`
-    /// entries we care about (GuiderType, PHD2Host/Port, LinGuiderHost/Port).
+    /// entries we care about (guiderType, pHD2Host/Port, linGuiderHost/Port).
     pub guide_options: RwSignal<serde_json::Value>,
     pub guide_preview_url: RwSignal<Option<String>>,
     pub scheduler_status: RwSignal<SchedulerStatusData>,
@@ -1202,11 +1202,11 @@ impl DeviceStore {
             // stomp on future consumers that request their own options.
             "option_get" => {
                 const GUIDE_KEYS: &[&str] = &[
-                    "GuiderType",
-                    "PHD2Host",
-                    "PHD2Port",
-                    "LinGuiderHost",
-                    "LinGuiderPort",
+                    "guiderType",
+                    "pHD2Host",
+                    "pHD2Port",
+                    "linGuiderHost",
+                    "linGuiderPort",
                 ];
                 if let Some(arr) = payload.as_array() {
                     self.guide_options.update(|opt| {
@@ -1221,7 +1221,7 @@ impl DeviceStore {
                             let Some(name) = el["name"].as_str() else {
                                 continue;
                             };
-                            if name == "FlatSyncFocus" {
+                            if name == "flatSyncFocus" {
                                 if let Some(b) = el["value"].as_bool() {
                                     self.flat_sync_focus.set(Some(b));
                                 }

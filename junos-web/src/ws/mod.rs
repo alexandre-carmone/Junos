@@ -69,7 +69,10 @@ pub(crate) const BOOTSTRAP_CMDS: &[&str] = &[
     // Guider-backend settings live in global KStars Options::, not in
     // guide_get_all_settings. See message.cpp:1418. FlatSyncFocus is the
     // Filter Settings dialog's "flats at the lights' focus" checkbox.
-    r#"{"type":"option_get","payload":{"options":[{"name":"GuiderType"},{"name":"PHD2Host"},{"name":"PHD2Port"},{"name":"LinGuiderHost"},{"name":"LinGuiderPort"},{"name":"FlatSyncFocus"}]}}"#,
+    // `option_get` / `option_set` take the Q_PROPERTY name kconfig_compiler
+    // generates: the kcfg entry with its first letter lowercased (`PHD2Host`
+    // → `pHD2Host`). A wrong name reads null and writes nowhere, silently.
+    r#"{"type":"option_get","payload":{"options":[{"name":"guiderType"},{"name":"pHD2Host"},{"name":"pHD2Port"},{"name":"linGuiderHost"},{"name":"linGuiderPort"},{"name":"flatSyncFocus"}]}}"#,
 ];
 
 pub fn use_junos_ws() -> (DeviceStore, SendCmd) {

@@ -143,7 +143,7 @@ pub fn GuideTab(
     let preview  = Memo::new(move |_| snap.with(|g| g.preview_url.clone()));
     let settings = Memo::new(move |_| snap.with(|g| g.settings.clone()));
     let options  = Memo::new(move |_| snap.with(|g| g.options.clone()));
-    let guider   = Memo::new(move |_| options.with(|o| settings_i64(o, "GuiderType").unwrap_or(0)));
+    let guider   = Memo::new(move |_| options.with(|o| settings_i64(o, "guiderType").unwrap_or(0)));
     let accuracy = Memo::new(move |_| {
         settings.with(|s| s.get("guiderAccuracyThreshold").and_then(|v| v.as_f64()).unwrap_or(1.5))
     });
