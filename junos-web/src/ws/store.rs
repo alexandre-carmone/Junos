@@ -57,6 +57,11 @@ pub struct DeviceStore {
     pub focus_preview_url: RwSignal<Option<String>>,
     pub focus_stars: RwSignal<Option<FocusStars>>,
     pub focus_hfr_history: RwSignal<Vec<HfrSample>>,
+    /// The Aberration Inspector (a KStars fork's `focus_abins_*`): its
+    /// status, the last run's result and its settings (raw, edited by key).
+    pub abins_status: RwSignal<Option<AbInsStatus>>,
+    pub abins_result: RwSignal<Option<AbInsResult>>,
+    pub abins_settings: RwSignal<serde_json::Value>,
     pub capture_status: RwSignal<CaptureStatusData>,
     pub capture_settings: RwSignal<serde_json::Value>,
     pub capture_sequence: RwSignal<serde_json::Value>,
@@ -203,6 +208,9 @@ impl DeviceStore {
             focus_preview_url: RwSignal::new(None),
             focus_stars: RwSignal::new(None),
             focus_hfr_history: RwSignal::new(Vec::new()),
+            abins_status: RwSignal::new(None),
+            abins_result: RwSignal::new(None),
+            abins_settings: RwSignal::new(serde_json::Value::Null),
             capture_status: RwSignal::new(CaptureStatusData::default()),
             capture_settings: RwSignal::new(serde_json::Value::Null),
             capture_sequence: RwSignal::new(serde_json::Value::Null),
@@ -319,6 +327,8 @@ impl DeviceStore {
                     self.focus_status.set(None);
                     self.focus_preview_url.set(None);
                     self.focus_hfr_history.set(Vec::new());
+                    self.abins_status.set(None);
+                    self.abins_result.set(None);
                     self.polar_state.set(PolarStateData::default());
                     self.align_settings.set(serde_json::Value::Null);
                     self.stellarsolver_profiles.set(Vec::new());
@@ -947,6 +957,26 @@ impl DeviceStore {
                         row.save = true;
                     }
                 });
+            }
+
+            // Aberration Inspector (a KStars fork, message.cpp
+            // processAbInsCommands). The status is pushed on start, after
+            // analysis and at end, sent in `get_states`, and is the reply to
+            // `focus_abins_start` — then with `startAccepted`. An accepted
+            // start pushes a plain status (running) before that reply.
+            "focus_abins_status" => {
+                self.abins_status.set(Some(AbInsStatus::from_json(payload)));
+            }
+            // Pushed once analysed, and the reply to `focus_abins_get_result`
+            // (`{"available": false}` before the first run).
+            "focus_abins_result" => {
+                self.abins_result.set(AbInsResult::from_json(payload));
+            }
+            // The reply to both `focus_abins_get_all_settings` and
+            // `focus_abins_set_all_settings` (the effective values: an
+            // invalid key is dropped silently, so the echo is the truth).
+            "focus_abins_get_all_settings" => {
+                self.abins_settings.set(payload.clone());
             }
 
             // Camera state: temperature (see message.cpp:446 sendTemperature).

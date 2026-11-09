@@ -6,7 +6,7 @@
 use leptos::prelude::*;
 
 use crate::ws::{
-    AlignFrame, DeviceStore, FocusStars, FrameStats, GuideDriftSample, GuideStateSample,
+    AbInsResult, AbInsStatus, AlignFrame, DeviceStore, FocusStars, FrameStats, GuideDriftSample, GuideStateSample,
     HfrSample, PolarVectorData,
 };
 
@@ -147,6 +147,13 @@ pub struct FocusSnapshot {
     /// KStars' own summary line for the current focus run, shown as the chart
     /// caption when non-empty.
     pub plot_title: String,
+    /// The Aberration Inspector (a KStars fork): status, last result, settings.
+    #[allow(dead_code)] // read by the Focus tab's Aberration Inspector card (next commit)
+    pub abins_status: Option<AbInsStatus>,
+    #[allow(dead_code)]
+    pub abins_result: Option<AbInsResult>,
+    #[allow(dead_code)]
+    pub abins_settings: serde_json::Value,
 }
 
 pub fn derive_mount(store: &DeviceStore) -> Signal<MountSnapshot> {
@@ -185,6 +192,9 @@ pub fn derive_focus(store: &DeviceStore) -> Signal<FocusSnapshot> {
     let focus_preview_url = store.focus_preview_url;
     let focus_stars       = store.focus_stars;
     let focus_hfr_history = store.focus_hfr_history;
+    let abins_status      = store.abins_status;
+    let abins_result      = store.abins_result;
+    let abins_settings    = store.abins_settings;
     Signal::derive(move || {
         let (device, status, hfr, position, temperature, plot_title) =
             match focus_status.get() {
@@ -202,6 +212,9 @@ pub fn derive_focus(store: &DeviceStore) -> Signal<FocusSnapshot> {
             stars: focus_stars.get(),
             history: focus_hfr_history.get(),
             settings: focus_settings.get(),
+            abins_status: abins_status.get(),
+            abins_result: abins_result.get(),
+            abins_settings: abins_settings.get(),
         }
     })
 }

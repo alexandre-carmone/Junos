@@ -255,6 +255,248 @@ pub enum BfoPhase {
     Done,
 }
 
+// ── Aberration Inspector (Focus) ─────────────────────────────────────────
+// A KStars fork's `focus_abins_*` messages (see CLAUDE.md). Field names are
+// the camelCase wire keys in snake_case; every struct mirrors the wire shape
+// whole, so some fields are kept for completeness rather than read.
+
+fn f64_or(v: &serde_json::Value, key: &str, d: f64) -> f64 {
+    v[key].as_f64().unwrap_or(d)
+}
+
+fn str_of(v: &serde_json::Value, key: &str) -> String {
+    v[key].as_str().unwrap_or("").to_string()
+}
+
+/// `focus_abins_status`: pushed on start / after analysis / at end, sent in
+/// `get_states`, and the reply to `focus_abins_start` (then with
+/// `startAccepted` and, when refused, `error`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AbInsStatus {
+    pub can_start: bool,
+    /// Blocker codes (focus.cpp `abInsBlockers`): `noFocuser`,
+    /// `algorithmNotLinear1Pass`, `maskNotMosaic`, `inspectorRunning`, …
+    pub reasons: Vec<String>,
+    pub running: bool,
+    pub last_run: i64,
+    /// `none` | `complete` | `aborted`.
+    pub last_run_state: String,
+    pub has_result: bool,
+    pub dialog_available: bool,
+    /// The `error` of a refused `focus_abins_start` reply; cleared by the
+    /// next plain status push.
+    pub start_error: Option<String>,
+}
+
+impl AbInsStatus {
+    pub fn from_json(v: &serde_json::Value) -> Self {
+        let refused = v["startAccepted"].as_bool() == Some(false);
+        Self {
+            can_start: v["canStart"].as_bool().unwrap_or(false),
+            reasons: v["reasons"].as_array().map(|a| a.iter().filter_map(|r| r.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+            running: v["running"].as_bool().unwrap_or(false),
+            last_run: v["lastRun"].as_i64().unwrap_or(0),
+            last_run_state: str_of(v, "lastRunState"),
+            has_result: v["hasResult"].as_bool().unwrap_or(false),
+            dialog_available: v["dialogAvailable"].as_bool().unwrap_or(false),
+            start_error: refused.then(|| str_of(v, "error")),
+        }
+    }
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AbInsSensor {
+    pub width_px: i64,
+    pub height_px: i64,
+    pub pixel_size_microns: f64,
+    pub tile_width_px: i64,
+    pub lr_span_microns: f64,
+    pub tb_span_microns: f64,
+}
+
+/// One of the nine mosaic tiles, `id = row * 3 + col`, names TL T TR L C R
+/// BL B BR. Deltas are tile − centre.
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AbInsTile {
+    pub id: i64,
+    pub name: String,
+    pub used: bool,
+    pub fit: bool,
+    pub excluded: bool,
+    pub solution: i64,
+    pub delta_ticks: i64,
+    pub delta_microns: f64,
+    pub min_stars: i64,
+    pub max_stars: i64,
+    pub r2: f64,
+    pub min_measure: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AbInsBackfocus {
+    pub ok: bool,
+    /// Negative: move the sensor nearer the flattener.
+    pub delta_microns: f64,
+    /// `none` | `nearer` | `away`.
+    pub advice: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AbInsTilt {
+    pub ok: bool,
+    pub lr_microns: f64,
+    pub tb_microns: f64,
+    pub diagonal_microns: f64,
+    pub lr_percent: f64,
+    pub tb_percent: f64,
+    pub diagonal_percent: f64,
+}
+
+/// One tilt-plate screw: where it sits (rear view, `right` … `lowerRight`)
+/// and how far to turn it.
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AbInsScrew {
+    pub index: i64,
+    pub angle_deg: f64,
+    pub position: String,
+    pub adjustment_mm: f64,
+    pub turns: f64,
+}
+
+/// `tiltPlate` when `valid` — the Tilt Correction Advisory's numbers.
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AbInsTiltPlate {
+    /// 0 = 3-point, 1 = 4-point.
+    pub plate_type: i64,
+    /// 0 = relative, 1 = push-only.
+    pub mode: i64,
+    pub radius_mm: f64,
+    pub screw_pitch_mm: f64,
+    pub thread_index: i64,
+    pub plate_angle_deg: f64,
+    pub total_tilt_microns: f64,
+    pub max_adjustment_mm: f64,
+    pub points: Vec<AbInsScrew>,
+}
+
+/// `focus_abins_result` (aberrationinspectoranalysis.cpp `toJson` plus
+/// `Focus::buildAbInsResult`). `None` from `{"available": false}`.
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AbInsResult {
+    pub run: i64,
+    pub train: String,
+    /// ISO-8601 UTC.
+    pub timestamp: String,
+    pub curve_fit: String,
+    pub use_weights: bool,
+    pub datapoints: i64,
+    pub y_axis_label: String,
+    pub focuser_step_microns: f64,
+    pub cfz_steps: f64,
+    pub sensor: AbInsSensor,
+    /// `all` | `outerCorners` | `innerDiamond`.
+    pub tile_selection: String,
+    pub opt_centres: bool,
+    /// `insufficientDatapoints` | `datapointMismatch` | `tileOffsetsUnavailable`.
+    pub warnings: Vec<String>,
+    pub tiles: Vec<AbInsTile>,
+    pub backfocus: AbInsBackfocus,
+    pub tilt: AbInsTilt,
+    pub results_ok: bool,
+    pub plate_present: bool,
+    pub eta_connected: bool,
+    pub tilt_plate: Option<AbInsTiltPlate>,
+}
+
+impl AbInsResult {
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        if v["available"].as_bool() == Some(false) {
+            return None;
+        }
+        let tiles = v["tiles"].as_array()?.iter().map(|t| AbInsTile {
+            id: t["id"].as_i64().unwrap_or(0),
+            name: str_of(t, "name"),
+            used: t["used"].as_bool().unwrap_or(false),
+            fit: t["fit"].as_bool().unwrap_or(false),
+            excluded: t["excluded"].as_bool().unwrap_or(false),
+            solution: t["solution"].as_i64().unwrap_or(0),
+            delta_ticks: t["deltaTicks"].as_i64().unwrap_or(0),
+            delta_microns: f64_or(t, "deltaMicrons", 0.0),
+            min_stars: t["minStars"].as_i64().unwrap_or(0),
+            max_stars: t["maxStars"].as_i64().unwrap_or(0),
+            r2: f64_or(t, "r2", 0.0),
+            min_measure: f64_or(t, "minMeasure", 0.0),
+        }).collect();
+        let s = &v["sensor"];
+        let b = &v["backfocus"];
+        let t = &v["tilt"];
+        let p = &v["tiltPlate"];
+        let tilt_plate = (p["valid"].as_bool() == Some(true)).then(|| AbInsTiltPlate {
+            plate_type: p["plateType"].as_i64().unwrap_or(0),
+            mode: p["mode"].as_i64().unwrap_or(0),
+            radius_mm: f64_or(p, "radiusMm", 0.0),
+            screw_pitch_mm: f64_or(p, "screwPitchMm", 0.0),
+            thread_index: p["threadIndex"].as_i64().unwrap_or(0),
+            plate_angle_deg: f64_or(p, "plateAngleDeg", 0.0),
+            total_tilt_microns: f64_or(p, "totalTiltMicrons", 0.0),
+            max_adjustment_mm: f64_or(p, "maxAdjustmentMm", 0.0),
+            points: p["points"].as_array().map(|a| a.iter().map(|q| AbInsScrew {
+                index: q["index"].as_i64().unwrap_or(0),
+                angle_deg: f64_or(q, "angleDeg", 0.0),
+                position: str_of(q, "position"),
+                adjustment_mm: f64_or(q, "adjustmentMm", 0.0),
+                turns: f64_or(q, "turns", 0.0),
+            }).collect()).unwrap_or_default(),
+        });
+        Some(Self {
+            run: v["run"].as_i64().unwrap_or(0),
+            train: str_of(v, "train"),
+            timestamp: str_of(v, "timestamp"),
+            curve_fit: str_of(v, "curveFit"),
+            use_weights: v["useWeights"].as_bool().unwrap_or(false),
+            datapoints: v["datapoints"].as_i64().unwrap_or(0),
+            y_axis_label: str_of(v, "yAxisLabel"),
+            focuser_step_microns: f64_or(v, "focuserStepMicrons", 0.0),
+            cfz_steps: f64_or(v, "cfzSteps", 0.0),
+            sensor: AbInsSensor {
+                width_px: s["widthPx"].as_i64().unwrap_or(0),
+                height_px: s["heightPx"].as_i64().unwrap_or(0),
+                pixel_size_microns: f64_or(s, "pixelSizeMicrons", 0.0),
+                tile_width_px: s["tileWidthPx"].as_i64().unwrap_or(0),
+                lr_span_microns: f64_or(s, "lrSpanMicrons", 0.0),
+                tb_span_microns: f64_or(s, "tbSpanMicrons", 0.0),
+            },
+            tile_selection: str_of(v, "tileSelection"),
+            opt_centres: v["optCentres"].as_bool().unwrap_or(false),
+            warnings: v["warnings"].as_array().map(|a| a.iter().filter_map(|w| w.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+            tiles,
+            backfocus: AbInsBackfocus {
+                ok: b["ok"].as_bool().unwrap_or(false),
+                delta_microns: f64_or(b, "deltaMicrons", 0.0),
+                advice: str_of(b, "advice"),
+            },
+            tilt: AbInsTilt {
+                ok: t["ok"].as_bool().unwrap_or(false),
+                lr_microns: f64_or(t, "lrMicrons", 0.0),
+                tb_microns: f64_or(t, "tbMicrons", 0.0),
+                diagonal_microns: f64_or(t, "diagonalMicrons", 0.0),
+                lr_percent: f64_or(t, "lrPercent", 0.0),
+                tb_percent: f64_or(t, "tbPercent", 0.0),
+                diagonal_percent: f64_or(t, "diagonalPercent", 0.0),
+            },
+            results_ok: v["resultsOK"].as_bool().unwrap_or(false),
+            plate_present: p["present"].as_bool().unwrap_or(false),
+            eta_connected: p["etaConnected"].as_bool().unwrap_or(false),
+            tilt_plate,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CaptureStatusData {
     pub status: String,

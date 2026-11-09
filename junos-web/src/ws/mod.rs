@@ -54,6 +54,10 @@ pub(crate) const BOOTSTRAP_CMDS: &[&str] = &[
     r#"{"type":"train_get_all","payload":{}}"#,
     r#"{"type":"train_get_profiles","payload":{}}"#,
     r#"{"type":"focus_get_all_settings","payload":{}}"#,
+    // The Aberration Inspector's last result and settings (a KStars fork);
+    // its status already comes with `get_states`.
+    r#"{"type":"focus_abins_get_result","payload":{}}"#,
+    r#"{"type":"focus_abins_get_all_settings","payload":{}}"#,
     r#"{"type":"capture_get_all_settings","payload":{}}"#,
     r#"{"type":"capture_get_sequences","payload":{}}"#,
     r#"{"type":"align_get_all_settings","payload":{}}"#,
