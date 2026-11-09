@@ -148,11 +148,8 @@ pub struct FocusSnapshot {
     /// caption when non-empty.
     pub plot_title: String,
     /// The Aberration Inspector (a KStars fork): status, last result, settings.
-    #[allow(dead_code)] // read by the Focus tab's Aberration Inspector card (next commit)
     pub abins_status: Option<AbInsStatus>,
-    #[allow(dead_code)]
     pub abins_result: Option<AbInsResult>,
-    #[allow(dead_code)]
     pub abins_settings: serde_json::Value,
 }
 

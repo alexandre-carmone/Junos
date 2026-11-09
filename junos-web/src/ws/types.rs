@@ -495,6 +495,11 @@ impl AbInsResult {
             tilt_plate,
         })
     }
+
+    /// The critical focus zone in µm — the yardstick for a tile's delta.
+    pub fn cfz_microns(&self) -> f64 {
+        self.cfz_steps * self.focuser_step_microns
+    }
 }
 
 #[derive(Debug, Clone, Default)]

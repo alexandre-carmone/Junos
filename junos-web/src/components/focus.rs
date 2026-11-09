@@ -15,6 +15,7 @@
 //!     `focus_set_all_settings{…}`, `focus_set_crosshair{x,y}`.
 //!     Command list: `kstars/kstars/ekos/ekoslive/commands.h`,
 //!     handlers: `kstars/kstars/ekos/ekoslive/message.cpp:709-739`.
+//!   - The Aberration Inspector (`focus_abins_*`, a KStars fork): `abins.rs`.
 
 use leptos::prelude::*;
 use leptos::html;
@@ -29,6 +30,7 @@ use crate::ws::SendCmd;
 use crate::ws_helpers::{send_cmd, dispatch_setting};
 use crate::Tab;
 
+mod abins;
 mod vcurve;
 use crate::dom::{event_target_checked, event_target_value};
 
@@ -137,6 +139,11 @@ pub fn FocusTab(
     // A Memo so the open settings sheet only re-renders when the settings
     // change, not on every HFR update (which would eat a half-typed value).
     let settings = Memo::new(move |_| focus.with(|f| f.settings.clone()));
+    // The Aberration Inspector's card and sheet, likewise memoized.
+    let abins_open = RwSignal::new(false);
+    let abins_status = Memo::new(move |_| focus.with(|f| f.abins_status.clone()));
+    let abins_result = Memo::new(move |_| focus.with(|f| f.abins_result.clone()));
+    let abins_settings = Memo::new(move |_| focus.with(|f| f.abins_settings.clone()));
 
     // Detected-stars overlay: on by default. `resize_tick` is bumped whenever
     // the preview box can change size (the window `resize` listener below and
@@ -154,6 +161,7 @@ pub fn FocusTab(
                 if e.key() == "Escape" {
                     settings_open.set(false);
                     filters_open.set(false);
+                    abins_open.set(false);
                 }
             },
         );
@@ -891,6 +899,9 @@ pub fn FocusTab(
                                 <button class="btn h-12 text-base" on:click=cmd("focus_out")>{move || tr().focus_out_btn}</button>
                             </div>
                         </div>
+
+                        // Aberration Inspector (a KStars fork)
+                        {abins::abins_card(abins_status, abins_result, send_sv.get_value(), abins_open)}
                     </div>
 
                     // HFR V-curve — under the frame on md+. Title and caption
@@ -952,6 +963,7 @@ pub fn FocusTab(
                 </div>
             </Show>
             <FilterSettingsSheet open=filters_open send=send_sv.get_value() />
+            {abins::abins_sheet(abins_result, abins_settings, send_sv.get_value(), abins_open)}
         </div>
     }
 }
