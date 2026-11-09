@@ -9,6 +9,10 @@
 //! effective map under `focus_abins_get_all_settings` — an invalid value is
 //! dropped silently, so the echo is what the sheet shows. Stop is the Focus
 //! module's `focus_stop` (the run is an autofocus).
+//!
+//! The tilt plate card is recomputed from the settings echo on every change
+//! (`tilt_calc.rs`), like the desktop Tilt Correction Advisory; the result's
+//! own `tiltPlate` is only the fallback before the settings have loaded.
 
 use leptos::prelude::*;
 use serde_json::{json, Value};
@@ -18,6 +22,8 @@ use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::{AbInsResult, AbInsStatus, SendCmd};
 use crate::ws_helpers::send_cmd;
+
+use super::tilt_calc;
 
 type Label = fn(&'static Translations) -> &'static str;
 
@@ -210,7 +216,7 @@ pub fn abins_sheet(
                 <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 \
                             pb-[max(0.75rem,env(safe-area-inset-bottom))] flex flex-col gap-3 text-sm">
                     {move || result.with(|r| match r {
-                        Some(r) => result_cards(r, tr()).into_any(),
+                        Some(r) => result_cards(r, &settings.get(), tr()).into_any(),
                         None => view! { <div class="text-text-faint py-2">{tr().abins_no_result}</div> }.into_any(),
                     })}
                     {form.card()}
@@ -230,7 +236,7 @@ fn fact(label: &'static str, value: String) -> impl IntoView {
     }
 }
 
-fn result_cards(r: &AbInsResult, tr: &'static Translations) -> impl IntoView + use<> {
+fn result_cards(r: &AbInsResult, settings: &Value, tr: &'static Translations) -> impl IntoView + use<> {
     let cfz = r.cfz_microns();
 
     // Header: run, train, time, fit, datapoints, CFZ, warnings.
@@ -319,11 +325,14 @@ fn result_cards(r: &AbInsResult, tr: &'static Translations) -> impl IntoView + u
         </div>
     };
 
-    // Tilt plate: the screws to turn.
+    // Tilt plate: the screws to turn, under the current settings (the
+    // result's own advice only until the settings echo has arrived).
+    let advice = tilt_calc::plate_advice(r, settings).or_else(|| r.tilt_plate.clone());
+    let plate_present = settings["tiltPlatePresent"].as_bool().unwrap_or(r.plate_present);
     let plate = view! {
         <div class=CARD>
             <span class=CARD_TITLE>{tr.abins_tilt_plate}</span>
-            {match &r.tilt_plate {
+            {match &advice {
                 Some(p) => {
                     let screws = p.points.iter().map(|s| view! {
                         <tr>
@@ -356,7 +365,7 @@ fn result_cards(r: &AbInsResult, tr: &'static Translations) -> impl IntoView + u
                 }
                 None => view! {
                     <div class="text-text-faint">
-                        {if !r.tilt.ok { tr.abins_plate_no_tilt } else if !r.plate_present { tr.abins_no_plate } else { tr.abins_not_ok }}
+                        {if !r.tilt.ok { tr.abins_plate_no_tilt } else if !plate_present { tr.abins_no_plate } else { tr.abins_not_ok }}
                     </div>
                 }.into_any(),
             }}

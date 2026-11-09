@@ -31,6 +31,7 @@ use crate::ws_helpers::{send_cmd, dispatch_setting};
 use crate::Tab;
 
 mod abins;
+mod tilt_calc;
 mod vcurve;
 use crate::dom::{event_target_checked, event_target_value};
 
