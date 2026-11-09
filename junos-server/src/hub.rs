@@ -107,6 +107,11 @@ const STICKY_TYPES: &[&str] = &[
     // (message.cpp:1818 answers under the request's type), never a push, so
     // a reconnecting browser would otherwise wait for its bootstrap.
     "fm_get_data",
+    // The Focus module's Aberration Inspector (a KStars fork, see CLAUDE.md):
+    // its status and the last run's result are pushed once per run, so a
+    // reconnecting browser would otherwise wait for the next run.
+    "focus_abins_status",
+    "focus_abins_result",
 ];
 
 /// INDI properties whose last `device_property_{set,get}` reply is kept per
@@ -366,8 +371,12 @@ mod tests {
         // Not on the allowlist — must be dropped.
         c.capture(r#"{"type":"device_property_set","payload":{"device":"CCD Simulator","name":"CCD_TEMPERATURE","state":0,"numbers":[]}}"#);
         c.capture(r#"{"type":"new_align_state","payload":{"status":"Complete"}}"#);
+        c.capture(r#"{"type":"focus_abins_status","payload":{"canStart":true,"running":false}}"#);
+        c.capture(r#"{"type":"focus_abins_result","payload":{"available":true,"run":1}}"#);
 
         let snap = types(&c.snapshot());
+        assert!(snap.contains(&"focus_abins_status".to_string()));
+        assert!(snap.contains(&"focus_abins_result".to_string()));
         assert!(snap.contains(&"get_scopes".to_string()));
         assert!(snap.contains(&"new_focus_state".to_string()));
         assert!(snap.contains(&"new_align_state".to_string()));
