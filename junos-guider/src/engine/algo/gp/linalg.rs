@@ -111,9 +111,293 @@ impl Mat {
     }
 }
 
+/// Eigen's `LDLT<MatrixXd>` (lower storage): `P A Pᵀ = L D Lᵀ` with the
+/// diagonal pivoting of `ldlt_inplace<Lower>::unblocked`.
+#[derive(Clone, Debug)]
+pub struct Ldlt {
+    /// Eigen's `m_matrix`: the strictly lower part holds `L` (unit diagonal
+    /// implied), the diagonal holds `D`. The upper part is the untouched input.
+    m: Mat,
+    /// Eigen's `m_transpositions`: step `k` swapped row/column `k` with
+    /// `transpositions[k]` (`>= k`).
+    transpositions: Vec<usize>,
+    /// Eigen's `info() == Success`.
+    success: bool,
+}
+
+/// Factorises a symmetric matrix the way Eigen's `a.ldlt()` does. Only the
+/// lower triangle of `a` is read, like Eigen's `LDLT<_, Lower>`.
+///
+/// Like Eigen, it always returns a factorisation: a zero pivot followed by a
+/// non-zero one marks it `NumericalIssue` (`success() == false`) but PHD2
+/// never checks `info()` and solves with it anyway, so neither do we.
+pub fn ldlt(a: &Mat) -> Ldlt {
+    assert_eq!(a.n_rows, a.n_cols, "ldlt: square");
+    let n = a.n_rows;
+    let mut m = a.clone();
+    let mut transpositions = vec![0usize; n];
+    let mut temp = vec![0.0; n];
+    let mut found_zero_pivot = false;
+    let mut ret = true;
+
+    if n <= 1 {
+        // LDLT.h:310 — nothing to eliminate; the sign bookkeeping is dropped
+        // since nothing reads it.
+        for (j, t) in transpositions.iter_mut().enumerate() {
+            *t = j;
+        }
+        return Ldlt { m, transpositions, success: true };
+    }
+
+    for k in 0..n {
+        // Find the largest |diagonal| in the trailing corner, k included
+        // (LDLT.h:323). `maxCoeff` keeps the first of equal maxima.
+        let mut biggest = k;
+        let mut biggest_abs = m.get(k, k).abs();
+        for i in k + 1..n {
+            let v = m.get(i, i).abs();
+            if v > biggest_abs {
+                biggest_abs = v;
+                biggest = i;
+            }
+        }
+        transpositions[k] = biggest;
+        if k != biggest {
+            // Apply the transposition to the lower triangle only (LDLT.h:331).
+            let s = n - biggest - 1;
+            for j in 0..k {
+                let (x, y) = (m.get(k, j), m.get(biggest, j));
+                m.set(k, j, y);
+                m.set(biggest, j, x);
+            }
+            for i in n - s..n {
+                let (x, y) = (m.get(i, k), m.get(i, biggest));
+                m.set(i, k, y);
+                m.set(i, biggest, x);
+            }
+            let (x, y) = (m.get(k, k), m.get(biggest, biggest));
+            m.set(k, k, y);
+            m.set(biggest, biggest, x);
+            for i in k + 1..biggest {
+                let tmp = m.get(i, k);
+                m.set(i, k, m.get(biggest, i));
+                m.set(biggest, i, tmp);
+            }
+        }
+
+        // Partition (LDLT.h:349): A10 = row k, cols 0..k; A21 = col k, rows
+        // k+1..n; A20 = the block below A10.
+        let rs = n - k - 1;
+        if k > 0 {
+            // temp = D₀₀ · A10ᵀ, then A11 -= A10 · temp and A21 -= A20 · temp.
+            for j in 0..k {
+                temp[j] = m.get(j, j) * m.get(k, j);
+            }
+            let mut dot = 0.0;
+            for j in 0..k {
+                dot += m.get(k, j) * temp[j];
+            }
+            *m.at_mut(k, k) -= dot;
+            if rs > 0 {
+                for i in k + 1..n {
+                    let mut acc = 0.0;
+                    for j in 0..k {
+                        acc += m.get(i, j) * temp[j];
+                    }
+                    *m.at_mut(i, k) -= acc;
+                }
+            }
+        }
+
+        // LDLT.h:369 — the cutoff is 0, like LAPACK; only INF/NaN is avoided.
+        let real_akk = m.get(k, k);
+        let pivot_is_valid = real_akk.abs() > 0.0;
+
+        if k == 0 && !pivot_is_valid {
+            // The whole diagonal is zero (LDLT.h:376): identity transpositions,
+            // success iff the matrix is zero.
+            for (j, t) in transpositions.iter_mut().enumerate() {
+                *t = j;
+                for i in j + 1..n {
+                    ret = ret && m.get(i, j) == 0.0;
+                }
+            }
+            return Ldlt { m, transpositions, success: ret };
+        }
+
+        if rs > 0 && pivot_is_valid {
+            for i in k + 1..n {
+                *m.at_mut(i, k) /= real_akk;
+            }
+        } else if rs > 0 {
+            for i in k + 1..n {
+                ret = ret && m.get(i, k) == 0.0;
+            }
+        }
+
+        if found_zero_pivot && pivot_is_valid {
+            ret = false; // factorisation failed (LDLT.h:394)
+        } else if !pivot_is_valid {
+            found_zero_pivot = true;
+        }
+    }
+
+    Ldlt { m, transpositions, success: ret }
+}
+
+impl Ldlt {
+    /// Eigen's `info() == Success`.
+    pub fn success(&self) -> bool {
+        self.success
+    }
+
+    /// Eigen's `vectorD()`.
+    pub fn vector_d(&self) -> Vec<f64> {
+        (0..self.m.n_rows).map(|i| self.m.get(i, i)).collect()
+    }
+
+    /// Eigen's `matrixL()`: unit lower triangular.
+    pub fn matrix_l(&self) -> Mat {
+        let n = self.m.n_rows;
+        Mat::from_fn(n, n, |r, c| {
+            if r == c {
+                1.0
+            } else if r > c {
+                self.m.get(r, c)
+            } else {
+                0.0
+            }
+        })
+    }
+
+    /// Eigen's `transpositionsP()`: step `k` swapped index `k` with this.
+    pub fn transpositions(&self) -> &[usize] {
+        &self.transpositions
+    }
+
+    /// Eigen's `solve(b)` for one right-hand side (`LDLT::_solve_impl`,
+    /// LDLT.h:574): `x = Pᵀ L⁻ᵀ D⁻¹ L⁻¹ P b`, with `D`'s pseudo-inverse —
+    /// a row is zeroed where `|d| <= numeric_limits::min()`.
+    pub fn solve(&self, b: &[f64]) -> Vec<f64> {
+        let n = self.m.n_rows;
+        assert_eq!(b.len(), n, "Ldlt::solve: length");
+        let mut x = b.to_vec();
+
+        // x = P b: the transpositions in order.
+        for k in 0..n {
+            x.swap(k, self.transpositions[k]);
+        }
+        // x = L⁻¹ x (forward substitution, unit diagonal).
+        for i in 0..n {
+            let mut acc = x[i];
+            for j in 0..i {
+                acc -= self.m.get(i, j) * x[j];
+            }
+            x[i] = acc;
+        }
+        // x = D⁺ x.
+        let tolerance = f64::MIN_POSITIVE;
+        for i in 0..n {
+            let d = self.m.get(i, i);
+            if d.abs() > tolerance {
+                x[i] /= d;
+            } else {
+                x[i] = 0.0;
+            }
+        }
+        // x = L⁻ᵀ x (back substitution).
+        for i in (0..n).rev() {
+            let mut acc = x[i];
+            for j in i + 1..n {
+                acc -= self.m.get(j, i) * x[j];
+            }
+            x[i] = acc;
+        }
+        // x = Pᵀ x: the transpositions in reverse order.
+        for k in (0..n).rev() {
+            x.swap(k, self.transpositions[k]);
+        }
+        x
+    }
+
+    /// Eigen's `solve(B)` for a matrix right-hand side: one solve per column.
+    pub fn solve_mat(&self, b: &Mat) -> Mat {
+        assert_eq!(b.n_rows, self.m.n_rows, "Ldlt::solve_mat: rows");
+        let mut out = Mat::zeros(b.n_rows, b.n_cols);
+        for c in 0..b.n_cols {
+            let x = self.solve(&b.col(c));
+            for (r, v) in x.into_iter().enumerate() {
+                out.set(r, c, v);
+            }
+        }
+        out
+    }
+}
+
+/// Plain Cholesky `A = L Lᵀ` (lower `L`), reading the lower triangle of `a`.
+/// `None` when `a` is not positive definite. For the tests and for a
+/// sample draw (`GP::drawSample`'s `llt()`), not for the guiding path.
+pub fn cholesky(a: &Mat) -> Option<Mat> {
+    assert_eq!(a.n_rows, a.n_cols, "cholesky: square");
+    let n = a.n_rows;
+    let mut l = Mat::zeros(n, n);
+    for j in 0..n {
+        let mut d = a.get(j, j);
+        for k in 0..j {
+            d -= l.get(j, k) * l.get(j, k);
+        }
+        if d <= 0.0 {
+            return None;
+        }
+        let d = d.sqrt();
+        l.set(j, j, d);
+        for i in j + 1..n {
+            let mut v = a.get(i, j);
+            for k in 0..j {
+                v -= l.get(i, k) * l.get(j, k);
+            }
+            l.set(i, j, v / d);
+        }
+    }
+    Some(l)
+}
+
+/// Cramer's rule for a 2×2 system `a · x = b`; `None` when the determinant
+/// is zero.
+pub fn solve_2x2(a: [[f64; 2]; 2], b: [f64; 2]) -> Option<[f64; 2]> {
+    let det = a[0][0] * a[1][1] - a[0][1] * a[1][0];
+    if det == 0.0 {
+        return None;
+    }
+    Some([
+        (b[0] * a[1][1] - a[0][1] * b[1]) / det,
+        (a[0][0] * b[1] - b[0] * a[1][0]) / det,
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_close(a: &[f64], b: &[f64], tol: f64) {
+        assert_eq!(a.len(), b.len());
+        for (i, (x, y)) in a.iter().zip(b).enumerate() {
+            assert!((x - y).abs() <= tol, "index {i}: {x} vs {y} (tol {tol})");
+        }
+    }
+
+    fn spd4() -> Mat {
+        Mat::new(
+            4,
+            4,
+            vec![
+                4.0, 1.0, 2.0, 0.5, //
+                1.0, 3.0, 0.0, 1.0, //
+                2.0, 0.0, 5.0, 1.0, //
+                0.5, 1.0, 1.0, 2.0,
+            ],
+        )
+    }
 
     #[test]
     fn mat_basics() {
@@ -131,5 +415,146 @@ mod tests {
         *s.at_mut(1, 0) = 7.0;
         assert_eq!(s.data, vec![0.25, 0.0, 7.0, 0.5]);
         assert_eq!(s.col(0), vec![0.25, 7.0]);
+    }
+
+    #[test]
+    fn ldlt_spd_4x4_matches_numpy() {
+        let a = spd4();
+        // x = [1, −2, 0.5, 3] → b = A·x (NumPy: [4.5, −2, 7.5, 5]).
+        let b = [4.5, -2.0, 7.5, 5.0];
+        let f = ldlt(&a);
+        assert!(f.success());
+        assert_close(&f.solve(&b), &[1.0, -2.0, 0.5, 3.0], 1e-12);
+        // Step 0 pivots on the largest diagonal, 5 at index 2, so D[0] is
+        // exactly 5 before any elimination.
+        assert_eq!(f.transpositions()[0], 2);
+        assert_eq!(f.vector_d()[0], 5.0);
+        // All pivots positive for an SPD matrix.
+        assert!(f.vector_d().iter().all(|&d| d > 0.0));
+        // P A Pᵀ = L D Lᵀ, P applied as the transposition sequence.
+        let n = 4;
+        let mut perm: Vec<usize> = (0..n).collect();
+        for k in 0..n {
+            perm.swap(k, f.transpositions()[k]);
+        }
+        let paptt = Mat::from_fn(n, n, |r, c| a.get(perm[r], perm[c]));
+        let l = f.matrix_l();
+        let d = f.vector_d();
+        let ld = Mat::from_fn(n, n, |r, c| l.get(r, c) * d[c]);
+        let ldlt_m = ld.mul(&l.transpose());
+        assert_close(&ldlt_m.data, &paptt.data, 1e-12);
+        // solve_mat on the identity gives A⁻¹: A · A⁻¹ = I.
+        let inv = f.solve_mat(&Mat::from_fn(n, n, |r, c| if r == c { 1.0 } else { 0.0 }));
+        let id = a.mul(&inv);
+        assert_close(&id.data, &Mat::from_fn(n, n, |r, c| if r == c { 1.0 } else { 0.0 }).data, 1e-12);
+    }
+
+    #[test]
+    fn ldlt_ignores_the_upper_triangle() {
+        // Eigen's LDLT<_, Lower> reads the lower triangle only: garbage above
+        // the diagonal changes nothing.
+        let mut a = spd4();
+        a.set(0, 3, 99.0);
+        a.set(1, 2, -42.0);
+        let x = ldlt(&a).solve(&[4.5, -2.0, 7.5, 5.0]);
+        assert_close(&x, &[1.0, -2.0, 0.5, 3.0], 1e-12);
+    }
+
+    #[test]
+    fn ldlt_indefinite_3x3() {
+        // Eigenvalues −3.41, 1.18, 2.23: not SPD, Cholesky fails, LDLT works.
+        let a = Mat::new(3, 3, vec![2.0, 1.0, 0.0, 1.0, -3.0, 1.0, 0.0, 1.0, 1.0]);
+        assert!(cholesky(&a).is_none());
+        let f = ldlt(&a);
+        assert!(f.success());
+        // x = [1, −2, 3] → b = [0, 10, 1].
+        assert_close(&f.solve(&[0.0, 10.0, 1.0]), &[1.0, -2.0, 3.0], 1e-12);
+        // Pivot order: |−3| is the largest diagonal, so step 0 takes index 1
+        // and D[0] = −3; one negative pivot in all (inertia 2+, 1−).
+        assert_eq!(f.transpositions()[0], 1);
+        assert_eq!(f.vector_d()[0], -3.0);
+        assert_eq!(f.vector_d().iter().filter(|&&d| d < 0.0).count(), 1);
+    }
+
+    #[test]
+    fn ldlt_kernel_100x100_recovers_x() {
+        // The GP's gram matrix: K_ij = 20²·exp(−(i−j)²/(2·140²)) + diag(0.25),
+        // condition number ≈ 1.5e5; NumPy recovers x to 1e-11.
+        let n = 100;
+        let mut k = Mat::from_fn(n, n, |i, j| {
+            let d = i as f64 - j as f64;
+            400.0 * (-(d * d) / (2.0 * 140.0 * 140.0)).exp()
+        });
+        k.add_diag(&vec![0.25; n]);
+        let x: Vec<f64> = (0..n).map(|i| (i as f64 / 7.0).sin()).collect();
+        let b = k.mul_vec(&x);
+        let f = ldlt(&k);
+        assert!(f.success());
+        let got = f.solve(&b);
+        let max_x = x.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        for (g, e) in got.iter().zip(&x) {
+            assert!((g - e).abs() / max_x < 1e-6, "{g} vs {e}");
+        }
+        // Cholesky agrees with LDLT on an SPD matrix.
+        let l = cholesky(&k).unwrap();
+        let mut y = b.clone();
+        for i in 0..n {
+            for j in 0..i {
+                y[i] -= l.get(i, j) * y[j];
+            }
+            y[i] /= l.get(i, i);
+        }
+        for i in (0..n).rev() {
+            for j in i + 1..n {
+                y[i] -= l.get(j, i) * y[j];
+            }
+            y[i] /= l.get(i, i);
+        }
+        assert_close(&y, &got, 1e-9);
+    }
+
+    #[test]
+    fn ldlt_degenerate_cases() {
+        // 1×1 and the zero matrix take Eigen's early returns.
+        let one = ldlt(&Mat::new(1, 1, vec![4.0]));
+        assert!(one.success());
+        assert_eq!(one.solve(&[2.0]), vec![0.5]);
+        let zero = ldlt(&Mat::zeros(3, 3));
+        assert!(zero.success());
+        assert_eq!(zero.transpositions(), &[0, 1, 2]);
+        // D's pseudo-inverse: zero pivots give zero rows.
+        assert_eq!(zero.solve(&[1.0, 2.0, 3.0]), vec![0.0, 0.0, 0.0]);
+        // Zero diagonal with a non-zero below it: not "the zero matrix".
+        let mut z = Mat::zeros(2, 2);
+        z.set(1, 0, 1.0);
+        assert!(!ldlt(&z).success());
+        // A zero pivot followed by a valid one is NumericalIssue (LDLT.h:394):
+        // diag(1, 0, 0) with a 1 at (2, 1).
+        let mut a = Mat::zeros(3, 3);
+        a.set(0, 0, 1.0);
+        a.set(2, 1, 1.0);
+        a.set(1, 2, 1.0);
+        assert!(!ldlt(&a).success());
+        // PSD diag(0, 0, 1): the zero pivots come last, success.
+        let mut p = Mat::zeros(3, 3);
+        p.set(2, 2, 1.0);
+        let f = ldlt(&p);
+        assert!(f.success());
+        assert_eq!(f.transpositions(), &[2, 1, 2]);
+        assert_eq!(f.solve(&[5.0, 5.0, 5.0]), vec![0.0, 0.0, 5.0]);
+    }
+
+    #[test]
+    fn cholesky_and_2x2() {
+        let a = spd4();
+        let l = cholesky(&a).unwrap();
+        let llt = l.mul(&l.transpose());
+        assert_close(&llt.data, &a.data, 1e-12);
+        assert_eq!(l.get(0, 0), 2.0);
+        assert_eq!(l.get(0, 1), 0.0);
+        // [[3, 1], [1, 2]] · x = [5, 4] → x = [1.2, 1.4].
+        let x = solve_2x2([[3.0, 1.0], [1.0, 2.0]], [5.0, 4.0]).unwrap();
+        assert_close(&x, &[1.2, 1.4], 1e-15);
+        assert!(solve_2x2([[1.0, 2.0], [2.0, 4.0]], [1.0, 2.0]).is_none());
     }
 }
