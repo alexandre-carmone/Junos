@@ -7,4 +7,5 @@
 pub mod fits;
 pub mod image;
 pub mod rng;
+pub mod stats;
 pub mod traits;
