@@ -375,9 +375,71 @@ pub fn solve_2x2(a: [[f64; 2]; 2], b: [f64; 2]) -> Option<[f64; 2]> {
     ])
 }
 
+/// The smallest power of two `>= n` (1 for `n <= 1`). PHD2 computes it as
+/// `pow(2, ceil(log(N) / log(2)))` (math_tools.cpp:184); the two agree for
+/// every `N` the GP can pass (checked up to 70,000).
+pub fn next_pow2(n: usize) -> usize {
+    if n <= 1 { 1 } else { n.next_power_of_two() }
+}
+
+/// In-place forward FFT of a power-of-two length, iterative radix-2
+/// Cooley–Tukey, unscaled: `X_k = Σ x_n e^{-2πi kn/N}` — the convention of
+/// kissfft behind Eigen's `FFT::fwd` (and of FFTW / NumPy).
+pub fn fft_radix2(re: &mut [f64], im: &mut [f64]) {
+    let n = re.len();
+    assert_eq!(im.len(), n, "fft_radix2: lengths");
+    assert!(n.is_power_of_two(), "fft_radix2: length must be a power of two");
+    if n < 2 {
+        return;
+    }
+    // Bit-reversal permutation.
+    let bits = n.trailing_zeros();
+    for i in 0..n {
+        let j = i.reverse_bits() >> (usize::BITS - bits);
+        if j > i {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+    }
+    // Butterflies, span doubling each stage; the twiddle for stage `len` is
+    // e^{-2πi k/len}, recomputed from the angle (no running product, so the
+    // rounding stays independent of the index).
+    let mut len = 2;
+    while len <= n {
+        let half = len / 2;
+        let step = -2.0 * std::f64::consts::PI / len as f64;
+        for start in (0..n).step_by(len) {
+            for k in 0..half {
+                let (wr, wi) = ((step * k as f64).cos(), (step * k as f64).sin());
+                let (a, b) = (start + k, start + k + half);
+                let tr = wr * re[b] - wi * im[b];
+                let ti = wr * im[b] + wi * re[b];
+                re[b] = re[a] - tr;
+                im[b] = im[a] - ti;
+                re[a] += tr;
+                im[a] += ti;
+            }
+        }
+        len *= 2;
+    }
+}
+
+/// `|X_k|²` for `k in 0..=npad/2` of `data` zero-padded to `npad` (a power
+/// of two `>= data.len()`) — the amplitudes `compute_spectrum`
+/// (math_tools.cpp:174) slices its spectrum from.
+pub fn power_spectrum(data: &[f64], npad: usize) -> Vec<f64> {
+    assert!(npad >= data.len(), "power_spectrum: npad shorter than the data");
+    let mut re = vec![0.0; npad];
+    let mut im = vec![0.0; npad];
+    re[..data.len()].copy_from_slice(data);
+    fft_radix2(&mut re, &mut im);
+    (0..=npad / 2).map(|k| re[k] * re[k] + im[k] * im[k]).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::rng::Rng;
 
     fn assert_close(a: &[f64], b: &[f64], tol: f64) {
         assert_eq!(a.len(), b.len());
@@ -556,5 +618,123 @@ mod tests {
         let x = solve_2x2([[3.0, 1.0], [1.0, 2.0]], [5.0, 4.0]).unwrap();
         assert_close(&x, &[1.2, 1.4], 1e-15);
         assert!(solve_2x2([[1.0, 2.0], [2.0, 4.0]], [1.0, 2.0]).is_none());
+    }
+
+    #[test]
+    fn next_pow2_boundaries() {
+        assert_eq!(next_pow2(0), 1);
+        assert_eq!(next_pow2(1), 1);
+        assert_eq!(next_pow2(2), 2);
+        assert_eq!(next_pow2(3), 4);
+        assert_eq!(next_pow2(4), 4);
+        assert_eq!(next_pow2(4095), 4096);
+        assert_eq!(next_pow2(4096), 4096);
+        assert_eq!(next_pow2(4097), 8192);
+        assert_eq!(next_pow2(8192), 8192);
+    }
+
+    #[test]
+    fn fft_cosine_and_impulse() {
+        // cos(2πn/8): X_1 = X_7 = N/2 = 4, everything else 0.
+        let mut re: Vec<f64> = (0..8).map(|n| (2.0 * std::f64::consts::PI * n as f64 / 8.0).cos()).collect();
+        let mut im = vec![0.0; 8];
+        fft_radix2(&mut re, &mut im);
+        let mut want = vec![0.0; 8];
+        want[1] = 4.0;
+        want[7] = 4.0;
+        assert_close(&re, &want, 1e-14);
+        assert_close(&im, &[0.0; 8], 1e-14);
+        // An impulse has a flat spectrum: X_k = 1 for every k.
+        let mut re = vec![0.0; 16];
+        re[0] = 1.0;
+        let mut im = vec![0.0; 16];
+        fft_radix2(&mut re, &mut im);
+        assert_eq!(re, vec![1.0; 16]);
+        assert_eq!(im, vec![0.0; 16]);
+        // Length 1 is the identity; length 2 is [a+b, a−b].
+        let (mut r1, mut i1) = (vec![3.0], vec![0.0]);
+        fft_radix2(&mut r1, &mut i1);
+        assert_eq!(r1, vec![3.0]);
+        let (mut r2, mut i2) = (vec![3.0, 1.0], vec![0.0, 0.0]);
+        fft_radix2(&mut r2, &mut i2);
+        assert_eq!(r2, vec![4.0, 2.0]);
+    }
+
+    #[test]
+    fn fft_16_matches_numpy() {
+        let data = [
+            0.5, -1.25, 2.0, 0.75, -0.5, 1.5, -2.25, 0.25, 1.0, -0.75, 0.5, 2.5, -1.0, 0.0, 1.25, -0.25,
+        ];
+        let mut re = data.to_vec();
+        let mut im = vec![0.0; 16];
+        fft_radix2(&mut re, &mut im);
+        let want_re = [
+            4.25,
+            0.8679332182349091,
+            -1.7729707730091961,
+            -1.4156088576361459,
+            -1.5,
+            -6.65545895422933,
+            7.772970773009196,
+            5.2031345936305655,
+            -1.25,
+            5.203134593630566,
+            7.772970773009196,
+            -6.65545895422933,
+            -1.5,
+            -1.4156088576361459,
+            -1.7729707730091961,
+            0.8679332182349091,
+        ];
+        let want_im = [
+            0.0,
+            1.1451834455009162,
+            -3.323223304703363,
+            1.8185427042818227,
+            3.75,
+            -2.009884420464367,
+            3.676776695296637,
+            -0.6832436792452733,
+            0.0,
+            0.6832436792452727,
+            -3.676776695296637,
+            2.0098844204643673,
+            -3.75,
+            -1.8185427042818219,
+            3.323223304703363,
+            -1.145183445500917,
+        ];
+        assert_close(&re, &want_re, 1e-13);
+        assert_close(&im, &want_im, 1e-13);
+    }
+
+    #[test]
+    fn fft_64_matches_naive_dft() {
+        let mut rng = Rng::new(11);
+        let n = 64;
+        let x: Vec<f64> = (0..n).map(|_| rng.uniform(-1.0, 1.0)).collect();
+        let mut re = x.clone();
+        let mut im = vec![0.0; n];
+        fft_radix2(&mut re, &mut im);
+        for k in 0..n {
+            let (mut sr, mut si) = (0.0, 0.0);
+            for (i, v) in x.iter().enumerate() {
+                let ang = -2.0 * std::f64::consts::PI * (k * i) as f64 / n as f64;
+                sr += v * ang.cos();
+                si += v * ang.sin();
+            }
+            assert!((re[k] - sr).abs() < 1e-9, "k={k} re {} vs {sr}", re[k]);
+            assert!((im[k] - si).abs() < 1e-9, "k={k} im {} vs {si}", im[k]);
+        }
+    }
+
+    #[test]
+    fn power_spectrum_pads_and_halves() {
+        // [1, 2, 3, 4, 5] padded to 8 (NumPy |X_k|² for k = 0..=4).
+        let ps = power_spectrum(&[1.0, 2.0, 3.0, 4.0, 5.0], 8);
+        assert_eq!(ps.len(), 5);
+        assert_close(&ps, &[225.0, 81.76955262170047, 13.0, 8.23044737829953, 9.0], 1e-12);
+        // No padding needed: the sum of the first power-of-two length.
+        assert_eq!(power_spectrum(&[1.0, 1.0, 1.0, 1.0], 4), vec![16.0, 0.0, 0.0]);
     }
 }
