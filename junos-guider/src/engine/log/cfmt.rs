@@ -96,3 +96,111 @@ fn strip_zeros(mut s: String) -> String {
     }
     s
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Expected strings are glibc's, generated with `'%g' % x` / `'%.*f' % (p, x)`
+    // in CPython (which calls the C library's printf for these).
+
+    #[test]
+    fn g_plan_vectors() {
+        assert_eq!(fmt_g(0.5), "0.5");
+        assert_eq!(fmt_g(100000.0), "100000");
+        assert_eq!(fmt_g(1e6), "1e+06");
+        assert_eq!(fmt_g(1234567.0), "1.23457e+06");
+        assert_eq!(fmt_g(1.234567891), "1.23457");
+        assert_eq!(fmt_g(0.0001), "0.0001");
+        assert_eq!(fmt_g(0.00001), "1e-05");
+    }
+
+    #[test]
+    fn g_style_switch_uses_the_rounded_exponent() {
+        // Rounds up to 7 digits: %e style, not "1000000".
+        assert_eq!(fmt_g(999999.5), "1e+06");
+        // 123456.5 is exactly representable; ties to even → 123456.
+        assert_eq!(fmt_g(123456.5), "123456");
+        // Just under 1e-4 but rounds up to it: %f style.
+        assert_eq!(fmt_g(9.9999995e-5), "0.0001");
+        assert_eq!(fmt_g(9.9999999e-5), "0.0001");
+        // Rounds down to 99999.9 (the double is below the tie).
+        assert_eq!(fmt_g(99999.95), "99999.9");
+        assert_eq!(fmt_g(123456789.0), "1.23457e+08");
+    }
+
+    #[test]
+    fn g_zero_and_trailing_zeros() {
+        assert_eq!(fmt_g(0.0), "0");
+        assert_eq!(fmt_g(-0.0), "-0");
+        assert_eq!(fmt_g(100.0), "100");
+        assert_eq!(fmt_g(2.0 / 3.0), "0.666667");
+        assert_eq!(fmt_g(0.1 + 0.2), "0.3");
+        assert_eq!(fmt_g(-1234.5678), "-1234.57");
+        assert_eq!(fmt_g(0.000123456789), "0.000123457");
+    }
+
+    #[test]
+    fn g_exponent_spelling() {
+        assert_eq!(fmt_g(1.5e-7), "1.5e-07");
+        assert_eq!(fmt_g(-2.5e-5), "-2.5e-05");
+        assert_eq!(fmt_g(1e21), "1e+21");
+        assert_eq!(fmt_g(1e100), "1e+100");
+        assert_eq!(fmt_g(1e-100), "1e-100");
+        assert_eq!(fmt_g(5e-324), "4.94066e-324");
+        assert_eq!(fmt_g(f64::MAX), "1.79769e+308");
+    }
+
+    #[test]
+    fn g_specials() {
+        assert_eq!(fmt_g(f64::NAN), "nan");
+        assert_eq!(fmt_g(-f64::NAN), "-nan");
+        assert_eq!(fmt_g(f64::INFINITY), "inf");
+        assert_eq!(fmt_g(f64::NEG_INFINITY), "-inf");
+        assert_eq!(fmt_f(f64::NAN, 2), "nan");
+        assert_eq!(fmt_f(f64::INFINITY, 2), "inf");
+    }
+
+    #[test]
+    fn gp_precision() {
+        // Precision 0 behaves as 1.
+        assert_eq!(fmt_gp(1234.5, 0), "1e+03");
+        assert_eq!(fmt_gp(1234.5, 1), "1e+03");
+        assert_eq!(fmt_gp(9.5, 1), "1e+01");
+        assert_eq!(fmt_gp(0.95, 1), "0.9");
+        assert_eq!(fmt_gp(0.25, 1), "0.2");
+        assert_eq!(fmt_gp(2.5, 2), "2.5");
+        assert_eq!(fmt_gp(0.000123, 2), "0.00012");
+        assert_eq!(fmt_gp(1e6, 3), "1e+06");
+        assert_eq!(fmt_gp(123.456, 3), "123");
+        assert_eq!(fmt_gp(1234567.891, 8), "1234567.9");
+        assert_eq!(fmt_gp(1.0 / 3.0, 10), "0.3333333333");
+        assert_eq!(fmt_gp(0.0, 3), "0");
+        assert_eq!(fmt_gp(-0.0, 2), "-0");
+    }
+
+    #[test]
+    fn f_ties_to_even_on_the_binary_value() {
+        assert_eq!(fmt_f(0.125, 2), "0.12");
+        assert_eq!(fmt_f(0.375, 2), "0.38");
+        assert_eq!(fmt_f(-1.005, 2), "-1.00");
+        assert_eq!(fmt_f(2.0005, 3), "2.001");
+        assert_eq!(fmt_f(0.25, 1), "0.2");
+        assert_eq!(fmt_f(0.05, 1), "0.1");
+        assert_eq!(fmt_f(2.5, 0), "2");
+        assert_eq!(fmt_f(0.5, 0), "0");
+        assert_eq!(fmt_f(1.5, 0), "2");
+        assert_eq!(fmt_f(-0.5, 0), "-0");
+        assert_eq!(fmt_f(-0.4, 0), "-0");
+        assert_eq!(fmt_f(-0.0, 2), "-0.00");
+        assert_eq!(fmt_f(1e-10, 3), "0.000");
+        assert_eq!(fmt_f(1e20, 2), "100000000000000000000.00");
+    }
+
+    #[test]
+    fn d_plain() {
+        assert_eq!(fmt_d(0), "0");
+        assert_eq!(fmt_d(-42), "-42");
+        assert_eq!(fmt_d(1_000_000), "1000000");
+    }
+}
