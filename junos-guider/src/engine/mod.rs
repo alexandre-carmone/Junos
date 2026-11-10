@@ -6,6 +6,7 @@
 
 pub mod fits;
 pub mod image;
+pub mod log;
 pub mod rng;
 pub mod stats;
 pub mod traits;
