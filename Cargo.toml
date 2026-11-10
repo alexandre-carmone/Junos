@@ -1,5 +1,5 @@
 [workspace]
-members = ["junos-server", "junos-web"]
+members = ["junos-server", "junos-web", "junos-guider"]
 default-members = ["junos-server"]
 resolver = "2"
 

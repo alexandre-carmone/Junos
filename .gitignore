@@ -1,5 +1,7 @@
 deprecated-junos
 kstars
+# PHD2 2.6.14 source, the read-only reference junos-guider is ported from
+phd2
 target
 junos-web/dist
 junos-web/styles/tailwind.css

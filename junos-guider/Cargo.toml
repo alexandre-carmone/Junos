@@ -1,0 +1,32 @@
+[package]
+name = "junos-guider"
+version = "0.1.0"
+edition = "2024"
+# The crate is GPL-3 like the rest of the workspace; the guiding engine is a
+# port of PHD2 (BSD-3-Clause), whose notices are kept in THIRD_PARTY.md and at
+# the top of every ported file.
+license = "GPL-3.0-or-later AND BSD-3-Clause"
+description = "A PHD2-compatible autoguider: INDI client, PHD2 event server, junos-web UI backend"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "junos-guider"
+path = "src/main.rs"
+
+[features]
+# The gear simulator (a port of PHD2's gear_simulator): a camera, mount and AO
+# that run with no INDI server. Always on for the tests; `--sim` at runtime.
+sim = []
+
+[dependencies]
+anyhow             = "1"
+clap               = { version = "4", features = ["derive", "env"] }
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Local wall time for the guide-log file names, headers and the 09:00
+# imaging-day rollover (`time` cannot read the local offset once threads exist).
+chrono             = { version = "0.4", default-features = false, features = ["clock", "std"] }

@@ -20,18 +20,20 @@ build-wasm: ensure-trunk
     ./scripts/precompress_dist.sh junos-web/dist
 
 build-server:
-    cargo build --release -p junos-server
+    cargo build --release -p junos-server -p junos-guider
 
 # Fast typecheck (no codegen) for both crates.
 check:
     cargo check -p junos-web --target wasm32-unknown-unknown
     cargo check -p junos-server
+    cargo check -p junos-guider --features sim
 
 # Run the unit tests. Server-side only: junos-web is wasm-only (wgpu's
 # webgpu backend does not build for the host), so its tests need a wasm
 # runner and are not part of this recipe.
 test:
     cargo test -p junos-server
+    cargo test -p junos-guider
 
 # Dev loop: trunk watch in one terminal, `just dev-server` in another.
 dev-wasm: ensure-trunk

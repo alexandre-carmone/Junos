@@ -31,9 +31,15 @@ jobs:
       - name: cargo check (server)
         run: cargo check -p junos-server
 
+      - name: cargo check (guider)
+        run: cargo check -p junos-guider --features sim
+
       - name: cargo check (web / wasm)
         run: cargo check -p junos-web --target wasm32-unknown-unknown
 
       # junos-web is wasm-only, so only the server tests run here.
       - name: cargo test (server)
         run: cargo test -p junos-server
+
+      - name: cargo test (guider)
+        run: cargo test -p junos-guider
