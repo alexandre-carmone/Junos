@@ -1,12 +1,13 @@
 //! The calibration model: what a mount calibration is, the camera ↔ mount
 //! transforms built on it, the pier-flip and the "adjust for where the scope
-//! points now" step run at guide start.
+//! points now" step run at guide start, the post-calibration sanity checks,
+//! and the calibration-step calculator.
 //!
 //! Everything here is pure: the persisted form lives in the profile store
 //! (the key names are in [`keys`]), the debug-log and alert wording comes
 //! back as strings for the caller to write or show.
 //!
-//! Ported from PHD2 `src/mount.h`, `src/mount.cpp`, `src/image_math.h` — BSD-3-Clause, see THIRD_PARTY.md
+//! Ported from PHD2 `src/mount.h`, `src/mount.cpp`, `src/scope.cpp`, `src/calstep_dialog.cpp`, `src/image_math.h` — BSD-3-Clause, see THIRD_PARTY.md
 
 use std::f64::consts::PI;
 
@@ -582,6 +583,152 @@ pub fn is_opposite_side(a: PierSide, b: PierSide) -> bool {
     (a == PierSide::East && b == PierSide::West) || (a == PierSide::West && b == PierSide::East)
 }
 
+/// `CAL_ALERT_MINSTEPS` (`scope.cpp:57`).
+pub const CAL_ALERT_MINSTEPS: i32 = 4;
+/// `CAL_ALERT_ORTHOGONALITY_TOLERANCE`, degrees.
+pub const CAL_ALERT_ORTHOGONALITY_TOLERANCE: f64 = 12.5;
+/// `CAL_ALERT_DECRATE_DIFFERENCE`, ratio.
+pub const CAL_ALERT_DECRATE_DIFFERENCE: f64 = 0.20;
+/// `CAL_ALERT_AXISRATES_TOLERANCE`, ratio.
+pub const CAL_ALERT_AXISRATES_TOLERANCE: f64 = 0.20;
+
+/// What [`sanity_check_calibration`] found.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SanityResult {
+    pub issue: CalibrationIssue,
+    /// The `Calibration alert details: %s` text; empty when there is no issue.
+    pub detail: String,
+}
+
+/// `Scope::SanityCheckCalibration` (`scope.cpp:868`): one verdict, in order
+/// of confidence — too few steps (RA < 4, or 0 < Dec < 4: Dec may be off);
+/// axes more than 12.5° from orthogonal; RA/Dec rates not in the `cos(dec)`
+/// ratio by more than 0.2 (only with a known Dec within [`DEC_COMP_LIMIT`],
+/// a Dec rate and Dec comp on, since a SiTech controller may scale the
+/// rates); a Dec rate more than 20 % away from the previous calibration's,
+/// only when the setup looks the same (image scale within 0.1″/px, RA angle
+/// within 5°, both Dec rates measured). `old_cal.is_valid` false skips the
+/// last test. The caller writes `last_issue` into the details
+/// (`FlagCalibrationIssue`) and shows [`issue_advisory`].
+pub fn sanity_check_calibration(
+    new_cal: &Calibration,
+    new_details: &CalibrationDetails,
+    old_cal: &Calibration,
+    old_details: &CalibrationDetails,
+    use_dec_comp: bool,
+) -> SanityResult {
+    let mut res = SanityResult::default();
+    let x_steps = new_details.ra_step_count;
+    let y_steps = new_details.dec_step_count;
+
+    if x_steps < CAL_ALERT_MINSTEPS || (y_steps < CAL_ALERT_MINSTEPS && y_steps > 0) {
+        res.issue = CalibrationIssue::Steps;
+        res.detail = format!("Actual RA calibration steps = {x_steps}, Dec calibration steps = {y_steps}");
+        return res;
+    }
+
+    let non_ortho = ortho_error_deg(new_cal.x_angle, new_cal.y_angle);
+    if non_ortho > CAL_ALERT_ORTHOGONALITY_TOLERANCE {
+        res.issue = CalibrationIssue::Angle;
+        res.detail = format!("Non-orthogonality = {non_ortho:.3}");
+    } else if new_cal.declination != UNKNOWN_DECLINATION
+        && new_cal.y_rate != CALIBRATION_RATE_UNCALIBRATED
+        && new_cal.declination.abs() <= DEC_COMP_LIMIT
+        && use_dec_comp
+    {
+        let expected_ratio = new_cal.declination.cos();
+        // Mounts may guide at different speeds on the two axes.
+        let speed_ratio = if new_details.ra_guide_speed > 0.0 {
+            new_details.dec_guide_speed / new_details.ra_guide_speed
+        } else {
+            1.0
+        };
+        let actual_ratio = new_cal.x_rate * speed_ratio / new_cal.y_rate;
+        if (expected_ratio - actual_ratio).abs() > CAL_ALERT_AXISRATES_TOLERANCE {
+            res.issue = CalibrationIssue::Rates;
+            res.detail = format!(
+                "Expected ratio at dec={:.1} is {:.3}, actual is {:.3}",
+                new_cal.declination.to_degrees(),
+                expected_ratio,
+                actual_ratio
+            );
+        }
+    }
+
+    // The "old" values went through the profile store, so no exact compares.
+    if res.issue == CalibrationIssue::None
+        && old_cal.is_valid
+        && (old_details.image_scale - new_details.image_scale).abs() < 0.1
+        && (old_cal.x_angle - new_cal.x_angle).to_degrees().abs() < 5.0
+        && new_cal.y_rate != CALIBRATION_RATE_UNCALIBRATED
+        && old_cal.y_rate != CALIBRATION_RATE_UNCALIBRATED
+        && new_cal.y_rate != 0.0
+    {
+        let ratio = old_cal.y_rate / new_cal.y_rate;
+        if (1.0 - ratio).abs() > CAL_ALERT_DECRATE_DIFFERENCE {
+            res.issue = CalibrationIssue::Different;
+            res.detail = format!("Current/previous Dec rate ratio is {ratio:.3}");
+        }
+    }
+    res
+}
+
+/// `CalstepDialog::DEFAULT_STEPS` (`calstep_dialog.h:76`).
+pub const CALSTEP_DEFAULT_STEPS: i32 = 12;
+/// `CalstepDialog::DEFAULT_DISTANCE`, px.
+pub const CALSTEP_DEFAULT_DISTANCE: i32 = 25;
+/// `MIN_STEPS` (`calstep_dialog.cpp:45`): the pulse is capped so Dec, at
+/// `cos(dec)` of the RA travel per pulse, still gets this many steps.
+pub const CALSTEP_MIN_STEPS: f64 = 6.0;
+
+/// `MyFrame::GetPixelScale` (`myframe.h:731`): arcsec per (binned) pixel.
+pub fn pixel_scale(pixel_um: f64, focal_mm: i32, binning: u16) -> f64 {
+    206.265 * pixel_um * binning as f64 / focal_mm as f64
+}
+
+/// `CalstepDialog::GetCalibrationDistance` (`calstep_dialog.cpp:208`): 20″
+/// or 25 px, whichever is more.
+pub fn calibration_distance(focal_mm: i32, pixel_um: f64, binning: u16) -> i32 {
+    let scale = pixel_scale(pixel_um, focal_mm, binning);
+    let nominal_distance_arcsecs = 20.0;
+    let min_distance_px = CALSTEP_DEFAULT_DISTANCE as f64;
+    min_distance_px.max(nominal_distance_arcsecs / scale).ceil() as i32
+}
+
+/// `CalstepDialog::GetCalibrationStepSize` (`calstep_dialog.cpp:230`): the
+/// pulse, ms, that covers `distance` px in `desired_steps` steps at this
+/// declination. `guide_speed` is a fraction of sidereal (15″/s); the pulse
+/// grows by `1/cos(dec)` but never past the length that gives
+/// [`CALSTEP_MIN_STEPS`] at the equator, and rounds up to 50 ms. Returns
+/// `(image_scale, step_ms)`.
+pub fn calibration_step_size(
+    focal_mm: i32,
+    pixel_um: f64,
+    binning: u16,
+    guide_speed: f64,
+    desired_steps: i32,
+    declination_deg: f64,
+    distance: i32,
+) -> (f64, i32) {
+    let image_scale = pixel_scale(pixel_um, focal_mm, binning);
+    let total_duration = distance as f64 * image_scale / (15.0 * guide_speed);
+    let pulse = total_duration / desired_steps as f64 * 1000.0;
+    let max_pulse = total_duration / CALSTEP_MIN_STEPS * 1000.0;
+    let pulse = max_pulse.min(pulse / declination_deg.to_radians().cos());
+    // Too-small pulses lead to calibration problems: round up, not to nearest.
+    let step = (pulse / 50.0).ceil() as i32 * 50;
+    (image_scale, step)
+}
+
+/// The calibration-step calculator as the dialog runs it: the recommended
+/// distance for this scale, then the pulse for it. Returns
+/// `(distance_px, pulse_ms)`.
+pub fn calstep(pixel_um: f64, binning: u16, focal_mm: i32, guide_speed: f64, dec_deg: f64, steps: i32) -> (i32, i32) {
+    let distance = calibration_distance(focal_mm, pixel_um, binning);
+    let (_, pulse) = calibration_step_size(focal_mm, pixel_um, binning, guide_speed, steps, dec_deg, distance);
+    (distance, pulse)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -852,6 +999,68 @@ mod tests {
     }
 
     #[test]
+    fn sanity_each_issue() {
+        let old = cal(15.0, 105.0);
+        let od = details(8, 8);
+
+        // Few steps: RA < 4, or Dec in 1..3; Dec 0 (Dec off) is fine.
+        let r = sanity_check_calibration(&cal(15.0, 105.0), &details(3, 8), &old, &od, true);
+        assert_eq!(r.issue, CalibrationIssue::Steps);
+        assert_eq!(r.detail, "Actual RA calibration steps = 3, Dec calibration steps = 8");
+        assert_eq!(sanity_check_calibration(&cal(15.0, 105.0), &details(8, 2), &old, &od, true).issue, CalibrationIssue::Steps);
+        assert_eq!(sanity_check_calibration(&cal(15.0, 105.0), &details(8, 0), &old, &od, true).issue, CalibrationIssue::None);
+
+        // 13° off orthogonal.
+        let r = sanity_check_calibration(&cal(15.0, 92.0), &details(8, 8), &old, &od, true);
+        assert_eq!(r.issue, CalibrationIssue::Angle);
+        assert_eq!(r.detail, "Non-orthogonality = 13.000");
+        // 12° passes; a reversed Dec axis (x − 90°) is orthogonal.
+        assert_eq!(sanity_check_calibration(&cal(15.0, 93.0), &details(8, 8), &old, &od, true).issue, CalibrationIssue::None);
+        assert_eq!(sanity_check_calibration(&cal(15.0, -75.0), &details(8, 8), &old, &od, true).issue, CalibrationIssue::None);
+
+        // Rates: expected cos(20°) = 0.940, actual x/y = 0.01/0.02 = 0.5.
+        let c = Calibration { y_rate: 0.02, ..cal(15.0, 105.0) };
+        let r = sanity_check_calibration(&c, &details(8, 8), &old, &od, true);
+        assert_eq!(r.issue, CalibrationIssue::Rates);
+        assert_eq!(r.detail, "Expected ratio at dec=20.0 is 0.940, actual is 0.500");
+        // Not checked with Dec comp off, past 60° or an unknown Dec: the
+        // verdict falls through to the Dec-rate difference (0.0106/0.02).
+        let r = sanity_check_calibration(&c, &details(8, 8), &old, &od, false);
+        assert_eq!(r.issue, CalibrationIssue::Different);
+        assert_eq!(r.detail, "Current/previous Dec rate ratio is 0.530");
+        let far = Calibration { declination: 65.0f64.to_radians(), ..c.clone() };
+        assert_eq!(sanity_check_calibration(&far, &details(8, 8), &old, &od, true).issue, CalibrationIssue::Different);
+        let unk = Calibration { declination: UNKNOWN_DECLINATION, ..c.clone() };
+        assert_eq!(sanity_check_calibration(&unk, &details(8, 8), &old, &od, true).issue, CalibrationIssue::Different);
+        // ... and to None when the previous Dec rate is the same.
+        let same = Calibration { y_rate: 0.02, ..old.clone() };
+        assert_eq!(sanity_check_calibration(&c, &details(8, 8), &same, &od, false).issue, CalibrationIssue::None);
+        // The Dec guide speed scales the expected ratio: half-speed Dec passes.
+        let d = CalibrationDetails { dec_guide_speed: od.ra_guide_speed * 0.5, ..details(8, 8) };
+        assert_eq!(sanity_check_calibration(&c, &d, &old, &od, true).issue, CalibrationIssue::Rates);
+        let c2 = Calibration { y_rate: 0.0053, ..cal(15.0, 105.0) };
+        let old2 = Calibration { y_rate: 0.0053, ..old.clone() };
+        assert_eq!(sanity_check_calibration(&c2, &d, &old2, &od, true).issue, CalibrationIssue::None);
+
+        // Different: old Dec rate 0.0106 vs new 0.0134 → ratio 0.791, while
+        // 0.01/0.0134 = 0.746 still passes the rate check (0.940 − 0.746 < 0.2).
+        let c = Calibration { y_rate: 0.0134, ..cal(15.0, 105.0) };
+        let r = sanity_check_calibration(&c, &details(8, 8), &old, &od, true);
+        assert_eq!(r.issue, CalibrationIssue::Different);
+        assert_eq!(r.detail, "Current/previous Dec rate ratio is 0.791");
+        // Skipped when the old one is invalid, the scale moved, the RA angle
+        // moved ≥ 5°, or either Dec rate is uncalibrated.
+        let invalid = Calibration { is_valid: false, ..old.clone() };
+        assert_eq!(sanity_check_calibration(&c, &details(8, 8), &invalid, &od, true).issue, CalibrationIssue::None);
+        let d = CalibrationDetails { image_scale: 2.1, ..details(8, 8) };
+        assert_eq!(sanity_check_calibration(&c, &d, &old, &od, true).issue, CalibrationIssue::None);
+        let turned = Calibration { y_rate: 0.0134, ..cal(21.0, 111.0) };
+        assert_eq!(sanity_check_calibration(&turned, &details(8, 8), &old, &od, true).issue, CalibrationIssue::None);
+        let no_dec = Calibration { y_rate: CALIBRATION_RATE_UNCALIBRATED, ..old.clone() };
+        assert_eq!(sanity_check_calibration(&c, &details(8, 8), &no_dec, &od, true).issue, CalibrationIssue::None);
+    }
+
+    #[test]
     fn issue_names_and_advisories() {
         assert_eq!(issue_text(&CalibrationIssue::Angle), "Orthogonality");
         assert_eq!(issue_text(&CalibrationIssue::Different), "Difference");
@@ -861,6 +1070,22 @@ mod tests {
         assert_eq!(CalibrationIssue::Different.warning_key_qualifier(), "Diff");
         assert!(issue_advisory(&CalibrationIssue::Steps).starts_with("Advisory: Calibration completed but few guide steps"));
         assert_eq!(issue_advisory(&CalibrationIssue::None), "");
+    }
+
+    #[test]
+    fn calstep_3_75um_400mm_half_sidereal() {
+        // scale 1.9337″/px, 20″ = 10.3 px < 25 px → 25 px; 6.4458 s of travel;
+        // 537 ms per step at dec 0 → 550.
+        assert!(near(pixel_scale(3.75, 400, 1), 1.933734375, 1e-12));
+        assert_eq!(calstep(3.75, 1, 400, 0.5, 0.0, CALSTEP_DEFAULT_STEPS), (25, 550));
+        // dec 45: 759.6 → 800. dec 60: 1074.3, the 6-step cap exactly → 1100.
+        assert_eq!(calstep(3.75, 1, 400, 0.5, 45.0, CALSTEP_DEFAULT_STEPS), (25, 800));
+        assert_eq!(calstep(3.75, 1, 400, 0.5, 60.0, CALSTEP_DEFAULT_STEPS), (25, 1100));
+        // Long focal length: 20″ wins the distance (0.2475″/px → 81 px).
+        assert_eq!(calstep(2.4, 1, 2000, 0.5, 0.0, CALSTEP_DEFAULT_STEPS), (81, 250));
+        let (scale, step) = calibration_step_size(400, 3.75, 1, 0.5, 12, 0.0, 25);
+        assert!(near(scale, 1.933734375, 1e-12));
+        assert_eq!(step, 550);
     }
 
     #[test]
