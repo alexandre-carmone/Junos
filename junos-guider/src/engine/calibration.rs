@@ -1,8 +1,10 @@
-//! The calibration model: what a mount calibration is, its details and
-//! sanity verdict, and the camera ↔ mount transforms built on it.
+//! The calibration model: what a mount calibration is, the camera ↔ mount
+//! transforms built on it, the pier-flip and the "adjust for where the scope
+//! points now" step run at guide start.
 //!
 //! Everything here is pure: the persisted form lives in the profile store
-//! (the key names are in [`keys`]).
+//! (the key names are in [`keys`]), the debug-log and alert wording comes
+//! back as strings for the caller to write or show.
 //!
 //! Ported from PHD2 `src/mount.h`, `src/mount.cpp`, `src/image_math.h` — BSD-3-Clause, see THIRD_PARTY.md
 
@@ -245,6 +247,341 @@ pub fn mount_to_camera(offset: Point, cal: &Calibration) -> Point {
     Point::new(x_angle.cos() * hyp, x_angle.sin() * hyp)
 }
 
+/// `ParityStr` (`mount.cpp:104`).
+fn parity_str(p: Parity) -> &'static str {
+    match p {
+        Parity::Even => "+",
+        Parity::Odd => "-",
+        Parity::Unknown => "?",
+    }
+}
+
+/// `Mount::DeclinationStr` with the default `%.1f`.
+fn declination_str(dec: f64) -> String {
+    if dec == UNKNOWN_DECLINATION { "Unknown".to_string() } else { format!("{:.1}", dec.to_degrees()) }
+}
+
+/// `RotAngleStr` (`mount.cpp:884`).
+fn rot_angle_str(rot: f64) -> String {
+    if rot == ROTATOR_POSITION_UNKNOWN { "None".to_string() } else { format!("{rot:.1}") }
+}
+
+/// What [`flip_calibration`] reports.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FlipResult {
+    /// The status-bar line, `CAL: East(15,105)->West(-165,105)`.
+    pub status: String,
+    /// The three debug-log lines, in PHD2's wording.
+    pub log: Vec<String>,
+}
+
+/// `Mount::FlipCalibration` (`mount.cpp:891`): the calibration as seen from
+/// the other side of the pier. RA turns by π; Dec turns by π too when the
+/// mount reverses its Dec motor on a flip (`CalFlipRequiresDecFlip`), else
+/// the Dec parity inverts instead. The pier side swaps; the RA parity, the
+/// rates, the declination and the rotator angle stay. `None` when there is
+/// no calibration to flip ("cannot flip if not calibrated").
+pub fn flip_calibration(cal: &mut Calibration, dec_flip_required: bool) -> Option<FlipResult> {
+    if !cal.is_valid {
+        return None;
+    }
+    let orig_x = cal.x_angle;
+    let orig_y = cal.y_angle;
+    let mut log = vec![format!(
+        "FlipCalibration before: x={:.1}, y={:.1} decFlipRequired={} sideOfPier={} rotAngle={} parity={}/{}",
+        orig_x.to_degrees(),
+        orig_y.to_degrees(),
+        dec_flip_required as i32,
+        cal.pier_side.label(),
+        rot_angle_str(cal.rotator_angle),
+        parity_str(cal.ra_guide_parity),
+        parity_str(cal.dec_guide_parity)
+    )];
+
+    let mut new_x = orig_x + PI;
+    let mut new_y = orig_y;
+    if dec_flip_required {
+        new_y += PI;
+    }
+    log.push(format!("FlipCalibration pre-normalize: x={:.1}, y={:.1}", new_x.to_degrees(), new_y.to_degrees()));
+    new_x = norm_angle(new_x);
+    new_y = norm_angle(new_y);
+
+    let prior_side = cal.pier_side;
+    let new_side = cal.pier_side.opposite();
+    // Guide(NORTH) moves the star the other way on the other side of the pier,
+    // unless the mount already reverses its Dec motor on the flip.
+    let new_dec_parity = if dec_flip_required { cal.dec_guide_parity } else { cal.dec_guide_parity.flipped() };
+    log.push(format!(
+        "FlipCalibration after: x={:.1} y={:.1} sideOfPier={} parity={}/{}",
+        new_x.to_degrees(),
+        new_y.to_degrees(),
+        new_side.label(),
+        parity_str(cal.ra_guide_parity),
+        parity_str(new_dec_parity)
+    ));
+
+    cal.x_angle = new_x;
+    cal.y_angle = new_y;
+    cal.pier_side = new_side;
+    cal.dec_guide_parity = new_dec_parity;
+
+    // PierSideStrTr(side, "") — an unknown side prints as nothing.
+    let side_str = |s: PierSide| if s == PierSide::Unknown { "" } else { s.label() };
+    let status = format!(
+        "CAL: {}({:.0},{:.0})->{}({:.0},{:.0})",
+        side_str(prior_side),
+        orig_x.to_degrees(),
+        orig_y.to_degrees(),
+        side_str(new_side),
+        new_x.to_degrees(),
+        new_y.to_degrees()
+    );
+    Some(FlipResult { status, log })
+}
+
+/// Where the scope points and what the gear reports when guiding starts:
+/// the inputs `Mount::AdjustCalibrationForScopePointing` reads from the
+/// pointing source, the camera and the rotator.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pointing {
+    /// Radians; `None` when the pointing source cannot say (PHD2's
+    /// `UNKNOWN_DECLINATION`).
+    pub declination: Option<f64>,
+    pub pier_side: PierSide,
+    /// Degrees; `None` without a rotator (`Rotator::POSITION_UNKNOWN`).
+    pub rotator_angle: Option<f64>,
+    /// The camera's current binning.
+    pub binning: u16,
+    /// `(RA, Dec)` guide rates in deg/s, `None` when the mount cannot report
+    /// its position or its rates (`CanReportPosition` / `GetGuideRates`).
+    pub guide_rates: Option<(f64, f64)>,
+    /// The pixel size the camera reports, µm.
+    pub camera_pixel_size: f64,
+    /// The pixel size in the profile, µm.
+    pub profile_pixel_size: f64,
+}
+
+/// The mount settings the adjustment depends on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AdjustOpts {
+    /// `GetMountClassName()`: `scope` or `stepguider`, for the log line.
+    pub mount_class: &'static str,
+    /// `UseDecComp` (`Scope::DecCompensationEnabled`; always false for an AO).
+    pub use_dec_comp: bool,
+    /// `CalFlipRequiresDecFlip`.
+    pub cal_flip_requires_dec_flip: bool,
+}
+
+/// What [`adjust_for_scope_pointing`] decided.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Adjustment {
+    /// The effective RA rate (`m_xRate`), px/ms: the stored one, or the
+    /// Dec-compensated one. Never persisted.
+    pub x_rate: f64,
+    /// The calibration was flipped to the other side of the pier.
+    pub flipped: bool,
+    /// The calibration was rewritten (binning, flip or rotator) and must be
+    /// stored again (PHD2's `SetCalibration`, which also restamps `timestamp`).
+    pub cal_changed: bool,
+    /// The image scale moved by ≥ 1 %: PHD2 runs `MyFrame::HandleImageScaleChange`
+    /// (clears the calibration, resets the step size and min-moves); the
+    /// caller must do the same.
+    pub image_scale_changed: bool,
+    /// The camera-reported pixel size to write into the profile, when it
+    /// disagreed with the profile by ≥ 1 µm (`pCamera->SetCameraPixelSize`).
+    pub new_pixel_size: Option<f64>,
+    /// `pFrame->Alert` texts, in order.
+    pub alerts: Vec<String>,
+    /// Debug-log lines, in order and in PHD2's wording.
+    pub log: Vec<String>,
+}
+
+/// `Mount::AdjustCalibrationForScopePointing` (`mount.cpp:1253-1410`), run
+/// when guiding starts: warns when the guide speeds or the pixel size moved
+/// since calibration, rescales the rates for a binning change, flips the
+/// calibration when the scope is on the other side of the pier, turns the
+/// axes with the rotator, then compensates the RA rate for the declination
+/// (`cal.x_rate / cos(cal_dec) · cos(dec)` with `dec` clamped to ±89°, only
+/// when the calibration was done within [`DEC_COMP_LIMIT`] of the equator and
+/// `use_dec_comp` is on). `prev_x_rate` is the effective rate in force before
+/// the call, only for the "asserted base xRate" log line.
+pub fn adjust_for_scope_pointing(
+    cal: &mut Calibration,
+    details: &CalibrationDetails,
+    pointing: &Pointing,
+    opts: &AdjustOpts,
+    prev_x_rate: f64,
+) -> Adjustment {
+    let mut out = Adjustment { x_rate: cal.x_rate, ..Default::default() };
+    let new_declination = pointing.declination.unwrap_or(UNKNOWN_DECLINATION);
+    let new_rotator = pointing.rotator_angle.unwrap_or(ROTATOR_POSITION_UNKNOWN);
+    let binning = pointing.binning;
+
+    out.log.push(format!(
+        "AdjustCalibrationForScopePointing ({}): current dec={} pierSide={}, cal dec={} pierSide={} rotAngle={} bin={}",
+        opts.mount_class,
+        declination_str(new_declination),
+        pointing.pier_side as i32,
+        declination_str(cal.declination),
+        cal.pier_side as i32,
+        rot_angle_str(new_rotator),
+        binning
+    ));
+
+    // Guide speeds changed since calibration: an alert that can't be avoided.
+    if let Some((cur_ra, cur_dec)) = pointing.guide_rates
+        && details.ra_guide_speed > 0.0
+        && details.dec_guide_speed > 0.0
+        && ((1.0 - cur_ra / details.ra_guide_speed).abs() > 0.05
+            || (1.0 - cur_dec / details.dec_guide_speed).abs() > 0.05)
+    {
+        out.alerts.push(
+            "Mount guide speeds are different from those used in last calibration.  Do a new calibration or reset mount guide speed settings to previous values. "
+                .to_string(),
+        );
+        out.log.push(format!(
+            "Guide speeds have changed since calibration.  Orig RA = {:.1}, Orig Dec = {:.1}, Curr RA = {:.1}, Curr Dec = {:.1}, Units are arc-sec/sec",
+            details.ra_guide_speed * 3600.0,
+            details.dec_guide_speed * 3600.0,
+            cur_ra * 3600.0,
+            cur_dec * 3600.0
+        ));
+    }
+
+    if pointing.pier_side != PierSide::Unknown && cal.pier_side == PierSide::Unknown {
+        out.alerts.push(
+            "Current calibration did not have side-of-pier information, so PHD2 can't automatically correct for meridian flips. You should do a fresh calibration to correct this problem."
+                .to_string(),
+        );
+    }
+
+    // Binning or pixel-size change. A driver may lie about the binning while
+    // changing the reported pixel size, so both are watched.
+    let mut scale_adjustment = 1.0;
+    if (pointing.camera_pixel_size - pointing.profile_pixel_size).abs() >= 1.0 {
+        out.alerts.push(
+            "Profile pixel size doesn't match camera-reported pixel size.  Re-calibrate to restore correct guiding."
+                .to_string(),
+        );
+        out.log.push(format!(
+            "Camera pixel size changed from {:.1} to {:.1}",
+            pointing.profile_pixel_size, pointing.camera_pixel_size
+        ));
+        scale_adjustment = pointing.camera_pixel_size / pointing.profile_pixel_size;
+        out.new_pixel_size = Some(pointing.camera_pixel_size);
+    }
+
+    if binning != cal.binning && cal.is_valid {
+        // Quirk (mount.cpp:1314): `binning / m_cal.binning` is an unsigned
+        // short division, so 2 -> 3 yields 1 and no image-scale change is
+        // seen; the rates themselves use the double ratio. PHD2 would trap on
+        // a stored binning of 0; a divisor of 1 stands in for it here.
+        scale_adjustment *= (binning / cal.binning.max(1)) as f64;
+        let adj = cal.binning as f64 / binning as f64;
+        let new_x = cal.x_rate * adj;
+        let new_y = cal.y_rate * adj;
+        out.log.push(format!(
+            "Binning {} -> {}, rates ({:.3}, {:.3}) -> ({:.3}, {:.3})",
+            cal.binning,
+            binning,
+            cal.x_rate * 1000.0,
+            cal.y_rate * 1000.0,
+            new_x * 1000.0,
+            new_y * 1000.0
+        ));
+        cal.x_rate = new_x;
+        cal.y_rate = new_y;
+        cal.binning = binning;
+        out.x_rate = cal.x_rate;
+        out.cal_changed = true;
+    }
+
+    if (scale_adjustment - 1.0).abs() >= 0.01 {
+        out.log.push("Mount::AdjustCalibrationForScopePointing: imageScaleRatio changed".to_string());
+        out.image_scale_changed = true;
+        // MyFrame::HandleImageScaleChange's own alert (myframe.cpp:2863).
+        out.alerts.push(
+            "Binning or camera pixel size changed unexpectedly. You should use separate profiles for different image scales."
+                .to_string(),
+        );
+    }
+
+    if is_opposite_side(pointing.pier_side, cal.pier_side) {
+        out.log.push(format!(
+            "Guiding starts on opposite side of pier: calibration data side is {}, current side is {}",
+            cal.pier_side.label(),
+            pointing.pier_side.label()
+        ));
+        if let Some(flip) = flip_calibration(cal, opts.cal_flip_requires_dec_flip) {
+            out.log.extend(flip.log);
+            out.flipped = true;
+            out.cal_changed = true;
+        }
+    }
+
+    if let Some(new_rot) = pointing.rotator_angle {
+        if cal.rotator_angle == ROTATOR_POSITION_UNKNOWN {
+            // No rotator position at calibration time: nothing to adjust from.
+            // The angle is remembered in memory only (not via SetCalibration).
+            out.alerts.push("Rotator position has changed, recalibration is needed.".to_string());
+            cal.rotator_angle = new_rot;
+        } else {
+            let da = new_rot - cal.rotator_angle;
+            if da.abs() > 0.05 {
+                out.log.push(format!(
+                    "New rotator position {:.1} deg, prev = {:.1} deg, delta = {:.1} deg",
+                    new_rot, cal.rotator_angle, da
+                ));
+                let da = da.to_radians();
+                cal.x_angle = norm_angle(cal.x_angle - da);
+                cal.y_angle = norm_angle(cal.y_angle - da);
+                cal.rotator_angle = new_rot;
+                out.cal_changed = true;
+            }
+        }
+    }
+
+    // Dec compensation, last, since it reads the rates the steps above may
+    // have rewritten. The result is never stored.
+    let mut deccomp = false;
+    if new_declination != cal.declination
+        && new_declination != UNKNOWN_DECLINATION
+        && cal.declination != UNKNOWN_DECLINATION
+    {
+        if cal.declination.abs() > DEC_COMP_LIMIT {
+            out.log.push("skipping Dec comp: initial calibration too far from equator".to_string());
+            out.alerts.push("Calibration was too far from equator, recalibration is needed.".to_string());
+        } else if !opts.use_dec_comp {
+            out.log.push("skipping Dec comp: Dec Comp not enabled".to_string());
+        } else {
+            // Near the pole the rate would blow up downstream: clamp to ±89°.
+            let dec = new_declination.max((-89.0f64).to_radians()).min(89.0f64.to_radians());
+            out.x_rate = (cal.x_rate / cal.declination.cos()) * dec.cos();
+            deccomp = true;
+            out.log.push(format!(
+                "Dec comp: XRate {:.3} -> {:.3} for dec {:.1} -> dec {:.1}",
+                cal.x_rate * 1000.0,
+                out.x_rate * 1000.0,
+                cal.declination.to_degrees(),
+                dec.to_degrees()
+            ));
+        }
+    }
+    if !deccomp {
+        if prev_x_rate != cal.x_rate {
+            out.log.push(format!("No dec comp, asserted base xRate {:.3}", cal.x_rate * 1000.0));
+        }
+        out.x_rate = cal.x_rate;
+    }
+    out
+}
+
+/// `IsOppositeSide` (`mount.cpp:63`): East vs West only; Unknown matches nothing.
+pub fn is_opposite_side(a: PierSide, b: PierSide) -> bool {
+    (a == PierSide::East && b == PierSide::West) || (a == PierSide::West && b == PierSide::East)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +607,33 @@ mod tests {
         }
     }
 
+    fn details(ra: i32, dec: i32) -> CalibrationDetails {
+        CalibrationDetails {
+            focal_length: 400,
+            image_scale: 1.93,
+            ra_guide_speed: 0.5 * 15.0 / 3600.0,
+            dec_guide_speed: 0.5 * 15.0 / 3600.0,
+            ortho_error: 0.0,
+            orig_binning: 1.0,
+            ra_step_count: ra,
+            dec_step_count: dec,
+            ..Default::default()
+        }
+    }
+
+    fn pointing() -> Pointing {
+        Pointing {
+            declination: Some(20.0f64.to_radians()),
+            pier_side: PierSide::East,
+            rotator_angle: None,
+            binning: 1,
+            guide_rates: None,
+            camera_pixel_size: 3.75,
+            profile_pixel_size: 3.75,
+        }
+    }
+
+    const OPTS: AdjustOpts = AdjustOpts { mount_class: "scope", use_dec_comp: true, cal_flip_requires_dec_flip: false };
 
     #[test]
     fn norm_angle_wraps_into_minus_pi_pi() {
@@ -331,6 +695,160 @@ mod tests {
         let m = camera_to_mount(Point::new(3.0, -4.0), &c);
         let back = mount_to_camera(m, &c);
         assert!(near(back.x, 3.0, 1e-9) && near(back.y, -4.0, 1e-9));
+    }
+
+    #[test]
+    fn flip_without_dec_flip_inverts_parity() {
+        let mut c = cal(15.0, 105.0);
+        let r = flip_calibration(&mut c, false).unwrap();
+        assert!(near(c.x_angle.to_degrees(), -165.0, 1e-9));
+        assert!(near(c.y_angle.to_degrees(), 105.0, 1e-9));
+        assert_eq!(c.pier_side, PierSide::West);
+        assert_eq!(c.ra_guide_parity, Parity::Even);
+        assert_eq!(c.dec_guide_parity, Parity::Odd);
+        assert_eq!(r.status, "CAL: East(15,105)->West(-165,105)");
+        assert_eq!(
+            r.log[0],
+            "FlipCalibration before: x=15.0, y=105.0 decFlipRequired=0 sideOfPier=East rotAngle=None parity=+/+"
+        );
+        assert_eq!(r.log[1], "FlipCalibration pre-normalize: x=195.0, y=105.0");
+        assert_eq!(r.log[2], "FlipCalibration after: x=-165.0 y=105.0 sideOfPier=West parity=+/-");
+    }
+
+    #[test]
+    fn flip_with_dec_flip_turns_y_and_keeps_parity() {
+        let mut c = cal(15.0, 105.0);
+        flip_calibration(&mut c, true).unwrap();
+        assert!(near(c.x_angle.to_degrees(), -165.0, 1e-9));
+        assert!(near(c.y_angle.to_degrees(), -75.0, 1e-9));
+        assert_eq!(c.dec_guide_parity, Parity::Even);
+        assert_eq!(c.pier_side, PierSide::West);
+        // Flipping back restores the angles.
+        flip_calibration(&mut c, true).unwrap();
+        assert!(near(c.x_angle.to_degrees(), 15.0, 1e-9) && near(c.y_angle.to_degrees(), 105.0, 1e-9));
+        assert_eq!(c.pier_side, PierSide::East);
+        // Nothing to flip without a calibration.
+        let mut none = Calibration::default();
+        assert!(flip_calibration(&mut none, false).is_none());
+    }
+
+    #[test]
+    fn dec_comp_at_cal_dec_20_pointing_60() {
+        let mut c = cal(15.0, 105.0);
+        let p = Pointing { declination: Some(60.0f64.to_radians()), ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &OPTS, 0.01);
+        assert!(near(a.x_rate, 0.005320888862379561, 1e-15));
+        assert!(near(c.x_rate, 0.01, 0.0)); // the stored rate is untouched
+        assert!(!a.flipped && !a.cal_changed && a.alerts.is_empty());
+        assert_eq!(a.log[1], "Dec comp: XRate 10.000 -> 5.321 for dec 20.0 -> dec 60.0");
+    }
+
+    #[test]
+    fn dec_comp_clamps_at_89_and_skips_when_off_or_far() {
+        let mut c = cal(15.0, 105.0);
+        let p = Pointing { declination: Some(89.5f64.to_radians()), ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &OPTS, 0.01);
+        assert!(near(a.x_rate, 0.00018572463006772728, 1e-18));
+
+        // Dec comp off: base rate, plus the "asserted" line when it differed.
+        let off = AdjustOpts { use_dec_comp: false, ..OPTS };
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &off, 0.005);
+        assert_eq!(a.x_rate, 0.01);
+        assert_eq!(a.log[1], "skipping Dec comp: Dec Comp not enabled");
+        assert_eq!(a.log[2], "No dec comp, asserted base xRate 10.000");
+
+        // Calibrated past 60°: an alert, no compensation.
+        let mut far = Calibration { declination: 65.0f64.to_radians(), ..cal(15.0, 105.0) };
+        let p = Pointing { declination: Some(10.0f64.to_radians()), ..pointing() };
+        let a = adjust_for_scope_pointing(&mut far, &details(8, 8), &p, &OPTS, 0.01);
+        assert_eq!(a.x_rate, 0.01);
+        assert_eq!(a.alerts, vec!["Calibration was too far from equator, recalibration is needed.".to_string()]);
+
+        // Same declination as the calibration, or unknown: nothing happens.
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &pointing(), &OPTS, 0.01);
+        assert_eq!(a.x_rate, 0.01);
+        assert_eq!(a.log.len(), 1);
+        let p = Pointing { declination: None, ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &OPTS, 0.01);
+        assert_eq!(a.x_rate, 0.01);
+        assert_eq!(a.log[0], "AdjustCalibrationForScopePointing (scope): current dec=Unknown pierSide=0, cal dec=20.0 pierSide=0 rotAngle=None bin=1");
+    }
+
+    #[test]
+    fn adjust_flips_on_opposite_pier_and_turns_with_rotator() {
+        let mut c = Calibration { rotator_angle: 30.0, ..cal(15.0, 105.0) };
+        let p = Pointing { pier_side: PierSide::West, rotator_angle: Some(40.0), ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &OPTS, 0.01);
+        assert!(a.flipped && a.cal_changed);
+        assert_eq!(c.pier_side, PierSide::West);
+        assert_eq!(c.dec_guide_parity, Parity::Odd);
+        // Flip: 15 → -165, 105; then the 10° rotator delta is subtracted.
+        assert!(near(c.x_angle.to_degrees(), -175.0, 1e-9));
+        assert!(near(c.y_angle.to_degrees(), 95.0, 1e-9));
+        assert_eq!(c.rotator_angle, 40.0);
+        assert_eq!(
+            a.log[1],
+            "Guiding starts on opposite side of pier: calibration data side is East, current side is West"
+        );
+        assert_eq!(a.log[5], "New rotator position 40.0 deg, prev = 30.0 deg, delta = 10.0 deg");
+
+        // Rotator unknown at calibration: an alert, the angle remembered.
+        let mut c = cal(15.0, 105.0);
+        let p = Pointing { rotator_angle: Some(40.0), ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &OPTS, 0.01);
+        assert_eq!(a.alerts, vec!["Rotator position has changed, recalibration is needed.".to_string()]);
+        assert_eq!(c.rotator_angle, 40.0);
+        assert!(!a.cal_changed);
+
+        // Unknown pier side in the calibration: an alert, no flip.
+        let mut c = Calibration { pier_side: PierSide::Unknown, ..cal(15.0, 105.0) };
+        let p = Pointing { pier_side: PierSide::West, ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &OPTS, 0.01);
+        assert!(!a.flipped);
+        assert!(a.alerts[0].starts_with("Current calibration did not have side-of-pier information"));
+    }
+
+    #[test]
+    fn adjust_binning_and_guide_speed_changes() {
+        // Binning 1 → 2 halves the rates and changes the image scale.
+        let mut c = cal(15.0, 105.0);
+        let p = Pointing { binning: 2, ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &OPTS, 0.01);
+        assert!(near(c.x_rate, 0.005, 1e-15) && near(c.y_rate, 0.0053, 1e-15));
+        assert_eq!(c.binning, 2);
+        assert_eq!(a.x_rate, 0.005);
+        assert!(a.cal_changed && a.image_scale_changed);
+        assert_eq!(a.log[1], "Binning 1 -> 2, rates (10.000, 10.600) -> (5.000, 5.300)");
+        assert_eq!(a.alerts.len(), 1);
+
+        // Quirk: 2 → 3 is an integer ratio of 1, so no image-scale change.
+        let mut c = Calibration { binning: 2, ..cal(15.0, 105.0) };
+        let p = Pointing { binning: 3, ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &OPTS, 0.01);
+        assert!(!a.image_scale_changed);
+        assert!(near(c.x_rate, 0.01 * 2.0 / 3.0, 1e-15));
+
+        // Guide speed 20 % off: the alert, speeds printed in arcsec/s.
+        let mut c = cal(15.0, 105.0);
+        let d = details(8, 8);
+        let p = Pointing { guide_rates: Some((d.ra_guide_speed * 1.2, d.dec_guide_speed)), ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &d, &p, &OPTS, 0.01);
+        assert!(a.alerts[0].starts_with("Mount guide speeds are different"));
+        assert_eq!(
+            a.log[1],
+            "Guide speeds have changed since calibration.  Orig RA = 7.5, Orig Dec = 7.5, Curr RA = 9.0, Curr Dec = 7.5, Units are arc-sec/sec"
+        );
+        // Within 5 %: nothing.
+        let p = Pointing { guide_rates: Some((d.ra_guide_speed * 1.04, d.dec_guide_speed)), ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &d, &p, &OPTS, 0.01);
+        assert!(a.alerts.is_empty());
+
+        // Pixel size 1 µm off: the profile is updated, the scale changed.
+        let p = Pointing { camera_pixel_size: 4.8, ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &d, &p, &OPTS, 0.01);
+        assert_eq!(a.new_pixel_size, Some(4.8));
+        assert!(a.image_scale_changed);
+        assert_eq!(a.log[1], "Camera pixel size changed from 3.8 to 4.8");
     }
 
     #[test]
