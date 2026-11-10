@@ -4,5 +4,6 @@
 //! [`traits`]; time through [`traits::Clock`]; everything the engine tells the
 //! outside leaves as events. The daemon owns the thread and the channels.
 
+pub mod image;
 pub mod rng;
 pub mod traits;
