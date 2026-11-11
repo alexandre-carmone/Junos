@@ -304,8 +304,9 @@ pub enum DarksBuildState {
 /// the master darks of a dark library, one per exposure, or the defect
 /// map's single master, a frame at a time, with the dialog's status line
 /// and progress. The caller captures the frames [`DarksBuild::next_capture`]
-/// asks for (`CAPTURE_DARK`, with the camera's `ShutterClosed` set from the
-/// start until a `Done` build ends) and does the file work:
+/// asks for (`CAPTURE_DARK`, with [`super::camera::CameraSettings::shutter_closed`]
+/// set from the start and cleared when the build ends `Done` or `Failed`; a
+/// `Cancelled` build leaves it set, as PHD2 does) and does the file work:
 ///
 /// - first, the [`COVER_GUIDE_SCOPE`] box when the camera has no shutter;
 /// - a dark library `Done`: save it ([`DarkLibrary::to_fits`] with the

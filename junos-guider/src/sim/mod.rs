@@ -18,8 +18,7 @@
 //! position. Here [`SimMount`] also reports a position (RA 0 h, Dec 25°,
 //! the declination PHD2's pulses assume when none is known), the pier side
 //! and the guide rate, so the engine's pointing features have a source.
-//! PHD2's cooler and rotator simulators are left out: the camera seam has
-//! no cooler and there is no rotator device yet.
+//! PHD2's rotator simulator is left out: there is no rotator device yet.
 //!
 //! Ported from PHD2 src/gear_simulator.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
@@ -29,7 +28,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use chrono::{DateTime, Local, TimeDelta};
 
 use crate::engine::calibration::{ProfileAccess, norm, radians};
-use crate::engine::camera::{CaptureKind, GuideCamera};
+use crate::engine::camera::{
+    CameraSettings, CaptureError, CaptureKind, CoolerStatus, GuideCamera, UNDEFINED_FRAME_SIZE,
+};
 use crate::engine::image::UsImage;
 use crate::engine::mount::{GuideOutput, PointingSource};
 use crate::engine::rng::Rng;
@@ -63,7 +64,9 @@ const STAR: [[f64; 5]; 5] = [
 ];
 /// The simulated clock's wall time at its zero: 2026-01-01 00:00:00 UTC.
 const WALL_EPOCH: i64 = 1_767_225_600;
-const INTERRUPTED: &str = "capture interrupted";
+/// The cooler's range, °C: it cannot warm past the ambient temperature.
+const AMBIENT_TEMP: f64 = 15.0;
+const MIN_COOLER_TEMP: f64 = -15.0;
 
 /// `SimCamParams`, in the simulator's internal units: what
 /// `load_sim_params` makes of the `/SimCam/*` keys.
@@ -242,6 +245,89 @@ impl StictionSim {
     }
 }
 
+/// The simulated cooler (`Cooler`): it moves at 1/8 °C a second towards
+/// its target, held to −15…15 °C. Times are wall-clock seconds
+/// (`wxDateTime::GetTimeNow`).
+#[derive(Clone, Copy, Debug)]
+struct Cooler {
+    on: bool,
+    start_temp: f64,
+    end_temp: f64,
+    set_temp: f64,
+    end_time: i64,
+    /// °C per second.
+    rate: f64,
+    /// −1 cooling, +1 warming.
+    direction: f64,
+}
+
+impl Cooler {
+    fn new() -> Self {
+        Cooler {
+            on: false,
+            start_temp: AMBIENT_TEMP,
+            end_temp: AMBIENT_TEMP,
+            set_temp: AMBIENT_TEMP,
+            end_time: 0,
+            rate: 1.0 / 8.0,
+            direction: 0.0,
+        }
+    }
+
+    fn current_temp(&self, now: i64) -> f64 {
+        if now >= self.end_time {
+            return self.end_temp;
+        }
+        self.end_temp - self.rate * self.direction * (self.end_time - now) as f64
+    }
+
+    fn turn_on(&mut self, now: i64) {
+        if !self.on {
+            self.go_to(self.current_temp(now), now);
+            self.on = true;
+        }
+    }
+
+    fn turn_off(&mut self, now: i64) {
+        if self.on {
+            self.go_to(AMBIENT_TEMP, now);
+            self.on = false;
+        }
+    }
+
+    /// `_SetTemp`.
+    fn go_to(&mut self, temp: f64, now: i64) {
+        self.start_temp = self.current_temp(now);
+        // `std::max(std::min(newtemp, AMBIENT_TEMP), MIN_COOLER_TEMP)`.
+        let t = if AMBIENT_TEMP < temp { AMBIENT_TEMP } else { temp };
+        self.end_temp = if t < MIN_COOLER_TEMP { MIN_COOLER_TEMP } else { t };
+        let dt = ((self.end_temp - self.start_temp).abs() / self.rate).ceil();
+        self.end_time = now + dt as i64;
+        self.direction = if self.end_temp < self.start_temp { -1.0 } else { 1.0 };
+    }
+
+    fn set_temp(&mut self, temp: f64, now: i64) {
+        self.go_to(temp, now);
+        self.set_temp = temp;
+    }
+
+    /// `CameraSimulator::GetCoolerStatus`: the power is how far below the
+    /// ambient temperature the sensor is, of the cooler's whole range.
+    fn status(&self, now: i64) -> CoolerStatus {
+        let cur = self.current_temp(now);
+        let (setpoint, power) = if !self.on {
+            (0.0, 0.0)
+        } else if cur < MIN_COOLER_TEMP {
+            (self.set_temp, 100.0)
+        } else if cur >= AMBIENT_TEMP {
+            (self.set_temp, 0.0)
+        } else {
+            (self.set_temp, (AMBIENT_TEMP - cur) * 100.0 / (AMBIENT_TEMP - MIN_COOLER_TEMP))
+        };
+        CoolerStatus { on: self.on, setpoint, power, temperature: cur }
+    }
+}
+
 /// A star of the field, in RA/Dec px around the frame centre.
 #[derive(Clone, Copy, Debug)]
 struct SimStar {
@@ -272,6 +358,10 @@ struct SimState {
     rng: Rng,
     connected: bool,
     binning: u8,
+    /// `FrameSize`: set by each capture, kept across reconnects.
+    frame_size: (i32, i32),
+    /// Kept across reconnects, as in PHD2.
+    cooler: Cooler,
     /// Simulated time, ms since the simulator was made: the clock's
     /// `mono` and the camera's stopwatch.
     now_ms: u64,
@@ -393,20 +483,31 @@ impl SimState {
 
     /// `CameraSimulator::Capture`: wait out the exposure but its last
     /// 5 ms, render (so a pulse made meanwhile shows), then wait out the
-    /// download.
+    /// download. A wait that ends past the exposure plus the camera timeout
+    /// (`CameraWatchdog`) disconnects the camera.
     fn capture(
         &mut self,
         duration: u32,
-        kind: CaptureKind,
         subframe: Option<Rect>,
+        settings: &CameraSettings,
         cancel: &CancelToken,
-    ) -> Result<UsImage, String> {
-        let start = self.now_ms;
-        if duration > 5 && self.sleep(duration as u64 - 5, cancel) {
-            return Err(INTERRUPTED.into());
+    ) -> Result<UsImage, CaptureError> {
+        let start = self.now_ms as i64;
+        // `Watchdog(unsigned timeout, unsigned grace)`: the sum wraps as an
+        // unsigned int.
+        let limit = duration.wrapping_add(settings.timeout_ms as u32) as i64;
+        if duration > 5 {
+            if self.sleep(duration as u64 - 5, cancel) {
+                return Err(CaptureError::Interrupted);
+            }
+            if self.now_ms as i64 - start > limit {
+                self.connected = false;
+                return Err(CaptureError::Timeout);
+            }
         }
         let bin = self.binning.max(1) as i32;
         let (w, h) = (self.p.width as i32 / bin, self.p.height as i32 / bin);
+        self.frame_size = (w, h);
         // A subframe that does not fit is dropped. PHD2 lets a negative
         // origin through, to read before the buffer.
         let sub = subframe.filter(|r| r.w > 0 && r.h > 0 && r.x >= 0 && r.y >= 0 && r.right() < w && r.bottom() < h);
@@ -414,14 +515,28 @@ impl SimState {
         let mut img = UsImage::new(w, h);
         let exptime = duration as i32;
         self.fill_noise(&mut img, area, exptime);
-        self.fill_image(&mut img, area, exptime, kind.shutter_closed());
+        self.fill_image(&mut img, area, exptime, settings.shutter_closed);
         img.subframe = sub;
-        let total = duration as u64 + self.p.frame_download_ms as u64;
-        let elapsed = self.now_ms - start;
-        if elapsed < total && self.sleep(total - elapsed, cancel) {
-            return Err(INTERRUPTED.into());
+        // `unsigned tot_dur = duration + frame_download_ms`: a negative
+        // download time wraps, and the `int` sleep it gives is then ≤ 0.
+        let tot_dur = duration.wrapping_add(self.p.frame_download_ms) as i64;
+        let elapsed = self.now_ms as i64 - start;
+        if elapsed < tot_dur {
+            let ms = (tot_dur - elapsed) as i32;
+            if self.sleep(ms.max(0) as u64, cancel) {
+                return Err(CaptureError::Interrupted);
+            }
+            if self.now_ms as i64 - start > limit {
+                self.connected = false;
+                return Err(CaptureError::Timeout);
+            }
         }
         Ok(img)
+    }
+
+    /// Wall-clock seconds on the simulated clock.
+    fn wall_secs(&self) -> i64 {
+        WALL_EPOCH + (self.now_ms / 1000) as i64
     }
 
     /// `fill_noise`: the background, uniform noise over a dark level.
@@ -644,6 +759,8 @@ impl SimCamera {
             rng: Rng::new(2),
             connected: false,
             binning: 1,
+            frame_size: UNDEFINED_FRAME_SIZE,
+            cooler: Cooler::new(),
             now_ms: 0,
             ra_h: 0.0,
             dec_deg: Some(25.0),
@@ -679,6 +796,18 @@ impl SimCamera {
         let mut s = lock(&self.0);
         s.p.pier_side = if s.p.pier_side == PierSide::East { PierSide::West } else { PierSide::East };
     }
+
+    /// `CameraSimulator::Connect`: a new star field (`Initialize`) from
+    /// the params, which the caller loads first (`load_sim_params`).
+    pub fn connect(&self) {
+        let mut s = lock(&self.0);
+        s.initialize();
+        s.connected = true;
+    }
+
+    pub fn disconnect(&self) {
+        lock(&self.0).connected = false;
+    }
 }
 
 impl GuideCamera for SimCamera {
@@ -686,26 +815,12 @@ impl GuideCamera for SimCamera {
         "Simulator".into()
     }
 
-    fn connect(&mut self) -> Result<(), String> {
-        let mut s = lock(&self.0);
-        s.initialize();
-        s.connected = true;
-        Ok(())
-    }
-
-    fn disconnect(&mut self) -> Result<(), String> {
-        lock(&self.0).connected = false;
-        Ok(())
-    }
-
     fn is_connected(&self) -> bool {
         lock(&self.0).connected
     }
 
-    fn full_size(&self) -> (i32, i32) {
-        let s = lock(&self.0);
-        let bin = s.binning.max(1) as i32;
-        (s.p.width as i32 / bin, s.p.height as i32 / bin)
+    fn frame_size(&self) -> (i32, i32) {
+        lock(&self.0).frame_size
     }
 
     fn binning(&self) -> u8 {
@@ -741,6 +856,41 @@ impl GuideCamera for SimCamera {
         true
     }
 
+    fn has_cooler(&self) -> bool {
+        true
+    }
+
+    fn set_cooler_on(&mut self, on: bool) -> bool {
+        let mut s = lock(&self.0);
+        let now = s.wall_secs();
+        if on {
+            s.cooler.turn_on(now)
+        } else {
+            s.cooler.turn_off(now)
+        }
+        false
+    }
+
+    /// Refused while the cooler is off.
+    fn set_cooler_setpoint(&mut self, celsius: f64) -> bool {
+        let mut s = lock(&self.0);
+        if !s.cooler.on {
+            return true;
+        }
+        let now = s.wall_secs();
+        s.cooler.set_temp(celsius, now);
+        false
+    }
+
+    fn cooler_status(&self) -> Option<CoolerStatus> {
+        let s = lock(&self.0);
+        Some(s.cooler.status(s.wall_secs()))
+    }
+
+    fn sensor_temperature(&self) -> Option<f64> {
+        self.cooler_status().map(|c| c.temperature)
+    }
+
     fn has_guide_output(&self) -> bool {
         true
     }
@@ -750,14 +900,17 @@ impl GuideCamera for SimCamera {
         Ok(())
     }
 
+    /// The frame kind is the engine's business: the simulator reads the
+    /// shutter from `settings`.
     fn capture(
         &mut self,
         dur_ms: u32,
-        kind: CaptureKind,
+        _kind: CaptureKind,
         subframe: Option<Rect>,
+        settings: &CameraSettings,
         cancel: &CancelToken,
-    ) -> Result<UsImage, String> {
-        lock(&self.0).capture(dur_ms, kind, subframe, cancel)
+    ) -> Result<UsImage, CaptureError> {
+        lock(&self.0).capture(dur_ms, subframe, settings, cancel)
     }
 }
 
@@ -901,7 +1054,6 @@ impl Clock for SimClock {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -962,9 +1114,14 @@ mod tests {
     }
 
     fn connected(p: SimParams) -> SimCamera {
-        let mut cam = SimCamera::new(p);
-        cam.connect().unwrap();
+        let cam = SimCamera::new(p);
+        cam.connect();
         cam
+    }
+
+    /// PHD2's camera defaults, shutter open.
+    fn settings() -> CameraSettings {
+        CameraSettings::load(&NoProfile)
     }
 
     /// Where star `i` sits on the camera with the pulses and the drift but
@@ -983,7 +1140,7 @@ mod tests {
 
     /// One frame, and the star found near `near`.
     fn locate(cam: &mut SimCamera, near: Point, subframe: Option<Rect>) -> Point {
-        let img = cam.capture(1000, CaptureKind::Light, subframe, &CancelToken::new()).unwrap();
+        let img = cam.capture(1000, CaptureKind::Light, subframe, &settings(), &CancelToken::new()).unwrap();
         let star = Star::find(&img, 15, near.x, near.y, FindMode::Centroid, 0.0, 100.0, 0);
         assert!(star.was_found(), "{:?}", star.result);
         star.position()
@@ -1010,7 +1167,10 @@ mod tests {
         let cancel = CancelToken::new();
         let frame = || {
             let mut cam = connected(SimParams::new(1.0));
-            let img = cam.capture(1000, CaptureKind::Light, None, &cancel).unwrap();
+            // The frame size is unknown until the first frame.
+            assert_eq!(cam.frame_size(), (0, 0));
+            let img = cam.capture(1000, CaptureKind::Light, None, &settings(), &cancel).unwrap();
+            assert_eq!(cam.frame_size(), (752, 580));
             (img, cam.clock().mono())
         };
         let (a, t) = frame();
@@ -1027,21 +1187,76 @@ mod tests {
         let saturated = a.data.iter().filter(|&&v| v == u16::MAX).count();
         assert!(saturated > 8, "{saturated}");
 
-        // A dark frame is the noise, 2 × (3000 + 0..3000), and the hot pixels.
-        let dark = cam.capture(1000, CaptureKind::Dark, None, &cancel).unwrap();
+        // With the shutter closed: the noise, 2 × (3000 + 0..3000), and the
+        // hot pixels.
+        let closed = CameraSettings { shutter_closed: true, ..settings() };
+        let dark = cam.capture(1000, CaptureKind::Dark, None, &closed, &cancel).unwrap();
         let hot = dark.data.iter().filter(|&&v| v == u16::MAX).count();
         assert_eq!(hot, 8);
         assert!(dark.data.iter().all(|&v| v == u16::MAX || (6000..=11998).contains(&v)));
 
         // A subframe is the only area read; one past the frame edge is dropped.
         let sub = Rect::new(600, 420, 100, 100);
-        let img = cam.capture(500, CaptureKind::Light, Some(sub), &cancel).unwrap();
+        let img = cam.capture(500, CaptureKind::Light, Some(sub), &settings(), &cancel).unwrap();
         assert_eq!(img.subframe, Some(sub));
         assert_eq!((img.pixel(599, 420), img.pixel(600, 520)), (0, 0));
         assert!(img.pixel(600, 420) >= 3000 && img.pixel(699, 519) >= 3000);
-        let img = cam.capture(500, CaptureKind::Light, Some(Rect::new(701, 0, 52, 10)), &cancel).unwrap();
+        let img = cam.capture(500, CaptureKind::Light, Some(Rect::new(701, 0, 52, 10)), &settings(), &cancel).unwrap();
         assert_eq!(img.subframe, None);
         assert!(img.data.iter().all(|&v| v > 0));
+    }
+
+    #[test]
+    fn frame_size_watchdog_and_download_time() {
+        let cancel = CancelToken::new();
+        let mut cam = connected(quiet(1.0));
+        cam.capture(100, CaptureKind::Light, None, &settings(), &cancel).unwrap();
+        // A new binning shows with the next frame.
+        cam.set_binning(2);
+        assert_eq!(cam.frame_size(), (752, 580));
+        cam.capture(100, CaptureKind::Light, None, &settings(), &cancel).unwrap();
+        assert_eq!(cam.frame_size(), (376, 290));
+
+        // A negative download time wraps to a sleep ≤ 0: none at all.
+        let clock = cam.clock();
+        for (dur, download, waited) in [(1000, -100, 0.995), (50, -100, 0.045), (50, 20, 0.07)] {
+            cam.set_params(SimParams { frame_download_ms: download as u32, ..quiet(1.0) });
+            let t = clock.mono();
+            cam.capture(dur, CaptureKind::Light, None, &settings(), &cancel).unwrap();
+            assert!((clock.mono() - t - waited).abs() < 1e-9, "{dur} {download}");
+        }
+
+        // A negative timeout in the profile makes the watchdog's unsigned
+        // sum wrap below the exposure: the camera drops at once.
+        let short = CameraSettings { timeout_ms: -1500, ..settings() };
+        assert_eq!(cam.capture(2000, CaptureKind::Light, None, &short, &cancel).unwrap_err(), CaptureError::Timeout);
+        assert!(!cam.is_connected());
+    }
+
+    #[test]
+    fn the_cooler_runs_at_an_eighth_of_a_degree_a_second() {
+        let mut cam = connected(quiet(1.0));
+        let clock = cam.clock();
+        let off = CoolerStatus { on: false, setpoint: 0.0, power: 0.0, temperature: 15.0 };
+        assert_eq!(cam.cooler_status(), Some(off));
+        assert!(cam.set_cooler_setpoint(-10.0), "refused while off");
+        assert!(!cam.set_cooler_on(true));
+        assert!(!cam.set_cooler_setpoint(-10.0));
+        // 25 °C to go: 200 s.
+        clock.sleep_ms(100_000);
+        let s = cam.cooler_status().unwrap();
+        assert_eq!((s.on, s.setpoint, s.temperature), (true, -10.0, 2.5));
+        assert!((s.power - 12.5 * 100.0 / 30.0).abs() < 1e-12);
+        clock.sleep_ms(100_000);
+        assert_eq!(cam.sensor_temperature(), Some(-10.0));
+        // Held to −15 °C, the setpoint shown as asked.
+        cam.set_cooler_setpoint(-40.0);
+        clock.sleep_ms(60_000);
+        let s = cam.cooler_status().unwrap();
+        assert_eq!((s.setpoint, s.temperature, s.power), (-40.0, -15.0, 100.0));
+        cam.set_cooler_on(false);
+        clock.sleep_ms(240_000);
+        assert_eq!(cam.cooler_status(), Some(CoolerStatus { setpoint: 0.0, ..off }));
     }
 
     #[test]
