@@ -136,8 +136,10 @@ impl Gp {
         let n = self.data_loc.len();
         self.feature_vectors = Mat::from_fn(2, n, |r, c| if r == 0 { 1.0 } else { self.data_loc[c] });
         // A = H K⁻¹ Hᵀ (2×2), itself LDLT-solved: β = (A⁻¹ H) α, in that order.
-        let feature_matrix =
-            self.feature_vectors.mul(&self.chol_gram_matrix.solve_mat(&self.feature_vectors.transpose()));
+        // Nested in the product, Eigen's K⁻¹Hᵀ is a row-major solve.
+        let feature_matrix = self
+            .feature_vectors
+            .mul(&self.chol_gram_matrix.solve_mat_row_major(&self.feature_vectors.transpose()));
         self.beta = ldlt(&feature_matrix).solve_mat(&self.feature_vectors).mul_vec(&self.alpha);
     }
 
