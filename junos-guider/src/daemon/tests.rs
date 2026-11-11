@@ -210,3 +210,79 @@ async fn a_long_exposure_does_not_hold_up_a_stop_or_a_refusal() {
     assert!(stop < error);
     assert!(debug.contains("MyFrame::OnClose proceeding"));
 }
+
+/// A scripted INDI telescope with timed guiding, as the mount tests'.
+fn fake_mount(dev: &'static str) -> crate::indi::fake::Fake {
+    use crate::indi::fake;
+    fake::Fake::start(move |e, peer| match (e.name.as_str(), e.attr("name").unwrap_or_default()) {
+        ("getProperties", _) => peer.send(&fake::driver(dev, 5, false)),
+        ("newSwitchVector", "CONNECTION") => {
+            peer.send(&fake::connection_reply(e).unwrap());
+            let coord = [("RA", 5.5, 0.0, 24.0), ("DEC", 20.0, -90.0, 90.0)];
+            let mut s = fake::def_number(dev, "EQUATORIAL_EOD_COORD", "Ok", &coord);
+            for (p, a, b) in [
+                ("TELESCOPE_TIMED_GUIDE_NS", "TIMED_GUIDE_N", "TIMED_GUIDE_S"),
+                ("TELESCOPE_TIMED_GUIDE_WE", "TIMED_GUIDE_W", "TIMED_GUIDE_E"),
+            ] {
+                s += &fake::def_number(dev, p, "Idle", &[(a, 0.0, 0.0, 6e4), (b, 0.0, 0.0, 6e4)]);
+            }
+            peer.send(&s);
+        }
+        _ => {}
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_indi_mount_connects_drops_and_comes_back() {
+    const DEV: &str = "Telescope Simulator";
+    let fake = fake_mount(DEV);
+    let path = dir("indi");
+    let mut store = ProfileStore::open(&path.join("config"), 1).unwrap();
+    store.initialize_profile();
+    {
+        let mut p = store.profile();
+        p.set_str("/scope/LastMenuChoice", "INDI Mount [Telescope Simulator]");
+        p.set_str("/indi/INDImount", DEV);
+        p.set_str("/indi/INDIhost", "127.0.0.1");
+        p.set_i32("/indi/INDIport", fake.port as i32);
+    }
+    let s = |p: PathBuf| p.to_str().unwrap().to_string();
+    let opts = DaemonOptions {
+        engine: EngineConfig {
+            instance: 1,
+            log_dir: s(path.join("logs")),
+            darks_dir: s(path.join("darks")),
+            data_dir: s(path.clone()),
+        },
+        sim: false,
+        indi_host: "localhost".into(),
+        indi_port: 1,
+    };
+    let d = Daemon::start(opts, store, Box::new(DiskFiles));
+    let mut ev = d.subscribe();
+
+    // No camera chosen: PHD2's error, the mount connected all the same.
+    let r = d.set_connected(true).await;
+    assert_eq!(r, Err(CmdError::new(1, "equipment failed to connect: camera")));
+    let mount = || d.snapshot().mount.clone().unwrap();
+    assert_eq!(mount().name, "INDI Mount [Telescope Simulator]");
+    assert!(mount().connected);
+    assert!(!d.snapshot().connected);
+
+    // The server goes: PHD2's alert, the mount disconnected; then the
+    // client redials and the daemon connects the mount again.
+    fake.drop_conns();
+    let seen = wait_for(&mut ev, 5, |e| matches!(e, EngineEvent::Alert { .. })).await;
+    let Some(EngineEvent::Alert { msg, .. }) = seen.last().map(|e| &**e) else { unreachable!() };
+    assert_eq!(msg, "INDI server disconnected");
+    let t = Instant::now();
+    while !mount().connected {
+        assert!(t.elapsed() < Duration::from_secs(10), "the mount did not come back");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(fake.accepted() >= 2);
+
+    assert_eq!(d.set_connected(false).await, Ok(json!(0)));
+    assert!(!mount().connected);
+    d.close();
+}

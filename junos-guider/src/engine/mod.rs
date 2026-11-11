@@ -1093,6 +1093,19 @@ impl Engine {
                 self.queue_moves(&upd.moves);
                 ok()
             }
+            Command::DeviceLost(which) => {
+                if matches!(which, Which::Mount | Which::Both)
+                    && let Some(s) = self.scope.as_mut()
+                {
+                    s.scope.mount.disconnect();
+                }
+                if matches!(which, Which::Ao | Which::Both)
+                    && let Some(a) = self.ao.as_mut()
+                {
+                    a.sg.disconnect();
+                }
+                ok()
+            }
             Command::Connecting(on) => {
                 if on && self.ctrl.capture_active() {
                     return Err(CmdError::new(1, "cannot connect equipment when capture is active"));

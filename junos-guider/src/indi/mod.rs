@@ -18,4 +18,4 @@ pub mod store;
 pub mod xml;
 
 #[cfg(test)]
-mod fake;
+pub(crate) mod fake;

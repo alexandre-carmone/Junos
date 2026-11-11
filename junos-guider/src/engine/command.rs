@@ -238,6 +238,10 @@ pub enum Command {
     /// `ConnectAll` is; `false` once the gear is attached or failed. In
     /// between, `loop` and `guide` are refused.
     Connecting(bool),
+    /// The device behind the scope or the AO dropped (the INDI server or
+    /// the driver went): its mount is disconnected, as `ScopeINDI` and the
+    /// INDI AO do from their INDI thread.
+    DeviceLost(Which),
 
     // ---------------------------------------------------- the junos UI's
     /// A click on the frame: lock on the star there (`select_star`).
@@ -315,6 +319,7 @@ impl Command {
             Command::ProfileChanged => "set_profile",
             Command::Tick => "tick",
             Command::Connecting(_) => "set_connected",
+            Command::DeviceLost(_) => "device_lost",
             Command::SelectStar { .. } => "select_star",
             Command::SetCalibrationData { .. } => "set_calibration_data",
             Command::NudgeLock { .. } => "nudge_lock",

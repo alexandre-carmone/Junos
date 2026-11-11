@@ -166,6 +166,15 @@ impl Engine {
         self.events.push(EngineEvent::Status(msg.to_string()));
     }
 
+    /// A camera drop noticed between captures (PHD2's INDI thread calling
+    /// `DisconnectWithAlert`): the alert a capture would raise for it.
+    pub fn camera_lost(&mut self, e: &camera::CaptureError) {
+        let requested = self.ctrl.requested_exposure_duration(self.camera_connected());
+        if let Some((msg, _reconnect)) = e.alert(requested, &self.cam) {
+            self.alert(msg, AlertKind::Warning);
+        }
+    }
+
     /// `pFrame->Alert`, which PHD2 also writes to the debug log.
     pub fn alert(&mut self, msg: String, kind: AlertKind) {
         self.debug(&format!("Alert: {msg}"));

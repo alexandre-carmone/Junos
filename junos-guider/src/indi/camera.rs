@@ -528,6 +528,10 @@ impl GuideCamera for IndiCamera {
         self.client.lock().store.device(&self.device).is_some_and(|d| d.driver_interface() & GUIDER_INTERFACE != 0)
     }
 
+    fn take_debug(&mut self) -> Vec<String> {
+        IndiCamera::take_debug(self)
+    }
+
     fn st4_pulse(&mut self, dir: Dir, ms: u32, cancel: &CancelToken) -> Result<(), String> {
         let client = self.client.clone();
         match self.pulse.pulse(&client, &self.device, dir, ms, cancel, "INDI Camera", &mut self.debug) {
