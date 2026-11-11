@@ -1825,7 +1825,8 @@ mod tests {
     // The scripted rig of the C++ harness: West moves the star 3 px per
     // 750 ms along 195° (so the RA axis reads 15°), North 3 px along 105°,
     // South 10 % slower, with a 1500 ms Dec backlash at the start and on each
-    // reversal. RA falls going West, Dec rises going North, at 7.5″/s.
+    // reversal. RA falls going West, Dec rises going North, at 7.5″/s. The
+    // branch scenarios turn its knobs.
     const RA_RATE: f64 = 0.004;
     const NORTH_RATE: f64 = 0.004;
     const SOUTH_RATE: f64 = 0.0036;
@@ -1839,16 +1840,23 @@ mod tests {
         y: f64,
         ra: f64,
         dec: f64,
+        /// The Dec backlash, ms: the initial `slack` and what a reversal takes up.
+        backlash: f64,
         slack: f64,
         last_dec: i32,
         west_moves: bool,
         dec_moves: bool,
         slewing: bool,
         north_deg: f64,
+        ra_rate: f64,
         north_rate: f64,
         south_rate: f64,
         east_scale: f64,
-        guide_speed: f64,
+        /// Factors on the first North pulses (a negative one moves the star back).
+        north_script: Vec<f64>,
+        north_pulses: usize,
+        ra_speed: f64,
+        dec_speed: f64,
     }
 
     impl Default for Rig {
@@ -1858,16 +1866,21 @@ mod tests {
                 y: 100.0,
                 ra: 5.0,
                 dec: 20.0,
+                backlash: BACKLASH_MS,
                 slack: BACKLASH_MS,
                 last_dec: 0,
                 west_moves: true,
                 dec_moves: true,
                 slewing: false,
                 north_deg: 105.0,
+                ra_rate: RA_RATE,
                 north_rate: NORTH_RATE,
                 south_rate: SOUTH_RATE,
                 east_scale: 1.0,
-                guide_speed: GUIDE_SPEED,
+                north_script: Vec::new(),
+                north_pulses: 0,
+                ra_speed: GUIDE_SPEED,
+                dec_speed: GUIDE_SPEED,
             }
         }
     }
@@ -1886,8 +1899,8 @@ mod tests {
                         return;
                     }
                     let (s, ms) = if dir == Dir::West { (1.0, ms as f64) } else { (-1.0, ms as f64 * self.east_scale) };
-                    self.x += s * w.cos() * RA_RATE * ms;
-                    self.y += s * w.sin() * RA_RATE * ms;
+                    self.x += s * w.cos() * self.ra_rate * ms;
+                    self.y += s * w.sin() * self.ra_rate * ms;
                     self.ra -= s * ms * KRA;
                 }
                 Dir::North | Dir::South => {
@@ -1896,7 +1909,7 @@ mod tests {
                     }
                     let s = if dir == Dir::North { 1 } else { -1 };
                     if self.last_dec != 0 && self.last_dec != s {
-                        self.slack = BACKLASH_MS;
+                        self.slack = self.backlash;
                     }
                     self.last_dec = s;
                     let mut eff = ms as f64 - self.slack;
@@ -1907,9 +1920,14 @@ mod tests {
                         self.slack = 0.0;
                     }
                     let rate = if dir == Dir::North { self.north_rate } else { self.south_rate };
-                    self.x += s as f64 * n.cos() * rate * eff;
-                    self.y += s as f64 * n.sin() * rate * eff;
-                    self.dec += s as f64 * eff * KDEC;
+                    let mut f = 1.0;
+                    if dir == Dir::North {
+                        f = self.north_script.get(self.north_pulses).copied().unwrap_or(1.0);
+                        self.north_pulses += 1;
+                    }
+                    self.x += s as f64 * n.cos() * rate * eff * f;
+                    self.y += s as f64 * n.sin() * rate * eff * f;
+                    self.dec += s as f64 * eff * f * KDEC;
                 }
             }
         }
@@ -1923,7 +1941,7 @@ mod tests {
             PierSide::East
         }
         fn guide_rates(&self) -> Option<(f64, f64)> {
-            Some((self.guide_speed, self.guide_speed))
+            Some((self.ra_speed, self.dec_speed))
         }
         fn is_slewing(&self) -> bool {
             self.slewing
@@ -2048,14 +2066,17 @@ mod tests {
     /// The harness' calibration driver: one update per frame, the scheduled
     /// move made before the next. Returns the number of moves.
     fn run_calibration(scope: &mut Scope, rig: &mut Rig, profile: &mut Profile, out: &mut Vec<String>) -> usize {
-        run_calibration_in(&env(), scope, rig, profile, out)
+        run_calibration_in(&env(), scope, rig, profile, false, out)
     }
 
+    /// The same in `env`; `brief` as the harness' branch scenarios: no
+    /// `Calibrating` events, no debug lines from inside a move.
     fn run_calibration_in(
         env: &CalibrationEnv,
         scope: &mut Scope,
         rig: &mut Rig,
         profile: &mut Profile,
+        brief: bool,
         out: &mut Vec<String>,
     ) -> usize {
         let mut ev = Vec::new();
@@ -2065,6 +2086,9 @@ mod tests {
         render(&mut ev, out);
         for _ in 0..200 {
             let next = scope.update_calibration_state(rig.pos(), env, Some(&*rig), profile, &mut ev);
+            if brief {
+                ev.retain(|e| !matches!(e, MountEvent::Calibrating(_)));
+            }
             render(&mut ev, out);
             match next {
                 CalibrationNext::Failed => {
@@ -2078,6 +2102,9 @@ mod tests {
                     let cancel = CancelToken::new();
                     let mut io = ScopeIo { output: &mut pulses, pointing: Some(&*rig), cancel: &cancel, now: 1000.0 };
                     scope.move_axis(dir, ms, MoveOpts::CALIBRATION_MOVE, &mut io, &mut ev);
+                    if brief {
+                        ev.clear();
+                    }
                     render(&mut ev, out);
                     for (d, ms) in pulses.sent {
                         rig.pulse(d, ms as i32);
@@ -2226,6 +2253,127 @@ mod tests {
         guide_step(&mut scope, p, now, (0.0, 0.0), MoveOpts::DEDUCED_MOVE, 13, &mut out);
         guide_step(&mut scope, p, now, (3.0, -3.0), MoveOpts::USE_BLC, 14, &mut out);
 
+        let golden: Vec<&str> = GOLDEN.lines().collect();
+        for (k, (r, c)) in out.iter().zip(&golden).enumerate() {
+            assert_eq!(r, c, "line {}", k + 1);
+        }
+        assert_eq!(out.len(), golden.len());
+    }
+
+    #[test]
+    fn calibration_branches_match_phd2() {
+        // PHD2's C++ on the same rig, turned to reach the branches the clean
+        // calibration does not: the West and North legs giving up on the
+        // 62nd frame, the backlash clearing's limit (failing, or going on
+        // with ≥ 3 px), its rejected reversals, nudges the wrong way, the
+        // ST-4 east advisory and the three south wordings, assume-orthogonal,
+        // a Dec guide speed half the RA one (smaller backlash steps), each
+        // sanity-check issue (one suppressed), the step and distance refits
+        // for a guide-speed and a binning change, and a suppressed limit
+        // alert. Brief transcripts: no `Calibrating` events, no debug lines
+        // from inside a calibration move.
+        const GOLDEN: &str = include_str!("testdata/scope_phd2_branches.txt");
+        let mut out = Vec::new();
+        let mut ev = Vec::new();
+        let fresh = |name: &str, out: &mut Vec<String>| {
+            out.push(format!("#### {name}"));
+            let mut p = Profile::default();
+            let scope = connected_scope(&mut p, 1000.0);
+            (p, scope)
+        };
+        let run = |env: &CalibrationEnv, scope: &mut Scope, mut rig: Rig, p: &mut Profile, out: &mut Vec<String>| {
+            run_calibration_in(env, scope, &mut rig, p, true, out);
+            rig
+        };
+        let e = env();
+        let st4 = CalibrationEnv { can_pulse_guide: false, ..env() };
+
+        let (mut p, mut scope) = fresh("west fails on the 62nd frame", &mut out);
+        run(&e, &mut scope, Rig { west_moves: false, ..Rig::default() }, &mut p, &mut out);
+
+        // Long steps: 8 clearing pulses at most.
+        let (mut p, mut scope) = fresh("north fails after the clearing limit", &mut out);
+        scope.set_calibration_duration(7500, &mut p, &mut ev);
+        run(&e, &mut scope, Rig { north_rate: 0.000053, ..Rig::default() }, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("backlash clearing fails", &mut out);
+        scope.set_calibration_duration(7500, &mut p, &mut ev);
+        run(&e, &mut scope, Rig { dec_moves: false, ..Rig::default() }, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("backlash reversals", &mut out);
+        let rig = Rig { backlash: 0.0, slack: 0.0, north_script: vec![1.0, -1.0, 1.0, -0.3], ..Rig::default() };
+        run(&e, &mut scope, rig, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("nudge in the wrong direction", &mut out);
+        let rig = Rig { backlash: 0.0, slack: 0.0, south_rate: 0.006, ..Rig::default() };
+        run(&e, &mut scope, rig, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("st4, no east and no south movement", &mut out);
+        run(&st4, &mut scope, Rig { east_scale: 0.0, south_rate: 0.0, ..Rig::default() }, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("st4, little south movement", &mut out);
+        run(&st4, &mut scope, Rig { south_rate: 0.0008, ..Rig::default() }, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("pulse guide, no south movement", &mut out);
+        run(&e, &mut scope, Rig { south_rate: 0.0, ..Rig::default() }, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("assume orthogonal", &mut out);
+        scope.set_assume_orthogonal(true, &mut p);
+        run(&e, &mut scope, Rig { north_deg: 110.0, ..Rig::default() }, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("dec guide speed half the ra one", &mut out);
+        let rig = Rig {
+            dec_speed: GUIDE_SPEED / 2.0,
+            north_rate: NORTH_RATE / 2.0,
+            south_rate: SOUTH_RATE / 2.0,
+            ..Rig::default()
+        };
+        run(&e, &mut scope, rig, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("sanity: too few steps", &mut out);
+        run(&e, &mut scope, Rig { ra_rate: 4.0 * RA_RATE, ..Rig::default() }, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("sanity: axes not orthogonal, advisory suppressed", &mut out);
+        scope.set_suppressed_alerts(SuppressedAlerts {
+            calibration: vec![CalibrationIssue::Angle],
+            ..SuppressedAlerts::default()
+        });
+        run(&e, &mut scope, Rig { north_deg: 125.0, ..Rig::default() }, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("sanity: rates", &mut out);
+        run(&e, &mut scope, Rig { north_rate: 0.006, ..Rig::default() }, &mut p, &mut out);
+
+        let (mut p, mut scope) = fresh("sanity: different from the previous one", &mut out);
+        run(&e, &mut scope, Rig::default(), &mut p, &mut out);
+        run(&e, &mut scope, Rig { north_rate: 0.0052, ..Rig::default() }, &mut p, &mut out);
+
+        // A 1× guide speed, then binning 2 at 2000 mm.
+        let (mut p, mut scope) = fresh("step and distance refits", &mut out);
+        let mut env = CalibrationEnv { focal_length: 2000, ..env() };
+        let mut rig = run(&env, &mut scope, Rig::default(), &mut p, &mut out);
+        rig.ra_speed = 15.0 * 0.9973 / 3600.0;
+        rig.dec_speed = rig.ra_speed;
+        for binning in [1, 2] {
+            env.binning = binning;
+            out.push("== begin".into());
+            scope.begin_calibration(Some(rig.pos()), &env, Some(&rig), &mut p, &mut ev);
+            render(&mut ev, &mut out);
+            out.push(format!("SETTINGS: dur={} dist={}", scope.calibration_duration(), scope.calibration_distance()));
+        }
+
+        let (_, mut scope) = fresh("limit alert suppressed", &mut out);
+        scope.set_suppressed_alerts(SuppressedAlerts { ra_limit: true, ..SuppressedAlerts::default() });
+        let mut pulses = Pulses { pulse_guide: true, ..Pulses::default() };
+        let cancel = CancelToken::new();
+        let mut io = ScopeIo { output: &mut pulses, pointing: None, cancel: &cancel, now: 5000.0 };
+        for _ in 0..6 {
+            scope.mv.move_axis(true, Dir::West, 3000, MoveOpts::GUIDE_STEP, &mut io, &mut ev);
+        }
+        render(&mut ev, &mut out);
+
+        // The south advisories hold newlines, which the C++ prints as such.
+        let text = out.join("\n");
+        let out: Vec<&str> = text.lines().collect();
         let golden: Vec<&str> = GOLDEN.lines().collect();
         for (k, (r, c)) in out.iter().zip(&golden).enumerate() {
             assert_eq!(r, c, "line {}", k + 1);
@@ -2614,7 +2762,7 @@ mod tests {
         let mut rig = Rig { east_scale: 0.0, south_rate: 0.0, ..Rig::default() };
         let env = CalibrationEnv { can_pulse_guide: false, ..env() };
         let mut out = Vec::new();
-        run_calibration_in(&env, &mut scope, &mut rig, &mut p, &mut out);
+        run_calibration_in(&env, &mut scope, &mut rig, &mut p, false, &mut out);
         assert!(scope.is_calibrated());
         let east = "Advisory: Little or no east movement was measured, so guiding will probably be impaired. Check the guide cable and use the Manual Guide tool to confirm basic operation of the mount.";
         let k = out.iter().position(|l| l.starts_with("ALERT:")).expect("east advisory");
@@ -2671,7 +2819,7 @@ mod tests {
         let mut scope = connected_scope(&mut p, 0.0);
         run_calibration(&mut scope, &mut Rig::default(), &mut p, &mut Vec::new());
         // 0.5× → 1× sidereal: 25 px at 1.96″/px in 12 steps is 272 ms → 300.
-        let rig = Rig { guide_speed: 15.0 * 0.9973 / 3600.0, ..Rig::default() };
+        let rig = Rig { ra_speed: 15.0 * 0.9973 / 3600.0, dec_speed: 15.0 * 0.9973 / 3600.0, ..Rig::default() };
         let mut ev = Vec::new();
         assert!(scope.begin_calibration(Some(rig.pos()), &env(), Some(&rig), &mut p, &mut ev));
         assert_eq!(

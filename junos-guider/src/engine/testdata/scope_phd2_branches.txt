@@ -1,0 +1,2398 @@
+#### west fails on the 62nd frame
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   2, dist= 0.0
+MOVE: West 750
+ROW: West,2,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   3, dist= 0.0
+MOVE: West 750
+ROW: West,3,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   4, dist= 0.0
+MOVE: West 750
+ROW: West,4,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   5, dist= 0.0
+MOVE: West 750
+ROW: West,5,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   6, dist= 0.0
+MOVE: West 750
+ROW: West,6,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   7, dist= 0.0
+MOVE: West 750
+ROW: West,7,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   8, dist= 0.0
+MOVE: West 750
+ROW: West,8,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   9, dist= 0.0
+MOVE: West 750
+ROW: West,9,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  10, dist= 0.0
+MOVE: West 750
+ROW: West,10,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  11, dist= 0.0
+MOVE: West 750
+ROW: West,11,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  12, dist= 0.0
+MOVE: West 750
+ROW: West,12,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  13, dist= 0.0
+MOVE: West 750
+ROW: West,13,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  14, dist= 0.0
+MOVE: West 750
+ROW: West,14,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  15, dist= 0.0
+MOVE: West 750
+ROW: West,15,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  16, dist= 0.0
+MOVE: West 750
+ROW: West,16,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  17, dist= 0.0
+MOVE: West 750
+ROW: West,17,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  18, dist= 0.0
+MOVE: West 750
+ROW: West,18,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  19, dist= 0.0
+MOVE: West 750
+ROW: West,19,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  20, dist= 0.0
+MOVE: West 750
+ROW: West,20,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  21, dist= 0.0
+MOVE: West 750
+ROW: West,21,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  22, dist= 0.0
+MOVE: West 750
+ROW: West,22,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  23, dist= 0.0
+MOVE: West 750
+ROW: West,23,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  24, dist= 0.0
+MOVE: West 750
+ROW: West,24,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  25, dist= 0.0
+MOVE: West 750
+ROW: West,25,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  26, dist= 0.0
+MOVE: West 750
+ROW: West,26,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  27, dist= 0.0
+MOVE: West 750
+ROW: West,27,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  28, dist= 0.0
+MOVE: West 750
+ROW: West,28,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  29, dist= 0.0
+MOVE: West 750
+ROW: West,29,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  30, dist= 0.0
+MOVE: West 750
+ROW: West,30,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  31, dist= 0.0
+MOVE: West 750
+ROW: West,31,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  32, dist= 0.0
+MOVE: West 750
+ROW: West,32,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  33, dist= 0.0
+MOVE: West 750
+ROW: West,33,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  34, dist= 0.0
+MOVE: West 750
+ROW: West,34,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  35, dist= 0.0
+MOVE: West 750
+ROW: West,35,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  36, dist= 0.0
+MOVE: West 750
+ROW: West,36,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  37, dist= 0.0
+MOVE: West 750
+ROW: West,37,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  38, dist= 0.0
+MOVE: West 750
+ROW: West,38,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  39, dist= 0.0
+MOVE: West 750
+ROW: West,39,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  40, dist= 0.0
+MOVE: West 750
+ROW: West,40,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  41, dist= 0.0
+MOVE: West 750
+ROW: West,41,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  42, dist= 0.0
+MOVE: West 750
+ROW: West,42,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  43, dist= 0.0
+MOVE: West 750
+ROW: West,43,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  44, dist= 0.0
+MOVE: West 750
+ROW: West,44,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  45, dist= 0.0
+MOVE: West 750
+ROW: West,45,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  46, dist= 0.0
+MOVE: West 750
+ROW: West,46,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  47, dist= 0.0
+MOVE: West 750
+ROW: West,47,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  48, dist= 0.0
+MOVE: West 750
+ROW: West,48,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  49, dist= 0.0
+MOVE: West 750
+ROW: West,49,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  50, dist= 0.0
+MOVE: West 750
+ROW: West,50,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  51, dist= 0.0
+MOVE: West 750
+ROW: West,51,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  52, dist= 0.0
+MOVE: West 750
+ROW: West,52,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  53, dist= 0.0
+MOVE: West 750
+ROW: West,53,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  54, dist= 0.0
+MOVE: West 750
+ROW: West,54,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  55, dist= 0.0
+MOVE: West 750
+ROW: West,55,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  56, dist= 0.0
+MOVE: West 750
+ROW: West,56,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  57, dist= 0.0
+MOVE: West 750
+ROW: West,57,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  58, dist= 0.0
+MOVE: West 750
+ROW: West,58,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  59, dist= 0.0
+MOVE: West 750
+ROW: West,59,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  60, dist= 0.0
+MOVE: West 750
+ROW: West,60,0.000,0.000,100.000,100.000,0.000
+STATUS: West step  61, dist= 0.0
+MOVE: West 750
+ROW: West,61,0.000,0.000,100.000,100.000,0.000
+ALERT: RA Calibration Failed: star did not move enough
+FAILED: RA Calibration Failed: star did not move enough
+DEBUG: Error thrown from scope.cpp:1255->RA calibration failed
+RESULT: failed
+#### north fails after the clearing limit
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 7500
+ROW: West,1,28.978,7.765,71.022,92.235,30.000
+DEBUG: WEST calibration completes with steps=1 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,1,28.978,7.765,71.022,92.235,30.000
+STATUS: East step   1, dist=30.0
+MOVE: East 7500
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 18.0 px, max attempts = 8
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 7500
+STATUS: Clearing backlash step 1
+MOVE: North 7500
+ROW: Backlash,1,0.082,-0.307,99.918,100.307,0.318
+DEBUG: Backlash: Rejected small move of 0.3 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.32 px, CumDistance = 0.32 px
+MOVE: North 7500
+ROW: Backlash,2,0.185,-0.691,99.815,100.691,0.715
+DEBUG: Backlash: Rejected small move of 0.4 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.40 px, CumDistance = 0.72 px
+MOVE: North 7500
+ROW: Backlash,3,0.288,-1.075,99.712,101.075,1.113
+DEBUG: Backlash: Rejected small move of 0.4 px
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 0.40 px, CumDistance = 1.11 px
+MOVE: North 7500
+ROW: Backlash,4,0.391,-1.459,99.609,101.459,1.511
+DEBUG: Backlash: Rejected small move of 0.4 px
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 0.40 px, CumDistance = 1.51 px
+MOVE: North 7500
+ROW: Backlash,5,0.494,-1.843,99.506,101.843,1.908
+DEBUG: Backlash: Rejected small move of 0.4 px
+STATUS: Clearing backlash step   6
+DEBUG: Backlash: Clearing backlash step   6, Last Delta = 0.40 px, CumDistance = 1.91 px
+MOVE: North 7500
+ROW: Backlash,6,0.597,-2.227,99.403,102.227,2.306
+DEBUG: Backlash: Rejected small move of 0.4 px
+STATUS: Clearing backlash step   7
+DEBUG: Backlash: Clearing backlash step   7, Last Delta = 0.40 px, CumDistance = 2.31 px
+MOVE: North 7500
+ROW: Backlash,7,0.700,-2.611,99.300,102.611,2.703
+DEBUG: Backlash: Rejected small move of 0.4 px
+STATUS: Clearing backlash step   8
+DEBUG: Backlash: Clearing backlash step   8, Last Delta = 0.40 px, CumDistance = 2.70 px
+MOVE: North 7500
+ROW: Backlash,8,0.802,-2.995,99.198,102.995,3.101
+DEBUG: Backlash: Rejected small move of 0.4 px
+DEBUG: Backlash: Reached clearing limit but total displacement > 3px - proceeding with calibration
+DEBUG: Backlash: North calibration moves starting at {99.3,102.6}, Offset = 2.7 px
+DEBUG: Backlash: Total distance moved = 3.1
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,0,0.000,0.000,99.198,102.995,0.000
+STATUS: North step   1, dist= 0.0
+MOVE: North 7500
+ROW: North,1,0.103,-0.384,99.095,103.379,0.398
+STATUS: North step   2, dist= 0.4
+MOVE: North 7500
+ROW: North,2,0.206,-0.768,98.992,103.763,0.795
+STATUS: North step   3, dist= 0.8
+MOVE: North 7500
+ROW: North,3,0.309,-1.152,98.889,104.147,1.193
+STATUS: North step   4, dist= 1.2
+MOVE: North 7500
+ROW: North,4,0.412,-1.536,98.786,104.531,1.590
+STATUS: North step   5, dist= 1.6
+MOVE: North 7500
+ROW: North,5,0.514,-1.920,98.683,104.915,1.988
+STATUS: North step   6, dist= 2.0
+MOVE: North 7500
+ROW: North,6,0.617,-2.304,98.580,105.299,2.385
+STATUS: North step   7, dist= 2.4
+MOVE: North 7500
+ROW: North,7,0.720,-2.688,98.477,105.683,2.783
+STATUS: North step   8, dist= 2.8
+MOVE: North 7500
+ROW: North,8,0.823,-3.072,98.374,106.066,3.180
+STATUS: North step   9, dist= 3.2
+MOVE: North 7500
+ROW: North,9,0.926,-3.456,98.272,106.450,3.578
+STATUS: North step  10, dist= 3.6
+MOVE: North 7500
+ROW: North,10,1.029,-3.840,98.169,106.834,3.975
+STATUS: North step  11, dist= 4.0
+MOVE: North 7500
+ROW: North,11,1.132,-4.224,98.066,107.218,4.373
+STATUS: North step  12, dist= 4.4
+MOVE: North 7500
+ROW: North,12,1.235,-4.607,97.963,107.602,4.770
+STATUS: North step  13, dist= 4.8
+MOVE: North 7500
+ROW: North,13,1.337,-4.991,97.860,107.986,5.168
+STATUS: North step  14, dist= 5.2
+MOVE: North 7500
+ROW: North,14,1.440,-5.375,97.757,108.370,5.565
+STATUS: North step  15, dist= 5.6
+MOVE: North 7500
+ROW: North,15,1.543,-5.759,97.654,108.754,5.963
+STATUS: North step  16, dist= 6.0
+MOVE: North 7500
+ROW: North,16,1.646,-6.143,97.551,109.138,6.360
+STATUS: North step  17, dist= 6.4
+MOVE: North 7500
+ROW: North,17,1.749,-6.527,97.449,109.522,6.758
+STATUS: North step  18, dist= 6.8
+MOVE: North 7500
+ROW: North,18,1.852,-6.911,97.346,109.906,7.155
+STATUS: North step  19, dist= 7.2
+MOVE: North 7500
+ROW: North,19,1.955,-7.295,97.243,110.290,7.553
+STATUS: North step  20, dist= 7.6
+MOVE: North 7500
+ROW: North,20,2.058,-7.679,97.140,110.674,7.950
+STATUS: North step  21, dist= 8.0
+MOVE: North 7500
+ROW: North,21,2.160,-8.063,97.037,111.058,8.348
+STATUS: North step  22, dist= 8.3
+MOVE: North 7500
+ROW: North,22,2.263,-8.447,96.934,111.442,8.745
+STATUS: North step  23, dist= 8.7
+MOVE: North 7500
+ROW: North,23,2.366,-8.831,96.831,111.826,9.143
+STATUS: North step  24, dist= 9.1
+MOVE: North 7500
+ROW: North,24,2.469,-9.215,96.728,112.210,9.540
+STATUS: North step  25, dist= 9.5
+MOVE: North 7500
+ROW: North,25,2.572,-9.599,96.626,112.594,9.938
+STATUS: North step  26, dist= 9.9
+MOVE: North 7500
+ROW: North,26,2.675,-9.983,96.523,112.978,10.335
+STATUS: North step  27, dist=10.3
+MOVE: North 7500
+ROW: North,27,2.778,-10.367,96.420,113.362,10.733
+STATUS: North step  28, dist=10.7
+MOVE: North 7500
+ROW: North,28,2.881,-10.751,96.317,113.746,11.130
+STATUS: North step  29, dist=11.1
+MOVE: North 7500
+ROW: North,29,2.984,-11.135,96.214,114.130,11.528
+STATUS: North step  30, dist=11.5
+MOVE: North 7500
+ROW: North,30,3.086,-11.519,96.111,114.514,11.925
+STATUS: North step  31, dist=11.9
+MOVE: North 7500
+ROW: North,31,3.189,-11.903,96.008,114.897,12.323
+STATUS: North step  32, dist=12.3
+MOVE: North 7500
+ROW: North,32,3.292,-12.287,95.905,115.281,12.720
+STATUS: North step  33, dist=12.7
+MOVE: North 7500
+ROW: North,33,3.395,-12.671,95.802,115.665,13.118
+STATUS: North step  34, dist=13.1
+MOVE: North 7500
+ROW: North,34,3.498,-13.054,95.700,116.049,13.515
+STATUS: North step  35, dist=13.5
+MOVE: North 7500
+ROW: North,35,3.601,-13.438,95.597,116.433,13.913
+STATUS: North step  36, dist=13.9
+MOVE: North 7500
+ROW: North,36,3.704,-13.822,95.494,116.817,14.310
+STATUS: North step  37, dist=14.3
+MOVE: North 7500
+ROW: North,37,3.807,-14.206,95.391,117.201,14.708
+STATUS: North step  38, dist=14.7
+MOVE: North 7500
+ROW: North,38,3.909,-14.590,95.288,117.585,15.105
+STATUS: North step  39, dist=15.1
+MOVE: North 7500
+ROW: North,39,4.012,-14.974,95.185,117.969,15.503
+STATUS: North step  40, dist=15.5
+MOVE: North 7500
+ROW: North,40,4.115,-15.358,95.082,118.353,15.900
+STATUS: North step  41, dist=15.9
+MOVE: North 7500
+ROW: North,41,4.218,-15.742,94.979,118.737,16.298
+STATUS: North step  42, dist=16.3
+MOVE: North 7500
+ROW: North,42,4.321,-16.126,94.877,119.121,16.695
+STATUS: North step  43, dist=16.7
+MOVE: North 7500
+ROW: North,43,4.424,-16.510,94.774,119.505,17.093
+STATUS: North step  44, dist=17.1
+MOVE: North 7500
+ROW: North,44,4.527,-16.894,94.671,119.889,17.490
+STATUS: North step  45, dist=17.5
+MOVE: North 7500
+ROW: North,45,4.630,-17.278,94.568,120.273,17.888
+STATUS: North step  46, dist=17.9
+MOVE: North 7500
+ROW: North,46,4.733,-17.662,94.465,120.657,18.285
+STATUS: North step  47, dist=18.3
+MOVE: North 7500
+ROW: North,47,4.835,-18.046,94.362,121.041,18.683
+STATUS: North step  48, dist=18.7
+MOVE: North 7500
+ROW: North,48,4.938,-18.430,94.259,121.425,19.080
+STATUS: North step  49, dist=19.1
+MOVE: North 7500
+ROW: North,49,5.041,-18.814,94.156,121.809,19.478
+STATUS: North step  50, dist=19.5
+MOVE: North 7500
+ROW: North,50,5.144,-19.198,94.054,122.193,19.875
+STATUS: North step  51, dist=19.9
+MOVE: North 7500
+ROW: North,51,5.247,-19.582,93.951,122.577,20.273
+STATUS: North step  52, dist=20.3
+MOVE: North 7500
+ROW: North,52,5.350,-19.966,93.848,122.961,20.670
+STATUS: North step  53, dist=20.7
+MOVE: North 7500
+ROW: North,53,5.453,-20.350,93.745,123.344,21.068
+STATUS: North step  54, dist=21.1
+MOVE: North 7500
+ROW: North,54,5.556,-20.734,93.642,123.728,21.465
+STATUS: North step  55, dist=21.5
+MOVE: North 7500
+ROW: North,55,5.658,-21.118,93.539,124.112,21.863
+STATUS: North step  56, dist=21.9
+MOVE: North 7500
+ROW: North,56,5.761,-21.502,93.436,124.496,22.260
+STATUS: North step  57, dist=22.3
+MOVE: North 7500
+ROW: North,57,5.864,-21.885,93.333,124.880,22.658
+STATUS: North step  58, dist=22.7
+MOVE: North 7500
+ROW: North,58,5.967,-22.269,93.230,125.264,23.055
+STATUS: North step  59, dist=23.1
+MOVE: North 7500
+ROW: North,59,6.070,-22.653,93.128,125.648,23.453
+STATUS: North step  60, dist=23.5
+MOVE: North 7500
+ROW: North,60,6.173,-23.037,93.025,126.032,23.850
+STATUS: North step  61, dist=23.9
+MOVE: North 7500
+ROW: North,61,6.276,-23.421,92.922,126.416,24.248
+ALERT: DEC Calibration Failed: star did not move enough
+FAILED: DEC Calibration Failed: star did not move enough
+DEBUG: Error thrown from scope.cpp:1529->Dec calibration failed
+RESULT: failed
+#### backlash clearing fails
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 7500
+ROW: West,1,28.978,7.765,71.022,92.235,30.000
+DEBUG: WEST calibration completes with steps=1 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,1,28.978,7.765,71.022,92.235,30.000
+STATUS: East step   1, dist=30.0
+MOVE: East 7500
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 18.0 px, max attempts = 8
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 7500
+STATUS: Clearing backlash step 1
+MOVE: North 7500
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 7500
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 7500
+ROW: Backlash,3,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 7500
+ROW: Backlash,4,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 7500
+ROW: Backlash,5,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   6
+DEBUG: Backlash: Clearing backlash step   6, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 7500
+ROW: Backlash,6,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   7
+DEBUG: Backlash: Clearing backlash step   7, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 7500
+ROW: Backlash,7,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   8
+DEBUG: Backlash: Clearing backlash step   8, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 7500
+ROW: Backlash,8,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+ALERT: Backlash Clearing Failed: star did not move enough
+FAILED: Backlash Clearing Failed: star did not move enough
+DEBUG: Error thrown from scope.cpp:1480->Clear backlash failed
+RESULT: failed
+#### backlash reversals
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.776,-2.898,99.224,102.898,3.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected clearing move of 3.0, direction reversal
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 3.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,0.776,-2.898,99.224,102.898,3.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,4,0.544,-2.028,99.456,102.028,2.100
+DEBUG: Backlash: Rejected small direction reversal of 0.9 px
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 0.90 px, CumDistance = 2.10 px
+MOVE: North 750
+ROW: Backlash,5,1.320,-4.926,98.680,104.926,5.100
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   6
+DEBUG: Backlash: Clearing backlash step   6, Last Delta = 3.00 px, CumDistance = 5.10 px
+MOVE: North 750
+ROW: Backlash,6,2.096,-7.824,97.904,107.824,8.100
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   7
+DEBUG: Backlash: Clearing backlash step   7, Last Delta = 3.00 px, CumDistance = 8.10 px
+MOVE: North 750
+ROW: Backlash,7,2.873,-10.722,97.127,110.722,11.100
+DEBUG: Backlash: Accepted clearing move of 3.0
+ROW: North,0,0.000,0.000,97.904,107.824,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {97.9,107.8}, Offset = 8.1 px
+DEBUG: Backlash: Total distance moved = 11.1
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,0.776,-2.898,97.127,110.722,3.000
+STATUS: North step   2, dist= 3.0
+MOVE: North 750
+ROW: North,2,1.553,-5.796,96.351,113.620,6.000
+STATUS: North step   3, dist= 6.0
+MOVE: North 750
+ROW: North,3,2.329,-8.693,95.574,116.517,9.000
+STATUS: North step   4, dist= 9.0
+MOVE: North 750
+ROW: North,4,3.106,-11.591,94.798,119.415,12.000
+STATUS: North step   5, dist=12.0
+MOVE: North 750
+ROW: North,5,3.882,-14.489,94.021,122.313,15.000
+STATUS: North step   6, dist=15.0
+MOVE: North 750
+ROW: North,6,4.659,-17.387,93.245,125.211,18.000
+STATUS: North step   7, dist=18.0
+MOVE: North 750
+ROW: North,7,5.435,-20.284,92.468,128.108,21.000
+STATUS: North step   8, dist=21.0
+MOVE: North 750
+ROW: North,8,6.212,-23.182,91.692,131.006,24.000
+STATUS: North step   9, dist=24.0
+MOVE: North 750
+ROW: North,9,6.988,-26.080,90.915,133.904,27.000
+DEBUG: NORTH calibration completes with angle=105.0 rate=4.000 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,6.988,-26.080,90.915,133.904,27.000
+STATUS: South step   3, dist=27.0
+MOVE: South 2500
+ROW: South,2,4.659,-17.387,93.245,125.211,18.000
+STATUS: South step   2, dist=18.0
+MOVE: South 2500
+ROW: South,1,2.329,-8.693,95.574,116.517,9.000
+STATUS: South step   1, dist= 9.0
+MOVE: South 1750
+ROW: South,0,0.699,-2.608,97.205,110.432,2.700
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 10.800, Normal south moves = 24.300
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   1
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 8.100, Normal south moves = 24.300
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   2
+MOVE: South 750
+DEBUG: Nudge: theta = nan
+DEBUG: Nudging discontinued, wrong direction: nan
+DEBUG: Final south nudging status: Current loc = {98.602,105.216}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=4.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+DEBUG: Calibration passed sanity checks...
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940481 xr=0.0040000000000000114 yr=0.0039999999999999923 dec=0.3490849399375594 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {0.8 -2.9}, {1.6 -5.8}, {2.3 -8.7}, {3.1 -11.6}, {3.9 -14.5}, {4.7 -17.4}, {5.4 -20.3}, {6.2 -23.2}, {7.0 -26.1}, {7.0 -26.1}, {4.7 -17.4}, {2.3 -8.7}, {0.7 -2.6} n=9/9 issue=0 ortho=7.6333312355124402e-14
+#### nudge in the wrong direction
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.776,-2.898,99.224,102.898,3.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,2,1.553,-5.796,98.447,105.796,6.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 3.00 px, CumDistance = 6.00 px
+MOVE: North 750
+ROW: Backlash,3,2.329,-8.693,97.671,108.693,9.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+ROW: North,0,0.000,0.000,98.447,105.796,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {98.4,105.8}, Offset = 6.0 px
+DEBUG: Backlash: Total distance moved = 9.0
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,0.776,-2.898,97.671,108.693,3.000
+STATUS: North step   2, dist= 3.0
+MOVE: North 750
+ROW: North,2,1.553,-5.796,96.894,111.591,6.000
+STATUS: North step   3, dist= 6.0
+MOVE: North 750
+ROW: North,3,2.329,-8.693,96.118,114.489,9.000
+STATUS: North step   4, dist= 9.0
+MOVE: North 750
+ROW: North,4,3.106,-11.591,95.341,117.387,12.000
+STATUS: North step   5, dist=12.0
+MOVE: North 750
+ROW: North,5,3.882,-14.489,94.565,120.284,15.000
+STATUS: North step   6, dist=15.0
+MOVE: North 750
+ROW: North,6,4.659,-17.387,93.788,123.182,18.000
+STATUS: North step   7, dist=18.0
+MOVE: North 750
+ROW: North,7,5.435,-20.284,93.012,126.080,21.000
+STATUS: North step   8, dist=21.0
+MOVE: North 750
+ROW: North,8,6.212,-23.182,92.235,128.978,24.000
+STATUS: North step   9, dist=24.0
+MOVE: North 750
+ROW: North,9,6.988,-26.080,91.459,131.876,27.000
+DEBUG: NORTH calibration completes with angle=105.0 rate=4.000 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,6.988,-26.080,91.459,131.876,27.000
+STATUS: South step   3, dist=27.0
+MOVE: South 2500
+ROW: South,2,3.106,-11.591,95.341,117.387,12.000
+STATUS: South step   2, dist=12.0
+MOVE: South 2500
+ROW: South,1,-0.776,2.898,99.224,102.898,3.000
+STATUS: South step   1, dist= 3.0
+MOVE: South 1750
+ROW: South,0,-3.494,13.040,101.941,92.756,13.500
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 0.00
+DEBUG: Nudging discontinued, wrong direction: 0.00
+DEBUG: Final south nudging status: Current loc = {101.941,92.756}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=4.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+DEBUG: Calibration passed sanity checks...
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940481 xr=0.0040000000000000114 yr=0.0039999999999999923 dec=0.34912039193799049 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {0.8 -2.9}, {1.6 -5.8}, {2.3 -8.7}, {3.1 -11.6}, {3.9 -14.5}, {4.7 -17.4}, {5.4 -20.3}, {6.2 -23.2}, {7.0 -26.1}, {7.0 -26.1}, {3.1 -11.6}, {-0.8 2.9}, {-3.5 13.0} n=9/9 issue=0 ortho=7.6333312355124402e-14
+#### st4, no east and no south movement
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   2, dist=27.0
+MOVE: East 2500
+ROW: East,1,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   1, dist=27.0
+MOVE: East 1750
+ROW: East,0,26.080,6.988,73.920,93.012,27.000
+ALERT: Advisory: Little or no east movement was measured, so guiding will probably be impaired. Check the guide cable and use the Manual Guide tool to confirm basic operation of the mount.
+DEBUG: Calibration alert: Advisory: Little or no east movement was measured, so guiding will probably be impaired. Check the guide cable and use the Manual Guide tool to confirm basic operation of the mount.
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,73.920,93.012,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,73.920,93.012,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,73.920,93.012,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,0.776,-2.898,73.144,95.910,3.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,4,1.553,-5.796,72.367,98.807,6.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 3.00 px, CumDistance = 6.00 px
+MOVE: North 750
+ROW: Backlash,5,2.329,-8.693,71.591,101.705,9.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+ROW: North,0,0.000,0.000,72.367,98.807,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {72.4,98.8}, Offset = 27.7 px
+DEBUG: Backlash: Total distance moved = 28.5
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,0.776,-2.898,71.591,101.705,3.000
+STATUS: North step   2, dist= 3.0
+MOVE: North 750
+ROW: North,2,1.553,-5.796,70.814,104.603,6.000
+STATUS: North step   3, dist= 6.0
+MOVE: North 750
+ROW: North,3,2.329,-8.693,70.038,107.501,9.000
+STATUS: North step   4, dist= 9.0
+MOVE: North 750
+ROW: North,4,3.106,-11.591,69.261,110.399,12.000
+STATUS: North step   5, dist=12.0
+MOVE: North 750
+ROW: North,5,3.882,-14.489,68.485,113.296,15.000
+STATUS: North step   6, dist=15.0
+MOVE: North 750
+ROW: North,6,4.659,-17.387,67.708,116.194,18.000
+STATUS: North step   7, dist=18.0
+MOVE: North 750
+ROW: North,7,5.435,-20.284,66.932,119.092,21.000
+STATUS: North step   8, dist=21.0
+MOVE: North 750
+ROW: North,8,6.212,-23.182,66.155,121.990,24.000
+STATUS: North step   9, dist=24.0
+MOVE: North 750
+ROW: North,9,6.988,-26.080,65.379,124.887,27.000
+DEBUG: NORTH calibration completes with angle=105.0 rate=4.000 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,6.988,-26.080,65.379,124.887,27.000
+STATUS: South step   3, dist=27.0
+MOVE: South 2500
+ROW: South,2,6.988,-26.080,65.379,124.887,27.000
+STATUS: South step   2, dist=27.0
+MOVE: South 2500
+ROW: South,1,6.988,-26.080,65.379,124.887,27.000
+STATUS: South step   1, dist=27.0
+MOVE: South 1750
+ROW: South,0,6.988,-26.080,65.379,124.887,27.000
+DEBUG: Omitted calibration alert: Advisory: Calibration successful but little or no south movement was measured, so guiding will probably be impaired.
+ This is usually caused by a faulty guide cable or very large Dec backlash. 
+Check the guide cable and read the online Help for how to identify these types of problems (Manual Guide, Declination backlash).
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 33.000, Normal south moves = -0.000
+DEBUG: Final south nudging status: Current loc = {65.379,124.887}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=4.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+DEBUG: Calibration passed sanity checks...
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940481 xr=0.0040000000000000114 yr=0.0039999999999999923 dec=0.34917493347711526 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {26.1 7.0}, {26.1 7.0}, {26.1 7.0} dec={0.0 0.0}, {0.8 -2.9}, {1.6 -5.8}, {2.3 -8.7}, {3.1 -11.6}, {3.9 -14.5}, {4.7 -17.4}, {5.4 -20.3}, {6.2 -23.2}, {7.0 -26.1}, {7.0 -26.1}, {7.0 -26.1}, {7.0 -26.1}, {7.0 -26.1} n=9/9 issue=0 ortho=7.6333312355124402e-14
+#### st4, little south movement
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,0.776,-2.898,99.224,102.898,3.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,4,1.553,-5.796,98.447,105.796,6.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 3.00 px, CumDistance = 6.00 px
+MOVE: North 750
+ROW: Backlash,5,2.329,-8.693,97.671,108.693,9.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+ROW: North,0,0.000,0.000,98.447,105.796,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {98.4,105.8}, Offset = 6.0 px
+DEBUG: Backlash: Total distance moved = 9.0
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,0.776,-2.898,97.671,108.693,3.000
+STATUS: North step   2, dist= 3.0
+MOVE: North 750
+ROW: North,2,1.553,-5.796,96.894,111.591,6.000
+STATUS: North step   3, dist= 6.0
+MOVE: North 750
+ROW: North,3,2.329,-8.693,96.118,114.489,9.000
+STATUS: North step   4, dist= 9.0
+MOVE: North 750
+ROW: North,4,3.106,-11.591,95.341,117.387,12.000
+STATUS: North step   5, dist=12.0
+MOVE: North 750
+ROW: North,5,3.882,-14.489,94.565,120.284,15.000
+STATUS: North step   6, dist=15.0
+MOVE: North 750
+ROW: North,6,4.659,-17.387,93.788,123.182,18.000
+STATUS: North step   7, dist=18.0
+MOVE: North 750
+ROW: North,7,5.435,-20.284,93.012,126.080,21.000
+STATUS: North step   8, dist=21.0
+MOVE: North 750
+ROW: North,8,6.212,-23.182,92.235,128.978,24.000
+STATUS: North step   9, dist=24.0
+MOVE: North 750
+ROW: North,9,6.988,-26.080,91.459,131.876,27.000
+DEBUG: NORTH calibration completes with angle=105.0 rate=4.000 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,6.988,-26.080,91.459,131.876,27.000
+STATUS: South step   3, dist=27.0
+MOVE: South 2500
+ROW: South,2,6.781,-25.307,91.666,131.103,26.200
+STATUS: South step   2, dist=26.2
+MOVE: South 2500
+ROW: South,1,6.263,-23.375,92.184,129.171,24.200
+STATUS: South step   1, dist=24.2
+MOVE: South 1750
+ROW: South,0,5.901,-22.023,92.546,127.819,22.800
+DEBUG: Omitted calibration alert: Advisory: Calibration successful but little south movement was measured, so guiding will probably be impaired. 
+This is usually caused by very large Dec backlash or other problems with the mount mechanics. 
+Read the online Help for how to identify these types of problems (Manual Guide, Declination backlash).
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 28.800, Normal south moves = 4.200
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   1
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 28.200, Normal south moves = 4.200
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   2
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 27.600, Normal south moves = 4.200
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   3
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 27.000, Normal south moves = 4.200
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   4
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: Final south nudging status: Current loc = {93.167,125.500}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=4.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+DEBUG: Calibration passed sanity checks...
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940481 xr=0.0040000000000000114 yr=0.0039999999999999923 dec=0.34906585039886573 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {0.8 -2.9}, {1.6 -5.8}, {2.3 -8.7}, {3.1 -11.6}, {3.9 -14.5}, {4.7 -17.4}, {5.4 -20.3}, {6.2 -23.2}, {7.0 -26.1}, {7.0 -26.1}, {6.8 -25.3}, {6.3 -23.4}, {5.9 -22.0} n=9/9 issue=0 ortho=7.6333312355124402e-14
+#### pulse guide, no south movement
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,0.776,-2.898,99.224,102.898,3.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,4,1.553,-5.796,98.447,105.796,6.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 3.00 px, CumDistance = 6.00 px
+MOVE: North 750
+ROW: Backlash,5,2.329,-8.693,97.671,108.693,9.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+ROW: North,0,0.000,0.000,98.447,105.796,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {98.4,105.8}, Offset = 6.0 px
+DEBUG: Backlash: Total distance moved = 9.0
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,0.776,-2.898,97.671,108.693,3.000
+STATUS: North step   2, dist= 3.0
+MOVE: North 750
+ROW: North,2,1.553,-5.796,96.894,111.591,6.000
+STATUS: North step   3, dist= 6.0
+MOVE: North 750
+ROW: North,3,2.329,-8.693,96.118,114.489,9.000
+STATUS: North step   4, dist= 9.0
+MOVE: North 750
+ROW: North,4,3.106,-11.591,95.341,117.387,12.000
+STATUS: North step   5, dist=12.0
+MOVE: North 750
+ROW: North,5,3.882,-14.489,94.565,120.284,15.000
+STATUS: North step   6, dist=15.0
+MOVE: North 750
+ROW: North,6,4.659,-17.387,93.788,123.182,18.000
+STATUS: North step   7, dist=18.0
+MOVE: North 750
+ROW: North,7,5.435,-20.284,93.012,126.080,21.000
+STATUS: North step   8, dist=21.0
+MOVE: North 750
+ROW: North,8,6.212,-23.182,92.235,128.978,24.000
+STATUS: North step   9, dist=24.0
+MOVE: North 750
+ROW: North,9,6.988,-26.080,91.459,131.876,27.000
+DEBUG: NORTH calibration completes with angle=105.0 rate=4.000 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,6.988,-26.080,91.459,131.876,27.000
+STATUS: South step   3, dist=27.0
+MOVE: South 2500
+ROW: South,2,6.988,-26.080,91.459,131.876,27.000
+STATUS: South step   2, dist=27.0
+MOVE: South 2500
+ROW: South,1,6.988,-26.080,91.459,131.876,27.000
+STATUS: South step   1, dist=27.0
+MOVE: South 1750
+ROW: South,0,6.988,-26.080,91.459,131.876,27.000
+DEBUG: Omitted calibration alert: Advisory: Calibration successful but little south movement was measured, so guiding may be impaired.
+ This is usually caused by very large Dec backlash or other problems with the mount mechanics. 
+Read the online help for how to deal with this type of problem (Declination backlash).
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: Final south nudging status: Current loc = {91.459,131.876}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=4.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+DEBUG: Calibration passed sanity checks...
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940481 xr=0.0040000000000000114 yr=0.0039999999999999923 dec=0.34917493347711526 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {0.8 -2.9}, {1.6 -5.8}, {2.3 -8.7}, {3.1 -11.6}, {3.9 -14.5}, {4.7 -17.4}, {5.4 -20.3}, {6.2 -23.2}, {7.0 -26.1}, {7.0 -26.1}, {7.0 -26.1}, {7.0 -26.1}, {7.0 -26.1} n=9/9 issue=0 ortho=7.6333312355124402e-14
+#### assume orthogonal
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,1.026,-2.819,98.974,102.819,3.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,4,2.052,-5.638,97.948,105.638,6.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 3.00 px, CumDistance = 6.00 px
+MOVE: North 750
+ROW: Backlash,5,3.078,-8.457,96.922,108.457,9.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+ROW: North,0,0.000,0.000,97.948,105.638,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {97.9,105.6}, Offset = 6.0 px
+DEBUG: Backlash: Total distance moved = 9.0
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,1.026,-2.819,96.922,108.457,3.000
+STATUS: North step   2, dist= 3.0
+MOVE: North 750
+ROW: North,2,2.052,-5.638,95.896,111.276,6.000
+STATUS: North step   3, dist= 6.0
+MOVE: North 750
+ROW: North,3,3.078,-8.457,94.870,114.095,9.000
+STATUS: North step   4, dist= 9.0
+MOVE: North 750
+ROW: North,4,4.104,-11.276,93.844,116.914,12.000
+STATUS: North step   5, dist=12.0
+MOVE: North 750
+ROW: North,5,5.130,-14.095,92.818,119.734,15.000
+STATUS: North step   6, dist=15.0
+MOVE: North 750
+ROW: North,6,6.156,-16.914,91.792,122.553,18.000
+STATUS: North step   7, dist=18.0
+MOVE: North 750
+ROW: North,7,7.182,-19.734,90.765,125.372,21.000
+STATUS: North step   8, dist=21.0
+MOVE: North 750
+ROW: North,8,8.208,-22.553,89.739,128.191,24.000
+STATUS: North step   9, dist=24.0
+MOVE: North 750
+ROW: North,9,9.235,-25.372,88.713,131.010,27.000
+DEBUG: Assuming orthogonal axes: measured Y angle = 110.0, X angle = 15.0, orthogonal = 105.0, -75.0, best = 105.0, dist = 27.00, dec_dist = 26.90
+DEBUG: NORTH calibration completes with angle=105.0 rate=3.985 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 3.985 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,9.235,-25.372,88.713,131.010,27.000
+STATUS: South step   3, dist=27.0
+MOVE: South 2500
+ROW: South,2,8.003,-21.989,89.945,127.627,23.400
+STATUS: South step   2, dist=23.4
+MOVE: South 2500
+ROW: South,1,4.925,-13.532,93.023,119.170,14.400
+STATUS: South step   1, dist=14.4
+MOVE: South 1750
+ROW: South,0,2.770,-7.612,95.178,113.250,8.100
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 14.046, Normal south moves = 18.828
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   1
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 11.357, Normal south moves = 18.828
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   2
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 8.667, Normal south moves = 18.828
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   3
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 5.977, Normal south moves = 18.828
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   4
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: Final south nudging status: Current loc = {98.871,103.101}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=3.985 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=0.0
+DEBUG: Calibration passed sanity checks...
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940468 xr=0.0040000000000000114 yr=0.0039847787923669876 dec=0.34906585039886573 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {1.0 -2.8}, {2.1 -5.6}, {3.1 -8.5}, {4.1 -11.3}, {5.1 -14.1}, {6.2 -16.9}, {7.2 -19.7}, {8.2 -22.6}, {9.2 -25.4}, {9.2 -25.4}, {8.0 -22.0}, {4.9 -13.5}, {2.8 -7.6} n=9/9 issue=0 ortho=0
+#### dec guide speed half the ra one
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 0.9 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,0.388,-1.449,99.612,101.449,1.500
+DEBUG: Backlash: Accepted clearing move of 1.5
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 1.50 px, CumDistance = 1.50 px
+MOVE: North 750
+ROW: Backlash,4,0.776,-2.898,99.224,102.898,3.000
+DEBUG: Backlash: Accepted clearing move of 1.5
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 1.50 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,5,1.165,-4.347,98.835,104.347,4.500
+DEBUG: Backlash: Accepted clearing move of 1.5
+ROW: North,0,0.000,0.000,99.224,102.898,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {99.2,102.9}, Offset = 3.0 px
+DEBUG: Backlash: Total distance moved = 4.5
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,0.388,-1.449,98.835,104.347,1.500
+STATUS: North step   2, dist= 1.5
+MOVE: North 750
+ROW: North,2,0.776,-2.898,98.447,105.796,3.000
+STATUS: North step   3, dist= 3.0
+MOVE: North 750
+ROW: North,3,1.165,-4.347,98.059,107.244,4.500
+STATUS: North step   4, dist= 4.5
+MOVE: North 750
+ROW: North,4,1.553,-5.796,97.671,108.693,6.000
+STATUS: North step   5, dist= 6.0
+MOVE: North 750
+ROW: North,5,1.941,-7.244,97.282,110.142,7.500
+STATUS: North step   6, dist= 7.5
+MOVE: North 750
+ROW: North,6,2.329,-8.693,96.894,111.591,9.000
+STATUS: North step   7, dist= 9.0
+MOVE: North 750
+ROW: North,7,2.718,-10.142,96.506,113.040,10.500
+STATUS: North step   8, dist=10.5
+MOVE: North 750
+ROW: North,8,3.106,-11.591,96.118,114.489,12.000
+STATUS: North step   9, dist=12.0
+MOVE: North 750
+ROW: North,9,3.494,-13.040,95.729,115.938,13.500
+STATUS: North step  10, dist=13.5
+MOVE: North 750
+ROW: North,10,3.882,-14.489,95.341,117.387,15.000
+STATUS: North step  11, dist=15.0
+MOVE: North 750
+ROW: North,11,4.271,-15.938,94.953,118.836,16.500
+STATUS: North step  12, dist=16.5
+MOVE: North 750
+ROW: North,12,4.659,-17.387,94.565,120.284,18.000
+STATUS: North step  13, dist=18.0
+MOVE: North 750
+ROW: North,13,5.047,-18.836,94.177,121.733,19.500
+STATUS: North step  14, dist=19.5
+MOVE: North 750
+ROW: North,14,5.435,-20.284,93.788,123.182,21.000
+STATUS: North step  15, dist=21.0
+MOVE: North 750
+ROW: North,15,5.823,-21.733,93.400,124.631,22.500
+STATUS: North step  16, dist=22.5
+MOVE: North 750
+ROW: North,16,6.212,-23.182,93.012,126.080,24.000
+STATUS: North step  17, dist=24.0
+MOVE: North 750
+ROW: North,17,6.600,-24.631,92.624,127.529,25.500
+DEBUG: NORTH calibration completes with angle=105.0 rate=2.000 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 2.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,6,6.600,-24.631,92.624,127.529,25.500
+STATUS: South step   6, dist=25.5
+MOVE: South 2500
+ROW: South,5,6.134,-22.892,93.090,125.790,23.700
+STATUS: South step   5, dist=23.7
+MOVE: South 2500
+ROW: South,4,4.969,-18.546,94.254,121.444,19.200
+STATUS: South step   4, dist=19.2
+MOVE: South 2500
+ROW: South,3,3.805,-14.199,95.419,117.097,14.700
+STATUS: South step   3, dist=14.7
+MOVE: South 2500
+ROW: South,2,2.640,-9.852,96.584,112.750,10.200
+STATUS: South step   2, dist=10.2
+MOVE: South 2500
+ROW: South,1,1.475,-5.506,97.748,108.404,5.700
+STATUS: South step   1, dist= 5.7
+MOVE: South 250
+ROW: South,0,1.359,-5.071,97.865,107.969,5.250
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 8.250, Normal south moves = 20.250
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   1
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 6.900, Normal south moves = 20.250
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   2
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 5.550, Normal south moves = 20.250
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   3
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 4.200, Normal south moves = 20.250
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   4
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: Final south nudging status: Current loc = {99.262,102.753}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=2.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+DEBUG: Calibration passed sanity checks...
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940481 xr=0.0040000000000000114 yr=0.0019999999999999966 dec=0.34906585039886556 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {0.4 -1.4}, {0.8 -2.9}, {1.2 -4.3}, {1.6 -5.8}, {1.9 -7.2}, {2.3 -8.7}, {2.7 -10.1}, {3.1 -11.6}, {3.5 -13.0}, {3.9 -14.5}, {4.3 -15.9}, {4.7 -17.4}, {5.0 -18.8}, {5.4 -20.3}, {5.8 -21.7}, {6.2 -23.2}, {6.6 -24.6}, {6.6 -24.6}, {6.1 -22.9}, {5.0 -18.5}, {3.8 -14.2}, {2.6 -9.9}, {1.5 -5.5}, {1.4 -5.1} n=9/17 issue=0 ortho=7.6333312355124402e-14
+#### sanity: too few steps
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   2, dist=12.0
+MOVE: West 750
+ROW: West,2,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   3, dist=24.0
+MOVE: West 750
+ROW: West,3,34.773,9.317,65.227,90.683,36.000
+DEBUG: WEST calibration completes with steps=3 angle=15.0 rate=16.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 16.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,2,34.773,9.317,65.227,90.683,36.000
+STATUS: East step   2, dist=36.0
+MOVE: East 1250
+ROW: East,1,15.455,4.141,84.545,95.859,16.000
+STATUS: East step   1, dist=16.0
+MOVE: East 1000
+ROW: East,0,-0.000,-0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 7.2 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,0.776,-2.898,99.224,102.898,3.000
+DEBUG: Backlash: Rejected small move of 3.0 px
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,4,1.553,-5.796,98.447,105.796,6.000
+DEBUG: Backlash: Rejected small move of 3.0 px
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 3.00 px, CumDistance = 6.00 px
+MOVE: North 750
+ROW: Backlash,5,2.329,-8.693,97.671,108.693,9.000
+DEBUG: Backlash: Rejected small move of 3.0 px
+STATUS: Clearing backlash step   6
+DEBUG: Backlash: Clearing backlash step   6, Last Delta = 3.00 px, CumDistance = 9.00 px
+MOVE: North 750
+ROW: Backlash,6,3.106,-11.591,96.894,111.591,12.000
+DEBUG: Backlash: Rejected small move of 3.0 px
+STATUS: Clearing backlash step   7
+DEBUG: Backlash: Clearing backlash step   7, Last Delta = 3.00 px, CumDistance = 12.00 px
+MOVE: North 750
+ROW: Backlash,7,3.882,-14.489,96.118,114.489,15.000
+DEBUG: Backlash: Rejected small move of 3.0 px
+STATUS: Clearing backlash step   8
+DEBUG: Backlash: Clearing backlash step   8, Last Delta = 3.00 px, CumDistance = 15.00 px
+MOVE: North 750
+ROW: Backlash,8,4.659,-17.387,95.341,117.387,18.000
+DEBUG: Backlash: Rejected small move of 3.0 px
+STATUS: Clearing backlash step   9
+DEBUG: Backlash: Clearing backlash step   9, Last Delta = 3.00 px, CumDistance = 18.00 px
+MOVE: North 750
+ROW: Backlash,9,5.435,-20.284,94.565,120.284,21.000
+DEBUG: Backlash: Rejected small move of 3.0 px
+STATUS: Clearing backlash step  10
+DEBUG: Backlash: Clearing backlash step  10, Last Delta = 3.00 px, CumDistance = 21.00 px
+MOVE: North 750
+ROW: Backlash,10,6.212,-23.182,93.788,123.182,24.000
+DEBUG: Backlash: Rejected small move of 3.0 px
+STATUS: Clearing backlash step  11
+DEBUG: Backlash: Clearing backlash step  11, Last Delta = 3.00 px, CumDistance = 24.00 px
+MOVE: North 750
+ROW: Backlash,11,6.988,-26.080,93.012,126.080,27.000
+DEBUG: Backlash: Rejected small move of 3.0 px
+DEBUG: Backlash: Reached clearing limit but total displacement > 3px - proceeding with calibration
+DEBUG: Backlash: North calibration moves starting at {93.8,123.2}, Offset = 24.0 px
+DEBUG: Backlash: Total distance moved = 27.0
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,0,0.000,0.000,93.012,126.080,0.000
+STATUS: North step   1, dist= 0.0
+MOVE: North 750
+ROW: North,1,0.776,-2.898,92.235,128.978,3.000
+STATUS: North step   2, dist= 3.0
+MOVE: North 750
+ROW: North,2,1.553,-5.796,91.459,131.876,6.000
+STATUS: North step   3, dist= 6.0
+MOVE: North 750
+ROW: North,3,2.329,-8.693,90.683,134.773,9.000
+STATUS: North step   4, dist= 9.0
+MOVE: North 750
+ROW: North,4,3.106,-11.591,89.906,137.671,12.000
+STATUS: North step   5, dist=12.0
+MOVE: North 750
+ROW: North,5,3.882,-14.489,89.130,140.569,15.000
+STATUS: North step   6, dist=15.0
+MOVE: North 750
+ROW: North,6,4.659,-17.387,88.353,143.467,18.000
+STATUS: North step   7, dist=18.0
+MOVE: North 750
+ROW: North,7,5.435,-20.284,87.577,146.364,21.000
+STATUS: North step   8, dist=21.0
+MOVE: North 750
+ROW: North,8,6.212,-23.182,86.800,149.262,24.000
+STATUS: North step   9, dist=24.0
+MOVE: North 750
+ROW: North,9,6.988,-26.080,86.024,152.160,27.000
+DEBUG: NORTH calibration completes with angle=105.0 rate=4.000 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,6.988,-26.080,86.024,152.160,27.000
+STATUS: South step   3, dist=27.0
+MOVE: South 2500
+ROW: South,2,6.056,-22.603,86.956,148.683,23.400
+STATUS: South step   2, dist=23.4
+MOVE: South 2500
+ROW: South,1,3.727,-13.909,89.285,139.989,14.400
+STATUS: South step   1, dist=14.4
+MOVE: South 1750
+ROW: South,0,2.096,-7.824,90.915,133.904,8.100
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = nan
+DEBUG: Nudging discontinued, wrong direction: nan
+DEBUG: Final south nudging status: Current loc = {90.915,133.904}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=16.000 yRate=4.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+ALERT: Advisory: Calibration completed but few guide steps were used, so accuracy is questionable
+DEBUG: Calibration alert details: Actual RA calibration steps = 3, Dec calibration steps = 9
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779914852 y=1.8325957145940481 xr=0.015999999999999997 yr=0.0039999999999999923 dec=0.34936582886405199 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {11.6 3.1}, {23.2 6.2}, {34.8 9.3}, {34.8 9.3}, {15.5 4.1}, {-0.0 -0.0} dec={0.0 0.0}, {0.8 -2.9}, {1.6 -5.8}, {2.3 -8.7}, {3.1 -11.6}, {3.9 -14.5}, {4.7 -17.4}, {5.4 -20.3}, {6.2 -23.2}, {7.0 -26.1}, {7.0 -26.1}, {6.1 -22.6}, {3.7 -13.9}, {2.1 -7.8} n=3/9 issue=1 ortho=1.7811106216195694e-13
+#### sanity: axes not orthogonal, advisory suppressed
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,1.721,-2.457,98.279,102.457,3.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,4,3.441,-4.915,96.559,104.915,6.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 3.00 px, CumDistance = 6.00 px
+MOVE: North 750
+ROW: Backlash,5,5.162,-7.372,94.838,107.372,9.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+ROW: North,0,0.000,0.000,96.559,104.915,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {96.6,104.9}, Offset = 6.0 px
+DEBUG: Backlash: Total distance moved = 9.0
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,1.721,-2.457,94.838,107.372,3.000
+STATUS: North step   2, dist= 3.0
+MOVE: North 750
+ROW: North,2,3.441,-4.915,93.117,109.830,6.000
+STATUS: North step   3, dist= 6.0
+MOVE: North 750
+ROW: North,3,5.162,-7.372,91.396,112.287,9.000
+STATUS: North step   4, dist= 9.0
+MOVE: North 750
+ROW: North,4,6.883,-9.830,89.676,114.745,12.000
+STATUS: North step   5, dist=12.0
+MOVE: North 750
+ROW: North,5,8.604,-12.287,87.955,117.202,15.000
+STATUS: North step   6, dist=15.0
+MOVE: North 750
+ROW: North,6,10.324,-14.745,86.234,119.660,18.000
+STATUS: North step   7, dist=18.0
+MOVE: North 750
+ROW: North,7,12.045,-17.202,84.513,122.117,21.000
+STATUS: North step   8, dist=21.0
+MOVE: North 750
+ROW: North,8,13.766,-19.660,82.793,124.575,24.000
+STATUS: North step   9, dist=24.0
+MOVE: North 750
+ROW: North,9,15.487,-22.117,81.072,127.032,27.000
+DEBUG: NORTH calibration completes with angle=125.0 rate=4.000 parity=1
+AXIS: North calibration complete. Angle = 125.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,15.487,-22.117,81.072,127.032,27.000
+STATUS: South step   3, dist=27.0
+MOVE: South 2500
+ROW: South,2,13.422,-19.168,83.137,124.083,23.400
+STATUS: South step   2, dist=23.4
+MOVE: South 2500
+ROW: South,1,8.260,-11.796,88.299,116.711,14.400
+STATUS: South step   1, dist=14.4
+MOVE: South 1750
+ROW: South,0,4.646,-6.635,91.913,111.550,8.100
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 10.801, Normal south moves = 14.478
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   1
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 8.733, Normal south moves = 14.478
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   2
+MOVE: South 750
+DEBUG: Nudge: theta = nan
+DEBUG: Nudging discontinued, wrong direction: nan
+DEBUG: Final south nudging status: Current loc = {95.010,107.127}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=125.0 xRate=4.000 yRate=4.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-20.0
+DEBUG: Alert detected in scope calibration but not shown to user - suppressed message was: Advisory: Calibration completed but RA/Dec axis angles are questionable and guiding may be impaired
+DEBUG: Calibration alert details: Non-orthogonality = 20.000
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=2.1816615649929116 xr=0.0040000000000000114 yr=0.004000000000000007 dec=0.34912039193799049 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {1.7 -2.5}, {3.4 -4.9}, {5.2 -7.4}, {6.9 -9.8}, {8.6 -12.3}, {10.3 -14.7}, {12.0 -17.2}, {13.8 -19.7}, {15.5 -22.1}, {15.5 -22.1}, {13.4 -19.2}, {8.3 -11.8}, {4.6 -6.6} n=9/9 issue=2 ortho=19.99999999999994
+#### sanity: rates
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,1.165,-4.347,98.835,104.347,4.500
+DEBUG: Backlash: Accepted clearing move of 4.5
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 4.50 px, CumDistance = 4.50 px
+MOVE: North 750
+ROW: Backlash,4,2.329,-8.693,97.671,108.693,9.000
+DEBUG: Backlash: Accepted clearing move of 4.5
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 4.50 px, CumDistance = 9.00 px
+MOVE: North 750
+ROW: Backlash,5,3.494,-13.040,96.506,113.040,13.500
+DEBUG: Backlash: Accepted clearing move of 4.5
+ROW: North,0,0.000,0.000,97.671,108.693,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {97.7,108.7}, Offset = 9.0 px
+DEBUG: Backlash: Total distance moved = 13.5
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,1.165,-4.347,96.506,113.040,4.500
+STATUS: North step   2, dist= 4.5
+MOVE: North 750
+ROW: North,2,2.329,-8.693,95.341,117.387,9.000
+STATUS: North step   3, dist= 9.0
+MOVE: North 750
+ROW: North,3,3.494,-13.040,94.177,121.733,13.500
+STATUS: North step   4, dist=13.5
+MOVE: North 750
+ROW: North,4,4.659,-17.387,93.012,126.080,18.000
+STATUS: North step   5, dist=18.0
+MOVE: North 750
+ROW: North,5,5.823,-21.733,91.847,130.427,22.500
+STATUS: North step   6, dist=22.5
+MOVE: North 750
+ROW: North,6,6.988,-26.080,90.683,134.773,27.000
+DEBUG: NORTH calibration completes with angle=105.0 rate=6.000 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 6.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,2,6.988,-26.080,90.683,134.773,27.000
+STATUS: South step   2, dist=27.0
+MOVE: South 2500
+ROW: South,1,6.056,-22.603,91.614,131.296,23.400
+STATUS: South step   1, dist=23.4
+MOVE: South 2000
+ROW: South,0,4.193,-15.648,93.478,124.341,16.200
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 25.200, Normal south moves = 10.800
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   1
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 22.500, Normal south moves = 10.800
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   2
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 19.800, Normal south moves = 10.800
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   3
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 17.100, Normal south moves = 10.800
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   4
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: Final south nudging status: Current loc = {96.273,113.909}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=6.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+ALERT: Advisory: Calibration completed but RA and Dec rates vary by an unexpected amount (often caused by large Dec backlash)
+DEBUG: Calibration alert details: Expected ratio at dec=20.0 is 0.940, actual is 0.667
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940472 xr=0.0040000000000000114 yr=0.0060000000000000071 dec=0.34906585039886578 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {1.2 -4.3}, {2.3 -8.7}, {3.5 -13.0}, {4.7 -17.4}, {5.8 -21.7}, {7.0 -26.1}, {7.0 -26.1}, {6.1 -22.6}, {4.2 -15.6} n=9/6 issue=3 ortho=2.5444437451708134e-14
+#### sanity: different from the previous one
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,0.776,-2.898,99.224,102.898,3.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,4,1.553,-5.796,98.447,105.796,6.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 3.00 px, CumDistance = 6.00 px
+MOVE: North 750
+ROW: Backlash,5,2.329,-8.693,97.671,108.693,9.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+ROW: North,0,0.000,0.000,98.447,105.796,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {98.4,105.8}, Offset = 6.0 px
+DEBUG: Backlash: Total distance moved = 9.0
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,0.776,-2.898,97.671,108.693,3.000
+STATUS: North step   2, dist= 3.0
+MOVE: North 750
+ROW: North,2,1.553,-5.796,96.894,111.591,6.000
+STATUS: North step   3, dist= 6.0
+MOVE: North 750
+ROW: North,3,2.329,-8.693,96.118,114.489,9.000
+STATUS: North step   4, dist= 9.0
+MOVE: North 750
+ROW: North,4,3.106,-11.591,95.341,117.387,12.000
+STATUS: North step   5, dist=12.0
+MOVE: North 750
+ROW: North,5,3.882,-14.489,94.565,120.284,15.000
+STATUS: North step   6, dist=15.0
+MOVE: North 750
+ROW: North,6,4.659,-17.387,93.788,123.182,18.000
+STATUS: North step   7, dist=18.0
+MOVE: North 750
+ROW: North,7,5.435,-20.284,93.012,126.080,21.000
+STATUS: North step   8, dist=21.0
+MOVE: North 750
+ROW: North,8,6.212,-23.182,92.235,128.978,24.000
+STATUS: North step   9, dist=24.0
+MOVE: North 750
+ROW: North,9,6.988,-26.080,91.459,131.876,27.000
+DEBUG: NORTH calibration completes with angle=105.0 rate=4.000 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,6.988,-26.080,91.459,131.876,27.000
+STATUS: South step   3, dist=27.0
+MOVE: South 2500
+ROW: South,2,6.056,-22.603,92.391,128.398,23.400
+STATUS: South step   2, dist=23.4
+MOVE: South 2500
+ROW: South,1,3.727,-13.909,94.720,119.705,14.400
+STATUS: South step   1, dist=14.4
+MOVE: South 1750
+ROW: South,0,2.096,-7.824,96.351,113.620,8.100
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 14.100, Normal south moves = 18.900
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   1
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 11.400, Normal south moves = 18.900
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   2
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 8.700, Normal south moves = 18.900
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   3
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 6.000, Normal south moves = 18.900
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   4
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: Final south nudging status: Current loc = {99.146,103.188}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=4.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+DEBUG: Calibration passed sanity checks...
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940481 xr=0.0040000000000000114 yr=0.0039999999999999923 dec=0.34906585039886573 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {0.8 -2.9}, {1.6 -5.8}, {2.3 -8.7}, {3.1 -11.6}, {3.9 -14.5}, {4.7 -17.4}, {5.4 -20.3}, {6.2 -23.2}, {7.0 -26.1}, {7.0 -26.1}, {6.1 -22.6}, {3.7 -13.9}, {2.1 -7.8} n=9/9 issue=0 ortho=7.6333312355124402e-14
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,1.009,-3.767,98.991,103.767,3.900
+DEBUG: Backlash: Accepted clearing move of 3.9
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.90 px, CumDistance = 3.90 px
+MOVE: North 750
+ROW: Backlash,4,2.019,-7.534,97.981,107.534,7.800
+DEBUG: Backlash: Accepted clearing move of 3.9
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 3.90 px, CumDistance = 7.80 px
+MOVE: North 750
+ROW: Backlash,5,3.028,-11.301,96.972,111.301,11.700
+DEBUG: Backlash: Accepted clearing move of 3.9
+ROW: North,0,0.000,0.000,97.981,107.534,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {98.0,107.5}, Offset = 7.8 px
+DEBUG: Backlash: Total distance moved = 11.7
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,1.009,-3.767,96.972,111.301,3.900
+STATUS: North step   2, dist= 3.9
+MOVE: North 750
+ROW: North,2,2.019,-7.534,95.962,115.068,7.800
+STATUS: North step   3, dist= 7.8
+MOVE: North 750
+ROW: North,3,3.028,-11.301,94.953,118.836,11.700
+STATUS: North step   4, dist=11.7
+MOVE: North 750
+ROW: North,4,4.038,-15.068,93.944,122.603,15.600
+STATUS: North step   5, dist=15.6
+MOVE: North 750
+ROW: North,5,5.047,-18.836,92.934,126.370,19.500
+STATUS: North step   6, dist=19.5
+MOVE: North 750
+ROW: North,6,6.056,-22.603,91.925,130.137,23.400
+STATUS: North step   7, dist=23.4
+MOVE: North 750
+ROW: North,7,7.066,-26.370,90.915,133.904,27.300
+DEBUG: NORTH calibration completes with angle=105.0 rate=5.200 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 5.200 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,7.066,-26.370,90.915,133.904,27.300
+STATUS: South step   3, dist=27.3
+MOVE: South 2500
+ROW: South,2,6.134,-22.892,91.847,130.427,23.700
+STATUS: South step   2, dist=23.7
+MOVE: South 2500
+ROW: South,1,3.805,-14.199,94.177,121.733,14.700
+STATUS: South step   1, dist=14.7
+MOVE: South 250
+ROW: South,0,3.572,-13.330,94.410,120.864,13.800
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 21.600, Normal south moves = 13.500
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   1
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 18.900, Normal south moves = 13.500
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   2
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 16.200, Normal south moves = 13.500
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   3
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 13.500, Normal south moves = 13.500
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   4
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: Final south nudging status: Current loc = {97.205,110.432}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=5.200 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+ALERT: Advisory: This calibration is substantially different from the previous one - have you changed configurations?
+DEBUG: Calibration alert details: Current/previous Dec rate ratio is 0.769
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940475 xr=0.0040000000000000114 yr=0.0051999999999999998 dec=0.34906585039886578 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {1.0 -3.8}, {2.0 -7.5}, {3.0 -11.3}, {4.0 -15.1}, {5.0 -18.8}, {6.1 -22.6}, {7.1 -26.4}, {7.1 -26.4}, {6.1 -22.9}, {3.8 -14.2}, {3.6 -13.3} n=9/7 issue=4 ortho=3.8166656177562201e-14
+#### step and distance refits
+== calibration
+DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
+ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
+MOVE: West 750
+ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
+MOVE: West 750
+ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
+MOVE: West 750
+ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
+MOVE: West 750
+ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
+MOVE: West 750
+ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
+MOVE: West 750
+ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
+MOVE: West 750
+ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
+MOVE: West 750
+ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
+MOVE: West 750
+ROW: West,9,26.080,6.988,73.920,93.012,27.000
+DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
+AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_EAST
+ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
+MOVE: East 2500
+ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
+MOVE: East 2500
+ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
+MOVE: East 1750
+ROW: East,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
+DEBUG: Falling Through to state CLEAR_BACKLASH
+ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
+MOVE: North 750
+ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
+DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
+DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
+DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
+MOVE: North 750
+ROW: Backlash,3,0.776,-2.898,99.224,102.898,3.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   4
+DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.00 px, CumDistance = 3.00 px
+MOVE: North 750
+ROW: Backlash,4,1.553,-5.796,98.447,105.796,6.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   5
+DEBUG: Backlash: Clearing backlash step   5, Last Delta = 3.00 px, CumDistance = 6.00 px
+MOVE: North 750
+ROW: Backlash,5,2.329,-8.693,97.671,108.693,9.000
+DEBUG: Backlash: Accepted clearing move of 3.0
+ROW: North,0,0.000,0.000,98.447,105.796,0.000
+DEBUG: Backlash: Got 3 acceptable moves, using last move as step 1 of N calibration
+DEBUG: Backlash: North calibration moves starting at {98.4,105.8}, Offset = 6.0 px
+DEBUG: Backlash: Total distance moved = 9.0
+DEBUG: Backlash: Falling Through to state GO_NORTH
+ROW: North,1,0.776,-2.898,97.671,108.693,3.000
+STATUS: North step   2, dist= 3.0
+MOVE: North 750
+ROW: North,2,1.553,-5.796,96.894,111.591,6.000
+STATUS: North step   3, dist= 6.0
+MOVE: North 750
+ROW: North,3,2.329,-8.693,96.118,114.489,9.000
+STATUS: North step   4, dist= 9.0
+MOVE: North 750
+ROW: North,4,3.106,-11.591,95.341,117.387,12.000
+STATUS: North step   5, dist=12.0
+MOVE: North 750
+ROW: North,5,3.882,-14.489,94.565,120.284,15.000
+STATUS: North step   6, dist=15.0
+MOVE: North 750
+ROW: North,6,4.659,-17.387,93.788,123.182,18.000
+STATUS: North step   7, dist=18.0
+MOVE: North 750
+ROW: North,7,5.435,-20.284,93.012,126.080,21.000
+STATUS: North step   8, dist=21.0
+MOVE: North 750
+ROW: North,8,6.212,-23.182,92.235,128.978,24.000
+STATUS: North step   9, dist=24.0
+MOVE: North 750
+ROW: North,9,6.988,-26.080,91.459,131.876,27.000
+DEBUG: NORTH calibration completes with angle=105.0 rate=4.000 parity=1
+AXIS: North calibration complete. Angle = 105.0 deg, Rate = 4.000 px/sec, Parity = Even
+DEBUG: Falling Through to state GO_SOUTH
+ROW: South,3,6.988,-26.080,91.459,131.876,27.000
+STATUS: South step   3, dist=27.0
+MOVE: South 2500
+ROW: South,2,6.056,-22.603,92.391,128.398,23.400
+STATUS: South step   2, dist=23.4
+MOVE: South 2500
+ROW: South,1,3.727,-13.909,94.720,119.705,14.400
+STATUS: South step   1, dist=14.4
+MOVE: South 1750
+ROW: South,0,2.096,-7.824,96.351,113.620,8.100
+DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 14.100, Normal south moves = 18.900
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   1
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 11.400, Normal south moves = 18.900
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   2
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 8.700, Normal south moves = 18.900
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   3
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: South nudging, decAmt = 6.000, Normal south moves = 18.900
+DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   4
+MOVE: South 750
+DEBUG: Nudge: theta = 3.14
+DEBUG: Final south nudging status: Current loc = {99.146,103.188}, targeting {100.000,100.000}
+DEBUG: Falling Through to state CALIBRATION_COMPLETE
+DEBUG: Mount::SetCalibration (scope) -- xAngle=15.0 yAngle=105.0 xRate=4.000 yRate=4.000 bin=1 dec=20.0 pierSide=0 par=+/+ rotAng=None
+DEBUG: Mount::SetCalibration (scope) -- sets m_xAngle=15.0 m_yAngleError=-0.0
+DEBUG: Calibration passed sanity checks...
+STATUS: Calibration complete
+COMPLETE
+DEBUG: Calibration Complete
+RESULT: calibrated
+CALDATA: x=0.26179938779915024 y=1.8325957145940481 xr=0.0040000000000000114 yr=0.0039999999999999923 dec=0.34906585039886573 par=1/1 side=0 bin=1 rot=-888
+DETAILS: ra={0.0 0.0}, {2.9 0.8}, {5.8 1.6}, {8.7 2.3}, {11.6 3.1}, {14.5 3.9}, {17.4 4.7}, {20.3 5.4}, {23.2 6.2}, {26.1 7.0}, {26.1 7.0}, {16.4 4.4}, {6.8 1.8}, {0.0 0.0} dec={0.0 0.0}, {0.8 -2.9}, {1.6 -5.8}, {2.3 -8.7}, {3.1 -11.6}, {3.9 -14.5}, {4.7 -17.4}, {5.4 -20.3}, {6.2 -23.2}, {7.0 -26.1}, {7.0 -26.1}, {6.1 -22.6}, {3.7 -13.9}, {2.1 -7.8} n=9/9 issue=0 ortho=7.6333312355124402e-14
+== begin
+DEBUG: CalDuration adjusted at start of calibration from 750 to 100 because of  mount guide speed  change
+SETTINGS: dur=100 dist=25
+== begin
+DEBUG: CalDistance adjusted at start of calibration from 25 to 26 because of binning change
+DEBUG: CalDuration adjusted at start of calibration from 100 to 150 because of  binning  change
+SETTINGS: dur=150 dist=26
+#### limit alert suppressed
+DEBUG: MoveAxis(W, 3000, ABG)
+DEBUG: duration set to 2500 by maxRaDuration
+DEBUG: Move returns status 0, amount 2500
+DEBUG: MoveAxis(W, 3000, ABG)
+DEBUG: duration set to 2500 by maxRaDuration
+DEBUG: Move returns status 0, amount 2500
+DEBUG: MoveAxis(W, 3000, ABG)
+DEBUG: duration set to 2500 by maxRaDuration
+DEBUG: Move returns status 0, amount 2500
+DEBUG: MoveAxis(W, 3000, ABG)
+DEBUG: duration set to 2500 by maxRaDuration
+DEBUG: Move returns status 0, amount 2500
+DEBUG: MoveAxis(W, 3000, ABG)
+DEBUG: duration set to 2500 by maxRaDuration
+DEBUG: Move returns status 0, amount 2500
+DEBUG: MoveAxis(W, 3000, ABG)
+DEBUG: duration set to 2500 by maxRaDuration
+DEBUG: Suppressed alert:  PHD2 is not able to make sufficient corrections in RA.  Check for cable snags, try re-doing your calibration, and check for problems with the mount mechanics.
+DEBUG: Move returns status 0, amount 2500
