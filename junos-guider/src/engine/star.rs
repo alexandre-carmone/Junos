@@ -1,17 +1,21 @@
 //! Star detection: the centroid / peak finder every guide frame goes through
-//! (`Star::Find`), its half-flux diameter and its saturation tests, and the
-//! status strings the event server reports for a lost star.
+//! (`Star::Find`), its half-flux diameter and its saturation tests, the
+//! status strings the event server reports for a lost star, and the guide
+//! star auto-selection (`GuideStar::AutoFind`).
 //!
 //! `find` is a step-for-step port: same search bounds, same 3×3 smoothing
 //! kernel, same annulus background with its sigma clipping, same SNR
 //! formula, same rejection order and the same quirks (the `snr = 2.9`
-//! false-star guard, the single-pixel HFR of 0.25). Nothing here looks at the
-//! configuration: every PHD2 setting is a parameter.
+//! false-star guard, the single-pixel HFR of 0.25). `auto_find` keeps
+//! PHD2's filters, `f32` arithmetic, pruning order and three-pass pick,
+//! including its quirks (a peak scoring exactly like a listed one is
+//! dropped, secondary offsets run from the primary's integer peak). Nothing
+//! here looks at the configuration: every PHD2 setting is a parameter.
 //!
 //! Ported from PHD2 src/star.h, src/star.cpp, src/guider_multistar.cpp (the status strings) — BSD-3-Clause, see THIRD_PARTY.md
 
-use super::image::UsImage;
-use super::traits::Point;
+use super::image::{UsImage, median3};
+use super::traits::{Point, Rect};
 
 /// `Star::FindMode`: a sub-pixel centroid, or the brightest raw pixel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -527,11 +531,506 @@ fn find_body(
     (new_x, new_y, if saturated { FindResult::Saturated } else { FindResult::Ok })
 }
 
+/// PHD2's `GuideStar`: a star of the multi-star list with the state the
+/// guider tracks it by.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GuideStar {
+    pub star: Star,
+    /// Where the star was when it joined the list; its offsets are measured
+    /// from here.
+    pub reference_point: Point,
+    /// Frames where the star moved unlike the primary.
+    pub miss_count: u32,
+    /// Frames with an offset of exactly zero on an axis (a hot pixel).
+    pub zero_count: u32,
+    /// Offset from the primary star, set by `auto_find` and used to re-find
+    /// the star after a dither.
+    pub offset_from_primary: Point,
+    pub was_lost: bool,
+}
+
+/// What `GuideStar::AutoFind` reads from the profile, the guider and the
+/// camera.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoFindParams {
+    /// The downsample factor (≥ 1), already resolved from
+    /// `/guider/AutoSelDownsample` by [`auto_sel_downsample`].
+    pub downsample: i32,
+    /// `/guider/StarMinHFD`.
+    pub min_hfd: f64,
+    /// `/guider/StarMaxHFD`.
+    pub max_hfd: f64,
+    /// `/guider/StarMinSNR` (`GetAFMinStarSNR`, 6 by default).
+    pub min_snr: f64,
+    /// `/camera/SaturationByADU` (true by default).
+    pub saturation_by_adu: bool,
+    /// `/camera/SaturationADU`, 0 while unset.
+    pub saturation_adu: u16,
+}
+
+/// What `GuideStar::AutoFind` gives back besides the star list.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoFindResult {
+    /// The chosen star, `None` when nothing was found (PHD2 returns false).
+    /// It is the convolution peak mapped back onto the frame, in whole
+    /// pixels, not a centroid: AutoSelect runs [`Star::find`] there next.
+    pub position: Option<Point>,
+    /// `Some(level)` when saturation is by ADU with no level set: PHD2 then
+    /// sets the camera's level to `(1 << bpp) − 1` (star.cpp:964,
+    /// `SetSaturationByADU(true, level)`), even when no star is found. The
+    /// caller saves it to `/camera/SaturationADU`.
+    pub saturation_adu_set: Option<u16>,
+}
+
+/// `/guider/AutoSelDownsample` resolved as AutoFind does (star.cpp:756):
+/// 0 is "Auto", which downsamples by 2 when the pixel scale is 0.6″/px or
+/// finer (an unknown scale is 1.0, so no downsampling).
+pub fn auto_sel_downsample(setting: u32, pixel_scale: f64) -> i32 {
+    const DOWNSAMPLE_SCALE_THRESH: f64 = 0.6;
+    if setting == 0 {
+        if pixel_scale > DOWNSAMPLE_SCALE_THRESH { 1 } else { 2 }
+    } else {
+        setting as i32
+    }
+}
+
+impl GuideStar {
+    /// `GuideStar(const Star&)`: the reference point starts at the star.
+    pub fn from_star(star: Star) -> Self {
+        GuideStar { reference_point: star.position(), star, ..Default::default() }
+    }
+
+    /// `GuideStar::AutoFind` (star.cpp:718): pick the best guide star of a
+    /// full frame and, when `max_stars > 1`, the list of stars for
+    /// multi-star guiding.
+    ///
+    /// The frame is median-filtered (outside `roi` blanked), downsampled,
+    /// convolved with a 9×9 star template; its local maxima are scored
+    /// against the global noise, the 100 best kept, then pruned: peaks under
+    /// 5 px apart merge, two peaks in one search box both go unless one is
+    /// 5× the other, peaks within `search_region + extra_edge_allowance` of
+    /// the edge go. Each survivor is measured with [`Star::find`], brightest
+    /// first, in three passes: under 90 % of saturation with the minimum
+    /// SNR, then unsaturated with the minimum SNR, then anything found.
+    ///
+    /// `found_stars` is PHD2's out-parameter: left untouched when the frame
+    /// is subframed or the ROI is smaller than the search region, cleared
+    /// otherwise, then filled with the primary first and the secondaries
+    /// (SNR ≥ `min_snr`, 25 px apart, carrying `offset_from_primary`),
+    /// at most `max_stars` of them.
+    pub fn auto_find(
+        image: &UsImage,
+        extra_edge_allowance: i32,
+        search_region: i32,
+        roi: Option<Rect>,
+        found_stars: &mut Vec<GuideStar>,
+        max_stars: usize,
+        p: &AutoFindParams,
+    ) -> AutoFindResult {
+        let mut out = AutoFindResult { position: None, saturation_adu_set: None };
+
+        if image.roi().is_some() {
+            // AutoFind called on subframe
+            return out;
+        }
+
+        // run a 3x3 median first to eliminate hot pixels; with an ROI the
+        // subframe makes Median3 blank everything outside it
+        let mut smoothed = image.clone();
+        if let Some(roi) = roi.filter(|r| !r.is_empty()) {
+            let r = roi.intersect(&Rect::new(0, 0, image.w, image.h));
+            if r.w < search_region || r.h < search_region {
+                return out; // bad ROI
+            }
+            smoothed.subframe = Some(r);
+        }
+        median3(&mut smoothed);
+
+        // convert to floating point, downsample, run the PSF convolution
+        let mut conv = FloatImg {
+            px: smoothed.data.iter().map(|&v| v as f32).collect(),
+            w: smoothed.w,
+            h: smoothed.h,
+        };
+        let downsample = p.downsample;
+        if downsample > 1 {
+            conv = downsample_img(&conv, downsample);
+        }
+        conv = psf_conv(&conv);
+
+        const CONV_RADIUS: i32 = 4;
+        let dw = conv.w; // width of the downsampled image
+        let dh = conv.h; // height of the downsampled image
+        // region containing valid data
+        let conv_rect = Rect::new(CONV_RADIUS, CONV_RADIUS, dw - 2 * CONV_RADIUS, dh - 2 * CONV_RADIUS);
+
+        const TOP_N: usize = 100; // keep track of the brightest stars
+        let mut stars: Vec<Peak> = Vec::new(); // ascending intensity, as std::set<Peak>
+
+        let (_, global_stdev) = get_stats(&conv, conv_rect);
+
+        const THRESHOLD: f64 = 0.1;
+
+        // find each local maximum
+        const SRCH: i32 = 4;
+        for y in conv_rect.y + SRCH..=conv_rect.bottom() - SRCH {
+            for x in conv_rect.x + SRCH..=conv_rect.right() - SRCH {
+                let val = conv.at(x, y);
+                if !(val > 0.0) {
+                    continue;
+                }
+                let mut ismax = true;
+                'window: for j in -SRCH..=SRCH {
+                    for i in -SRCH..=SRCH {
+                        if i == 0 && j == 0 {
+                            continue;
+                        }
+                        if conv.at(x + i, y + j) > val {
+                            ismax = false;
+                            break 'window;
+                        }
+                    }
+                }
+                if !ismax {
+                    continue;
+                }
+
+                // compare local maximum to mean value of surrounding pixels
+                const LOCAL: i32 = 7;
+                let local_rect = Rect::new(x - LOCAL, y - LOCAL, 2 * LOCAL + 1, 2 * LOCAL + 1).intersect(&conv_rect);
+                let (local_mean, _) = get_stats(&conv, local_rect);
+
+                // this is our measure of star intensity
+                let h = (val as f64 - local_mean) / global_stdev;
+                if h < THRESHOLD {
+                    continue;
+                }
+
+                // coordinates on the original image
+                let imgx = x * downsample + downsample / 2;
+                let imgy = y * downsample + downsample / 2;
+
+                insert_peak(&mut stars, Peak { x: imgx, y: imgy, val: h as f32 });
+                if stars.len() > TOP_N {
+                    stars.remove(0);
+                }
+            }
+        }
+
+        // merge stars that are very close into a single star: erase the
+        // dimmer one and start over
+        const MIN_LIMIT_SQ: i32 = 5 * 5;
+        'repeat: loop {
+            for a in 0..stars.len() {
+                for b in a + 1..stars.len() {
+                    let dx = stars[a].x - stars[b].x;
+                    let dy = stars[a].y - stars[b].y;
+                    if dx * dx + dy * dy < MIN_LIMIT_SQ {
+                        stars.remove(a);
+                        continue 'repeat;
+                    }
+                }
+            }
+            break;
+        }
+
+        // exclude stars that would fit within a single searchRegion box,
+        // both of them, but do not let a very dim star eliminate a very
+        // bright one (b is the brighter: the list is ascending)
+        {
+            const EXTRA: i32 = 5; // extra safety margin
+            let fullw = search_region + EXTRA;
+            let mut to_erase = vec![false; stars.len()];
+            for a in 0..stars.len() {
+                for b in a + 1..stars.len() {
+                    let dx = (stars[a].x - stars[b].x).abs();
+                    let dy = (stars[a].y - stars[b].y).abs();
+                    if dx <= fullw && dy <= fullw && !(stars[b].val / stars[a].val >= 5.0) {
+                        to_erase[a] = true;
+                        to_erase[b] = true;
+                    }
+                }
+            }
+            let mut i = 0;
+            stars.retain(|_| {
+                i += 1;
+                !to_erase[i - 1]
+            });
+        }
+
+        // exclude stars too close to the edge
+        let edge_dist = search_region + extra_edge_allowance;
+        stars.retain(|s| {
+            !(s.x <= edge_dist || s.x >= image.w - edge_dist || s.y <= edge_dist || s.y >= image.h - edge_dist)
+        });
+
+        // the saturation level, pedestal included, and the ADU limit the
+        // finds below get (`pCamera->GetSaturationADU()`, 0 when saturation
+        // is not by ADU)
+        let max_adu: u16;
+        let sat_level: u32;
+        if p.saturation_by_adu {
+            let mut sat_adu = p.saturation_adu;
+            if sat_adu == 0 {
+                // for cameras that don't scale their data to the full 16
+                // bits this is too high; the user will have to fix it
+                sat_adu = ((1u32 << image.bits_per_pixel) - 1) as u16;
+                out.saturation_adu_set = Some(sat_adu);
+            }
+            max_adu = sat_adu;
+            sat_level = sat_adu as u32 + image.pedestal as u32;
+        } else {
+            max_adu = 0;
+            // the peak pixel overall, then look for a star with a flat top
+            // at that level (a flat top below it is a false positive)
+            let max_val = image.data.iter().copied().max().unwrap_or(0);
+            let found_saturated = stars.iter().rev().any(|s| {
+                let tmp = Star::find(image, search_region, s.x as f64, s.y as f64, FindMode::Centroid, p.min_hfd, p.max_hfd, 0);
+                tmp.was_found() && tmp.result == FindResult::Saturated && (max_val - tmp.peak_val) as u32 * 255 <= max_val as u32
+            });
+            sat_level = if found_saturated {
+                max_val as u32
+            } else {
+                // can't tell whether the max is saturated
+                ((1u32 << image.bits_per_pixel) - 1) + image.pedestal as u32
+            };
+        }
+
+        let range = sat_level.saturating_sub(image.pedestal as u32);
+        // "near-saturation" threshold at 90% saturation
+        let sat_thresh = (image.pedestal as u32 + 9 * range / 10).min(65535) as u16;
+
+        let find = |s: &Peak| {
+            Star::find(image, search_region, s.x as f64, s.y as f64, FindMode::Centroid, p.min_hfd, p.max_hfd, max_adu as u32)
+        };
+
+        // before sifting for the best star, collect all the viable
+        // candidates; a repeated find can land on the same star, so drop
+        // the ones within 25 px of a listed one
+        found_stars.clear();
+        if max_stars > 1 {
+            for s in stars.iter().rev() {
+                let tmp = find(s);
+                if tmp.was_found() && tmp.snr >= p.min_snr {
+                    let duplicate = found_stars.iter().any(|o| o.star.position().distance(&tmp.position()) < 25.0);
+                    if !duplicate {
+                        found_stars.push(GuideStar::from_star(tmp));
+                    }
+                }
+            }
+        }
+
+        // final star selection: the only star, or the primary in multi-star
+        // mode. Pass 1 takes the brightest star under 90 % saturation with
+        // SNR ≥ min, pass 2 the brightest unsaturated one with SNR ≥ min,
+        // pass 3 the brightest star found at all.
+        for pass in 1..=3 {
+            for s in stars.iter().rev() {
+                let tmp = find(s);
+                if !tmp.was_found() {
+                    continue;
+                }
+                let saturated_or_dim = tmp.result == FindResult::Saturated || tmp.snr < p.min_snr;
+                if (pass == 1 && (tmp.peak_val > sat_thresh || saturated_or_dim)) || (pass == 2 && saturated_or_dim) {
+                    continue;
+                }
+
+                // star accepted, at the convolution peak
+                let primary_ref = Point::new(s.x as f64, s.y as f64);
+                out.position = Some(primary_ref);
+
+                if max_stars > 1 {
+                    // find the chosen star in the list (same centroid) and
+                    // set every other star's offset — from the peak, not
+                    // from the primary's centroid, as PHD2 does
+                    let mut primary_loc = None;
+                    for (i, gs) in found_stars.iter_mut().enumerate() {
+                        if gs.star.x == tmp.x && gs.star.y == tmp.y {
+                            primary_loc = Some(i);
+                        } else {
+                            gs.offset_from_primary = gs.reference_point - primary_ref;
+                        }
+                    }
+                    match primary_loc {
+                        Some(i) => {
+                            // the stars ahead of it are likely saturated or
+                            // otherwise flawed
+                            found_stars.drain(..i);
+                            found_stars.truncate(max_stars);
+                        }
+                        None => {
+                            // the secondaries are presumably degraded: the
+                            // primary alone
+                            found_stars.clear();
+                            found_stars.push(GuideStar::from_star(tmp));
+                        }
+                    }
+                } else {
+                    found_stars.push(GuideStar::from_star(tmp));
+                }
+                return out;
+            }
+        }
+
+        out
+    }
+}
+
+/// star.cpp's `FloatImg`: the frame as floats for the AutoFind filters.
+struct FloatImg {
+    px: Vec<f32>,
+    w: i32,
+    h: i32,
+}
+
+impl FloatImg {
+    fn at(&self, x: i32, y: i32) -> f32 {
+        self.px[(y * self.w + x) as usize]
+    }
+}
+
+/// A local maximum of the convolved image: its position on the original
+/// frame and its score.
+#[derive(Clone, Copy, Debug)]
+struct Peak {
+    x: i32,
+    y: i32,
+    val: f32,
+}
+
+/// `std::set<Peak>::insert` with `Peak::operator<` comparing `val` only:
+/// the list stays sorted ascending, and a peak whose score equals one
+/// already listed is dropped, as the set does.
+fn insert_peak(stars: &mut Vec<Peak>, p: Peak) {
+    match stars.binary_search_by(|q| q.val.partial_cmp(&p.val).unwrap_or(std::cmp::Ordering::Equal)) {
+        Ok(_) => {}
+        Err(i) => stars.insert(i, p),
+    }
+}
+
+/// `GetStats` (star.cpp:515): mean and population standard deviation of the
+/// pixels in `win` (Welford). An empty window gives NaN, as in PHD2.
+fn get_stats(img: &FloatImg, win: Rect) -> (f64, f64) {
+    let (mut sum, mut a, mut q, mut k, mut km1) = (0.0, 0.0, 0.0, 1.0, 0.0);
+    for y in 0..win.h {
+        for x in 0..win.w {
+            let v = img.at(win.x + x, win.y + y) as f64;
+            sum += v;
+            let a0 = a;
+            a += (v - a) / k;
+            q += (v - a0) * (v - a);
+            km1 = k;
+            k += 1.0;
+        }
+    }
+    (sum / km1, (q / km1).sqrt())
+}
+
+/// `psf_conv` (star.cpp:574): correlate with a 9×9 star template, each ring
+/// of the template taken relative to the 9×9 mean. The rings are summed in
+/// `f32` in PHD2's order; the 4 px border stays 0.
+///
+/// ```text
+/// D3 D3 D3 D3 D3 D3 D3 D3 D3
+/// D3 D3 D3 D2 D1 D2 D3 D3 D3
+/// D3 D3 C3 C2 C1 C2 C3 D3 D3
+/// D3 D2 C2 B2 B1 B2 C2 D2 D3
+/// D3 D1 C1 B1 A  B1 C1 D1 D3      1 A; 4 B1, B2, C1, C3, D1;
+/// D3 D2 C2 B2 B1 B2 C2 D2 D3      8 C2, D2; 44 D3
+/// D3 D3 C3 C2 C1 C2 C3 D3 D3
+/// D3 D3 D3 D2 D1 D2 D3 D3 D3
+/// D3 D3 D3 D3 D3 D3 D3 D3 D3
+/// ```
+fn psf_conv(src: &FloatImg) -> FloatImg {
+    //                A      B1     B2     C1    C2    C3     D1     D2     D3
+    const PSF: [f64; 9] = [0.906, 0.584, 0.365, 0.117, 0.049, -0.05, -0.064, -0.074, -0.094];
+    const PSF_SIZE: i32 = 4;
+
+    let (width, height) = (src.w, src.h);
+    let mut dst = FloatImg { px: vec![0.0; src.px.len()], w: width, h: height };
+
+    for y in PSF_SIZE..height - PSF_SIZE {
+        for x in PSF_SIZE..width - PSF_SIZE {
+            let px = |dx: i32, dy: i32| src.at(x + dx, y + dy);
+
+            let a = px(0, 0);
+            let b1 = px(0, -1) + px(0, 1) + px(1, 0) + px(-1, 0);
+            let b2 = px(-1, -1) + px(1, -1) + px(-1, 1) + px(1, 1);
+            let c1 = px(0, -2) + px(-2, 0) + px(2, 0) + px(0, 2);
+            let c2 = px(-1, -2) + px(1, -2) + px(-2, -1) + px(2, -1) + px(-2, 1) + px(2, 1) + px(-1, 2) + px(1, 2);
+            let c3 = px(-2, -2) + px(2, -2) + px(-2, 2) + px(2, 2);
+            let d1 = px(0, -3) + px(-3, 0) + px(3, 0) + px(0, 3);
+            let d2 = px(-1, -3) + px(1, -3) + px(-3, -1) + px(3, -1) + px(-3, 1) + px(3, 1) + px(-1, 3) + px(1, 3);
+            let mut d3 = px(-4, -2)
+                + px(-3, -2)
+                + px(3, -2)
+                + px(4, -2)
+                + px(-4, -1)
+                + px(4, -1)
+                + px(-4, 0)
+                + px(4, 0)
+                + px(-4, 1)
+                + px(4, 1)
+                + px(-4, 2)
+                + px(-3, 2)
+                + px(3, 2)
+                + px(4, 2);
+            // rows −4 and +4 whole, rows −3 and +3 but their middle three
+            for i in -4..=4 {
+                d3 += px(i, -4);
+            }
+            for i in [-4, -3, -2, 2, 3, 4] {
+                d3 += px(i, -3);
+            }
+            for i in [-4, -3, -2, 2, 3, 4] {
+                d3 += px(i, 3);
+            }
+            for i in -4..=4 {
+                d3 += px(i, 4);
+            }
+
+            let mean = (a + b1 + b2 + c1 + c2 + c3 + d1 + d2 + d3) as f64 / 81.0;
+            let psf_fit = PSF[0] * (a as f64 - mean)
+                + PSF[1] * (b1 as f64 - 4.0 * mean)
+                + PSF[2] * (b2 as f64 - 4.0 * mean)
+                + PSF[3] * (c1 as f64 - 4.0 * mean)
+                + PSF[4] * (c2 as f64 - 8.0 * mean)
+                + PSF[5] * (c3 as f64 - 4.0 * mean)
+                + PSF[6] * (d1 as f64 - 4.0 * mean)
+                + PSF[7] * (d2 as f64 - 8.0 * mean)
+                + PSF[8] * (d3 as f64 - 44.0 * mean);
+
+            dst.px[(width * y + x) as usize] = psf_fit as f32;
+        }
+    }
+    dst
+}
+
+/// `Downsample` (star.cpp:657): the mean of each `ds × ds` block, summed in
+/// `f32`; a partial block at the right or bottom edge is dropped.
+fn downsample_img(src: &FloatImg, ds: i32) -> FloatImg {
+    let dw = src.w / ds;
+    let dh = src.h / ds;
+    let d2 = (ds * ds) as f32;
+    let mut px = vec![0.0f32; (dw * dh) as usize];
+    for yy in 0..dh {
+        for xx in 0..dw {
+            let mut sum = 0.0f32;
+            for j in 0..ds {
+                for i in 0..ds {
+                    sum += src.at(xx * ds + i, yy * ds + j);
+                }
+            }
+            px[(yy * dw + xx) as usize] = sum / d2;
+        }
+    }
+    FloatImg { px, w: dw, h: dh }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::rng::Rng;
-    use crate::engine::traits::Rect;
 
     /// A 2-D Gaussian: (x, y, sigma, peak above the background).
     struct Gauss {
@@ -788,5 +1287,255 @@ mod tests {
         assert!(FindResult::Saturated.was_found() && !FindResult::LowHfd.was_found());
         s.invalidate();
         assert!(!s.is_valid() && s.result == FindResult::Error && (s.x, s.y) == (1.0, 2.0));
+    }
+
+    #[test]
+    fn auto_sel_downsample_resolution() {
+        // "Auto" downsamples by 2 at 0.6"/px or finer; an unknown scale is 1.0
+        assert_eq!(auto_sel_downsample(0, 1.0), 1);
+        assert_eq!(auto_sel_downsample(0, 0.61), 1);
+        assert_eq!(auto_sel_downsample(0, 0.6), 2);
+        assert_eq!(auto_sel_downsample(0, 0.3), 2);
+        assert_eq!(auto_sel_downsample(3, 0.3), 3);
+        assert_eq!(auto_sel_downsample(1, 0.3), 1);
+    }
+
+    fn float_img(w: i32, h: i32, f: impl Fn(i32, i32) -> f32) -> FloatImg {
+        let mut px = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                px.push(f(x, y));
+            }
+        }
+        FloatImg { px, w, h }
+    }
+
+    #[test]
+    fn psf_template_coefficients() {
+        // the template weights sum to 0.378 (1·0.906 + 4·0.584 + 4·0.365 +
+        // 4·0.117 + 8·0.049 − 4·0.05 − 4·0.064 − 8·0.074 − 44·0.094); a unit
+        // impulse adds 1/81 to the mean, so each response is the weight of
+        // the impulse's ring minus 0.378/81
+        let delta = float_img(17, 17, |x, y| if (x, y) == (8, 8) { 1.0 } else { 0.0 });
+        let c = psf_conv(&delta);
+        let k = 0.378 / 81.0;
+        let at = |x: i32, y: i32| c.at(x, y) as f64;
+        assert!((at(8, 8) - (0.906 - k)).abs() < 1e-6, "A {}", at(8, 8));
+        assert!((at(9, 8) - (0.584 - k)).abs() < 1e-6, "B1 {}", at(9, 8));
+        assert!((at(9, 9) - (0.365 - k)).abs() < 1e-6, "B2 {}", at(9, 9));
+        assert!((at(8, 10) - (0.117 - k)).abs() < 1e-6, "C1 {}", at(8, 10));
+        assert!((at(9, 10) - (0.049 - k)).abs() < 1e-6, "C2 {}", at(9, 10));
+        assert!((at(10, 10) - (-0.05 - k)).abs() < 1e-6, "C3 {}", at(10, 10));
+        assert!((at(5, 8) - (-0.064 - k)).abs() < 1e-6, "D1 {}", at(5, 8));
+        assert!((at(7, 11) - (-0.074 - k)).abs() < 1e-6, "D2 {}", at(7, 11));
+        // D3: the corners, the rows ±4 and the ends of the rows ±3
+        for (x, y) in [(4, 4), (12, 12), (12, 8), (6, 11), (4, 5)] {
+            assert!((at(x, y) - (-0.094 - k)).abs() < 1e-6, "D3 ({x},{y}) {}", at(x, y));
+        }
+        // the 4 px border is left at 0
+        assert_eq!((at(3, 8), at(13, 8), at(8, 3), at(8, 13)), (0.0, 0.0, 0.0, 0.0));
+        // a flat background vanishes: each ring minus its share of the mean
+        let flat = psf_conv(&float_img(12, 12, |_, _| 100.0));
+        assert!(flat.px.iter().all(|&v| v == 0.0));
+        // too small for the template: all 0, no panic
+        assert!(psf_conv(&float_img(8, 8, |x, _| x as f32)).px.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn downsample_and_stats() {
+        // 5×4 ramp v = x + 5y by 2: the 2×2 block means, the odd column dropped
+        let d = downsample_img(&float_img(5, 4, |x, y| (x + 5 * y) as f32), 2);
+        assert_eq!((d.w, d.h), (2, 2));
+        assert_eq!(d.px, vec![3.0, 5.0, 13.0, 15.0]);
+        // mean and population sigma (q / n), over a window only
+        let img = float_img(3, 3, |x, y| if x < 2 && y < 2 { (1 + x + 2 * y) as f32 } else { 50.0 });
+        let (mean, sd) = get_stats(&img, Rect::new(0, 0, 2, 2));
+        assert_eq!(mean, 2.5);
+        assert!((sd - 1.25f64.sqrt()).abs() < 1e-12);
+        let (mean, sd) = get_stats(&img, Rect::new(0, 0, 0, 0));
+        assert!(mean.is_nan() && sd.is_nan());
+    }
+
+    #[test]
+    fn peak_set_semantics() {
+        let mut v = Vec::new();
+        for (x, val) in [(1, 0.5), (2, 0.2), (3, 0.5), (4, 0.9)] {
+            insert_peak(&mut v, Peak { x, y: 0, val });
+        }
+        // ascending by score; the second 0.5 is the set's duplicate key
+        assert_eq!(v.iter().map(|p| (p.x, p.val)).collect::<Vec<_>>(), vec![(2, 0.2), (1, 0.5), (4, 0.9)]);
+    }
+
+    /// The AutoFind test field: a saturated star, the brightest clean star,
+    /// a fainter one, a close pair (12 × 6 px apart, similar) and a star
+    /// 13 px from the right edge.
+    fn six_stars() -> UsImage {
+        field(
+            256,
+            192,
+            100.0,
+            5.0,
+            21,
+            &[
+                Gauss { x: 60.4, y: 50.2, sigma: 2.0, peak: 100000.0 },
+                Gauss { x: 180.3, y: 60.7, sigma: 1.5, peak: 20000.0 },
+                Gauss { x: 130.6, y: 120.2, sigma: 1.5, peak: 8000.0 },
+                Gauss { x: 40.0, y: 140.0, sigma: 1.5, peak: 3000.0 },
+                Gauss { x: 52.0, y: 146.0, sigma: 1.5, peak: 2500.0 },
+                Gauss { x: 243.0, y: 120.0, sigma: 1.5, peak: 6000.0 },
+            ],
+        )
+    }
+
+    fn af_params() -> AutoFindParams {
+        AutoFindParams {
+            downsample: 1,
+            min_hfd: 1.5,
+            max_hfd: 20.0,
+            min_snr: 6.0,
+            saturation_by_adu: true,
+            saturation_adu: 0,
+        }
+    }
+
+    fn near(s: &GuideStar, x: f64, y: f64) -> bool {
+        (s.star.x - x).abs() < 0.05 && (s.star.y - y).abs() < 0.05
+    }
+
+    #[test]
+    fn auto_find_on_a_field() {
+        let img = six_stars();
+        for by_adu in [true, false] {
+            let p = AutoFindParams { saturation_by_adu: by_adu, ..af_params() };
+            let mut list = Vec::new();
+            let r = GuideStar::auto_find(&img, 0, 15, None, &mut list, 12, &p);
+            // the primary is the 20000 star, at its convolution peak in whole
+            // pixels, not the brighter saturated one, which is listed but
+            // erased with the stars ahead of the primary
+            assert_eq!(r.position, Some(Point::new(180.0, 61.0)));
+            // with saturation by ADU and no level, the level becomes 2^16 − 1
+            assert_eq!(r.saturation_adu_set, if by_adu { Some(65535) } else { None });
+            // the pair is pruned (both), the edge star too (243 ≥ 256 − 15):
+            // the primary and the 8000 star remain
+            assert_eq!(list.len(), 2);
+            assert!(near(&list[0], 180.3, 60.7) && list[0].star.result == FindResult::Ok);
+            assert_eq!(list[0].reference_point, list[0].star.position());
+            assert_eq!(list[0].offset_from_primary, Point::new(0.0, 0.0));
+            assert!(near(&list[1], 130.6, 120.2));
+            // the offset runs from the primary's peak, not its centroid
+            assert_eq!(list[1].offset_from_primary, list[1].reference_point - Point::new(180.0, 61.0));
+            assert!(list[1].star.snr >= 6.0);
+        }
+    }
+
+    #[test]
+    fn auto_find_passes() {
+        let img = six_stars();
+        // pass 1 skips a star over 90 % of the saturation level: at 21000
+        // ADU the threshold is 18900 and the 20000 star peaks at 19309;
+        // the two stars listed ahead of the 8000 one are erased
+        let p = AutoFindParams { saturation_adu: 21000, ..af_params() };
+        let mut list = Vec::new();
+        let r = GuideStar::auto_find(&img, 0, 15, None, &mut list, 12, &p);
+        assert_eq!(r, AutoFindResult { position: Some(Point::new(131.0, 120.0)), saturation_adu_set: None });
+        assert_eq!(list.len(), 1);
+        assert!(near(&list[0], 130.6, 120.2));
+        // no star reaches the SNR floor: pass 3 takes the brightest one
+        // found, saturated or not, and the list is that star alone
+        let p = AutoFindParams { min_snr: 1e6, ..af_params() };
+        let r = GuideStar::auto_find(&img, 0, 15, None, &mut list, 12, &p);
+        assert_eq!(r.position, Some(Point::new(60.0, 50.0)));
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].star.result, FindResult::Saturated);
+        assert_eq!(list[0].star.peak_val, 65535);
+        assert_eq!(list[0].reference_point, list[0].star.position());
+    }
+
+    #[test]
+    fn auto_find_edge_roi_downsample_and_list_size() {
+        let img = six_stars();
+        let mut list = Vec::new();
+        // an edge allowance of 50 (calibration distance) prunes within 65 px
+        // of the edges: only the 8000 star is left
+        let r = GuideStar::auto_find(&img, 50, 15, None, &mut list, 12, &af_params());
+        assert_eq!(r.position, Some(Point::new(131.0, 120.0)));
+        assert_eq!(list.len(), 1);
+        // an ROI excludes the 20000 star (Median3 blanks the rest)
+        let roi = Some(Rect::new(100, 80, 156, 112));
+        let r = GuideStar::auto_find(&img, 0, 15, roi, &mut list, 12, &af_params());
+        assert_eq!(r.position, Some(Point::new(131.0, 120.0)));
+        // downsampling by 2 maps peak 90 back to 90·2 + 1
+        let p = AutoFindParams { downsample: 2, ..af_params() };
+        let r = GuideStar::auto_find(&img, 0, 15, None, &mut list, 12, &p);
+        assert_eq!(r.position, Some(Point::new(181.0, 61.0)));
+        assert_eq!(list[1].offset_from_primary, list[1].reference_point - Point::new(181.0, 61.0));
+        // by 3 the pair is 4 px apart: one local maximum, no pair to prune,
+        // so three stars are listed; max_stars cuts the list
+        let p = AutoFindParams { downsample: 3, ..af_params() };
+        GuideStar::auto_find(&img, 0, 15, None, &mut list, 12, &p);
+        assert_eq!(list.len(), 3);
+        assert!(near(&list[2], 40.0, 140.0));
+        GuideStar::auto_find(&img, 0, 15, None, &mut list, 2, &p);
+        assert_eq!(list.len(), 2);
+        assert!(near(&list[0], 180.3, 60.7) && near(&list[1], 130.6, 120.2));
+        // single-star mode: the primary alone, no secondaries collected
+        let r = GuideStar::auto_find(&img, 0, 15, None, &mut list, 1, &af_params());
+        assert_eq!(r.position, Some(Point::new(180.0, 61.0)));
+        assert_eq!(list.len(), 1);
+        assert!(near(&list[0], 180.3, 60.7));
+    }
+
+    #[test]
+    fn auto_find_close_pair_ratio() {
+        // two stars 12 px apart in one search box: both dropped...
+        let pair = |dim: f64| {
+            field(
+                128,
+                128,
+                100.0,
+                5.0,
+                9,
+                &[Gauss { x: 60.3, y: 60.7, sigma: 1.5, peak: 20000.0 }, Gauss { x: 72.0, y: 66.0, sigma: 1.5, peak: dim }],
+            )
+        };
+        let mut list = Vec::new();
+        let r = GuideStar::auto_find(&pair(8000.0), 0, 15, None, &mut list, 12, &af_params());
+        assert_eq!(r.position, None);
+        assert!(list.is_empty());
+        // ...unless the brighter scores 5× the dimmer: a very dim star does
+        // not eliminate a very bright one (the dim one is a duplicate of the
+        // bright one within 25 px, so the list holds one star)
+        let r = GuideStar::auto_find(&pair(1500.0), 0, 15, None, &mut list, 12, &af_params());
+        assert_eq!(r.position, Some(Point::new(60.0, 61.0)));
+        assert_eq!(list.len(), 1);
+        assert!(near(&list[0], 60.3, 60.7));
+    }
+
+    #[test]
+    fn auto_find_preconditions() {
+        let img = six_stars();
+        let keep = vec![GuideStar::from_star(Star::new())];
+        // a subframed image: refused, the list untouched
+        let mut sub = img.clone();
+        sub.subframe = Some(Rect::new(0, 0, 100, 100));
+        let mut list = keep.clone();
+        let r = GuideStar::auto_find(&sub, 0, 15, None, &mut list, 12, &af_params());
+        assert_eq!(r, AutoFindResult { position: None, saturation_adu_set: None });
+        assert_eq!(list, keep);
+        // an ROI narrower than the search region (clipped to the frame: 6 px)
+        let r = GuideStar::auto_find(&img, 0, 15, Some(Rect::new(250, 0, 40, 40)), &mut list, 12, &af_params());
+        assert_eq!(r.position, None);
+        assert_eq!(list, keep);
+        // an empty ROI means none
+        let r = GuideStar::auto_find(&img, 0, 15, Some(Rect::default()), &mut list, 12, &af_params());
+        assert_eq!(r.position, Some(Point::new(180.0, 61.0)));
+        // a starless frame: nothing found, the list cleared, and the
+        // saturation level still set (8-bit: 255)
+        let mut blank = field(64, 64, 10.0, 2.0, 4, &[]);
+        blank.bits_per_pixel = 8;
+        let mut list = keep.clone();
+        let r = GuideStar::auto_find(&blank, 0, 15, None, &mut list, 12, &af_params());
+        assert_eq!(r, AutoFindResult { position: None, saturation_adu_set: Some(255) });
+        assert!(list.is_empty());
     }
 }
