@@ -34,7 +34,7 @@
 use serde_json::Value;
 
 use super::calibration::ProfileAccess;
-use super::guider::{DynProfile, Guider, GuiderCx, GuiderEvent, GuiderMount, GuiderState, MountRole, PauseType};
+use super::guider::{Guider, GuiderCx, GuiderEvent, GuiderMount, GuiderState, MountRole, PauseType};
 use super::log::cfmt::fmt_f;
 use super::log::guide_log::ExposureSummary;
 use super::mount::MountEvent;
@@ -1396,7 +1396,7 @@ impl Control {
     ) {
         match position {
             Some(Ok(u)) => self.adjust_auto_exposure(u.auto_exposure_snr, ev),
-            Some(Err(lost)) if lost.reset_auto_exposure => self.reset_auto_exposure(ev),
+            Some(Err(lost)) if lost.reset_auto_exposure() => self.reset_auto_exposure(ev),
             _ => {}
         }
     }
@@ -1481,7 +1481,7 @@ fn set_scope_dec_guide_mode(mode: DecGuideMode, cx: &mut ControlCx, ev: &mut Vec
     };
     if let Some(scope) = m.and_then(|m| m.scope_mut()) {
         let mut mev = Vec::new();
-        scope.set_dec_guide_mode(mode as i32, &mut DynProfile(&mut **profile), &mut mev);
+        scope.set_dec_guide_mode(mode as i32, profile, &mut mev);
         wrap(ev, role, mev);
     }
 }

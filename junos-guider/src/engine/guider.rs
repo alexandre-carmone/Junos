@@ -31,7 +31,7 @@ use super::image::UsImage;
 use super::log::cfmt::{fmt_f, fmt_gp};
 use super::mount::{AlertKind, GuiderOffset, Mount, MountEvent, PointingSource, stopwatch_seconds};
 use super::multistar::{
-    BoxState, FindParams, FrameErrorInfo, GuidingView, MAX_SEARCH_REGION, MIN_SEARCH_REGION, MultiStar,
+    BoxState, FindParams, FrameErrorInfo, GuidingView, LossReason, MAX_SEARCH_REGION, MIN_SEARCH_REGION, MultiStar,
     MultiStarConfig, PositionLost, PositionUpdate, autoselect_edge_allowance, keys,
 };
 use super::scope::{CalibrationEnv, CalibrationNext, Scope};
@@ -186,6 +186,23 @@ pub enum PaTools {
     UpdateState,
     /// SELECTED and the star lost: `StaticPaTool::NotifyStarLost`.
     StarLost,
+}
+
+/// The polar tool whose `UpdateState` failed, for [`Guider::pa_tool_failed`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaFailure {
+    StaticPa,
+    PolarDrift,
+}
+
+impl PaFailure {
+    /// The status message and the line of its throw.
+    fn message(self) -> (&'static str, u32) {
+        match self {
+            PaFailure::StaticPa => ("Static PA rotation failed", 1413),
+            PaFailure::PolarDrift => ("Polar Drift PA drift failed", 1419),
+        }
+    }
 }
 
 /// What a call did besides its events: what PHD2 does there outside the
@@ -413,39 +430,6 @@ pub trait GuiderMount {
     }
 }
 
-/// A `dyn ProfileAccess` handed to the scope's generic methods.
-pub(crate) struct DynProfile<'p>(pub(crate) &'p mut dyn ProfileAccess);
-
-impl ProfileAccess for DynProfile<'_> {
-    fn has(&self, key: &str) -> bool {
-        self.0.has(key)
-    }
-    fn get_f64(&self, key: &str, default: f64) -> f64 {
-        self.0.get_f64(key, default)
-    }
-    fn get_i32(&self, key: &str, default: i32) -> i32 {
-        self.0.get_i32(key, default)
-    }
-    fn get_str(&self, key: &str, default: &str) -> String {
-        self.0.get_str(key, default)
-    }
-    fn set_f64(&mut self, key: &str, value: f64) {
-        self.0.set_f64(key, value)
-    }
-    fn set_i32(&mut self, key: &str, value: i32) {
-        self.0.set_i32(key, value)
-    }
-    fn set_str(&mut self, key: &str, value: &str) {
-        self.0.set_str(key, value)
-    }
-    fn group_names(&self, group: &str) -> Vec<String> {
-        self.0.group_names(group)
-    }
-    fn delete_group(&mut self, group: &str) {
-        self.0.delete_group(group)
-    }
-}
-
 impl GuiderMount for Scope {
     fn mount(&self) -> &Mount {
         &self.mount
@@ -468,10 +452,10 @@ impl GuiderMount for Scope {
         location: Option<Point>,
         env: &CalibrationEnv,
         pointing: Option<&dyn PointingSource>,
-        profile: &mut dyn ProfileAccess,
+        mut profile: &mut dyn ProfileAccess,
         events: &mut Vec<MountEvent>,
     ) -> bool {
-        Scope::begin_calibration(self, location, env, pointing, &mut DynProfile(profile), events)
+        Scope::begin_calibration(self, location, env, pointing, &mut profile, events)
     }
 
     fn update_calibration_state(
@@ -479,24 +463,29 @@ impl GuiderMount for Scope {
         cur: Point,
         env: &CalibrationEnv,
         pointing: Option<&dyn PointingSource>,
-        profile: &mut dyn ProfileAccess,
+        mut profile: &mut dyn ProfileAccess,
         events: &mut Vec<MountEvent>,
     ) -> CalibrationNext {
-        Scope::update_calibration_state(self, cur, env, pointing, &mut DynProfile(profile), events)
+        Scope::update_calibration_state(self, cur, env, pointing, &mut profile, events)
     }
 
     fn adjust_calibration_for_scope_pointing(
         &mut self,
         pointing: &ScopePointing,
         timestamp: &str,
-        profile: &mut dyn ProfileAccess,
+        mut profile: &mut dyn ProfileAccess,
         events: &mut Vec<MountEvent>,
     ) -> Adjustment {
-        Scope::adjust_calibration_for_scope_pointing(self, pointing, timestamp, &mut DynProfile(profile), events)
+        Scope::adjust_calibration_for_scope_pointing(self, pointing, timestamp, &mut profile, events)
     }
 
-    fn notify_guiding_stopped(&mut self, ctx: &AlgoCtx, profile: &mut dyn ProfileAccess, events: &mut Vec<MountEvent>) {
-        Scope::notify_guiding_stopped(self, ctx, &mut DynProfile(profile), events)
+    fn notify_guiding_stopped(
+        &mut self,
+        ctx: &AlgoCtx,
+        mut profile: &mut dyn ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) {
+        Scope::notify_guiding_stopped(self, ctx, &mut profile, events)
     }
 
     fn clear_calibration(&mut self) {
@@ -1051,14 +1040,13 @@ impl Guider {
     }
 
     /// A polar tool's `UpdateState` failed on a SELECTED frame
-    /// ([`PaTools::UpdateState`]): back to looping, with its message
-    /// ("Static PA rotation failed" or "Polar Drift PA drift failed"). PHD2
+    /// ([`PaTools::UpdateState`]): back to looping, with its message. PHD2
     /// does this inside `UpdateGuideState`, so its `UpdateGuideState exits`
     /// debug line reads the message; here that line was written with the
     /// star's status before.
-    pub fn pa_tool_failed(&mut self, msg: &'static str, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+    pub fn pa_tool_failed(&mut self, failure: PaFailure, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
         self.set_state(GuiderState::Uninitialized, cx, ev);
-        let line = if msg.starts_with("Static") { 1413 } else { 1419 };
+        let (msg, line) = failure.message();
         debug(ev, format!("Error thrown from guider.cpp:{line}->{msg}"));
         ev.push(GuiderEvent::Status(msg.into()));
     }
@@ -1386,7 +1374,6 @@ impl Guider {
         };
         let edge = autoselect_edge_allowance(room(cx.primary.as_deref()), room(cx.secondary.as_deref()));
         let img = self.current_image.clone();
-        let before = *self.multistar.primary();
         let scale = cx.cal_env.image_scale;
         let res = self.multistar.auto_select(&img, roi, edge, cx.use_subframes, scale, &cx.find);
         // AutoFind set the camera's level (`SetSaturationByADU(true, level)`):
@@ -1410,10 +1397,7 @@ impl Guider {
         let mut selected = None;
         match res.star {
             None => {
-                // The result does not say which step failed: a failed find
-                // replaced the primary, a failed AutoFind left it.
-                let line =
-                    if *self.multistar.primary() == before { "474->Unable to AutoFind" } else { "482->Unable to find" };
+                let line = if res.find_failed { "482->Unable to find" } else { "474->Unable to AutoFind" };
                 debug(ev, format!("Error thrown from guider_multistar.cpp:{line}"));
             }
             Some(star) => {
@@ -1753,18 +1737,21 @@ impl Guider {
     /// mass status comes before the tracker's mass line, "Recovering" after
     /// the distance checker's lines. "No star selected" is a plain return.
     fn log_position_lost(&mut self, lost: &PositionLost, ev: &mut Vec<GuiderEvent>) {
-        let info = &lost.info;
-        if let Some(limits) = lost.mass_limits {
-            ev.push(GuiderEvent::Status(format!("Mass: {} vs {}", fmt_f(info.star_mass, 0), fmt_f(limits[1], 0))));
+        if let LossReason::MassChange(limits) = lost.reason {
+            let mass = lost.info.star_mass;
+            ev.push(GuiderEvent::Status(format!("Mass: {} vs {}", fmt_f(mass, 0), fmt_f(limits[1], 0))));
         }
         self.drain_multistar_log(ev);
-        if lost.mass_limits.is_some() {
-            debug(ev, "Throw from guider_multistar.cpp:989->massChangeThreshold error");
-        } else if lost.jump_rejected {
-            ev.push(GuiderEvent::Status("Recovering".into()));
-            debug(ev, "Throw from guider_multistar.cpp:1020->CheckDistance error");
-        } else if lost.reset_auto_exposure {
-            debug(ev, "Error thrown from guider_multistar.cpp:958->UpdateCurrentPosition():newStar not found");
+        match lost.reason {
+            LossReason::NoStar => {}
+            LossReason::NotFound => {
+                debug(ev, "Error thrown from guider_multistar.cpp:958->UpdateCurrentPosition():newStar not found");
+            }
+            LossReason::MassChange(_) => debug(ev, "Throw from guider_multistar.cpp:989->massChangeThreshold error"),
+            LossReason::Jump => {
+                ev.push(GuiderEvent::Status("Recovering".into()));
+                debug(ev, "Throw from guider_multistar.cpp:1020->CheckDistance error");
+            }
         }
     }
 
@@ -3187,5 +3174,33 @@ mod tests {
         assert!(b.debug("MultiStar mode enabled"));
         assert_eq!(b.guider.state(), GuiderState::Selected);
         assert!(b.guider.current_position().is_none());
+    }
+
+    /// A polar tool that fails on a SELECTED frame sends the guider back to
+    /// looping, with its own message and throw line.
+    #[test]
+    fn a_failed_polar_tool_drops_the_selection() {
+        let cases = [
+            (PaFailure::StaticPa, "1413", "Static PA rotation failed"),
+            (PaFailure::PolarDrift, "1419", "Polar Drift PA drift failed"),
+        ];
+        for (failure, line, msg) in cases {
+            let mut b = Bench::new();
+            b.select();
+            assert_eq!(b.frame().pa_tools, PaTools::UpdateState);
+            b.ev.clear();
+            b.call(|g, cx, ev| g.pa_tool_failed(failure, cx, ev));
+            assert_eq!(b.guider.state(), GuiderState::Selecting);
+            assert_eq!(
+                b.ev,
+                [
+                    GuiderEvent::Debug("Changing from state SELECTED to UNINITIALIZED".into()),
+                    GuiderEvent::LockPositionLost,
+                    GuiderEvent::Debug("guider state => SELECTING".into()),
+                    GuiderEvent::Debug(format!("Error thrown from guider.cpp:{line}->{msg}")),
+                    GuiderEvent::Status(msg.into()),
+                ]
+            );
+        }
     }
 }

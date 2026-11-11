@@ -481,15 +481,30 @@ pub struct FrameErrorInfo {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PositionLost {
     pub info: FrameErrorInfo,
+    pub reason: LossReason,
+}
+
+impl PositionLost {
     /// `ResetAutoExposure()` is due: every loss but "No star selected",
     /// which PHD2 returns before (and logs as `LogImageStarDeselected`).
-    pub reset_auto_exposure: bool,
-    /// A mass-change rejection's limits (low, median, high, spike), for the
-    /// `Mass: %.f vs %.f` status (with the median).
-    pub mass_limits: Option<[f64; 4]>,
-    /// The star was found but jumped too far: PHD2 shows "Recovering" in
-    /// the status bar (the guider's status then replaces it).
-    pub jump_rejected: bool,
+    pub fn reset_auto_exposure(&self) -> bool {
+        self.reason != LossReason::NoStar
+    }
+}
+
+/// Which of `UpdateCurrentPosition`'s exits dropped the frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LossReason {
+    /// No star selected: a plain return, no throw.
+    NoStar,
+    /// The find failed (the throw at guider_multistar.cpp:958).
+    NotFound,
+    /// The mass changed too much (989): the limits (low, median, high,
+    /// spike), for the `Mass: %.f vs %.f` status (with the median).
+    MassChange([f64; 4]),
+    /// The star was found but jumped too far (1020): PHD2 shows
+    /// "Recovering" in the status bar (the guider's status then replaces it).
+    Jump,
 }
 
 /// [`MultiStar::update_current_position`] when the star was accepted.
@@ -525,6 +540,10 @@ pub struct AutoSelectResult {
     /// AutoFind's saturation level to save to `/camera/SaturationADU`, set
     /// even when no star was found.
     pub saturation_adu_set: Option<u16>,
+    /// AutoFind picked a star but the find on it failed ("Unable to find",
+    /// guider_multistar.cpp:482). Both finds are the same, from the same
+    /// pixel, so PHD2 never gets there in practice.
+    pub find_failed: bool,
 }
 
 /// The guider state as `GetBoundingBox` sees it.
@@ -753,7 +772,7 @@ impl MultiStar {
         fp: &FindParams,
     ) -> AutoSelectResult {
         self.log.push("GuiderMultiStar::AutoSelect enter".into());
-        let mut out = AutoSelectResult { star: None, saturation_adu_set: None };
+        let mut out = AutoSelectResult { star: None, saturation_adu_set: None, find_failed: false };
         if img.data.is_empty() {
             return out; // No Current Image, and no "failed." line
         }
@@ -787,6 +806,7 @@ impl MultiStar {
         let star = self.find(img, pos.x, pos.y, &fp);
         if !find_into(&mut self.primary, star) {
             self.log.push("GuiderMultiStar::AutoSelect failed.".into());
+            out.find_failed = true;
             return out;
         }
 
@@ -1027,19 +1047,15 @@ impl MultiStar {
         now_ms: i64,
         cal: Option<&Calibration>,
     ) -> Result<PositionUpdate, PositionLost> {
-        let lost = |star_error, s: &Star, status, mass_limits| PositionLost {
+        let lost = |star_error, s: &Star, status, reason| PositionLost {
             info: FrameErrorInfo { star_error, star_mass: s.mass, star_snr: s.snr, star_hfd: s.hfd, status },
-            reset_auto_exposure: true,
-            mass_limits,
-            jump_rejected: false,
+            reason,
         };
 
         // An invalidated star away from (0, 0) is still searched for.
         if !self.primary.is_valid() && self.primary.x == 0.0 && self.primary.y == 0.0 {
             self.log.push("UpdateCurrentPosition: no star selected".into());
-            let mut l = lost(FindResult::Error, &Star::new(), "No star selected", None);
-            l.reset_auto_exposure = false;
-            return Err(l);
+            return Err(lost(FindResult::Error, &Star::new(), "No star selected", LossReason::NoStar));
         }
 
         let mut new_star = self.primary;
@@ -1047,7 +1063,7 @@ impl MultiStar {
         if !find_into(&mut new_star, found) {
             self.primary.set_error(new_star.result);
             self.distance_checker.activate(now_ms, &mut self.log);
-            return Err(lost(new_star.result, &Star::new(), new_star.status_str(), None));
+            return Err(lost(new_star.result, &Star::new(), new_star.status_str(), LossReason::NotFound));
         }
 
         // is it the same star? compare the mass
@@ -1058,7 +1074,8 @@ impl MultiStar {
                 self.primary.set_error(FindResult::MassChange);
                 // the status is the primary's: "No star selected" when it
                 // was invalidated
-                let l = lost(FindResult::MassChange, &new_star, self.primary.status_str(), Some(limits));
+                let reason = LossReason::MassChange(limits);
+                let l = lost(FindResult::MassChange, &new_star, self.primary.status_str(), reason);
                 self.log.push(format!(
                     "UpdateCurrentPosition: star mass new={} exp={} thresh={}% limits=({}, {}, {})",
                     fmt_f(new_star.mass, 1),
@@ -1082,9 +1099,7 @@ impl MultiStar {
         let tolerance = self.cfg.jump_tolerance();
         if !self.distance_checker.check_distance(distance, view, tolerance, now_ms, &mut self.log) {
             self.primary.set_error(FindResult::Error);
-            let mut l = lost(FindResult::Error, &new_star, self.primary.status_str(), None);
-            l.jump_rejected = true;
-            return Err(l);
+            return Err(lost(FindResult::Error, &new_star, self.primary.status_str(), LossReason::Jump));
         }
 
         self.primary = new_star;
@@ -1622,7 +1637,8 @@ mod tests {
         // nothing selected: no search, no auto-exposure reset
         let l = ms.update_current_position(&img, &FP, None, &guiding_view(), 0, None).unwrap_err();
         assert_eq!(l.info.status, "No star selected");
-        assert_eq!((l.info.star_error, l.reset_auto_exposure), (FindResult::Error, false));
+        assert_eq!((l.info.star_error, l.reason), (FindResult::Error, LossReason::NoStar));
+        assert!(!l.reset_auto_exposure());
 
         // an invalidated star keeps its position and is searched for
         let star = render(100, 80, &[G { x: 50.3, y: 40.7, amp: 4000.0, sigma: 1.6 }]);
@@ -1635,7 +1651,8 @@ mod tests {
         let l = ms.update_current_position(&img, &FP, None, &guiding_view(), 0, None).unwrap_err();
         assert!(matches!(l.info.star_error, FindResult::LowSnr | FindResult::LowMass));
         assert_eq!(l.info.status, l.info.star_error.status_str());
-        assert_eq!((l.info.star_mass, l.info.star_snr, l.reset_auto_exposure), (0.0, 0.0, true));
+        assert_eq!((l.info.star_mass, l.info.star_snr, l.reason), (0.0, 0.0, LossReason::NotFound));
+        assert!(l.reset_auto_exposure());
         assert_eq!(ms.primary().result, l.info.star_error);
         assert_eq!(ms.distance_checker.state(), DistanceState::Waiting);
 
@@ -1682,11 +1699,11 @@ mod tests {
                 assert!(g.err && g.cam.is_none() && g.ucd.is_none() && g.adjust == -1.0);
                 let i = l.info;
                 let info = (i.star_error.error_code(), i.star_mass, i.star_snr, i.star_hfd, i.status);
-                assert_eq!((Some(info), l.reset_auto_exposure), (g.info, g.reset), "frame {f}");
-                let msg = match l.mass_limits {
-                    Some(m) => format!("Mass: {} vs {}", fmt_f(i.star_mass, 0), fmt_f(m[1], 0)),
-                    None if l.jump_rejected => "Recovering".into(),
-                    None => String::new(),
+                assert_eq!((Some(info), l.reset_auto_exposure()), (g.info, g.reset), "frame {f}");
+                let msg = match l.reason {
+                    LossReason::MassChange(m) => format!("Mass: {} vs {}", fmt_f(i.star_mass, 0), fmt_f(m[1], 0)),
+                    LossReason::Jump => "Recovering".into(),
+                    LossReason::NoStar | LossReason::NotFound => String::new(),
                 };
                 assert_eq!((i.status, msg.as_str()), (g.status, g.msg), "frame {f}");
             }

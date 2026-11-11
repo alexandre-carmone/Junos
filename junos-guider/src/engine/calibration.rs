@@ -322,6 +322,38 @@ pub trait ProfileAccess {
     fn delete_group(&mut self, _group: &str) {}
 }
 
+/// A borrowed profile goes through to the profile, so `&mut profile` serves
+/// where a `profile: &mut dyn ProfileAccess` cannot (an `impl ProfileAccess`).
+impl<P: ProfileAccess + ?Sized> ProfileAccess for &mut P {
+    fn has(&self, key: &str) -> bool {
+        (**self).has(key)
+    }
+    fn get_f64(&self, key: &str, default: f64) -> f64 {
+        (**self).get_f64(key, default)
+    }
+    fn get_i32(&self, key: &str, default: i32) -> i32 {
+        (**self).get_i32(key, default)
+    }
+    fn get_str(&self, key: &str, default: &str) -> String {
+        (**self).get_str(key, default)
+    }
+    fn set_f64(&mut self, key: &str, value: f64) {
+        (**self).set_f64(key, value)
+    }
+    fn set_i32(&mut self, key: &str, value: i32) {
+        (**self).set_i32(key, value)
+    }
+    fn set_str(&mut self, key: &str, value: &str) {
+        (**self).set_str(key, value)
+    }
+    fn group_names(&self, group: &str) -> Vec<String> {
+        (**self).group_names(group)
+    }
+    fn delete_group(&mut self, group: &str) {
+        (**self).delete_group(group)
+    }
+}
+
 /// `pier_side` (`mount.cpp:1648`): a stored side back; anything but East
 /// (0) and West (1) is Unknown.
 pub(crate) fn pier_side_from(v: i32) -> PierSide {
