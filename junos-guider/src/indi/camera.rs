@@ -591,6 +591,7 @@ impl GuideCamera for IndiCamera {
 mod tests {
     use super::*;
     use crate::indi::fake::{self, Fake, Profile};
+    use crate::indi::xml::Element;
 
     const DEV: &str = "CCD Simulator";
 
@@ -667,9 +668,9 @@ mod tests {
                 ("getProperties", _) => {
                     peer.send(&(fake::driver(DEV, 6, false) + &fake::def_blob(DEV, "CCD1", &["CCD1"])))
                 }
+                // One write, as a driver's burst.
                 ("newSwitchVector", "CONNECTION") => {
-                    peer.send(&fake::connection_reply(e).unwrap());
-                    peer.send(&connected_props(cfg.video));
+                    peer.send(&(fake::connection_reply(e).unwrap() + &connected_props(cfg.video)));
                 }
                 ("newNumberVector", "CCD_FRAME") => {
                     for (i, (_, v)) in values().iter().enumerate() {
@@ -869,16 +870,18 @@ mod tests {
         let fake = ccd(SIM);
         let mut cam = connected(&fake);
         let cancel = CancelToken::new();
-        let stop = cancel.clone();
         let t = Instant::now();
-        let stopper = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(150));
-            stop.cancel();
+        // Stopped once the exposure is asked for; its frame would come 2 s later.
+        let exposing = |r: &[Element]| r.iter().any(|e| e.attr("name") == Some("CCD_EXPOSURE"));
+        let r = thread::scope(|s| {
+            s.spawn(|| {
+                assert!(fake.wait_for(exposing));
+                cancel.cancel();
+            });
+            cam.capture(2000, CaptureKind::Light, None, &settings(15000), &cancel)
         });
-        let r = cam.capture(2000, CaptureKind::Light, None, &settings(15000), &cancel);
-        stopper.join().unwrap();
         assert_eq!(r.unwrap_err(), CaptureError::Interrupted);
-        assert!(t.elapsed() < Duration::from_millis(1000));
+        assert!(t.elapsed() < Duration::from_millis(2000));
         assert!(cam.is_connected());
         cam.client.shutdown();
     }
@@ -938,11 +941,13 @@ mod tests {
                     re-connect the camera.";
         assert_eq!((alert.as_str(), reconnect), (text, false));
         assert_eq!(cam.check_connection(), None);
-        // Connected again: the BLOB is enabled again with its definition.
+        // Connected again: the BLOB is enabled again, at its definition or
+        // at once (which comes first depends on when CCD1 is defined again,
+        // before or after check_connection's Never).
         cam.connect(&CancelToken::new()).unwrap();
         assert_eq!(capture(&mut cam, 20, None).unwrap().w, 64);
-        let enables = sent(&fake).iter().filter(|s| s.ends_with("name=CCD1 Also")).count();
-        assert_eq!(enables, 2);
+        let modes: Vec<String> = sent(&fake).into_iter().filter(|s| s.starts_with("enableBLOB")).collect();
+        assert_eq!(modes.last().map(String::as_str), Some("enableBLOB device=CCD Simulator name=CCD1 Also"));
         // The device switched off once ready: "INDI camera disconnected".
         fake.push(&fake::set_switch(DEV, "CONNECTION", "Ok", &[("CONNECT", false), ("DISCONNECT", true)]));
         let off = |l: &mut Link| l.device_connected(DEV) == Some(false);

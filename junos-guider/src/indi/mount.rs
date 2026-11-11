@@ -480,7 +480,6 @@ const NUTATION: [([i8; 5], (f64, f64, f64, f64)); 63] = [
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
     use std::time::Instant;
 
     use super::*;
@@ -567,9 +566,10 @@ mod tests {
             let members: Vec<(&str, f64)> = values.iter().map(|(n, v)| (n.as_str(), *v)).collect();
             match (e.name.as_str(), e.attr("name").unwrap_or_default()) {
                 ("getProperties", _) => peer.send(&fake::driver(DEV, 5, false)),
+                // One write, as a driver's burst: nothing a test pushes
+                // can land between the switch and the definitions.
                 ("newSwitchVector", "CONNECTION") => {
-                    peer.send(&fake::connection_reply(e).unwrap());
-                    peer.send(&connected_props(cfg));
+                    peer.send(&(fake::connection_reply(e).unwrap() + &connected_props(cfg)));
                 }
                 ("newNumberVector", p @ (TIMED_GUIDE_NS | TIMED_GUIDE_WE)) if cfg.instant => {
                     peer.send(&fake::set_number(DEV, p, "Ok", &members));
@@ -635,23 +635,23 @@ mod tests {
         assert_eq!(mount.guide(Dir::North, 200, &cancel), MoveResult::Ok);
         assert!(t.elapsed() >= Duration::from_millis(200));
         // A stop while the axis is Busy: an error, and the axis stays taken
-        // until the driver answers.
-        let stop = cancel.clone();
-        let stopper = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(50));
-            stop.cancel();
-        });
-        assert_eq!(mount.guide(Dir::West, 400, &cancel), MoveResult::Error);
-        stopper.join().unwrap();
+        // until the driver answers, 3 s later.
+        let seq0 = mount.client.lock().store.seq();
+        cancel.cancel();
+        assert_eq!(mount.guide(Dir::West, 3000, &cancel), MoveResult::Error);
         let fresh = CancelToken::new();
         assert_eq!(mount.guide(Dir::South, 100, &fresh), MoveResult::Error);
-        thread::sleep(Duration::from_millis(500));
+        let answered = |l: &mut Link| {
+            let p = l.store.property(DEV, TIMED_GUIDE_WE)?;
+            (p.updated > seq0 && p.state == PropState::Ok).then_some(())
+        };
+        mount.client.wait(Duration::from_secs(10), None, answered).unwrap();
         assert_eq!(mount.guide(Dir::South, 100, &fresh), MoveResult::Ok);
         assert_eq!(
             sent(&fake)[1..],
             [
                 "newNumberVector Telescope Simulator.TELESCOPE_TIMED_GUIDE_NS TIMED_GUIDE_N=200 TIMED_GUIDE_S=0",
-                "newNumberVector Telescope Simulator.TELESCOPE_TIMED_GUIDE_WE TIMED_GUIDE_W=400 TIMED_GUIDE_E=0",
+                "newNumberVector Telescope Simulator.TELESCOPE_TIMED_GUIDE_WE TIMED_GUIDE_W=3000 TIMED_GUIDE_E=0",
                 "newNumberVector Telescope Simulator.TELESCOPE_TIMED_GUIDE_NS TIMED_GUIDE_N=0 TIMED_GUIDE_S=100",
             ]
         );
@@ -719,13 +719,20 @@ mod tests {
         assert!(mount.slew_to_async(6.0, 30.0));
         // libindi's own copy is Busy from the send on, before the driver says so.
         assert!(mount.is_slewing());
-        let driver_busy = |l: &mut Link| coord(l, DEV).is_some_and(|p| p.updated > seq0 && p.state == PropState::Busy);
-        mount.client.wait(Duration::from_secs(2), None, |l| driver_busy(l).then_some(())).unwrap();
-        // A synchronous slew waits while the coordinates are Busy (here the
-        // first slew's), not for its own.
+        // The fake's Ok comes 100 ms after its Busy, from a thread of its
+        // own: let the first slew end, or its late Ok could land after the
+        // second slew's and leave the mount at the first target.
+        let at = |ra: f64| {
+            move |l: &mut Link| {
+                let p = coord(l, DEV)?;
+                (p.updated > seq0 && p.number("RA") == Some(ra) && p.state == PropState::Ok).then_some(())
+            }
+        };
+        mount.client.wait(Duration::from_secs(5), None, at(6.0)).unwrap();
+        assert!(!mount.is_slewing());
+        // A synchronous slew waits for the driver to end it.
         assert!(mount.slew_to(6.5, 31.0, &CancelToken::new()));
-        let at = |l: &mut Link| coord(l, DEV).is_some_and(|p| p.number("RA") == Some(6.5) && p.state == PropState::Ok);
-        mount.client.wait(Duration::from_secs(2), None, |l| at(l).then_some(())).unwrap();
+        assert!(!mount.is_slewing());
         assert_eq!(mount.coordinates().map(|c| (c.0, c.1)), Some((6.5, 31.0)));
         mount.abort_slew();
         assert!(fake.wait_for(|r| r.len() == 7));
@@ -776,9 +783,6 @@ mod tests {
         assert_eq!(mount.check_connection().as_deref(), Some("INDI mount was disconnected"));
         // The device goes: no alert.
         mount.connect(&CancelToken::new()).unwrap();
-        // The fake writes its connect reply's definitions after the CONNECT
-        // switch that ends connect(): let them land before the device goes.
-        std::thread::sleep(Duration::from_millis(100));
         fake.push(&format!("<delProperty device='{DEV}'/>\n"));
         mount.client.wait(Duration::from_secs(2), None, |l| l.store.device(DEV).is_none().then_some(())).unwrap();
         assert!(!mount.is_connected());

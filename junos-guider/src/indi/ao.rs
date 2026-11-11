@@ -403,16 +403,20 @@ mod tests {
         // The device is off: CONNECT is sent, the driver connects, and the
         // AO, which never reads the update, waits until cancelled.
         let cancel = CancelToken::new();
-        let stop = cancel.clone();
-        let stopper = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(300));
-            stop.cancel();
+        // Cancelled once the driver has the CONNECT: not after some time,
+        // which a loaded machine can spend before DRIVER_INFO comes.
+        thread::scope(|s| {
+            s.spawn(|| {
+                assert!(fake.wait_for(|r| r.iter().any(|e| e.name == "newSwitchVector")));
+                cancel.cancel();
+            });
+            assert_eq!(ao.connect(&cancel), Err("Connection cancelled".into()));
         });
-        assert_eq!(ao.connect(&cancel), Err("Connection cancelled".into()));
-        stopper.join().unwrap();
         assert!(!ao.is_connected());
         assert_eq!(sent(&fake), ["newSwitchVector SX AO.CONNECTION CONNECT=On"]);
-        // The next attempt finds it On.
+        // The next attempt finds it On, once the driver's answer is in.
+        let on = |l: &mut Link| (l.device_connected(DEV) == Some(true)).then_some(());
+        ao.client.wait(Duration::from_secs(5), None, on).unwrap();
         ao.connect(&CancelToken::new()).unwrap();
         assert!(ao.is_connected());
         assert_eq!(ao.name(), "");

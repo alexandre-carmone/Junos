@@ -903,8 +903,10 @@ mod tests {
 
     #[test]
     fn waits_end_on_cancel_and_on_timeout() {
-        // No server at all: the client never comes up.
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        // No server at all: the client never comes up. Port 0 refuses every
+        // dial; a port freed by a listener could be bound again by another
+        // test's fake, which would then count this client's hello.
+        let port = 0;
         let client = IndiClient::start("127.0.0.1", port, &[]);
         let cancel = CancelToken::new();
         let t = Instant::now();

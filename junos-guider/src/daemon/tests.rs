@@ -288,8 +288,10 @@ async fn an_indi_mount_connects_drops_and_comes_back() {
     let seen = wait_for(&mut ev, 5, |e| matches!(e, EngineEvent::Alert { .. })).await;
     let Some(EngineEvent::Alert { msg, .. }) = seen.last().map(|e| &**e) else { unreachable!() };
     assert_eq!(msg, "INDI server disconnected");
+    // The mount shows connected from the reconnect's attach on, before
+    // that connect lets go of the gear dialog: wait for both.
     let t = Instant::now();
-    while !mount().connected {
+    while !mount().connected || d.0.connecting.load(std::sync::atomic::Ordering::SeqCst) {
         assert!(t.elapsed() < Duration::from_secs(10), "the mount did not come back");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
