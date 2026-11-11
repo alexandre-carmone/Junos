@@ -230,7 +230,11 @@ fn profile_part(e: &mut Engine) -> ProfilePart {
     for l in e.store().take_debug() {
         e.debug(&l);
     }
-    let settings = e.store().profile_entries().map(|(k, v)| (k.to_string(), v.clone())).collect();
+    let mut settings: Map<String, Value> = e.store().profile_entries().map(|(k, v)| (k.to_string(), v.clone())).collect();
+    // The globals the settings sheet edits, beside the profile's keys.
+    for (k, v) in e.store().global_entries().filter(|(k, _)| extras::GLOBAL_KEYS.contains(k)) {
+        settings.insert(k.to_string(), v.clone());
+    }
     let profiles: Vec<Value> =
         e.store().profiles().into_iter().map(|(id, name, sel)| json!({"id": id, "name": name, "selected": sel})).collect();
     let p = e.store().profile();

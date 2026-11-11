@@ -25,6 +25,10 @@ use crate::engine::traits::PierSide;
 use crate::engine::{Command, DarksBuildKind, Engine, ManualPointing, Which};
 use crate::indi::client::Role;
 
+/// PHD2's `pConfig->Global` keys the UI edits through `set_profile_value`
+/// (the rest are the profile's); `guider_settings` carries them too.
+pub const GLOBAL_KEYS: [&str; 2] = ["/StickyLockPosition", "/server/guide_allow_recalibrate"];
+
 fn e1(msg: &str) -> RpcError {
     RpcError::new(1, msg)
 }
@@ -91,7 +95,8 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
             }
             engine(d, move |e| {
                 use crate::engine::calibration::ProfileAccess;
-                let mut prof = e.store().profile();
+                let global = GLOBAL_KEYS.contains(&key.as_str());
+                let mut prof = if global { e.store().global() } else { e.store().profile() };
                 match &value {
                     Value::Bool(b) => prof.set_bool(&key, *b),
                     Value::Number(n) if n.is_i64() => prof.set_i64(&key, n.as_i64().unwrap_or(0)),
@@ -422,6 +427,19 @@ mod tests {
         assert_eq!(r, Ok(json!(0)));
         assert_eq!(d.snapshot().exposure_setting_ms, 2000);
         assert_eq!(call(&d, "set_profile_value", json!({"key": "x", "value": 1})).await.unwrap_err().code, -32602);
+        // A global goes to PHD2's Global section, not the profile.
+        let r = call(&d, "set_profile_value", json!({"key": "/server/guide_allow_recalibrate", "value": false})).await;
+        assert_eq!(r, Ok(json!(0)));
+        let (global, profile) = d
+            .with_engine(|e| {
+                let key = "/server/guide_allow_recalibrate";
+                let g = e.store().global_entries().any(|(k, v)| k == key && *v == json!(false));
+                let p = e.store().profile_entries().any(|(k, _)| k == key);
+                (g, p)
+            })
+            .await
+            .unwrap();
+        assert!(global && !profile);
         // The current profile goes; the first one left is current.
         assert_eq!(call(&d, "delete_profile", json!({"id": 1})).await, Ok(json!(0)));
         assert_eq!(d.snapshot().profile_name, "RC8");
