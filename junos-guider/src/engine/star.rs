@@ -78,11 +78,13 @@ pub struct Star {
     pub snr: f64,
     /// Half-flux diameter in pixels (`2 × hfr`).
     pub hfd: f64,
-    /// Brightest raw pixel of the search region.
+    /// Brightest raw pixel (`PeakVal`): over the whole search region in
+    /// `Peak` mode, over its interior (one pixel in from each side, where
+    /// the 3×3 smoothing runs) in `Centroid` mode (star.cpp:198-225).
     pub peak_val: u16,
     pub result: FindResult,
     /// `PHD_Point::IsValid()`. A fresh star is invalid with `x = y = 0`;
-    /// `find` always validates it, even on `Error` (star.cpp:437).
+    /// `find` always validates it, even on `Error` (star.cpp:458-470).
     pub valid: bool,
 }
 
@@ -160,6 +162,13 @@ impl Star {
     ///
     /// The base position is truncated to integers like PHD2's `int` parameters
     /// (star.cpp:482 passes doubles to them).
+    ///
+    /// PHD2 runs Find on a star it keeps (`m_primaryStar`, a star of the
+    /// multi-star list, a copy of the primary), and on `Error` the throw at
+    /// star.cpp:164 skips both `PeakVal` assignments, so the star keeps its
+    /// previous `PeakVal`. This returns a fresh star, `peak_val` 0 on
+    /// `Error`: a caller replacing a kept star must carry `peak_val` over
+    /// (the star profile shows it, star_profile.cpp:356).
     pub fn find(
         img: &UsImage,
         search_region: i32,
@@ -168,7 +177,7 @@ impl Star {
         mode: FindMode,
         min_hfd: f64,
         max_hfd: f64,
-        max_adu: u32,
+        max_adu: u16,
     ) -> Star {
         let base_x = base_x as i32;
         let base_y = base_y as i32;
@@ -176,16 +185,12 @@ impl Star {
         let (new_x, new_y, result) =
             find_body(&mut star, img, search_region, base_x, base_y, mode, min_hfd, max_hfd, max_adu);
 
-        // star.cpp:437 `done:` — the point is set (and so valid) whatever
-        // happened, then the measurements are zeroed on an error. PHD2 also
-        // zeroes them when the point is invalid, which SetXY makes impossible.
+        // star.cpp:458-470 `done:` — the point is set (and so valid) whatever
+        // happened. PHD2 then zeroes mass, SNR and HFD on an error because its
+        // star is reused; here `find_body` fails before touching them, so they
+        // are still the fresh star's 0.
         star.set_xy(new_x, new_y);
         star.result = result;
-        if result == FindResult::Error {
-            star.mass = 0.0;
-            star.snr = 0.0;
-            star.hfd = 0.0;
-        }
         star
     }
 }
@@ -203,8 +208,9 @@ struct R2M {
 /// Half-flux radius (star.cpp:83): sort the aperture pixels by distance from
 /// the centroid, walk the cumulative mass up to half the total and
 /// interpolate linearly in radius between the last two pixels. A lone pixel
-/// (a hot pixel) is 0.25, as is an empty list or a zero mass (the `m1 > m0`
-/// fallback).
+/// (a hot pixel) is 0.25. So is the `m1 > m0` fallback, taken when the last
+/// pixel walked has m ≤ 0; through `find` (mass ≥ 10) only Peak mode's empty
+/// list gets there.
 fn hfr(vec: &mut [R2M], cx: f64, cy: f64, mass: f64) -> f64 {
     if vec.len() == 1 {
         return 0.25;
@@ -215,8 +221,13 @@ fn hfr(vec: &mut [R2M], cx: f64, cy: f64, mass: f64) -> f64 {
         let dy = p.y as f64 - cy;
         p.r2 = dx * dx + dy * dy;
     }
-    // std::sort is unstable; the order of equal radii is implementation
-    // defined in PHD2 too, so a stable sort (raster order) is as good.
+    // PHD2 uses std::sort. libstdc++ sorts 16 elements or fewer by insertion
+    // sort, which is stable like this one. Past 16 (an aperture holds up to
+    // 149 pixels) its introsort may order equal r2 differently, which moves
+    // the HFR only when such a tie sits where the half-flux point is
+    // reached. Exact ties need the centroid on one of a few lines (cx or cy
+    // a multiple of ½, cx ± cy one, …), as in symmetric noise-free frames,
+    // so introsort is not ported.
     vec.sort_by(|a, b| a.r2.partial_cmp(&b.r2).unwrap_or(std::cmp::Ordering::Equal));
 
     let (mut r20, mut r21, mut m0, mut m1) = (0.0, 0.0, 0.0, 0.0);
@@ -254,7 +265,7 @@ fn find_body(
     mode: FindMode,
     min_hfd: f64,
     max_hfd: f64,
-    max_adu: u32,
+    max_adu: u16,
 ) -> (f64, f64, FindResult) {
     let base = (base_x as f64, base_y as f64);
 
@@ -520,7 +531,7 @@ fn find_body(
 
     if max_adu > 0 {
         // maxADU is known
-        let result = if mx >= max_adu { FindResult::Saturated } else { FindResult::Ok };
+        let result = if mx >= max_adu as u32 { FindResult::Saturated } else { FindResult::Ok };
         return (new_x, new_y, result);
     }
 
@@ -580,13 +591,13 @@ pub struct AutoFindResult {
     /// pixels, not a centroid: AutoSelect runs [`Star::find`] there next.
     pub position: Option<Point>,
     /// `Some(level)` when saturation is by ADU with no level set: PHD2 then
-    /// sets the camera's level to `(1 << bpp) − 1` (star.cpp:964,
+    /// sets the camera's level to `(1 << bpp) − 1` (star.cpp:966,
     /// `SetSaturationByADU(true, level)`), even when no star is found. The
     /// caller saves it to `/camera/SaturationADU`.
     pub saturation_adu_set: Option<u16>,
 }
 
-/// `/guider/AutoSelDownsample` resolved as AutoFind does (star.cpp:756):
+/// `/guider/AutoSelDownsample` resolved as AutoFind does (star.cpp:758-770):
 /// 0 is "Auto", which downsamples by 2 when the pixel scale is 0.6″/px or
 /// finer (an unknown scale is 1.0, so no downsampling).
 pub fn auto_sel_downsample(setting: u32, pixel_scale: f64) -> i32 {
@@ -805,7 +816,7 @@ impl GuideStar {
         let sat_thresh = (image.pedestal as u32 + 9 * range / 10).min(65535) as u16;
 
         let find = |s: &Peak| {
-            Star::find(image, search_region, s.x as f64, s.y as f64, FindMode::Centroid, p.min_hfd, p.max_hfd, max_adu as u32)
+            Star::find(image, search_region, s.x as f64, s.y as f64, FindMode::Centroid, p.min_hfd, p.max_hfd, max_adu)
         };
 
         // before sifting for the best star, collect all the viable
@@ -1010,7 +1021,7 @@ fn psf_conv(src: &FloatImg) -> FloatImg {
     dst
 }
 
-/// `Downsample` (star.cpp:657): the mean of each `ds × ds` block, summed in
+/// `Downsample` (star.cpp:658): the mean of each `ds × ds` block, summed in
 /// `f32`; a partial block at the right or bottom edge is dropped.
 fn downsample_img(src: &FloatImg, ds: i32) -> FloatImg {
     let dw = src.w / ds;
