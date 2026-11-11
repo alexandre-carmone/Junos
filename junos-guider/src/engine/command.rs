@@ -21,6 +21,7 @@ use super::guider::ShiftUnits;
 use super::log::image_log::ImageLoggerSettings;
 use super::mount::{GuideOutput, PointingSource};
 use super::scope::DecGuideMode;
+use super::static_pa_win::StaticPaSet;
 use super::stepguider::StepGuiderDevice;
 use super::traits::{Dir, PierSide, Point, Rect};
 
@@ -310,6 +311,15 @@ pub enum Command {
     /// dialog's values when `None`) and Stop.
     StarCrossStart { pulse_count: Option<i32>, pulse_size: Option<i32> },
     StarCrossStop,
+    /// The Static Polar Alignment window: open (looping starts), Rotate /
+    /// "Get first position", "Get second / third position", Clear, its
+    /// choices, close.
+    StaticPaOpen,
+    StaticPaRotate,
+    StaticPaMark(i32),
+    StaticPaClear,
+    StaticPaSet(StaticPaSet),
+    StaticPaClose,
 }
 
 impl Command {
@@ -378,6 +388,12 @@ impl Command {
             Command::PolarDriftClose => "pa_drift_close",
             Command::StarCrossStart { .. } => "starcross_start",
             Command::StarCrossStop => "starcross_stop",
+            Command::StaticPaOpen => "pa_static_start",
+            Command::StaticPaRotate => "pa_static_rotate",
+            Command::StaticPaMark(_) => "pa_static_mark",
+            Command::StaticPaClear => "pa_static_clear",
+            Command::StaticPaSet(_) => "pa_static_set",
+            Command::StaticPaClose => "pa_static_stop",
         }
     }
 }

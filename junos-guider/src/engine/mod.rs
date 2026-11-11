@@ -58,6 +58,7 @@ pub mod rng;
 pub mod scope;
 mod secondary;
 mod session;
+mod static_pa_win;
 pub mod star;
 pub mod stats;
 pub mod stepguider;
@@ -100,6 +101,7 @@ pub use self::command::{
     BookmarkOp, CmdError, Command, DarksBuildKind, Gear, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator,
     ScopeGear, ScopeOutput, SingleFrame, Which,
 };
+pub use self::static_pa_win::StaticPaSet;
 pub use self::event::{
     AlgoView, CalibrationView, DarksView, DeviceView, EngineEvent, GaView, PolarDriftView, SettleView, Snapshot,
 };
@@ -256,6 +258,7 @@ pub struct Engine {
     darks_job: Option<DarksJob>,
     polar_drift: Option<PolarDrift>,
     tools: secondary::Tools,
+    static_pa: Option<static_pa_win::StaticPaWin>,
 
     // The logs.
     glog: GuideLog,
@@ -325,6 +328,7 @@ impl Engine {
             darks_job: None,
             polar_drift: None,
             tools: secondary::Tools::default(),
+            static_pa: None,
             glog: GuideLog::new(),
             dlog: DebugLog::new(now),
             ilog: ImageLogger::new(),
@@ -1354,6 +1358,12 @@ impl Engine {
             Command::PolarDriftClose => self.polar_drift_stop(true),
             Command::StarCrossStart { pulse_count, pulse_size } => self.starcross_start(pulse_count, pulse_size),
             Command::StarCrossStop => self.starcross_stop(),
+            Command::StaticPaOpen => self.static_pa_open(),
+            Command::StaticPaRotate => self.static_pa_rotate(),
+            Command::StaticPaMark(n) => self.static_pa_mark(n),
+            Command::StaticPaClear => self.static_pa_clear(),
+            Command::StaticPaSet(set) => self.static_pa_set(set),
+            Command::StaticPaClose => self.static_pa_close(),
         }
     }
 
@@ -1526,6 +1536,15 @@ impl Engine {
     }
 
     /// pMount's `Mount` half.
+    fn primary_mount(&self) -> Option<&mount::Mount> {
+        match (self.ao.as_ref(), self.scope.as_ref()) {
+            (Some(a), _) => Some(a.sg.mount()),
+            (None, Some(s)) => Some(&s.scope.mount),
+            (None, None) => None,
+        }
+    }
+
+    /// pMount's `Mount` half, to change.
     fn primary_mount_mut(&mut self) -> Option<&mut mount::Mount> {
         match (self.ao.as_mut(), self.scope.as_mut()) {
             (Some(a), _) => Some(a.sg.mount_mut()),
@@ -1676,6 +1695,7 @@ impl Engine {
             darks_build: self.darks_view(),
             polar_drift: self.polar_drift_view(),
             tools: self.tools_view(),
+            static_pa: self.static_pa_view(),
             connecting: self.connecting,
             port: None,
             port_error: None,

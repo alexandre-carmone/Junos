@@ -269,6 +269,8 @@ pub struct Snapshot {
     pub polar_drift: Option<PolarDriftView>,
     /// The secondary tools' state (`guider_tools`).
     pub tools: serde_json::Value,
+    /// The Static Polar Alignment window, `null` when closed.
+    pub static_pa: serde_json::Value,
     /// The daemon is connecting the gear ([`Command::Connecting`](super::Command::Connecting)).
     pub connecting: bool,
     /// The event server's port once it listens, and why it does not while

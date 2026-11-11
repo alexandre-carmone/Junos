@@ -4,7 +4,7 @@
 //! Guiding Assistant, the darks, the polar drift tool, the logs. Each maps
 //! onto an engine [`Command`] or the profile store; parameters are named
 //! (or positional in the table's order). The tools the engine does not
-//! have yet (static PA, drift align, calibration assistant, pier-flip,
+//! have yet (drift align, calibration assistant, pier-flip,
 //! comet training, bad-pixel editing, a single device's connect) answer
 //! code 1 "not available".
 //!
@@ -22,7 +22,7 @@ use crate::engine::calibration::Calibration;
 use crate::engine::control::DitherMode;
 use crate::engine::log::image_log::ImageLoggerSettings;
 use crate::engine::traits::{PierSide, Point};
-use crate::engine::{BookmarkOp, Command, DarksBuildKind, Engine, ManualPointing, Which};
+use crate::engine::{BookmarkOp, Command, StaticPaSet, DarksBuildKind, Engine, ManualPointing, Which};
 use crate::indi::client::Role;
 
 /// PHD2's `pConfig->Global` keys the UI edits through `set_profile_value`
@@ -307,6 +307,22 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
             command(d, Command::StarCrossStart { pulse_count, pulse_size }).await
         }
         "starcross_stop" => command(d, Command::StarCrossStop).await,
+        "pa_static_start" => command(d, Command::StaticPaOpen).await,
+        "pa_static_rotate" => command(d, Command::StaticPaRotate).await,
+        "pa_static_mark" => command(d, Command::StaticPaMark(int(p, "position")?)).await,
+        "pa_static_clear" => command(d, Command::StaticPaClear).await,
+        "pa_static_set" => {
+            let b = |n: &str| p.param(n).and_then(bool_param);
+            let set = StaticPaSet {
+                manual: b("manual"),
+                north: b("north"),
+                hour_angle: p.param("hour_angle").and_then(float_param),
+                flip: b("flip"),
+                ref_star: p.param("ref_star").and_then(int_param).and_then(|i| usize::try_from(i).ok()),
+            };
+            command(d, Command::StaticPaSet(set)).await
+        }
+        "pa_static_stop" => command(d, Command::StaticPaClose).await,
         "list_logs" => list_logs(&d.options().engine.log_dir),
         "read_log" => {
             let tail = p.param("tail").and_then(Value::as_u64);
@@ -492,7 +508,7 @@ mod tests {
         assert_eq!((d.snapshot().profile_name.as_str(), d.snapshot().exposure_setting_ms), ("Mak", 1500));
         assert_eq!(call(&d, "ga_history", json!({})).await, Ok(json!([])));
         assert_eq!(call(&d, "list_devices", json!({})).await.unwrap()["devices"], json!([]));
-        assert_eq!(call(&d, "pa_static_start", json!({})).await, Err(e1("not available")));
+        assert_eq!(call(&d, "drift_align_start", json!({})).await, Err(e1("not available")));
         // The image logger's dialog: the thresholds held to 1–10.
         let r = call(&d, "set_image_logger", json!({"enabled": true, "dropped": true, "thresh_px": 20.0})).await;
         assert_eq!(r, Ok(json!(0)));

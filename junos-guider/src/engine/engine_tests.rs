@@ -1029,3 +1029,34 @@ fn the_lock_is_nudged_saved_restored_and_bookmarked() {
     assert_eq!(r.e.snapshot().tools["bookmarks"], serde_json::json!([]));
     assert_eq!(r.e.store().profile().get_str("/guider/bookmarks", "x"), "");
 }
+
+#[test]
+fn the_static_pa_tool_reads_positions_on_selected_frames() {
+    use crate::engine::StaticPaSet;
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    assert_eq!(r.cmd(Command::StaticPaRotate).unwrap_err(), CmdError::new(1, "Static PA tool not open"));
+    r.cmd(Command::StaticPaOpen).unwrap();
+    assert!(r.e.snapshot().capture_active);
+    let v = r.e.snapshot().static_pa.clone();
+    // The simulator's mount cannot slew: manual mode, hour angle 18 h.
+    assert_eq!((v["auto"].as_bool(), v["can_slew"].as_bool()), (Some(false), Some(false)));
+    assert_eq!(v["hour_angle"], 18.0);
+    assert_eq!(v["stars"].as_array().unwrap().len(), 8);
+    // No star yet.
+    r.cmd(Command::StaticPaRotate).unwrap();
+    assert_eq!(r.e.snapshot().static_pa["status"], "Please select a star");
+    r.step();
+    r.cmd(Command::FindStar { roi: None }).unwrap();
+    r.cmd(Command::StaticPaRotate).unwrap();
+    r.step();
+    let v = r.e.snapshot().static_pa.clone();
+    assert!(v["positions"][0].is_array() && v["positions"][1].is_null(), "{v}");
+    r.cmd(Command::StaticPaSet(StaticPaSet { ref_star: Some(3), ..StaticPaSet::default() })).unwrap();
+    assert_eq!(r.e.snapshot().static_pa["ref_star"], 3);
+    r.cmd(Command::StaticPaMark(2)).unwrap();
+    r.step();
+    assert!(r.e.snapshot().static_pa["positions"][1].is_array());
+    r.cmd(Command::StaticPaClose).unwrap();
+    assert!(r.e.snapshot().static_pa.is_null());
+    assert!(r.debug_log().contains("Close StaticPaTool"));
+}

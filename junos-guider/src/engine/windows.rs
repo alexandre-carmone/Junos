@@ -553,9 +553,10 @@ impl Engine {
         Ok(json!(0))
     }
 
-    /// The polar tools' part of a SELECTED frame (`UpdateState`).
+    /// The polar tools' part of a SELECTED frame (`UpdateState`): the
+    /// static PA tool's, then the polar drift tool's.
     pub(super) fn pa_tools(&mut self, t: PaTools) {
-        if t != PaTools::UpdateState {
+        if !self.static_pa_frame(t) || t != PaTools::UpdateState {
             return;
         }
         let (now_ms, pos) = (self.now_ms(), self.guider.current_position());

@@ -253,7 +253,9 @@ pub static METHODS: &[Method] = &[
     ws("pa_drift_close", &[]),
     ws("pa_static_start", &[]),
     ws("pa_static_rotate", &[]),
-    ws("pa_static_mark", &[]),
+    ws("pa_static_mark", &["position"]),
+    ws("pa_static_clear", &[]),
+    ws("pa_static_set", &["manual", "north", "hour_angle", "flip", "ref_star"]),
     ws("pa_static_stop", &[]),
     ws("drift_align_start", &[]),
     ws("drift_align_stop", &[]),
@@ -1177,7 +1179,7 @@ mod tests {
         use crate::engine::log::image_log::ImageLoggerSettings;
         use crate::engine::scope::DecGuideMode;
         use crate::engine::traits::Dir;
-        use crate::engine::{BookmarkOp, Command as C, DarksBuildKind, Gear, SingleFrame, Which};
+        use crate::engine::{BookmarkOp, Command as C, StaticPaSet, DarksBuildKind, Gear, SingleFrame, Which};
         let settle = SettleParams::default();
         let commands = [
             C::Loop,
@@ -1233,6 +1235,12 @@ mod tests {
             C::PolarDriftClose,
             C::StarCrossStart { pulse_count: None, pulse_size: None },
             C::StarCrossStop,
+            C::StaticPaOpen,
+            C::StaticPaRotate,
+            C::StaticPaMark(2),
+            C::StaticPaClear,
+            C::StaticPaSet(StaticPaSet::default()),
+            C::StaticPaClose,
             C::SaveLock,
             C::RestoreLock,
             C::Bookmark(BookmarkOp::Lock),
