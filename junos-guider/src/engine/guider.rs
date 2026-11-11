@@ -357,10 +357,35 @@ pub trait GuiderMount {
     ) {
         self.mount_mut().notify_guiding_dithered(dx, dy, mount_coords, ctx, events);
     }
+    /// `ClearCalibration`: no longer calibrated. The scope and the AO
+    /// override it to send their calibration state machine back to the
+    /// start, which a forced recalibration relies on.
+    fn clear_calibration(&mut self) {
+        self.mount_mut().clear_calibration();
+    }
+    /// `NotifyGuidingResumed`, when a pause ends: the mount's, which the AO
+    /// overrides.
+    fn notify_guiding_resumed(&mut self, ctx: &AlgoCtx, events: &mut Vec<MountEvent>) {
+        self.mount_mut().notify_guiding_resumed(ctx, events);
+    }
+    /// `StepGuider::IsBumpInProgress`: a settle is not done while an AO
+    /// bump runs. Never on a scope.
+    fn is_bump_in_progress(&self) -> bool {
+        false
+    }
+    /// The AO's part of `MyFrame::Dither`: with `BumpOnDither`, start a bump
+    /// after the lock moved. Nothing on a scope.
+    fn dither_bump(&mut self, _events: &mut Vec<MountEvent>) {}
+    /// The scope behind the mount, for what PHD2 reads through `TheScope()`
+    /// and `static_cast<Scope *>(pMount)` (the Dec guide mode); `None` on an
+    /// AO.
+    fn scope_mut(&mut self) -> Option<&mut Scope> {
+        None
+    }
 }
 
 /// A `dyn ProfileAccess` handed to the scope's generic methods.
-struct DynProfile<'p>(&'p mut dyn ProfileAccess);
+pub(crate) struct DynProfile<'p>(pub(crate) &'p mut dyn ProfileAccess);
 
 impl ProfileAccess for DynProfile<'_> {
     fn has(&self, key: &str) -> bool {
@@ -437,6 +462,14 @@ impl GuiderMount for Scope {
 
     fn notify_guiding_stopped(&mut self, ctx: &AlgoCtx, profile: &mut dyn ProfileAccess, events: &mut Vec<MountEvent>) {
         Scope::notify_guiding_stopped(self, ctx, &mut DynProfile(profile), events)
+    }
+
+    fn clear_calibration(&mut self) {
+        Scope::clear_calibration(self)
+    }
+
+    fn scope_mut(&mut self) -> Option<&mut Scope> {
+        Some(self)
     }
 }
 
@@ -2522,6 +2555,26 @@ mod tests {
         }
         assert!(b.star.distance(&lock) < 1.5, "{:?} vs {:?}", b.star, lock);
         assert_eq!(b.guider.app_state(true).as_str(), "Guiding");
+    }
+
+    /// The controller's hooks on a scope: its own `ClearCalibration`, no
+    /// AO bump, and the scope itself for the Dec guide mode.
+    #[test]
+    fn the_scope_answers_the_controllers_hooks() {
+        use crate::engine::scope::CalibrationState;
+        let mut b = Bench::new();
+        b.select();
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        assert_ne!(b.scope.calibration_state(), CalibrationState::Cleared);
+        let m: &mut dyn GuiderMount = &mut b.scope;
+        assert!(!m.is_bump_in_progress());
+        assert!(m.scope_mut().is_some());
+        m.clear_calibration();
+        assert_eq!(b.scope.calibration_state(), CalibrationState::Cleared);
+
+        b.calibrate_scope();
+        GuiderMount::clear_calibration(&mut b.scope);
+        assert!(!GuiderMount::is_calibrated(&b.scope));
     }
 
     #[test]
