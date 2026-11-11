@@ -23,13 +23,14 @@ use super::gp::Gp;
 use super::math::{RegularizeOverrun, detrend, estimate_period_length, regularize_dataset};
 
 /// Raw data points kept (`CIRCULAR_BUFFER_SIZE`); past it the oldest go.
-pub const CIRCULAR_BUFFER_SIZE: usize = 8192;
-/// Frames a dither runs on dead reckoning unless settling ends it sooner.
-pub const MAX_DITHER_STEPS: i32 = 10;
+const CIRCULAR_BUFFER_SIZE: usize = 8192;
+/// Frames a dither lasts unless settling ends it sooner: each stores a dark
+/// point and moves by `control_gain · input`.
+const MAX_DITHER_STEPS: i32 = 10;
 /// Weight of each new period estimate in the running period.
-pub const DEFAULT_LEARNING_RATE: f64 = 0.01;
+const DEFAULT_LEARNING_RATE: f64 = 0.01;
 /// The hysteresis of the controller blended in before the GP takes over.
-pub const HYSTERESIS: f64 = 0.1;
+const HYSTERESIS: f64 = 0.1;
 
 // The hyperparameter indices, PHD2's `Hyperparameters` enum.
 pub const SE0K_LENGTH_SCALE: usize = 0;
@@ -45,22 +46,22 @@ pub const NUM_PARAMETERS: usize = 7;
 /// `i` holds measurement `i` and the control computed from measurement
 /// `i − 1`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct DataPoint {
+struct DataPoint {
     /// Gear time, seconds: the midpoint of the frame interval, plus the
     /// dither offset.
-    pub timestamp: f64,
+    timestamp: f64,
     /// The offset, px.
-    pub measurement: f64,
+    measurement: f64,
     /// The measurement's variance, px².
-    pub variance: f64,
+    variance: f64,
     /// The move, px.
-    pub control: f64,
+    control: f64,
 }
 
-/// PHD2's `guide_parameters`: the controller settings, and the kernels'
-/// hyperparameters (natural units, indexed by [`SE0K_LENGTH_SCALE`] …
-/// [`PK_PERIOD_LENGTH`]) the guider starts from. All zero by default, as
-/// PHD2's constructor leaves them.
+/// PHD2's `guide_parameters`: the controller settings. All zero by default,
+/// as PHD2's constructor leaves them. PHD2's struct also carries the
+/// starting hyperparameters, which only its constructor reads: here they
+/// are an argument of [`GaussianProcessGuider::new`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GuideParameters {
     pub control_gain: f64,
@@ -70,7 +71,6 @@ pub struct GuideParameters {
     pub min_periods_for_period_estimation: f64,
     pub points_for_approximation: i32,
     pub compute_period: bool,
-    pub hyperparameters: [f64; NUM_PARAMETERS],
 }
 
 /// `std::max(a, b)`: `a` unless `a < b`, so a NaN `a` stays NaN.
@@ -85,7 +85,8 @@ pub struct GaussianProcessGuider {
     start_time: f64,
     /// Clock reading of the previous data point (`last_time_`).
     last_time: f64,
-    /// Gear time the last prediction ended at; negative before the first.
+    /// Gear time the last prediction ended at: 0 after `new`, −1 after a
+    /// reset (negative: the next prediction starts from now).
     last_prediction_end: f64,
     dither_steps: i32,
     dithering_active: bool,
@@ -100,8 +101,10 @@ pub struct GaussianProcessGuider {
 
 impl GaussianProcessGuider {
     /// `GaussianProcessGuider(parameters)` at clock reading `now`: one point
-    /// with a zero control, the hyperparameters set from `parameters`.
-    pub fn new(parameters: GuideParameters, now: f64) -> Self {
+    /// with a zero control, and the kernels' `hyperparameters` (natural
+    /// units, indexed by [`SE0K_LENGTH_SCALE`] … [`PK_PERIOD_LENGTH`]) set
+    /// through [`Self::set_gp_hyperparameters`].
+    pub fn new(parameters: GuideParameters, hyperparameters: &[f64; NUM_PARAMETERS], now: f64) -> Self {
         let mut data = VecDeque::with_capacity(CIRCULAR_BUFFER_SIZE);
         data.push_back(DataPoint::default());
         let mut g = GaussianProcessGuider {
@@ -117,13 +120,13 @@ impl GaussianProcessGuider {
             learning_rate: DEFAULT_LEARNING_RATE,
             parameters,
         };
-        let hyperparameters = g.parameters.hyperparameters;
-        g.set_gp_hyperparameters(&hyperparameters);
+        g.set_gp_hyperparameters(hyperparameters);
         g
     }
 
     /// Number of points held, the open one (control only) included.
-    pub fn len(&self) -> usize {
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
         self.data.len()
     }
 
@@ -199,7 +202,10 @@ impl GaussianProcessGuider {
             self.update_period_length(estimate_period_length(&reg.timestamps, &gear_error_detrend));
         }
 
-        // The GP models the trend itself: it gets the raw gear error.
+        // The GP models the trend itself: it gets the raw gear error. A
+        // negative count would make PHD2 throw (`std::vector(n)` in inferSD,
+        // uncaught); here it fits nothing. Unreachable through ppec, whose
+        // setter refuses negatives.
         let points = self.parameters.points_for_approximation.max(0) as usize;
         self.gp.infer_sd(&reg.timestamps, &reg.gear_error, points, &reg.variances, prediction_point);
         Ok(())
@@ -348,8 +354,9 @@ impl GaussianProcessGuider {
     }
 
     /// `GuidingDithered`: a dither of `amt` px at `rate` px per second of
-    /// gear time shifts gear time by `amt / rate`; the next
-    /// [`MAX_DITHER_STEPS`] frames run on dead reckoning.
+    /// gear time shifts gear time by `amt / rate`. The next 10 frames
+    /// (`MAX_DITHER_STEPS`) store a dark point, as dead reckoning does, but
+    /// [`Self::result`] still moves by `control_gain · input`.
     pub fn guiding_dithered(&mut self, amt: f64, rate: f64) {
         self.dither_offset += amt / rate;
         self.dithering_active = true;
@@ -486,8 +493,13 @@ mod tests {
             min_periods_for_period_estimation: 2.0,
             points_for_approximation: 100,
             compute_period: true,
-            hyperparameters: [700.0, 20.0, 10.0, 20.0, 25.0, 10.0, 200.0],
         }
+    }
+
+    const PHD2_HYPERPARAMETERS: [f64; NUM_PARAMETERS] = [700.0, 20.0, 10.0, 20.0, 25.0, 10.0, 200.0];
+
+    fn guider(p: GuideParameters, now: f64) -> GaussianProcessGuider {
+        GaussianProcessGuider::new(p, &PHD2_HYPERPARAMETERS, now)
     }
 
     /// The harness' generator: a 64-bit LCG, 53 bits to [0, 1).
@@ -502,11 +514,17 @@ mod tests {
     /// 1/8 s of jitter in 1/512 s steps, so the clock is exact in both
     /// languages), an RA error of a 230.5 s, 2 px sine plus a 0.002 px/s
     /// drift, uniform ±0.2 px noise, SNR 10–50; the input is that error less
-    /// the moves made so far. With `events`, a 1.5 px dither at a rate of
-    /// 2 px/s after frame 150 (the lock moves by 1.5 px), its settle after
-    /// frame 153, and a lost star (dead reckoning) at frame 260.
-    fn run(frames: usize, events: bool) -> (GaussianProcessGuider, Vec<f64>) {
-        let mut gpg = GaussianProcessGuider::new(phd2_defaults(), T0_NS as f64 / 1e9);
+    /// the moves made so far. The harness' `mode`:
+    /// - 0: a 1.5 px dither at a rate of 2 px/s after frame 150 (the lock
+    ///   moves by 1.5 px), its settle after frame 153, and a lost star (dead
+    ///   reckoning) at frame 260;
+    /// - 1: no events;
+    /// - 2: the same dither after frame 230, past two periods (t ≈ 460 s),
+    ///   so the dithering frames refit the GP; a lost star at frame 232
+    ///   while it runs; its settle after frame 234; then a −2 px dither at
+    ///   0.1 px/s (−20 s of gear time) after frame 270.
+    fn run(frames: usize, mode: u8) -> (GaussianProcessGuider, Vec<f64>) {
+        let mut gpg = guider(phd2_defaults(), T0_NS as f64 / 1e9);
         gpg.reset(T0_NS as f64 / 1e9);
         let mut s: u64 = 0x9E3779B97F4A7C15;
         let (mut applied, mut shift) = (0.0, 0.0);
@@ -520,29 +538,36 @@ mod tests {
             let t = (t_ns - T0_NS) as f64 / 1e9;
             let pe = 2.0 * (2.0 * PI * t / 230.5).sin() + 0.002 * t;
             let input = pe - applied + noise + shift;
-            let u = if events && k == 260 {
+            let u = if (mode, k) == (0, 260) || (mode, k) == (2, 232) {
                 gpg.deduce_result(2.0, now).unwrap()
             } else {
                 gpg.result(input, snr, 2.0, now)
             };
             applied += u;
-            if events && k == 150 {
-                gpg.guiding_dithered(1.5, 2.0);
-                shift = 1.5;
-            }
-            if events && k == 153 {
-                gpg.guiding_dither_settle_done(true);
+            match (mode, k) {
+                (0, 150) | (2, 230) => {
+                    gpg.guiding_dithered(1.5, 2.0);
+                    shift += 1.5;
+                }
+                (0, 153) | (2, 234) => gpg.guiding_dither_settle_done(true),
+                (2, 270) => {
+                    gpg.guiding_dithered(-2.0, 0.1);
+                    shift -= 2.0;
+                }
+                _ => {}
             }
             controls.push(u);
         }
         (gpg, controls)
     }
 
+    /// The port matches the C++ to 5.2e-13 on the controls and 4.1e-12 on a
+    /// learned period (230 s): rounding, not a formula.
     fn close(rust: f64, cpp: f64) -> bool {
-        (rust - cpp).abs() <= 1e-6 * cpp.abs() || (rust - cpp).abs() <= 1e-9
+        (rust - cpp).abs() <= 1e-11 || (rust - cpp).abs() <= 1e-12 * cpp.abs()
     }
 
-    /// The controls of [`run`] with events, printed (`%.17g`) by a harness
+    /// The controls of [`run`] in mode 0, printed (`%.17g`) by a harness
     /// that compiles PHD2's own gaussian_process_guider.cpp, gaussian_process.cpp,
     /// covariance_functions.cpp and math_tools.cpp against Eigen 3.4.1, with
     /// `steady_clock` swapped for a settable clock.
@@ -652,21 +677,68 @@ mod tests {
 
     #[test]
     fn controls_match_phd2() {
-        let (gpg, controls) = run(300, true);
+        let (gpg, controls) = run(300, 0);
         for (k, (&r, &c)) in controls.iter().zip(CPP_CONTROLS.iter()).enumerate() {
             assert!(close(r, c), "frame {k}: rust {r}, C++ {c}");
         }
-        // PHD2's final period and length scale (natural units).
+        // PHD2's final period and length scale (natural units). The length
+        // scale only round-trips 10 through the period: its 1.8e-13 from 10
+        // is rounding, under the tolerance.
         let h = gpg.gp_hyperparameters();
         assert!(close(h[PK_PERIOD_LENGTH], 224.94963215588226), "{h:?}");
         assert!(close(h[PK_LENGTH_SCALE], 9.9999999999998224), "{h:?}");
         assert_eq!(gpg.len(), 301);
     }
 
+    /// Frames 225–299 of [`run`] in mode 2, from the same harness. Frame 232
+    /// is a prediction made while dithering; frame 272 is `control_gain ·
+    /// input` after the overrun reset (the harness logs "Index-over-run in
+    /// regularize_dataset, j = 106" there); the zeros are min-move.
+    #[rustfmt::skip]
+    const CPP_LATE_DITHER: [f64; 75] = [
+        0.049227661683751867, 0.047540108215309795, 0.052093862201653351,
+        0.3123844301184856, 0.050039260197539015, 0.050392481212191642,
+        1.0932177896003101, 0.070305956343736042, 0.49336092516037988,
+        0.23694112002233303, 0.35039382905570787, 0.052396976740106793,
+        0.051439167156648091, 0.049898218040101971, 0.046458202247054659,
+        0.20196591908781328, 0.037788736978942583, 0.17488909819560777,
+        0.16885168486361493, 0.14320367230841943, 0.017520544196198085,
+        0.1341043712387654, 0.15064076140242724, 0.0045342123674629864,
+        0.0012616505957726565, 0.15056315733260164, -0.0039393039770306837,
+        -0.0052232496716650978, -0.0063751498455915101, 0.13507587565372678,
+        -0.0081491626474625711, -0.0094914367842260372, 0.18184487020614051,
+        -0.013344791641962228, -0.016410139592020645, -0.022116221252538315,
+        -0.028635677653552349, -0.033112443329511354, -0.041132089255208948,
+        -0.049321297183980928, 0.12865288424673554, -0.05998642180708802,
+        -0.061210418779876541, -0.064144331560461065, -0.063382905639849718,
+        -0.063235264245633194, -1.3081369006518053, -0.47825734325046221,
+        -0.19534462421237767, -0.16971010889379806, 0.0,
+        0.0, -0.22312378485632611, -0.19081595076282393,
+        0.0, -0.15485394496952745, -0.13798837031001523,
+        -0.13465595029858493, -0.0035956085109848752, -0.0039227141108135076,
+        -0.0041032208179237716, -0.0042793350985604649, -0.1584197708630273,
+        -0.25909864413285022, 0.0027431693429176081, -0.0049948435310466742,
+        -0.13466208012369185, -0.27192618229473198, -0.0059935719278119588,
+        -0.0063710196799851605, -0.21296571475145049, -0.14074967150722786,
+        -0.007016350882898083, -0.006302855855772161, -0.19599007107374211,
+    ];
+
+    #[test]
+    fn late_dither_matches_phd2() {
+        let (gpg, controls) = run(300, 2);
+        for (k, (&r, &c)) in controls[225..].iter().zip(CPP_LATE_DITHER.iter()).enumerate() {
+            assert!(close(r, c), "frame {}: rust {r}, C++ {c}", k + 225);
+        }
+        // The overrun at 272 reset the model (27 frames since, plus the
+        // open point) but not the hyperparameters: PHD2's period.
+        assert_eq!((gpg.len(), gpg.dither_offset), (28, 0.0));
+        assert!(close(gpg.gp_hyperparameters()[PK_PERIOD_LENGTH], 221.08712309221028));
+    }
+
     #[test]
     fn learns_the_period() {
         // 1500 s of the same closed loop, no events.
-        let (gpg, _) = run(750, false);
+        let (gpg, _) = run(750, 1);
         let period = gpg.gp_hyperparameters()[PK_PERIOD_LENGTH];
         assert!((period - 230.5).abs() < 0.03 * 230.5, "period {period}");
         // PHD2's C++ ends on 230.43236227904831.
@@ -684,7 +756,7 @@ mod tests {
 
     #[test]
     fn first_points_are_proportional_with_min_move() {
-        let mut gpg = GaussianProcessGuider::new(phd2_defaults(), 5.0);
+        let mut gpg = guider(phd2_defaults(), 5.0);
         gpg.reset(5.0);
         // The first result starts gear time: timestamp 0.
         assert_eq!(gpg.result(1.0, 20.0, 2.0, 10.0), 0.6);
@@ -699,7 +771,7 @@ mod tests {
 
     #[test]
     fn dead_reckoning_before_the_model_is_ready() {
-        let mut gpg = GaussianProcessGuider::new(phd2_defaults(), 0.0);
+        let mut gpg = guider(phd2_defaults(), 0.0);
         gpg.reset(0.0);
         gpg.result(1.0, 20.0, 2.0, 0.0);
         // Too few points: no move, a dark point with a huge variance.
@@ -711,7 +783,7 @@ mod tests {
 
     #[test]
     fn dither_runs_proportional_then_settles() {
-        let mut gpg = GaussianProcessGuider::new(phd2_defaults(), 0.0);
+        let mut gpg = guider(phd2_defaults(), 0.0);
         gpg.reset(0.0);
         gpg.result(1.0, 20.0, 2.0, 0.0);
         // 3 px at 2 px/s: gear time moves 1.5 s ahead.
@@ -739,7 +811,7 @@ mod tests {
         let mut p = phd2_defaults();
         // Let dead reckoning use the GP at once.
         p.min_periods_for_inference = 0.0;
-        let mut gpg = GaussianProcessGuider::new(p, 0.0);
+        let mut gpg = guider(p, 0.0);
         gpg.reset(0.0);
         for k in 0..40 {
             gpg.result(0.5, 20.0, 2.0, 2.0 * k as f64);
@@ -758,7 +830,7 @@ mod tests {
 
     #[test]
     fn hyperparameter_conversion() {
-        let mut gpg = GaussianProcessGuider::new(phd2_defaults(), 0.0);
+        let mut gpg = guider(phd2_defaults(), 0.0);
         let h = gpg.gp_hyperparameters();
         for (got, want) in h.iter().zip([700.0, 20.0, 10.0, 20.0, 25.0, 10.0, 200.0]) {
             assert!((got - want).abs() < 1e-9 * want, "{h:?}");
@@ -779,7 +851,7 @@ mod tests {
 
     #[test]
     fn period_update_keeps_old_value_on_nan() {
-        let mut gpg = GaussianProcessGuider::new(phd2_defaults(), 0.0);
+        let mut gpg = guider(phd2_defaults(), 0.0);
         gpg.update_period_length(f64::NAN);
         assert!((gpg.gp_hyperparameters()[PK_PERIOD_LENGTH] - 200.0).abs() < 1e-9);
         gpg.update_period_length(300.0);
@@ -791,7 +863,7 @@ mod tests {
 
     #[test]
     fn ring_buffer_drops_the_oldest() {
-        let mut gpg = GaussianProcessGuider::new(phd2_defaults(), 0.0);
+        let mut gpg = guider(phd2_defaults(), 0.0);
         gpg.data[0].control = 7.0;
         for _ in 0..CIRCULAR_BUFFER_SIZE {
             gpg.add_one_point();

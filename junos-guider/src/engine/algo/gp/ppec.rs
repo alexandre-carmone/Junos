@@ -98,10 +98,9 @@ impl GaussianProcess {
             min_periods_for_period_estimation: DEFAULT_PERIOD_LENGTHS_FOR_PERIOD_ESTIMATION,
             points_for_approximation: DEFAULT_NUM_POINTS_FOR_APPROXIMATION,
             compute_period: DEFAULT_COMPUTE_PERIOD,
-            hyperparameters: HYPERPARAMETERS.map(|(default, _, _)| default),
         };
         let mut a = GaussianProcess {
-            gpg: GaussianProcessGuider::new(parameters, now),
+            gpg: GaussianProcessGuider::new(parameters, &HYPERPARAMETERS.map(|(default, _, _)| default), now),
             block_updates: false,
             guiding_ra: f64::NAN,
             guiding_pier_side: PierSide::Unknown,
