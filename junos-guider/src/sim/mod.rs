@@ -1914,4 +1914,134 @@ mod tests {
         assert!(cycles >= 2 && highest >= 16 && highest < 19, "{cycles} {highest}");
         assert!(worst < 0.5, "{worst}");
     }
+
+    // PHD2's own render_star, render_comet, BacklashVal, StictionSim and
+    // canned PE sum, compiled from gear_simulator.cpp in a throwaway
+    // harness: the pixels each renderer sets, `(x,y,value)` row by row.
+    const STAR1: &str = "(9,6,19) (10,6,62) (11,6,42) (12,6,8) (8,7,19) (9,7,462) (10,7,1455) (11,7,994) (12,7,214) \
+        (13,7,8) (8,8,100) (9,8,2130) (10,8,6691) (11,8,4572) (12,8,994) (13,8,42) (8,9,146) (9,9,3118) \
+        (10,9,9794) (11,9,6691) (12,9,1455) (13,9,62) (8,10,45) (9,10,992) (10,10,3118) (11,10,2130) \
+        (12,10,462) (13,10,19) (9,11,45) (10,11,146) (11,11,100) (12,11,19)";
+    const STAR2: &str = "(9,5,12) (10,5,84) (11,5,150) (12,5,50) (8,6,12) (9,6,328) (10,6,1884) (11,6,3365) (12,6,1125) \
+        (13,6,50) (8,7,53) (9,7,1321) (10,7,7517) (11,7,13431) (12,7,4490) (13,7,212) (8,8,64) \
+        (9,8,1596) (10,8,9079) (11,8,16221) (12,8,5423) (13,8,256) (8,9,18) (9,9,476) (10,9,2721) \
+        (11,9,4860) (12,9,1625) (13,9,75) (9,10,18) (10,10,126) (11,10,225) (12,10,75)";
+    const STAR_CLIP: &str = "(9,8,2130) (10,8,6691) (11,8,4572) (9,9,3118) (10,9,9794) (11,9,6691)";
+    const STAR_SAT: &str = "(4,3,9375) (5,3,25781) (6,3,9375) (3,4,9375) (4,4,65535) (5,4,65535) (6,4,65535) (7,4,9375) \
+        (3,5,25781) (4,5,65535) (5,5,65535) (6,5,65535) (7,5,25781) (3,6,9375) (4,6,65535) (5,6,65535) \
+        (6,6,65535) (7,6,9375) (4,7,9375) (5,7,25781) (6,7,9375)";
+    const STAR_NEG: &str = "(0,1,19) (1,1,65535) (0,2,402) (1,2,65535) (2,2,65535) (0,3,1263) (1,3,65535) (2,3,65535) \
+        (0,4,862) (1,4,65535) (2,4,65535) (0,5,188) (1,5,65535) (2,5,65535) (0,6,8) (1,6,65535)";
+    const COMET: &str = "(17,1,25313) (16,2,25313) (15,3,25313) (14,4,25313) (13,5,25313) (17,5,25313) (12,6,25313) \
+        (15,6,25313) (16,6,25313) (11,7,25313) (13,7,25313) (14,7,25313) (10,8,25313) (11,8,25313) \
+        (12,8,25313) (9,9,50626) (10,9,25313) (8,10,65535) (9,10,50626) (10,10,25313) (11,10,25313) \
+        (12,10,25313) (13,10,25313) (14,10,25313) (15,10,25313) (16,10,25313) (17,10,25313) (9,11,25313) \
+        (10,11,25313) (11,11,25313) (10,12,25313) (12,12,25313) (13,12,25313) (11,13,25313) \
+        (14,13,25313) (15,13,25313) (12,14,25313) (16,14,25313) (17,14,25313) (13,15,25313) \
+        (14,16,25313) (15,17,25313) (16,18,25313) (17,19,25313)";
+
+    fn dump(img: &UsImage) -> String {
+        let mut out = Vec::new();
+        for y in 0..img.h {
+            for x in 0..img.w {
+                let v = img.pixel(x, y);
+                if v != 0 {
+                    out.push(format!("({x},{y},{v})"));
+                }
+            }
+        }
+        out.join(" ")
+    }
+
+    fn star(w: i32, h: i32, bin: i32, sub: Rect, x: f64, y: f64, inten: f64) -> String {
+        let mut img = UsImage::new(w, h);
+        render_star(&mut img, bin, sub, x, y, inten);
+        dump(&img)
+    }
+
+    #[test]
+    fn the_renderers_draw_phd2s_pixels() {
+        assert_eq!(star(20, 20, 1, Rect::new(0, 0, 20, 20), 10.3, 8.7, 30000.0), STAR1);
+        assert_eq!(star(20, 20, 2, Rect::new(0, 0, 20, 20), 21.6, 15.2, 50000.0), STAR2);
+        assert_eq!(star(20, 20, 1, Rect::new(9, 8, 3, 2), 10.3, 8.7, 30000.0), STAR_CLIP);
+        assert_eq!(star(12, 12, 1, Rect::new(0, 0, 12, 12), 5.0, 5.0, 3e6), STAR_SAT);
+        // Left of the frame: negative weights wrap to 65535.
+        assert_eq!(star(8, 8, 1, Rect::new(0, 0, 8, 8), -1.4, 3.3, 30000.0), STAR_NEG);
+        let mut img = UsImage::new(30, 30);
+        render_comet(&mut img, 1, Rect::new(0, 0, 30, 30), 10.2, 12.6, 3000.0 * 30.0 + 3000.0 + 1234.0);
+        assert_eq!(dump(&img), COMET);
+        // A NaN position is `INT_MIN` in C, and its corner wraps off the
+        // frame instead of overflowing.
+        assert_eq!(star(8, 8, 1, Rect::new(0, 0, 8, 8), f64::NAN, 3.0, 30000.0), "");
+        render_comet(&mut img, 1, Rect::new(0, 0, 30, 30), f64::NAN, f64::NAN, 30000.0);
+        assert_eq!(dump(&img), COMET);
+    }
+
+    #[test]
+    fn backlash_stiction_and_pe_match_phd2() {
+        let mut b = BacklashVal::new(2.5);
+        let vals: Vec<f64> = [1.0, 3.0, -1.0, -2.0, -1.0, 0.5, 2.0, -6.0, 1.0]
+            .iter()
+            .map(|&d| {
+                b.incr(d);
+                b.val()
+            })
+            .collect();
+        assert_eq!(vals, [2.5, 4.0, 4.0, 3.5, 2.5, 2.5, 2.5, -1.0, -1.0]);
+
+        let (n, s) = (Dir::North, Dir::South);
+        let pulses = [(n, 500, 3.0), (s, 500, 3.0), (s, 200, 1.0), (n, 400, 2.0), (n, 400, 2.0), (s, 250, 1.0)];
+        let pulses = pulses.into_iter().chain([(n, 301, 6.0), (s, 301, 6.0), (s, 100, 9.0)]);
+        let mut st = StictionSim::default();
+        let mut debug = Vec::new();
+        let adj: Vec<f64> = pulses.map(|(dir, ms, d)| st.adjustment(dir, ms, d, &mut debug)).collect();
+        assert_eq!(adj, [0.0, -1.0, 1.0, -0.66666666666666663, 0.66666666666666663, 0.0, -2.0, 0.0, 0.0]);
+        assert_eq!(
+            debug,
+            [
+                "Stiction: reduced distance by 1.00",
+                "Stiction: increased distance by 1.00",
+                "Stiction: reduced distance by 0.67",
+                "Stiction: increased distance by 0.67",
+                "Stiction: reduced distance by 2.00",
+            ]
+        );
+
+        // The canned PE at 5″ and 2″/px.
+        let cam = connected(SimParams::new(2.0));
+        let want = [
+            1.5812903257789219,
+            1.3346424175144089,
+            -0.24680422967631901,
+            -0.85225770600772333,
+            1.2662156979642507,
+            -0.29507853327753197,
+            1.3904051594067719,
+        ];
+        for (t, want) in [0.0, 10.5, 57.25, 115.0, 230.5, 1000.0, -12.0].into_iter().zip(want) {
+            let got = lock(&cam.0).pe(t);
+            assert!((got - want).abs() < 1e-15, "{t}: {got} {want}");
+        }
+        // At 1″/px, sampled every 10 ms over the 230.5 s worm turn.
+        let cam = connected(SimParams::new(1.0));
+        let s = lock(&cam.0);
+        let pe: Vec<f64> = (0..=23050).map(|k| s.pe(k as f64 * 0.01)).collect();
+        let lo = pe.iter().copied().fold(f64::MAX, f64::min);
+        let hi = pe.iter().copied().fold(f64::MIN, f64::max);
+        assert!((lo + 1.8345325386719686).abs() < 1e-14 && (hi - 3.1625806515578438).abs() < 1e-14, "{lo} {hi}");
+    }
+
+    #[test]
+    fn unsigned_short_casts_wrap_as_in_c() {
+        // `(unsigned short)` of a double, as PHD2 casts noise and clouds.
+        let wrapped: Vec<u16> =
+            [66000.0, 65535.9, 70000.7, 131077.5, 150000.0, 95998.0].iter().map(|&v| c_int(v) as u16).collect();
+        assert_eq!(wrapped, [464, 65535, 4464, 5, 18928, 30462]);
+        // So full clouds over a 1 s frame, 50 × (3000 + 0..100), come out
+        // as 18928..=23926: darker than the noise.
+        let mut cam = connected(SimParams { clouds_opacity: 1.0, ..SimParams::new(1.0) });
+        let img = cam.capture(1000, CaptureKind::Light, None, &settings(), &CancelToken::new()).unwrap();
+        assert!(img.data.iter().all(|&v| v == u16::MAX || (18928..=23926).contains(&v)));
+        assert_eq!(img.data.iter().filter(|&&v| v == u16::MAX).count(), 8);
+    }
 }

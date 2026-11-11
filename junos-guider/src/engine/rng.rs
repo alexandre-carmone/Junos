@@ -37,7 +37,8 @@ impl Rng {
         (self.next_u64() % n.max(1) as u64) as u32
     }
 
-    /// Standard normal (Box–Muller), for the simulator's seeing and noise.
+    /// Standard normal (Box–Muller), for synthetic test frames. The
+    /// simulator's seeing has its own `rand_normal`, PHD2's pair form.
     pub fn gaussian(&mut self) -> f64 {
         let u1 = self.next_f64().max(f64::MIN_POSITIVE);
         let u2 = self.next_f64();
