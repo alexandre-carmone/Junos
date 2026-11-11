@@ -1,9 +1,9 @@
-//! The engine's base vocabulary: geometry, directions, outcomes, time and
-//! cancellation. Device traits (camera, guide output, pointing, AO, rotator)
+//! The engine's base vocabulary: geometry, directions, move options,
+//! outcomes, C int casts, time and cancellation. Device traits (camera, guide output, pointing, AO, rotator)
 //! are declared next to the modules that first need them.
 //!
-//! Ported from PHD2 `src/guide_direction.h`, `src/point.h`, `src/mount.h`
-//! (BSD-3-Clause, see THIRD_PARTY.md).
+//! Ported from PHD2 `src/guide_direction.h`, `src/point.h`, `src/mount.h`,
+//! `src/phd.h` (BSD-3-Clause, see THIRD_PARTY.md).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -164,6 +164,49 @@ pub enum MoveResult {
     AoLimit,
 }
 
+/// PHD2's `MountMoveOptionBits` and `MOVEOPTS_*` sets (`mount.h:125-142`):
+/// how a move is filtered, compensated and shown. Defined here, below both
+/// the mount and the backlash compensation that read it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MoveOpts(pub u32);
+
+impl MoveOpts {
+    /// Filter the move through the guide algorithm.
+    pub const ALGO_RESULT: MoveOpts = MoveOpts(1 << 0);
+    /// Let the algorithm deduce the move (paused, or the star lost).
+    pub const ALGO_DEDUCE: MoveOpts = MoveOpts(1 << 1);
+    /// Apply backlash compensation to the move.
+    pub const USE_BLC: MoveOpts = MoveOpts(1 << 2);
+    /// Show the move on the graphs.
+    pub const GRAPH: MoveOpts = MoveOpts(1 << 3);
+    /// A manual move, allowed even with guiding disabled.
+    pub const MANUAL: MoveOpts = MoveOpts(1 << 4);
+
+    pub const CALIBRATION_MOVE: MoveOpts = MoveOpts(0);
+    pub const GUIDE_STEP: MoveOpts = MoveOpts(Self::ALGO_RESULT.0 | Self::USE_BLC.0 | Self::GRAPH.0);
+    pub const DEDUCED_MOVE: MoveOpts = MoveOpts(Self::ALGO_DEDUCE.0 | Self::USE_BLC.0 | Self::GRAPH.0);
+    pub const RECOVERY_MOVE: MoveOpts = Self::USE_BLC;
+    pub const AO_BUMP: MoveOpts = Self::USE_BLC;
+
+    /// PHD2's `moveOptions & bit` test.
+    pub fn has(self, bit: MoveOpts) -> bool {
+        self.0 & bit.0 != 0
+    }
+}
+
+/// A C `(int)` cast of a double on x86-64 (`cvttsd2si`): truncation toward
+/// zero, with NaN and out-of-range values giving `INT_MIN` where Rust's `as`
+/// would give 0 or saturate.
+pub fn c_int(x: f64) -> i32 {
+    if x.is_nan() || x >= 2147483648.0 || x < -2147483648.0 { i32::MIN } else { x as i32 }
+}
+
+/// PHD2's `ROUND` (`phd.h:122`): `(int) floor(x + 0.5)`. Not `f64::round`,
+/// which rounds halves away from zero.
+pub fn phd_round(x: f64) -> i32 {
+    c_int((x + 0.5).floor())
+}
+
 /// PHD2's `PierSide` (`PIER_SIDE_UNKNOWN = -1`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PierSide {
@@ -300,6 +343,27 @@ mod tests {
         assert_eq!(Dir::parse("Left"), Some(Dir::West));
         assert_eq!(Dir::West.opposite(), Dir::East);
         assert_eq!(Dir::South.log_char(), 'S');
+    }
+
+    #[test]
+    fn move_opts_sets() {
+        assert_eq!(MoveOpts::GUIDE_STEP, MoveOpts(13));
+        assert_eq!(MoveOpts::DEDUCED_MOVE, MoveOpts(14));
+        assert!(MoveOpts::GUIDE_STEP.has(MoveOpts::USE_BLC));
+        assert!(!MoveOpts::RECOVERY_MOVE.has(MoveOpts::ALGO_RESULT));
+        assert!(!MoveOpts::CALIBRATION_MOVE.has(MoveOpts::USE_BLC));
+    }
+
+    #[test]
+    fn c_casts_match_x86() {
+        assert_eq!(c_int(f64::NAN), i32::MIN);
+        assert_eq!(c_int(f64::INFINITY), i32::MIN);
+        assert_eq!(c_int(3e9), i32::MIN);
+        assert_eq!(c_int(812.9), 812);
+        assert_eq!(c_int(-0.5), 0);
+        assert_eq!(phd_round(2.5), 3);
+        assert_eq!(phd_round(-2.5), -2);
+        assert_eq!(phd_round(f64::NAN), i32::MIN);
     }
 
     #[test]

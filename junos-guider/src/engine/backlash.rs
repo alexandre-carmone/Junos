@@ -16,31 +16,13 @@
 use super::calibration::{Calibration, camera_to_mount};
 use super::log::cfmt::fmt_f;
 use super::stats::AxisStats;
-use super::traits::{Dir, Point};
-
-/// `MOVEOPT_ALGO_RESULT` (`mount.h:127`): the move is a guide algorithm's
-/// result. `mount.rs` re-exports the full `MoveOpts` set; these two are the
-/// bits the compensation reads.
-pub const MOVEOPT_ALGO_RESULT: u32 = 1 << 0;
-/// `MOVEOPT_USE_BLC` (`mount.h:129`): apply backlash compensation to the move.
-pub const MOVEOPT_USE_BLC: u32 = 1 << 2;
+use super::traits::{Dir, MoveOpts, Point, c_int, phd_round};
 
 /// Smallest compensation pulse, ms (`backlash_comp.cpp:41`): small enough to
 /// disable the compensation in practice.
 pub const MIN_COMP_AMOUNT: i32 = 20;
 /// Largest compensation pulse, ms (`backlash_comp.cpp:42`).
 pub const MAX_COMP_AMOUNT: i32 = 8000;
-
-/// PHD2's `ROUND` (`phd.h:122`): `(int) floor(x + 0.5)`.
-fn round(x: f64) -> i32 {
-    (x + 0.5).floor() as i32
-}
-
-/// A C `(int)` cast of a double on x86-64: NaN and out-of-range values become
-/// `INT_MIN` (`cvttsd2si`), where Rust's `as` would give 0 or saturate.
-fn c_int(x: f64) -> i32 {
-    if x.is_nan() || x >= 2147483648.0 || x < -2147483648.0 { i32::MIN } else { x as i32 }
-}
 
 // ---------------------------------------------------------------- BLC history
 
@@ -237,7 +219,7 @@ impl BlcHistory {
         let mut adjust = false;
         if miss.abs() >= min_move {
             // The unsigned correction value.
-            let corr = ((avg_init_miss.abs() / y_rate).floor() + 0.5) as i32;
+            let corr = c_int((avg_init_miss.abs() / y_rate).floor() + 0.5);
             if miss > 0.0 {
                 // Under-shoot.
                 if avg_init_miss > 0.0 {
@@ -265,7 +247,7 @@ impl BlcHistory {
                 if curr.stiction_seen {
                     // Seeing and a low min-move can look like stiction: don't over-react.
                     if stats.stiction_count > 1 {
-                        let stiction_corr = ((stats.avg_stiction_amount.abs() / y_rate).floor() + 0.5) as i32 as f64;
+                        let stiction_corr = f64::from(c_int((stats.avg_stiction_amount.abs() / y_rate).floor() + 0.5));
                         correction = -stiction_corr;
                         self.remove_oldest_stictions(1);
                         adjust = true;
@@ -451,7 +433,7 @@ impl BacklashComp {
             floor
         };
         self.adjustment_ceiling = if ceiling < self.pulse_width {
-            (1.50 * self.pulse_width as f64).min(MAX_COMP_AMOUNT as f64) as i32
+            c_int((1.50 * self.pulse_width as f64).min(MAX_COMP_AMOUNT as f64))
         } else {
             ceiling.min(MAX_COMP_AMOUNT)
         };
@@ -538,7 +520,7 @@ impl BacklashComp {
     /// raise the max duration.
     pub fn track_blc_results(
         &mut self,
-        move_options: u32,
+        move_options: MoveOpts,
         y_raw_offset: f64,
         min_move: f64,
         y_rate: f64,
@@ -548,7 +530,7 @@ impl BacklashComp {
         if !self.comp_active {
             return fx;
         }
-        if move_options & MOVEOPT_USE_BLC == 0 {
+        if !move_options.has(MoveOpts::USE_BLC) {
             // A calibration-type move can move the mount in Dec without
             // telling the compensation about the direction.
             self.reset_blc_state_into(&mut fx.log);
@@ -556,7 +538,7 @@ impl BacklashComp {
         }
         // Only algorithm-result moves are tracked, not the fast recovery
         // after a dither, deduced moves or AO bumps.
-        let is_algo_result_move = move_options & MOVEOPT_ALGO_RESULT != 0;
+        let is_algo_result_move = move_options.has(MoveOpts::ALGO_RESULT);
         if !is_algo_result_move {
             // A non-algo BLC move happened before the follow-up of the previous one.
             self.history.close_window(&mut fx.log);
@@ -581,14 +563,14 @@ impl BacklashComp {
 
         let nominal_blc = self.pulse_width as f64 + adjustment;
         let new_blc = if nominal_blc > self.pulse_width as f64 {
-            let mut n = round((self.pulse_width as f64 * 1.1).min(nominal_blc));
+            let mut n = phd_round((self.pulse_width as f64 * 1.1).min(nominal_blc));
             if n > self.adjustment_ceiling {
                 fx.log.push(format!("BLC: Pulse increase limited by ceiling of {}", self.adjustment_ceiling));
                 n = self.adjustment_ceiling;
             }
             n
         } else {
-            let mut n = round((0.8 * self.pulse_width as f64).max(nominal_blc));
+            let mut n = phd_round((0.8 * self.pulse_width as f64).max(nominal_blc));
             if n < self.adjustment_floor {
                 fx.log.push(format!("BLC: Pulse decrease limited by floor of {}", self.adjustment_floor));
                 n = self.adjustment_floor;
@@ -606,16 +588,16 @@ impl BacklashComp {
     /// `ApplyBacklashComp` (`backlash_comp.cpp:549`): add the compensation
     /// pulse to `y_ms` when this Dec move (`y_guide_distance`, px, signed)
     /// reverses the last direction and the move asks for it.
-    pub fn apply_backlash_comp(&mut self, move_options: u32, y_guide_distance: f64, y_ms: &mut i32) -> BlcEffects {
+    pub fn apply_backlash_comp(&mut self, move_options: MoveOpts, y_guide_distance: f64, y_ms: &mut i32) -> BlcEffects {
         let mut fx = BlcEffects::default();
-        if move_options & MOVEOPT_USE_BLC == 0 {
+        if !move_options.has(MoveOpts::USE_BLC) {
             return fx;
         }
         if !self.comp_active || self.pulse_width <= 0 || y_guide_distance == 0.0 {
             return fx;
         }
         let dir = if y_guide_distance > 0.0 { Dir::DOWN } else { Dir::UP };
-        let is_algo_result_move = move_options & MOVEOPT_ALGO_RESULT != 0;
+        let is_algo_result_move = move_options.has(MoveOpts::ALGO_RESULT);
 
         match self.last_direction {
             Some(last) if last != dir => {
@@ -940,11 +922,11 @@ impl BacklashTool {
         if self.north_bl_steps.len() > 3 {
             // The drift over the whole north leg, px.
             let drift_amt_px = self.drift_per_sec * (self.msmt_end_time - self.msmt_start_time) as f64 / 1000.0;
-            let step_count = self.north_stats.count() as f64;
+            let step_count = self.north_stats.count() as i32;
             let north_delta = self.north_stats.sum();
             // The drift-corrected empirical north rate.
-            n_rate = ((north_delta - drift_amt_px) / (step_count * self.pulse_width as f64)).abs();
-            let drift_px_per_frame = drift_amt_px / step_count;
+            n_rate = ((north_delta - drift_amt_px) / f64::from(step_count.wrapping_mul(self.pulse_width))).abs();
+            let drift_px_per_frame = drift_amt_px / f64::from(step_count);
             // The expected move is 90 % of the median north move: accepts a
             // south rate that never quite matches the north one.
             let expected_magnitude = (0.9 * self.north_stats.median()).abs();
@@ -1108,20 +1090,22 @@ impl BacklashTool {
             }
             if self.accepted_moves >= BACKLASH_MIN_COUNT || self.backlash_exemption || out_of_room(env, cam) {
                 self.state = BltState::StepNorth;
-                let total_backlash_cleared = (self.step_count * self.pulse_width) as f64;
+                // C int arithmetic: a clearing pulse from a tiny rate wraps, as on x86.
+                let total_backlash_cleared = f64::from(self.step_count.wrapping_mul(self.pulse_width));
                 // North pulses of at least 500 ms whatever the image scale,
                 // but under 70 % of the tracking region per pulse (room for
                 // seeing and drift).
                 self.pulse_width = NORTH_PULSE_SIZE.max(env.calibration_duration_ms);
                 self.pulse_width = self
                     .pulse_width
-                    .min((0.7 * env.max_move_px as f64 / self.last_dec_guide_rate).floor() as i32);
+                    .min(c_int((0.7 * env.max_move_px as f64 / self.last_dec_guide_rate).floor()));
                 self.step_count = 0;
                 // 50 % more than the cleared backlash or at least 8 s, so the
                 // south leg has room to clear and get moving.
-                self.north_pulse_count = (((MAX_NORTH_PULSES + self.pulse_width - 1) / self.pulse_width) as f64)
-                    .max(total_backlash_cleared * 1.5 / self.pulse_width as f64)
-                    as i32;
+                self.north_pulse_count = c_int(
+                    f64::from((MAX_NORTH_PULSES + self.pulse_width - 1) / self.pulse_width)
+                        .max(total_backlash_cleared * 1.5 / self.pulse_width as f64),
+                );
                 log.push(format!("BLT: Starting North moves at Dec={}", fmt_f(curr.y, 2)));
                 self.msmt_start_time = env.now_ms;
                 // falls through to the north moves
@@ -1245,7 +1229,7 @@ impl BacklashTool {
                         self.step_count += 1;
                         return Ok(());
                     }
-                    let max_frame_move = (0.8 * env.max_move_px as f64 / self.north_rate).floor() as i32;
+                    let max_frame_move = c_int((0.8 * env.max_move_px as f64 / self.north_rate).floor());
                     log.push(format!("BLT: Clearing pulse is very large, issuing max S move of {max_frame_move}"));
                     // One more pulse to cycle the state machine; no fine
                     // tuning, just restore the star to < max-move of error.
@@ -1352,7 +1336,7 @@ impl BacklashTool {
 mod tests {
     use super::*;
 
-    const GUIDE: u32 = MOVEOPT_ALGO_RESULT | MOVEOPT_USE_BLC;
+    const GUIDE: MoveOpts = MoveOpts::GUIDE_STEP;
 
     fn comp(pulse: i32, floor: i32, ceiling: i32) -> BacklashComp {
         let cfg = BacklashConfig { pulse, floor, ceiling, enabled: true };
@@ -1474,11 +1458,11 @@ mod tests {
         );
         // A reversal without USE_BLC is ignored entirely (direction not even recorded).
         ms = 100;
-        c.apply_backlash_comp(MOVEOPT_ALGO_RESULT, 1.0, &mut ms);
+        c.apply_backlash_comp(MoveOpts::ALGO_RESULT, 1.0, &mut ms);
         assert_eq!(ms, 100);
         assert_eq!(c.last_direction, Some(Dir::North));
         // A non-algo reversal gets the pulse but closes the window.
-        let fx = c.apply_backlash_comp(MOVEOPT_USE_BLC, 1.0, &mut ms);
+        let fx = c.apply_backlash_comp(MoveOpts::USE_BLC, 1.0, &mut ms);
         assert_eq!(ms, 400);
         assert!(!c.history.window_open);
         assert_eq!(fx.log[0], "BLC: window closed");
@@ -1633,7 +1617,7 @@ mod tests {
         assert!(fx[1].log.is_empty());
         assert_eq!(c.backlash_pulse_width(), 100);
         // A move without USE_BLC resets the direction.
-        let fx = c.track_blc_results(0, 0.5, 0.2, 0.01, 2500);
+        let fx = c.track_blc_results(MoveOpts::CALIBRATION_MOVE, 0.5, 0.2, 0.01, 2500);
         assert_eq!(fx.log, ["BLC: window closed", "BLC: Last direction was reset"]);
         assert_eq!(c.last_direction, None);
     }
@@ -1799,13 +1783,5 @@ mod tests {
         assert_eq!(tool.blt_state(), BltState::Aborted);
         assert_eq!(log, ["BLT: Could not get calibration data"]);
         assert_eq!(tool.last_status(), "Backlash measurement cannot be run - please re-run your mount calibration");
-    }
-
-    #[test]
-    fn c_int_cast_matches_x86() {
-        assert_eq!(c_int(f64::NAN), i32::MIN);
-        assert_eq!(c_int(f64::INFINITY), i32::MIN);
-        assert_eq!(c_int(812.9), 812);
-        assert_eq!(c_int(-0.5), 0);
     }
 }
