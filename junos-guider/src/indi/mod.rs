@@ -6,13 +6,14 @@
 //! per change for the pulse waits, and hands out the decoded BLOBs. Both are
 //! pure. [`client`] owns the socket: a reader thread feeding the store, the
 //! writes, the reconnects and the device chooser. The device wrappers
-//! ([`camera`], [`mount`], [`ao`]) implement the engine's device traits
-//! over it.
+//! ([`camera`], [`mount`], [`ao`], [`rotator`]) implement the engine's
+//! device traits over it.
 
 pub mod ao;
 pub mod camera;
 pub mod client;
 pub mod mount;
+pub mod rotator;
 pub mod store;
 pub mod xml;
 
