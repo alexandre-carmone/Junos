@@ -1772,6 +1772,18 @@ mod tests {
         dec_step_count: i32,
         dec: fn(f64, i32) -> f64,
         ra: fn(f64, i32) -> f64,
+        /// `TheScope()`'s compensation pulse, ms.
+        blc_pulse: i32,
+        /// The backlash test as the stubbed tool reports it (`None`: no
+        /// tool), and `m_backlashMs`.
+        blt: Option<BltState>,
+        backlash_ms: i32,
+        exempt: bool,
+        msmt_pulse: i32,
+        north: &'static [f64],
+        south: &'static [f64],
+        /// Earlier runs already in the profile: start time, with a test.
+        history: &'static [(&'static str, bool)],
     }
 
     /// The harness' run: Start, the samples, `MakeRecommendations`, all of
@@ -1792,6 +1804,8 @@ mod tests {
             };
             ga.guide_step(&i, &env, &mut ev);
         }
+        ga.tool = c.blt.map(|st| BacklashTool::stub(st, c.exempt, c.msmt_pulse, c.north, c.south));
+        ga.backlash_ms = c.backlash_ms;
         let mut out = vec![format!("== {}", c.name)];
         out.extend(debug_lines(&ev).iter().map(|s| format!("dbg0 {s}")));
         let rec = RecEnv {
@@ -1813,7 +1827,14 @@ mod tests {
             dec_step_count: c.dec_step_count,
             ..Default::default()
         };
-        let mut scope = scope_on(&mut profile, c.mode, 0, &details);
+        let mut scope = scope_on(&mut profile, c.mode, c.blc_pulse, &details);
+        for &(ts, blt) in c.history {
+            profile.set_str(&format!("/GA/{ts}/timestamp"), ts);
+            if blt {
+                profile.set_str(&format!("/GA/{ts}/BLT_north"), "1.0,2.");
+                profile.set_str(&format!("/GA/{ts}/BLT_South"), "2.0,1.");
+            }
+        }
         let mut ev = Vec::new();
         ga.make_recommendations(&mut GaCx { scope: Some(&mut scope), ..cx(&rec, &mut profile) }, &mut ev);
 
@@ -1892,9 +1913,37 @@ mod tests {
         dec_step_count: 0,
         dec: |t, k| t / 60.0 + 0.05 * noise(k),
         ra: |t, k| 0.4 * tri(t, 40.0) + 0.1 * noise(k + 3),
+        blc_pulse: 0,
+        blt: None,
+        backlash_ms: 0,
+        exempt: false,
+        msmt_pulse: 0,
+        north: &[],
+        south: &[],
+        history: &[],
     };
 
-    const SCENARIOS: [Scenario; 5] = [
+    const EARLIER: &[(&str, bool)] =
+        &[("2026-11-11 18:00:00", true), ("2026-11-11 19:00:00", false), ("2026-11-11 20:00:00", false)];
+
+    /// A backlash test completed at 1234 ms, exempted (calibration advice);
+    /// a 3500 ms compensation pulse (likely backlash: no PA advice); three
+    /// earlier runs, the oldest the only one with a test: this fresh test
+    /// makes the oldest go.
+    const BLT: Scenario = Scenario {
+        name: "blt",
+        blc_pulse: 3500,
+        blt: Some(BltState::Completed),
+        backlash_ms: 1234,
+        exempt: true,
+        msmt_pulse: 600,
+        north: &[0.0, 4.25, 8.5, 12.75, 17.05],
+        south: &[17.05, 15.0, 10.95, 6.9],
+        history: EARLIER,
+        ..PA
+    };
+
+    const SCENARIOS: [Scenario; 9] = [
         // Dec 1 px/min plus noise at 2″/px, Dec 0: PA ≈ 7.6′, a short run.
         PA,
         // ±0.3 px on Dec, unknown declination, a faint star.
@@ -1968,12 +2017,23 @@ mod tests {
             ra: |t, k| 3.0 * tri(t, 20.0) + 0.05 * noise(k),
             ..PA
         },
+        BLT,
+        // 50 ms: no compensation needed, Lowpass2 for Dec; the PA advice
+        // back.
+        Scenario { name: "blt_small", blc_pulse: 0, backlash_ms: 50, exempt: false, history: &[], ..BLT },
+        // 4000 ms: guide Dec one way, no Apply; likely backlash from the
+        // test itself.
+        Scenario { name: "blt_large", blc_pulse: 0, backlash_ms: 4000, exempt: false, history: &[], ..BLT },
+        // No test this run, the oldest holds the only one: the next oldest
+        // goes.
+        Scenario { name: "hist", history: EARLIER, ..PA },
     ];
 
     /// The cells, numbers, recommendations, debug and guide-log lines and
     /// profile entries of PHD2's own `UpdateInfo` / `MakeRecommendations` /
-    /// `SaveGAResults` (with the real guiding_stats.cpp, built against wx
-    /// 3.2.11 base) on the same five measurement sets
+    /// `SaveGAResults` / `TrimGAHistory` (with the real guiding_stats.cpp,
+    /// built against wx 3.2.11 base) on the same nine runs: five measurement
+    /// sets, three backlash outcomes on a stubbed tool, and a history trim
     /// (target/scratch/harness/ga, not committed).
     #[test]
     fn recommendations_match_phd2() {
@@ -2443,16 +2503,25 @@ mod tests {
         assert_eq!(trim(&mut p, false), ["GA-History: removed entry for a"]);
         assert_eq!(history(&p), ["b", "c", "d"]);
         assert!(trim(&mut p, false).is_empty());
-        // The oldest holds the only backlash run: the next oldest goes...
-        let mut p = Mem::default();
-        run(&mut p, "a", true);
-        for ts in ["b", "c", "d"] {
-            run(&mut p, ts, false);
-        }
-        assert_eq!(trim(&mut p, false), ["GA-History: removed entry for b"]);
-        // ...unless this run measured backlash.
-        run(&mut p, "e", true);
-        assert_eq!(trim(&mut p, true), ["GA-History: removed entry for a"]);
+        // Runs a–d, those in `blt` with a backlash test.
+        let runs = |blt: &[&str]| {
+            let mut p = Mem::default();
+            for ts in ["a", "b", "c", "d"] {
+                run(&mut p, ts, blt.contains(&ts));
+            }
+            p
+        };
+        // The oldest holds the only backlash test: the next oldest goes,
+        // unless the flag says this run measured backlash.
+        assert_eq!(trim(&mut runs(&["a"]), false), ["GA-History: removed entry for b"]);
+        assert_eq!(trim(&mut runs(&["a"]), true), ["GA-History: removed entry for a"]);
+        // A later run holds the only one: the oldest goes.
+        assert_eq!(trim(&mut runs(&["b"]), false), ["GA-History: removed entry for a"]);
+        // Two or more: the oldest goes. With all four, PHD2's `bltCount ==
+        // totalGAs` holds too; alone (one run, one test) it never decides,
+        // since nothing is trimmed under four runs.
+        assert_eq!(trim(&mut runs(&["a", "c"]), false), ["GA-History: removed entry for a"]);
+        assert_eq!(trim(&mut runs(&["a", "b", "c", "d"]), false), ["GA-History: removed entry for a"]);
     }
 
     #[test]

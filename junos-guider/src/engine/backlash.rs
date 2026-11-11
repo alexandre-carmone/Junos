@@ -663,8 +663,9 @@ pub const TRIAL_TOLERANCE_AS: i32 = 2;
 /// step.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BltEnv<'a> {
-    /// The scope's last calibration (`GetLastCalibration`, the camera → mount
-    /// transform and the Dec rate).
+    /// The scope's calibration in memory (`m_cal`, see `Scope::blt_parts`):
+    /// the camera → mount transform, and the Dec rate PHD2 re-reads from
+    /// `GetLastCalibration`, the same calibration once stored.
     pub cal: &'a Calibration,
     /// Camera frame size, px (`pCamera->FrameSize`).
     pub frame_width: i32,
@@ -1369,6 +1370,22 @@ impl BacklashTool {
         }
         // Completed: nothing to do.
         Ok(())
+    }
+}
+
+#[cfg(test)]
+impl BacklashTool {
+    /// A tool left as a test ended: the Guiding Assistant's tests stub it so,
+    /// as their PHD2 harness does.
+    pub(crate) fn stub(state: BltState, exempted: bool, pulse: i32, north: &[f64], south: &[f64]) -> Self {
+        let cal = Calibration { is_valid: true, y_rate: 0.01, ..Default::default() };
+        let mut t = Self::new(&cal).0;
+        t.state = state;
+        t.backlash_exemption = exempted;
+        t.pulse_width = pulse;
+        t.north_bl_steps = north.to_vec();
+        t.south_bl_steps = south.to_vec();
+        t
     }
 }
 
