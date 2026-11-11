@@ -1,11 +1,12 @@
-//! C `printf` number formatting: `%g`, `%.*g`, `%.*f` and `%d`.
+//! C `printf` number formatting: `%g`, `%.*g` and `%.*f`.
 //!
 //! PHD2 formats every number of its guide log (`guidinglog.cpp`) and of its
 //! event server (`event_server.cpp`) through `wxString::Format`, i.e. the C
 //! library's `printf`. Clients that parse those files and messages (PHD2 Log
 //! Viewer, KStars' PHD2 driver, the junos-web Guide tab) see the exact glibc
 //! spelling, and Rust's `{}` / `{:e}` spell numbers differently — there is no
-//! `%g` at all. These helpers reproduce glibc byte for byte.
+//! `%g` at all. These helpers reproduce glibc byte for byte. The decimal
+//! point is always `.`: PHD2 forces `LC_NUMERIC` to "C" (`phd.cpp:600`).
 //!
 //! The rules (C11 7.21.6.1, as glibc implements them):
 //!
@@ -21,18 +22,26 @@
 //! |          | `1e+100`.                                                             |
 //! | `%.Pf`   | P digits after the point, rounded to nearest, ties to even, on the    |
 //! |          | exact binary value: `0.125` → `0.12`, `0.375` → `0.38`, `2.5` → `2`,  |
-//! |          | `-1.005` → `-1.00` (the double is just under −1.005).                 |
-//! | `%d`     | Plain decimal.                                                        |
+//! |          | `-1.005` → `-1.00` (its magnitude is just under 1.005).               |
 //! | specials | `-0` keeps its sign (`-0`, `-0.00`); `inf`, `-inf`, `nan`, `-nan`.    |
+//!
+//! `%d` and `%u` need no helper: Rust's `{}` spells integers the same way.
+//!
+//! x86-64's runtime `0.0 / 0.0` is a *negative* NaN, so PHD2 prints `-nan`
+//! there (e.g. a sigma over one sample, `guiding_stats.cpp`). Rust leaves the
+//! sign of a computed NaN unspecified and constant folding may make it
+//! positive: a golden containing a NaN must come from a runtime division.
 //!
 //! Rust's `{:.P}` and `{:.Pe}` already round the exact binary value to nearest
 //! even, like glibc, so the rounding is delegated to them and only the style
 //! choice, the zero stripping, the exponent spelling and the specials are done
 //! here (the tests pin the tie cases).
 //!
-//! Ported from PHD2 `src/guidinglog.cpp`, `src/event_server.cpp` — BSD-3-Clause, see THIRD_PARTY.md
+//! Reproduces the glibc `printf` behind PHD2's `wxString::Format`
+//! (`guidinglog.cpp`, `event_server.cpp:189,209-210`); no PHD2 code is ported.
 
-/// C `%g`: six significant digits, `%e` style outside `1e-4 ..= 999999.5`.
+/// C `%g`: six significant digits, `%e` style when |v| rounded to six
+/// significant digits is below 1e-4 or at least 1e6.
 pub fn fmt_g(v: f64) -> String {
     fmt_gp(v, 6)
 }
@@ -67,11 +76,6 @@ pub fn fmt_f(v: f64, prec: usize) -> String {
     special(v).unwrap_or_else(|| format!("{:.*}", prec, v))
 }
 
-/// C `%d`.
-pub fn fmt_d(v: i64) -> String {
-    v.to_string()
-}
-
 /// glibc spells the non-finite values in lowercase and keeps the sign of a
 /// negative NaN; Rust prints `NaN`.
 fn special(v: f64) -> Option<String> {
@@ -101,8 +105,8 @@ fn strip_zeros(mut s: String) -> String {
 mod tests {
     use super::*;
 
-    // Expected strings are glibc's, generated with `'%g' % x` / `'%.*f' % (p, x)`
-    // in CPython (which calls the C library's printf for these).
+    // Expected strings are glibc's `snprintf` (2.44), printed by a throwaway C
+    // harness; CPython's `%g` / `%.*f` gives the same text for finite values.
 
     #[test]
     fn g_plan_vectors() {
@@ -124,6 +128,10 @@ mod tests {
         // Just under 1e-4 but rounds up to it: %f style.
         assert_eq!(fmt_g(9.9999995e-5), "0.0001");
         assert_eq!(fmt_g(9.9999999e-5), "0.0001");
+        // 1.3e-21 above the tie at 6 digits: rounds up to 1e-4, %f style.
+        assert_eq!(fmt_g(9.999995e-5), "0.0001");
+        // The carry to 10 stays in %f style (X = 1 < 6).
+        assert_eq!(fmt_g(9.9999995), "10");
         // Rounds down to 99999.9 (the double is below the tie).
         assert_eq!(fmt_g(99999.95), "99999.9");
         assert_eq!(fmt_g(123456789.0), "1.23457e+08");
@@ -144,6 +152,8 @@ mod tests {
     fn g_exponent_spelling() {
         assert_eq!(fmt_g(1.5e-7), "1.5e-07");
         assert_eq!(fmt_g(-2.5e-5), "-2.5e-05");
+        assert_eq!(fmt_g(1e15), "1e+15");
+        assert_eq!(fmt_g(1e16), "1e+16");
         assert_eq!(fmt_g(1e21), "1e+21");
         assert_eq!(fmt_g(1e100), "1e+100");
         assert_eq!(fmt_g(1e-100), "1e-100");
@@ -159,6 +169,8 @@ mod tests {
         assert_eq!(fmt_g(f64::NEG_INFINITY), "-inf");
         assert_eq!(fmt_f(f64::NAN, 2), "nan");
         assert_eq!(fmt_f(f64::INFINITY, 2), "inf");
+        assert_eq!(fmt_f(-f64::NAN, 2), "-nan");
+        assert_eq!(fmt_f(f64::NEG_INFINITY, 1), "-inf");
     }
 
     #[test]
@@ -166,6 +178,8 @@ mod tests {
         // Precision 0 behaves as 1.
         assert_eq!(fmt_gp(1234.5, 0), "1e+03");
         assert_eq!(fmt_gp(1234.5, 1), "1e+03");
+        // An exact tie at P = 4, %f style: ties to even → 1234.
+        assert_eq!(fmt_gp(1234.5, 4), "1234");
         assert_eq!(fmt_gp(9.5, 1), "1e+01");
         assert_eq!(fmt_gp(0.95, 1), "0.9");
         assert_eq!(fmt_gp(0.25, 1), "0.2");
@@ -195,12 +209,15 @@ mod tests {
         assert_eq!(fmt_f(-0.0, 2), "-0.00");
         assert_eq!(fmt_f(1e-10, 3), "0.000");
         assert_eq!(fmt_f(1e20, 2), "100000000000000000000.00");
-    }
-
-    #[test]
-    fn d_plain() {
-        assert_eq!(fmt_d(0), "0");
-        assert_eq!(fmt_d(-42), "-42");
-        assert_eq!(fmt_d(1_000_000), "1000000");
+        // The exact binary value, all 309 digits.
+        assert_eq!(
+            fmt_f(f64::MAX, 0),
+            concat!(
+                "17976931348623157081452742373170435679807056752584499659891747680315726078002853876058955",
+                "86327668781715404589535143824642343213268894641827684675467035375169860499105765512820762",
+                "45490090389328944075868508455133942304583236903222948165808559332123348274797826204144723",
+                "168738177180919299881250404026184124858368"
+            )
+        );
     }
 }
