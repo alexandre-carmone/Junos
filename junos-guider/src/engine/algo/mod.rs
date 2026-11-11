@@ -169,7 +169,8 @@ pub struct AlgoCtx {
     pub now: f64,
     /// The calibration's X rate, px per ms.
     pub x_rate_px_ms: f64,
-    /// The mount's RA guide speed, × sidereal.
+    /// The calibration's RA guide speed, degrees per second; −1 when unknown
+    /// (PHD2's `CalibrationDetails::raGuideSpeed`).
     pub ra_guide_speed: f64,
     /// The mount's RA, hours, when the pointing source reports one.
     pub ra_h: Option<f64>,
@@ -284,8 +285,8 @@ pub trait GuideAlgorithm: Send {
 /// `profile` reads a full profile path (e.g.
 /// `/scope/GuideAlgorithm/X/Hysteresis/minMove`), `None` meaning unset; the
 /// algorithm asks for its keys under its own [`config_path`]. `None` builds
-/// Identity. The Gaussian process is not ported yet and gives `Err` with
-/// the kind's name.
+/// Identity. The Gaussian process is built only where [`allowed`] (scope
+/// RA), else `Err`.
 pub fn make(
     kind: AlgoKind,
     axis: Axis,
@@ -304,9 +305,11 @@ pub fn make(
         AlgoKind::Lowpass2 => Box::new(lowpass2::Lowpass2::new(params)),
         AlgoKind::ResistSwitch => Box::new(resist_switch::ResistSwitch::new(params)),
         AlgoKind::ZFilter => Box::new(zfilter::ZFilter::new(params)),
-        // TODO: ported in a later commit (gp/).
+        AlgoKind::GaussianProcess if allowed(kind, axis, mount_class) => {
+            Box::new(gp::ppec::GaussianProcess::new(params))
+        }
         AlgoKind::GaussianProcess => {
-            return Err(format!("{} not ported yet", kind.class_name()));
+            return Err(format!("{} is RA only", kind.class_name()));
         }
     })
 }
@@ -473,7 +476,10 @@ mod tests {
             assert_eq!(a.kind(), k);
             assert_eq!(a.class_name(), k.class_name());
         }
-        assert!(make(AlgoKind::GaussianProcess, Axis::X, MountClass::Scope, &no_params).is_err());
+        let a = make(AlgoKind::GaussianProcess, Axis::X, MountClass::Scope, &no_params).unwrap();
+        assert_eq!(a.kind(), AlgoKind::GaussianProcess);
+        assert!(make(AlgoKind::GaussianProcess, Axis::Y, MountClass::Scope, &no_params).is_err());
+        assert!(make(AlgoKind::GaussianProcess, Axis::X, MountClass::StepGuider, &no_params).is_err());
     }
 
     #[test]
@@ -490,6 +496,10 @@ mod tests {
         let a = make(AlgoKind::Hysteresis, Axis::Y, MountClass::StepGuider, &profile).unwrap();
         assert_eq!(a.get_param("aggression"), Some(1.2));
         assert_eq!(a.min_move(), 0.2);
+        // Predictive PEC's group keeps the space in its class name.
+        let profile = |k: &str| (k == "/scope/GuideAlgorithm/X/Predictive PEC/gp_min_move").then_some(0.3);
+        let a = make(AlgoKind::GaussianProcess, Axis::X, MountClass::Scope, &profile).unwrap();
+        assert_eq!(a.min_move(), 0.3);
         // A fallback reads the default algorithm's own group.
         let profile = |k: &str| (k == "/stepguider/GuideAlgorithm/X/Hysteresis/minMove").then_some(0.33);
         let (a, _) = make_or_default(AlgoKind::GaussianProcess, Axis::X, MountClass::StepGuider, &profile);
