@@ -1,5 +1,7 @@
 //! Command-line configuration (clap, env-aware like `junos-server`).
 
+use std::path::PathBuf;
+
 use clap::Parser;
 
 #[derive(Parser, Debug, Clone)]
@@ -43,11 +45,38 @@ pub struct Config {
     /// default so a service install keeps serving after NINA's "shut down".
     #[arg(long, env = "GUIDER_SHUTDOWN_EXITS", default_value_t = false)]
     pub shutdown_exits: bool,
+
+    /// Replace every setting with a file's (written by --save or PHD2's
+    /// `-s`), then exit: PHD2's `-l`.
+    #[arg(long, value_name = "FILE")]
+    pub load: Option<PathBuf>,
+
+    /// Write every setting to a file, then exit: PHD2's `-s`. Wins over
+    /// --load.
+    #[arg(long, value_name = "FILE")]
+    pub save: Option<PathBuf>,
+
+    /// Reset every setting to its default before starting: PHD2's `-R`.
+    #[arg(long, default_value_t = false)]
+    pub reset: bool,
 }
 
 impl Config {
     /// The event-server port: `--server-port` or `4400 + instance - 1`.
     pub fn event_server_port(&self) -> u16 {
         self.server_port.unwrap_or(4400 + self.instance.saturating_sub(1) as u16)
+    }
+
+    /// Where the profile store lives: `--data-dir`, else
+    /// `$XDG_CONFIG_HOME/junos-guider`, else `~/.config/junos-guider`.
+    pub fn config_dir(&self) -> PathBuf {
+        if let Some(dir) = &self.data_dir {
+            return PathBuf::from(dir);
+        }
+        let xdg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute());
+        let base = xdg
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+            .unwrap_or_else(|| PathBuf::from("."));
+        base.join("junos-guider")
     }
 }
