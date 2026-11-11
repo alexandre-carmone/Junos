@@ -2,7 +2,7 @@
 # Build a *portable* Linux release tarball from the local tree:
 #
 #     junos-server (binary) + junos-web/dist/ (compiled WASM frontend)
-#     + a sample systemd unit + run notes.
+#     + junos-guider (binary) + sample systemd units + run notes.
 #
 # Runs on any glibc Linux and is arch-agnostic — the produced tarball is named
 # after `uname -m` (x86_64 or aarch64), so the same script builds the Raspberry
@@ -48,14 +48,17 @@ echo ">> building frontend (trunk, release)"
 ( cd junos-web && trunk build --release )
 ./scripts/precompress_dist.sh junos-web/dist
 
-echo ">> building junos-server (release)"
-cargo build --release -p junos-server
+echo ">> building junos-server and junos-guider (release)"
+cargo build --release -p junos-server -p junos-guider
 
 # ── Stage + pack ────────────────────────────────────────────────────────────
 work="$(mktemp -d)"
 stage="$work/$name"
 mkdir -p "$stage"
 install -Dm755 target/release/junos-server            "$stage/junos-server"
+install -Dm755 target/release/junos-guider            "$stage/junos-guider"
+install -Dm644 packaging/arch/junos-guider.service    "$stage/junos-guider.service"
+install -Dm644 junos-guider/THIRD_PARTY.md            "$stage/THIRD_PARTY.md"
 cp -a           junos-web/dist                          "$stage/dist"
 install -Dm644  packaging/arch/junos-web.service        "$stage/junos-web.service"
 install -Dm644  packaging/arch/50-junos-web-power.rules "$stage/50-junos-web-power.rules"

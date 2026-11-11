@@ -1,0 +1,31 @@
+[Unit]
+Description=junos-guider PHD2-compatible autoguider
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# PHD2's event server on :4400 (Ekos' PHD2 port) and the relay's socket on
+# 127.0.0.1:4410, which junos-web.service dials by default. Don't run PHD2
+# at the same time: both listen on :4400. The camera and mount are driven
+# through the INDI server at localhost:7624 (--indi-host / --indi-port).
+# Profiles, darks and defect maps live in the StateDirectory, the guide and
+# debug logs in its logs/. To keep the logs in the user's home like PHD2,
+# use --log-dir /home/astronaut/Documents/PHD2 and add
+# ReadWritePaths=/home/astronaut/Documents/PHD2 with ProtectHome=read-only.
+ExecStart=/usr/bin/junos-guider --data-dir /var/lib/junos-guider --log-dir /var/lib/junos-guider/logs
+WorkingDirectory=/var/lib/junos-guider
+StateDirectory=junos-guider
+StateDirectoryMode=0750
+# Same user as junos-web.service.
+User=astronaut
+Restart=on-failure
+RestartSec=5s
+# Hardening (mirrors nix/module.nix).
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

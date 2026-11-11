@@ -2,10 +2,11 @@
 pkgname=junos-web
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Local KStars/Ekos Live LAN relay + WebGPU planetarium web client"
+pkgdesc="Local KStars/Ekos Live LAN relay + WebGPU planetarium web client, with a PHD2-compatible autoguider"
 arch=('x86_64' 'aarch64')
 url="https://github.com/alexandre-carmone/Junos"
-license=('GPL3')
+# junos-guider ports PHD2 (BSD-3-Clause), whose notices are in THIRD_PARTY.md.
+license=('GPL3' 'BSD-3-Clause')
 # Disable makepkg's default LTO. Arch mainline's makepkg.conf enables `lto`,
 # which injects `-flto` into CFLAGS/LDFLAGS. `ring`'s build.rs compiles its C
 # limb functions through the `cc` crate (which honours CFLAGS), turning them
@@ -27,10 +28,13 @@ makedepends=('rustup' 'trunk' 'brotli')
 _twver=3.4.17
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz"
         "junos-web.service"
+        "junos-guider.service"
         "50-junos-web-power.rules")
 source_x86_64=("tailwindcss-$pkgver-x86_64::https://github.com/tailwindlabs/tailwindcss/releases/download/v$_twver/tailwindcss-linux-x64")
 source_aarch64=("tailwindcss-$pkgver-aarch64::https://github.com/tailwindlabs/tailwindcss/releases/download/v$_twver/tailwindcss-linux-arm64")
 sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
             'SKIP')
 sha256sums_x86_64=('7d24f7fa191d2193b78cd5f5a42a6093e14409521908529f42d80b11fde1f1d4')
 sha256sums_aarch64=('69b1378b8133192d7d2feb12a116fa12d035594f58db3eff215879e4ad8cf39b')
@@ -59,13 +63,15 @@ build() {
   # Frontend (wasm + styles + public/ catalogs) -> junos-web/dist/
   ( cd junos-web && trunk build --release )
   ./scripts/precompress_dist.sh junos-web/dist
-  # Server binary -> target/release/junos-server
-  cargo build --release -p junos-server
+  # Server and guider binaries -> target/release/
+  cargo build --release -p junos-server -p junos-guider
 }
 
 package() {
   cd "$srcdir/$_srcdir"
   install -Dm755 target/release/junos-server "$pkgdir/usr/bin/junos-server"
+  install -Dm755 target/release/junos-guider "$pkgdir/usr/bin/junos-guider"
+  install -Dm644 junos-guider/THIRD_PARTY.md "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY.md"
 
   # Compiled frontend, served at runtime via --dist-dir.
   install -d "$pkgdir/usr/share/junos-web/dist"
@@ -73,6 +79,8 @@ package() {
 
   install -Dm644 "$srcdir/junos-web.service" \
     "$pkgdir/usr/lib/systemd/system/junos-web.service"
+  install -Dm644 "$srcdir/junos-guider.service" \
+    "$pkgdir/usr/lib/systemd/system/junos-guider.service"
 
   # Lets the service user power off / reboot the host from the Profiles tab.
   install -Dm644 "$srcdir/50-junos-web-power.rules" \

@@ -1,8 +1,8 @@
 # Arch Linux package (`junos-web`)
 
 Builds an installable package for **x86_64** and **aarch64** (Arch Linux ARM on
-Raspberry Pi). Ships the `junos-server` binary, the compiled WASM frontend, and a
-systemd service.
+Raspberry Pi). Ships the `junos-server` binary, the compiled WASM frontend, the
+`junos-guider` autoguider, and a systemd service for each.
 
 ## Build & install
 
@@ -85,6 +85,7 @@ toolchain, cargo crates, and `trunk` fetching `wasm-bindgen-cli`/`wasm-opt`).
 
 ```bash
 sudo systemctl enable --now junos-web
+sudo systemctl enable --now junos-guider   # optional: the PHD2-compatible guider
 ```
 
 - Browser UI: `https://<host>:8443` (self-signed cert — accept it in the browser;

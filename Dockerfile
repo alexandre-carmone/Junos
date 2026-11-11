@@ -45,12 +45,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/work/junos-web/target,id=junos-web-target \
     just build \
     && mkdir -p /out \
-    && cp target/release/junos-server /out/junos-server
+    && cp target/release/junos-server target/release/junos-guider /out/
 
 RUN just gen-cert
 
-# Move the cached binary into a stable path inside the image.
-RUN mkdir -p target/release && mv /out/junos-server target/release/junos-server
+# Move the cached binaries into a stable path inside the image.
+RUN mkdir -p target/release && mv /out/junos-server /out/junos-guider target/release/
 
-EXPOSE 8080 8443
+# 4400: junos-guider's PHD2 event server, when the container runs
+# ./target/release/junos-guider instead of the relay.
+EXPOSE 8080 8443 4400
 CMD ["./target/release/junos-server"]

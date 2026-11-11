@@ -5,6 +5,9 @@ Contents
   junos-server        the LAN relay + web server (single static-ish binary)
   dist/               the compiled WebGPU/Leptos frontend
   junos-web.service   sample systemd unit (edit paths before use)
+  junos-guider        the PHD2-compatible autoguider (optional)
+  junos-guider.service  its sample systemd unit
+  THIRD_PARTY.md      PHD2's notices (junos-guider is a port of it)
   README.txt          this file
 
 Run (foreground, from this directory)
@@ -32,6 +35,13 @@ Install as a service (example)
   sudo systemctl daemon-reload
   sudo systemctl enable --now junos-web
 
-Firewall (open the LAN ports if needed)
+Guider (optional, instead of PHD2: both listen on :4400)
+  ./junos-guider --indi-host localhost --indi-port 7624
+  - Ekos' guider: PHD2 at <host>:4400. The relay finds it on 127.0.0.1:4410.
+  - As a service: install it to /usr/bin/junos-guider and
+    junos-guider.service to /etc/systemd/system/ (edit User=), then
+    sudo systemctl enable --now junos-guider
+
+Firewall (open the LAN ports if needed; 4400 for an Ekos on another host)
   sudo firewall-cmd --add-port=8090/tcp --add-port=8443/tcp --permanent
   sudo firewall-cmd --reload
