@@ -71,18 +71,24 @@ impl Config {
         self.server_port.unwrap_or((4399 + self.instance) as u16)
     }
 
-    /// Where the dark libraries and defect maps live: `<--data-dir>/darks`,
-    /// else `$XDG_DATA_HOME/junos-guider/darks`, else
-    /// `~/.local/share/junos-guider/darks`.
-    pub fn darks_dir(&self) -> PathBuf {
+    /// PHD2's default file folder (`GetDefaultFileDir`, where `save_image`
+    /// writes): `--data-dir`, else `$XDG_DATA_HOME/junos-guider`, else
+    /// `~/.local/share/junos-guider`.
+    pub fn data_path(&self) -> PathBuf {
         if let Some(dir) = &self.data_dir {
-            return PathBuf::from(dir).join("darks");
+            return PathBuf::from(dir);
         }
         let xdg = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute());
         let base = xdg
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
             .unwrap_or_else(|| PathBuf::from("."));
-        base.join("junos-guider").join("darks")
+        base.join("junos-guider")
+    }
+
+    /// Where the dark libraries and defect maps live: the data folder's
+    /// `darks`.
+    pub fn darks_dir(&self) -> PathBuf {
+        self.data_path().join("darks")
     }
 
     /// Where the profile store lives: `--data-dir`, else

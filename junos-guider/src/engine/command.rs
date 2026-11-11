@@ -233,6 +233,11 @@ pub enum Command {
     ProfileChanged,
     /// The 1 s tick: the Guiding Assistant's countdown.
     Tick,
+    /// The daemon connects the gear off the engine thread (`set_connected
+    /// true`): `true` before it starts, refused while capturing as
+    /// `ConnectAll` is; `false` once the gear is attached or failed. In
+    /// between, `loop` and `guide` are refused.
+    Connecting(bool),
 
     // ---------------------------------------------------- the junos UI's
     /// A click on the frame: lock on the star there (`select_star`).
@@ -309,6 +314,7 @@ impl Command {
             Command::Detach => "set_connected",
             Command::ProfileChanged => "set_profile",
             Command::Tick => "tick",
+            Command::Connecting(_) => "set_connected",
             Command::SelectStar { .. } => "select_star",
             Command::SetCalibrationData { .. } => "set_calibration_data",
             Command::NudgeLock { .. } => "nudge_lock",

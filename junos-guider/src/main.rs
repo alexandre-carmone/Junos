@@ -5,6 +5,10 @@ use std::process::exit;
 
 use clap::Parser;
 use junos_guider::config::Config;
+use junos_guider::daemon::files::{self, DiskFiles};
+use junos_guider::daemon::{Daemon, DaemonOptions};
+use junos_guider::engine::EngineConfig;
+use junos_guider::engine::calibration::ProfileAccess;
 use junos_guider::profile::ProfileStore;
 
 fn main() {
@@ -53,12 +57,64 @@ fn main() {
     }
     // PHD2's event server drops the changes made before it starts.
     store.take_change();
+    if cfg.sim && !cfg!(feature = "sim") {
+        tracing::error!("--sim needs junos-guider built with the `sim` feature");
+        exit(1);
+    }
+    // `Logger::GetLogDir`: --log-dir stands for the `/frame/LogDir` setting.
+    let setting = match &cfg.log_dir {
+        Some(dir) => dir.clone(),
+        None => store.global().get_str("/frame/LogDir", ""),
+    };
+    let path = |p: std::path::PathBuf| p.to_string_lossy().into_owned();
+    let opts = DaemonOptions {
+        engine: EngineConfig {
+            instance: cfg.instance,
+            log_dir: path(files::log_dir(&setting)),
+            darks_dir: path(cfg.darks_dir()),
+            data_dir: path(cfg.data_path()),
+        },
+        sim: cfg.sim,
+        indi_host: cfg.indi_host.clone(),
+        indi_port: cfg.indi_port,
+    };
     tracing::info!(
         port = cfg.event_server_port(),
         ws = %cfg.ws_addr,
         profile = %store.current_profile(),
+        logs = %opts.engine.log_dir,
         "junos-guider starting"
     );
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            tracing::error!("cannot start the runtime: {e}");
+            exit(1);
+        }
+    };
+    rt.block_on(async {
+        let daemon = Daemon::start(opts, store, Box::new(DiskFiles));
+        wait_for_signal().await;
+        tracing::info!("junos-guider stopping");
+        daemon.shutdown().await;
+        tokio::task::spawn_blocking(move || daemon.close()).await.ok();
+    });
+}
+
+/// SIGINT or SIGTERM (a service stop).
+async fn wait_for_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+    match signal(SignalKind::terminate()) {
+        Ok(mut term) => {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+        }
+        Err(_) => {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    }
 }
 
 /// An exclusive lock on `path`, held as long as the file stays open; `None`

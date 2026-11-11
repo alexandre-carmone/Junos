@@ -32,3 +32,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono             = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # zlib for the INDI BLOBs a driver sends compressed (`.fits.z`).
 flate2             = "1"
+# The daemon's I/O: the reply and event channels around the engine thread,
+# the event server and the relay's socket.
+tokio              = { version = "1", features = ["full"] }

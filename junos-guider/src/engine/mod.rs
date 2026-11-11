@@ -69,6 +69,7 @@ mod engine_tests;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Local};
 use serde_json::json;
@@ -144,6 +145,26 @@ impl Pending {
     }
 }
 
+/// `stop_capture` while the engine thread is in a frame. PHD2's main thread
+/// runs `StopCapturing` beside its worker and interrupts the exposure, so
+/// the exposure comes back with the loop already stopped ("Image capture
+/// stopped"). Here commands wait for the frame: the daemon calls
+/// [`request`](Self::request), which cuts the exposure short; the engine
+/// runs `StopCapturing` as soon as it returns, and the `stop_capture`
+/// command that follows only answers.
+#[derive(Clone)]
+pub struct StopRequest {
+    flag: Arc<AtomicBool>,
+    cancel: CancelToken,
+}
+
+impl StopRequest {
+    pub fn request(&self) {
+        self.flag.store(true, Ordering::SeqCst);
+        self.cancel.cancel();
+    }
+}
+
 /// `SingleExposure`'s part outside the capture loop: what to put back and
 /// where to save.
 #[derive(Clone, Debug)]
@@ -196,6 +217,11 @@ pub struct Engine {
     /// `WorkerThread::RequestStop` (`INT_STOP`): set by a stop, cleared
     /// when an exposure is scheduled.
     cancel: CancelToken,
+    /// [`StopRequest`]'s flag, and the stop it already served.
+    stop: Arc<AtomicBool>,
+    stop_served: bool,
+    /// [`Command::Connecting`].
+    connecting: bool,
     /// An exposure was scheduled and the cancel token not yet cleared for it.
     exposure_seen: bool,
     single: Option<SingleState>,
@@ -256,6 +282,9 @@ impl Engine {
             ra_guide_speed: -1.0,
             moves: VecDeque::new(),
             cancel: CancelToken::new(),
+            stop: Arc::default(),
+            stop_served: false,
+            connecting: false,
             exposure_seen: false,
             single: None,
             ga: None,
@@ -286,6 +315,12 @@ impl Engine {
     /// exposure or a move, as PHD2's worker thread does.
     pub fn cancel_token(&self) -> CancelToken {
         self.cancel.clone()
+    }
+
+    /// The handle the daemon uses when `stop_capture` comes in while a
+    /// frame may be in progress (see [`StopRequest`]).
+    pub fn stop_request(&self) -> StopRequest {
+        StopRequest { flag: self.stop.clone(), cancel: self.cancel.clone() }
     }
 
     /// Whether [`step`](Self::step) has anything to do: an exposure is
@@ -335,6 +370,12 @@ impl Engine {
         } else {
             self.capture(req)
         };
+        // A `stop_capture` that came during the exposure: `StopCapturing`
+        // ran on PHD2's main thread meanwhile.
+        if self.stop.swap(false, Ordering::SeqCst) {
+            self.stop_served = true;
+            self.call(|c, cx, ev| c.stop_capturing(cx, ev));
+        }
         self.debug("worker thread done servicing request");
         self.exposure_seen = false;
 
@@ -873,6 +914,9 @@ impl Engine {
     fn dispatch(&mut self, cmd: Command) -> Reply {
         let ok = || Ok(json!(0));
         match cmd {
+            Command::Loop | Command::Guide { .. } if self.connecting => {
+                Err(CmdError::new(1, "all equipment must be connected first"))
+            }
             Command::Loop => {
                 if self.call(|c, cx, ev| c.start_looping(cx, ev)) {
                     ok()
@@ -881,6 +925,11 @@ impl Engine {
                 }
             }
             Command::StopCapture => {
+                // Already run when the frame it interrupted came back.
+                self.stop.store(false, Ordering::SeqCst);
+                if std::mem::take(&mut self.stop_served) {
+                    return ok();
+                }
                 if !self.call(|c, cx, ev| c.stop_capturing(cx, ev)) {
                     // `RequestStop`: the exposure scheduled is cut short.
                     self.cancel.cancel();
@@ -1042,6 +1091,13 @@ impl Engine {
                     upd
                 });
                 self.queue_moves(&upd.moves);
+                ok()
+            }
+            Command::Connecting(on) => {
+                if on && self.ctrl.capture_active() {
+                    return Err(CmdError::new(1, "cannot connect equipment when capture is active"));
+                }
+                self.connecting = on;
                 ok()
             }
             Command::Tick => {
@@ -1467,6 +1523,7 @@ impl Engine {
             ga: self.ga_view(),
             darks_build: self.darks_view(),
             polar_drift: self.polar_drift_view(),
+            connecting: self.connecting,
         }
     }
 }

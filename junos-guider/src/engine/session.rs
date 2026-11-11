@@ -155,19 +155,19 @@ impl Engine {
         );
     }
 
-    /// A debug-log line.
-    pub(super) fn debug(&mut self, line: &str) {
+    /// A debug-log line (also the daemon's devices' lines).
+    pub fn debug(&mut self, line: &str) {
         let now = self.clock.wall();
         self.dlog.add_line(now, THREAD, line);
     }
 
     /// `pFrame->StatusMsg`.
-    pub(super) fn status(&mut self, msg: &str) {
+    pub fn status(&mut self, msg: &str) {
         self.events.push(EngineEvent::Status(msg.to_string()));
     }
 
     /// `pFrame->Alert`, which PHD2 also writes to the debug log.
-    pub(super) fn alert(&mut self, msg: String, kind: AlertKind) {
+    pub fn alert(&mut self, msg: String, kind: AlertKind) {
         self.debug(&format!("Alert: {msg}"));
         self.events.push(EngineEvent::Alert { msg, kind, button: None, dont_show: None });
     }
@@ -181,7 +181,7 @@ impl Engine {
 
     /// The end of a command or a frame: the profile's getter traces, and
     /// one `ConfigurationChange` when the profile changed.
-    pub(super) fn finish(&mut self) {
+    pub fn finish(&mut self) {
         self.flush_profile();
     }
 
@@ -865,6 +865,9 @@ impl Engine {
             };
             sg.mount_mut().set_name(&name);
             sg.connect(&*dev, &mut mev);
+            // The connect handler centred the AO (`OnButtonConnectStepGuider`),
+            // which zeroes the position kept from a previous connection.
+            sg.zero_current_position();
             AoDev { sg, dev }
         });
         self.emit_mount_events(MountRole::Primary, mev);

@@ -242,4 +242,6 @@ pub struct Snapshot {
     pub ga: Option<GaView>,
     pub darks_build: Option<DarksView>,
     pub polar_drift: Option<PolarDriftView>,
+    /// The daemon is connecting the gear ([`Command::Connecting`](super::Command::Connecting)).
+    pub connecting: bool,
 }

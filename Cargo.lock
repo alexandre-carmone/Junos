@@ -1640,6 +1640,7 @@ dependencies = [
  "flate2",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
