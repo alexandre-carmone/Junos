@@ -138,6 +138,27 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
         });
     }
 
+    // junos-guider's history: the relay's replayed copy is the one the daemon
+    // sent when the relay connected, so ask for the last 300 s again; the
+    // daemon broadcasts the fresh `guider_history`, which replaces the
+    // series. On each rising edge of the guider's attachment, which follows
+    // every /ws (re)connect (the store drops it with the socket, the relay
+    // replays it) and every daemon restart; KStars' `connected` would miss a
+    // browser connecting while no KStars is attached.
+    {
+        let prime_send = send_fn.clone();
+        let guider_state = store.guider_state;
+        let pending = store.guider_pending;
+        let attached = Memo::new(move |_| guider_state.with(Option::is_some));
+        Effect::new(move |was: Option<bool>| {
+            let now = attached.get();
+            if now && was != Some(true) {
+                crate::ws_helpers::guider_rpc(&prime_send, pending, "get_history", serde_json::json!({}));
+            }
+            now
+        });
+    }
+
     // Bind each Ekos module to its *saved* optical train. Without an explicit
     // train_set, Guide::m_Camera stays null and the first guide_start silently
     // no-ops via Guide::calibrate() → KSNotification::error (does not propagate

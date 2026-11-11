@@ -412,14 +412,21 @@ fn App() -> impl IntoView {
     // Effect tracks `connected` so the filter is re-sent after a reconnect
     // (`ws/mod.rs` discards what was queued while offline). The same tab
     // read decides the mount-coordinate poll cadence (`ws/retry.rs`).
+    // With junos-guider attached (the Guide tab's native mode) the guide
+    // frames are its `+J` only: KStars' `+G` would be the same camera twice.
+    // Its state also re-sends the filter after a reconnect when no KStars is
+    // attached (the store drops it with the socket, the relay replays it).
     {
         let send = send.clone();
         let connected = store.connected;
         let mount_fast_poll = store.mount_fast_poll;
+        let guider_state = store.guider_state;
+        let native = Memo::new(move |_| guider_state.with(Option::is_some));
         Effect::new(move |_| {
             let tab = active_tab.get();
             let kinds: &[&str] = match tab {
                 Tab::Focus => &["+F"],
+                Tab::Guide if native.get() => &["+J"],
                 Tab::Guide => &["+G"],
                 Tab::PolarAlign => &["+A"],
                 Tab::Imaging => &["capture", "+S"],
@@ -431,7 +438,7 @@ fn App() -> impl IntoView {
                 payload["max_width"] = serde_json::json!(960);
                 payload["quality"] = serde_json::json!(70);
             }
-            if connected.get() {
+            if connected.get() || native.get() {
                 send(serde_json::json!({ "type": "junos_media_filter", "payload": payload }).to_string());
             }
         });

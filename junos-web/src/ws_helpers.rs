@@ -60,8 +60,6 @@ const GUIDER_RPC_TIMEOUT_MS: u32 = 10_000;
 /// a timeout after 10 s, or [`GuiderRpcError::LOST`] when the socket or the
 /// daemon goes first. Ids are unique to this page, since the relay hands
 /// every browser every reply.
-// First caller: the history request on connect (`ws/mod.rs`, next commit).
-#[allow(dead_code)]
 pub fn guider_rpc(
     send: &SendCmd,
     pending: GuiderPending,
