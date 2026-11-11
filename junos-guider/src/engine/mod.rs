@@ -42,6 +42,7 @@
 pub mod algo;
 pub mod assistant;
 pub mod backlash;
+mod cal_assistant_win;
 pub mod calibration;
 pub mod camera;
 pub mod command;
@@ -98,7 +99,7 @@ use self::windows::{DarksJob, GaCommand};
 use crate::profile::ProfileStore;
 
 pub use self::command::{
-    BookmarkOp, CmdError, Command, DarksBuildKind, Gear, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator,
+    BookmarkOp, CalAssistCmd, CmdError, Command, DarksBuildKind, Gear, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator,
     ScopeGear, ScopeOutput, SingleFrame, Which,
 };
 pub use self::static_pa_win::StaticPaSet;
@@ -259,6 +260,7 @@ pub struct Engine {
     polar_drift: Option<PolarDrift>,
     tools: secondary::Tools,
     static_pa: Option<static_pa_win::StaticPaWin>,
+    cal_assist: Option<cal_assistant_win::CalAssistWin>,
 
     // The logs.
     glog: GuideLog,
@@ -329,6 +331,7 @@ impl Engine {
             polar_drift: None,
             tools: secondary::Tools::default(),
             static_pa: None,
+            cal_assist: None,
             glog: GuideLog::new(),
             dlog: DebugLog::new(now),
             ilog: ImageLogger::new(),
@@ -1253,6 +1256,7 @@ impl Engine {
             }
             Command::Tick => {
                 self.ga_tick();
+                self.cal_assistant_tick();
                 ok()
             }
             Command::SelectStar { x, y } => {
@@ -1360,6 +1364,7 @@ impl Engine {
             Command::StarCrossStop => self.starcross_stop(),
             Command::StaticPaOpen => self.static_pa_open(),
             Command::CometTrainStart => self.comet_train_start(),
+            Command::CalAssistant(c) => self.cal_assistant(c),
             Command::CometTrainStop => self.comet_train_stop(),
             Command::StaticPaRotate => self.static_pa_rotate(),
             Command::StaticPaMark(n) => self.static_pa_mark(n),

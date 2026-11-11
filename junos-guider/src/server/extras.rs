@@ -4,7 +4,7 @@
 //! Guiding Assistant, the darks, the polar drift tool, the logs. Each maps
 //! onto an engine [`Command`] or the profile store; parameters are named
 //! (or positional in the table's order). The tools the engine does not
-//! have yet (drift align, calibration assistant, pier-flip,
+//! have yet (drift align, pier-flip,
 //! bad-pixel editing, a single device's connect) answer
 //! code 1 "not available".
 //!
@@ -22,7 +22,7 @@ use crate::engine::calibration::Calibration;
 use crate::engine::control::DitherMode;
 use crate::engine::log::image_log::ImageLoggerSettings;
 use crate::engine::traits::{PierSide, Point};
-use crate::engine::{BookmarkOp, Command, StaticPaSet, DarksBuildKind, Engine, ManualPointing, Which};
+use crate::engine::{BookmarkOp, CalAssistCmd, Command, StaticPaSet, DarksBuildKind, Engine, ManualPointing, Which};
 use crate::indi::client::Role;
 
 /// PHD2's `pConfig->Global` keys the UI edits through `set_profile_value`
@@ -324,6 +324,29 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
         }
         "pa_static_stop" => command(d, Command::StaticPaClose).await,
         "comet_train_start" => command(d, Command::CometTrainStart).await,
+        "cal_assistant_start" => command(d, Command::CalAssistant(CalAssistCmd::Open)).await,
+        "cal_assistant_set" => {
+            let offset = p.param("offset").and_then(int_param);
+            let dec = p.param("dec").and_then(int_param);
+            let east = p.param("east").and_then(bool_param);
+            command(d, Command::CalAssistant(CalAssistCmd::Set { offset, dec, east })).await
+        }
+        "cal_assistant_location" => {
+            let c = match text(p, "action")? {
+                "save" => {
+                    let single_side = p.param("single_side").and_then(bool_param).unwrap_or(false);
+                    CalAssistCmd::SaveCustom { single_side }
+                }
+                "load" => CalAssistCmd::LoadCustom,
+                "restore" => CalAssistCmd::Restore,
+                _ => return Err(RpcError::invalid_params("expected action param")),
+            };
+            command(d, Command::CalAssistant(c)).await
+        }
+        "cal_assistant_slew" => command(d, Command::CalAssistant(CalAssistCmd::Slew)).await,
+        "cal_assistant_calibrate" => command(d, Command::CalAssistant(CalAssistCmd::Calibrate)).await,
+        "cal_assistant_cancel" => command(d, Command::CalAssistant(CalAssistCmd::Stop)).await,
+        "cal_assistant_stop" => command(d, Command::CalAssistant(CalAssistCmd::Close)).await,
         "comet_train_stop" => command(d, Command::CometTrainStop).await,
         "list_logs" => list_logs(&d.options().engine.log_dir),
         "read_log" => {

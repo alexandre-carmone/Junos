@@ -185,6 +185,24 @@ pub enum BookmarkOp {
     Clear,
 }
 
+/// The Calibration Assistant's controls.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CalAssistCmd {
+    Open,
+    /// The target: meridian offset (degrees), Dec, east of the meridian.
+    Set { offset: Option<i32>, dec: Option<i32>, east: Option<bool> },
+    /// "Save custom" (with its east/west-only box), "Load custom",
+    /// "Restore defaults".
+    SaveCustom { single_side: bool },
+    LoadCustom,
+    Restore,
+    Slew,
+    Calibrate,
+    /// The slew's Cancel.
+    Stop,
+    Close,
+}
+
 /// Everything that changes the engine. The read-only RPCs answer from the
 /// snapshot, without the engine thread.
 pub enum Command {
@@ -323,6 +341,7 @@ pub enum Command {
     /// The comet tool's Start and Stop of training.
     CometTrainStart,
     CometTrainStop,
+    CalAssistant(CalAssistCmd),
 }
 
 impl Command {
@@ -399,6 +418,17 @@ impl Command {
             Command::StaticPaClose => "pa_static_stop",
             Command::CometTrainStart => "comet_train_start",
             Command::CometTrainStop => "comet_train_stop",
+            Command::CalAssistant(c) => match c {
+                CalAssistCmd::Open => "cal_assistant_start",
+                CalAssistCmd::Set { .. } => "cal_assistant_set",
+                CalAssistCmd::SaveCustom { .. } | CalAssistCmd::LoadCustom | CalAssistCmd::Restore => {
+                    "cal_assistant_location"
+                }
+                CalAssistCmd::Slew => "cal_assistant_slew",
+                CalAssistCmd::Calibrate => "cal_assistant_calibrate",
+                CalAssistCmd::Stop => "cal_assistant_cancel",
+                CalAssistCmd::Close => "cal_assistant_stop",
+            },
         }
     }
 }

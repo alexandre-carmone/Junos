@@ -1087,3 +1087,40 @@ fn comet_training_takes_the_rate_from_the_lock_moves() {
     assert!(r.e.snapshot().guider_state != Some(crate::engine::guider::GuiderState::Guiding));
     assert_eq!(r.e.snapshot().tools["comet"]["training"], false);
 }
+
+#[test]
+fn the_calibration_assistant_calibrates_and_grades_it() {
+    use crate::engine::CalAssistCmd as C;
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    r.cmd(Command::CalAssistant(C::Open)).unwrap();
+    let v = r.e.snapshot().tools["cal_assistant"].clone();
+    // RA 0 h, Dec 25°; the simulator's mount cannot slew.
+    assert_eq!(v["current"]["dec"], "+25.0");
+    assert_eq!((v["target"]["offset"].as_i64(), v["target"]["dec"].as_i64()), (Some(5), Some(0)));
+    assert_eq!(v["status"], "Manually move the telescope to a Dec location near 0");
+    assert!(v["explanation"].as_str().unwrap().starts_with("Calibration will be more accurate"));
+    r.cmd(Command::CalAssistant(C::Set { offset: Some(70), dec: Some(-3), east: None })).unwrap();
+    assert_eq!(r.e.snapshot().tools["cal_assistant"]["target"]["offset"], 50);
+    r.cmd(Command::CalAssistant(C::SaveCustom { single_side: true })).unwrap();
+    assert_eq!(r.e.store().profile().get_i32("/scope/CalSlew/TgtDec", 0), -3);
+    // No slew to make: the calibration starts at once.
+    r.cmd(Command::Loop).unwrap();
+    r.step();
+    r.cmd(Command::CalAssistant(C::Calibrate)).unwrap();
+    assert_eq!(r.e.snapshot().tools["cal_assistant"]["status"], "Waiting for calibration to complete");
+    r.run_until(400, |e| matches!(e, EngineEvent::StartCalibration { .. }));
+    r.cmd(Command::Tick).unwrap();
+    r.run_until(800, |e| matches!(e, EngineEvent::CalibrationComplete { .. }));
+    r.step();
+    r.cmd(Command::Tick).unwrap();
+    let v = r.e.snapshot().tools["cal_assistant"].clone();
+    // Dec 25°: graded down for the sky location.
+    assert_eq!(v["verdict"], "Acceptable", "{v}");
+    assert!(v["status"].as_str().unwrap().ends_with("Sky location)"), "{v}");
+    assert!(r.debug_log().contains("CalAsst: acceptable result, ("));
+    // The step size the simulator's profile keeps is far from the
+    // calculator's: the sanity check says so.
+    assert!(v["sanity"].as_str().unwrap().starts_with("Your current calibration parameters"));
+    r.cmd(Command::CalAssistant(C::Close)).unwrap();
+    assert!(r.e.snapshot().tools["cal_assistant"].is_null());
+}

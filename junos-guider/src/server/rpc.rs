@@ -260,6 +260,11 @@ pub static METHODS: &[Method] = &[
     ws("drift_align_start", &[]),
     ws("drift_align_stop", &[]),
     ws("cal_assistant_start", &[]),
+    ws("cal_assistant_set", &["offset", "dec", "east"]),
+    ws("cal_assistant_location", &["action", "single_side"]),
+    ws("cal_assistant_slew", &[]),
+    ws("cal_assistant_calibrate", &[]),
+    ws("cal_assistant_cancel", &[]),
     ws("cal_assistant_stop", &[]),
     ws("pierflip_start", &[]),
     ws("pierflip_stop", &[]),
@@ -1179,7 +1184,7 @@ mod tests {
         use crate::engine::log::image_log::ImageLoggerSettings;
         use crate::engine::scope::DecGuideMode;
         use crate::engine::traits::Dir;
-        use crate::engine::{BookmarkOp, Command as C, StaticPaSet, DarksBuildKind, Gear, SingleFrame, Which};
+        use crate::engine::{BookmarkOp, CalAssistCmd, Command as C, StaticPaSet, DarksBuildKind, Gear, SingleFrame, Which};
         let settle = SettleParams::default();
         let commands = [
             C::Loop,
@@ -1243,6 +1248,13 @@ mod tests {
             C::StaticPaClose,
             C::CometTrainStart,
             C::CometTrainStop,
+            C::CalAssistant(CalAssistCmd::Open),
+            C::CalAssistant(CalAssistCmd::Set { offset: None, dec: None, east: None }),
+            C::CalAssistant(CalAssistCmd::LoadCustom),
+            C::CalAssistant(CalAssistCmd::Slew),
+            C::CalAssistant(CalAssistCmd::Calibrate),
+            C::CalAssistant(CalAssistCmd::Stop),
+            C::CalAssistant(CalAssistCmd::Close),
             C::SaveLock,
             C::RestoreLock,
             C::Bookmark(BookmarkOp::Lock),

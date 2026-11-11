@@ -234,6 +234,7 @@ impl Engine {
         json!({
             "bookmarks": self.tools.bookmarks.iter().map(|b| [b.x, b.y]).collect::<Vec<_>>(),
             "starcross": sct,
+            "cal_assistant": self.cal_assistant_view(),
             "comet": {
                 "training": self.tools.comet.is_some(),
                 "status": comet::status(self.tools.comet.as_ref(), self.now_ms()),
