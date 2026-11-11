@@ -284,18 +284,20 @@ fn algorithm_key(class: MountClass, axis: Axis) -> String {
 
 /// `CreateGuideAlgorithm` plus the setters' profile writes: build what the
 /// stored integer asks for (the axis default for −1 or an unknown value),
-/// persist its effective parameters, then the kind.
+/// persist its effective parameters, then the kind. `guiding_enabled` is
+/// the mount's switch, which Predictive PEC reads when it is built.
 fn build_algorithm(
     class: MountClass,
     axis: Axis,
     stored: i32,
     profile: &mut impl ProfileAccess,
     now: f64,
+    guiding_enabled: bool,
 ) -> Box<dyn GuideAlgorithm> {
     let (algorithm, kind) = {
         let p = &*profile;
         let lookup = |k: &str| p.has(k).then(|| p.get_f64(k, 0.0));
-        algo::make_or_default(stored, axis, class, &lookup, now)
+        algo::make_or_default(stored, axis, class, &lookup, now, guiding_enabled)
     };
     let group = algo::config_path(class, axis, kind);
     for (key, value) in algorithm.params() {
@@ -325,9 +327,9 @@ impl Mount {
     /// `now` is the engine clock, where Predictive PEC starts its time.
     pub fn new(class: MountClass, profile: &mut impl ProfileAccess, now: f64) -> Mount {
         let stored_x = profile.get_i32(&algorithm_key(class, Axis::X), algo::default_kind(Axis::X, class) as i32);
-        let x_algo = build_algorithm(class, Axis::X, stored_x, profile, now);
+        let x_algo = build_algorithm(class, Axis::X, stored_x, profile, now, true);
         let stored_y = profile.get_i32(&algorithm_key(class, Axis::Y), algo::default_kind(Axis::Y, class) as i32);
-        let y_algo = build_algorithm(class, Axis::Y, stored_y, profile, now);
+        let y_algo = build_algorithm(class, Axis::Y, stored_y, profile, now, true);
         Mount {
             class,
             connected: false,
@@ -376,12 +378,13 @@ impl Mount {
     /// so −1 rebuilds even a running default — and persists it.
     pub fn set_guide_algorithm(&mut self, axis: Axis, algorithm: i32, profile: &mut impl ProfileAccess, now: f64) {
         let class = self.class;
+        let enabled = self.guiding_enabled;
         let slot = match axis {
             Axis::X => &mut self.x_algo,
             Axis::Y => &mut self.y_algo,
         };
         if slot.kind() as i32 != algorithm {
-            *slot = build_algorithm(class, axis, algorithm, profile, now);
+            *slot = build_algorithm(class, axis, algorithm, profile, now, enabled);
         }
     }
 

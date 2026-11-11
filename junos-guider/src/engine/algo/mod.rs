@@ -159,23 +159,45 @@ pub fn config_path(mount_class: MountClass, axis: Axis, kind: AlgoKind) -> Strin
 /// What the guider knows about the frame an algorithm is asked about. The
 /// classic algorithms ignore it; the Gaussian process reads the star SNR,
 /// the exposure, the clock and the mount's RA rate and pointing.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AlgoCtx {
     /// The guide star's SNR on this frame.
     pub snr: f64,
-    /// The exposure, seconds.
+    /// The requested exposure, seconds: PHD2's
+    /// `RequestedExposureDuration() / 1000`, whole ms — the single-exposure
+    /// override if one runs, else the exposure setting (the current one
+    /// under auto-exposure) — and 0 with no camera connected. Not the
+    /// measured frame interval.
     pub exposure_s: f64,
     /// The engine clock, seconds.
     pub now: f64,
-    /// The calibration's X rate, px per ms.
+    /// The mount's X rate, px per ms: PHD2's `Mount::xRate()`, the
+    /// Dec-compensated `MountCalibration::x_rate`, not the stored
+    /// calibration's `cal.x_rate`.
     pub x_rate_px_ms: f64,
     /// The calibration's RA guide speed, degrees per second; −1 when unknown
-    /// (PHD2's `CalibrationDetails::raGuideSpeed`).
+    /// (PHD2's `CalibrationDetails::raGuideSpeed`), also the default: 0
+    /// would make the Gaussian process' RA guide rate infinite (or NaN).
     pub ra_guide_speed: f64,
     /// The mount's RA, hours, when the pointing source reports one.
     pub ra_h: Option<f64>,
     /// The mount's pier side.
     pub pier: PierSide,
+}
+
+impl Default for AlgoCtx {
+    /// Everything 0 or unknown, the RA guide speed −1.
+    fn default() -> Self {
+        AlgoCtx {
+            snr: 0.0,
+            exposure_s: 0.0,
+            now: 0.0,
+            x_rate_px_ms: 0.0,
+            ra_guide_speed: -1.0,
+            ra_h: None,
+            pier: PierSide::Unknown,
+        }
+    }
 }
 
 /// A read-only view of stored settings: the value under a key, or `None` to
@@ -296,7 +318,9 @@ pub trait GuideAlgorithm: Send {
 
 /// `Mount::CreateGuideAlgorithm` (`mount.cpp:710`): build `kind` for an axis
 /// at engine clock reading `now`, where the Gaussian process starts its gear
-/// time (PHD2's constructor reads `steady_clock`). `profile` reads a full
+/// time (PHD2's constructor reads `steady_clock`). `guiding_enabled` is the
+/// mount's guiding-output flag, which only the Gaussian process reads (it
+/// does not learn while output is off). `profile` reads a full
 /// profile path (e.g.
 /// `/scope/GuideAlgorithm/X/Hysteresis/minMove`), `None` meaning unset; the
 /// algorithm asks for its keys under its own [`config_path`]. `None` builds
@@ -309,6 +333,7 @@ pub fn make(
     mount_class: MountClass,
     profile: ParamLookup,
     now: f64,
+    guiding_enabled: bool,
 ) -> Box<dyn GuideAlgorithm> {
     // The axis and mount class only pick the profile group; the algorithms
     // behave the same on every axis.
@@ -321,7 +346,7 @@ pub fn make(
         AlgoKind::Lowpass => Box::new(lowpass::Lowpass::new(params)),
         AlgoKind::Lowpass2 => Box::new(lowpass2::Lowpass2::new(params)),
         AlgoKind::ResistSwitch => Box::new(resist_switch::ResistSwitch::new(params)),
-        AlgoKind::GaussianProcess => Box::new(gp::ppec::GaussianProcess::new(params, now)),
+        AlgoKind::GaussianProcess => Box::new(gp::ppec::GaussianProcess::new(params, now, guiding_enabled)),
         AlgoKind::ZFilter => Box::new(zfilter::ZFilter::new(params)),
     }
 }
@@ -330,8 +355,8 @@ pub fn make(
 /// on the integer the profile stores (`/<mountClass>/XGuideAlgorithm` or
 /// `YGuideAlgorithm`): −1 means the axis default, and so does a value
 /// PHD2's factory refuses (outside −1..=6). Built at clock reading `now`
-/// (see [`make`]). Returns the algorithm and the kind to persist under that
-/// key.
+/// with the mount's `guiding_enabled` flag (see [`make`]). Returns the
+/// algorithm and the kind to persist under that key.
 ///
 /// PHD2 does all this only when the axis has no algorithm yet or a different
 /// one (`mount.cpp:600`): asking for the running kind rebuilds nothing, keeps
@@ -344,12 +369,13 @@ pub fn make_or_default(
     mount_class: MountClass,
     profile: ParamLookup,
     now: f64,
+    guiding_enabled: bool,
 ) -> (Box<dyn GuideAlgorithm>, AlgoKind) {
     let kind = match AlgoKind::from_i32(stored) {
         Some(AlgoKind::None) | None => default_kind(axis, mount_class),
         Some(kind) => kind,
     };
-    (make(kind, axis, mount_class, profile, now), kind)
+    (make(kind, axis, mount_class, profile, now, guiding_enabled), kind)
 }
 
 /// The algorithms the Brain offers for an axis, in PHD2's order
@@ -494,7 +520,7 @@ mod tests {
 
     #[test]
     fn factory() {
-        let a = make(AlgoKind::None, Axis::X, MountClass::Scope, &no_params, 0.0);
+        let a = make(AlgoKind::None, Axis::X, MountClass::Scope, &no_params, 0.0, true);
         assert_eq!(a.kind(), AlgoKind::Identity);
         // Every kind on every axis, Predictive PEC on Dec and on an AO
         // included: PHD2's factory checks neither.
@@ -513,7 +539,7 @@ mod tests {
                 (Axis::X, MountClass::StepGuider),
                 (Axis::Y, MountClass::StepGuider),
             ] {
-                let a = make(k, axis, mc, &no_params, 0.0);
+                let a = make(k, axis, mc, &no_params, 0.0, true);
                 assert_eq!(a.kind(), k);
                 assert_eq!(a.class_name(), k.class_name());
             }
@@ -529,24 +555,24 @@ mod tests {
             "/scope/GuideAlgorithm/Y/Hysteresis/aggression" => Some(0.3),
             _ => None,
         };
-        let a = make(AlgoKind::ResistSwitch, Axis::Y, MountClass::Scope, &profile, 0.0);
+        let a = make(AlgoKind::ResistSwitch, Axis::Y, MountClass::Scope, &profile, 0.0, true);
         assert_eq!(a.min_move(), 0.4);
-        let a = make(AlgoKind::Hysteresis, Axis::Y, MountClass::StepGuider, &profile, 0.0);
+        let a = make(AlgoKind::Hysteresis, Axis::Y, MountClass::StepGuider, &profile, 0.0, true);
         assert_eq!(a.get_param("aggression"), Some(1.2));
         assert_eq!(a.min_move(), 0.2);
         // Predictive PEC's group keeps the space in its class name.
         let profile = |k: &str| (k == "/scope/GuideAlgorithm/X/Predictive PEC/gp_min_move").then_some(0.3);
-        let a = make(AlgoKind::GaussianProcess, Axis::X, MountClass::Scope, &profile, 0.0);
+        let a = make(AlgoKind::GaussianProcess, Axis::X, MountClass::Scope, &profile, 0.0, true);
         assert_eq!(a.min_move(), 0.3);
         // A fallback reads the default algorithm's own group.
         let profile = |k: &str| (k == "/stepguider/GuideAlgorithm/X/Hysteresis/minMove").then_some(0.33);
-        let (a, _) = make_or_default(99, Axis::X, MountClass::StepGuider, &profile, 0.0);
+        let (a, _) = make_or_default(99, Axis::X, MountClass::StepGuider, &profile, 0.0, true);
         assert_eq!(a.min_move(), 0.33);
     }
 
     #[test]
     fn summaries() {
-        let algo = |k| make(k, Axis::X, MountClass::Scope, &no_params, 0.0).settings_summary();
+        let algo = |k| make(k, Axis::X, MountClass::Scope, &no_params, 0.0, true).settings_summary();
         // Identity's newline ends the X line: "X guide algorithm = None, \n".
         assert_eq!(algo(AlgoKind::None), "\n");
         assert_eq!(algo(AlgoKind::Hysteresis), "Hysteresis = 0.100, Aggression = 0.700, Minimum move = 0.200\n");
@@ -559,20 +585,20 @@ mod tests {
     #[test]
     fn make_or_default_falls_back() {
         // −1 and the values PHD2's factory refuses take the axis default.
-        let (a, k) = make_or_default(-1, Axis::Y, MountClass::Scope, &no_params, 0.0);
+        let (a, k) = make_or_default(-1, Axis::Y, MountClass::Scope, &no_params, 0.0, true);
         assert_eq!((a.kind(), k), (AlgoKind::ResistSwitch, AlgoKind::ResistSwitch));
-        let (a, k) = make_or_default(7, Axis::X, MountClass::StepGuider, &no_params, 0.0);
+        let (a, k) = make_or_default(7, Axis::X, MountClass::StepGuider, &no_params, 0.0, true);
         assert_eq!((a.kind(), k), (AlgoKind::Hysteresis, AlgoKind::Hysteresis));
-        let (a, k) = make_or_default(-2, Axis::Y, MountClass::Scope, &no_params, 0.0);
+        let (a, k) = make_or_default(-2, Axis::Y, MountClass::Scope, &no_params, 0.0, true);
         assert_eq!((a.kind(), k), (AlgoKind::ResistSwitch, AlgoKind::ResistSwitch));
         // Any valid kind is built and kept, offered on that axis or not.
-        let (a, k) = make_or_default(0, Axis::X, MountClass::Scope, &no_params, 0.0);
+        let (a, k) = make_or_default(0, Axis::X, MountClass::Scope, &no_params, 0.0, true);
         assert_eq!((a.kind(), k), (AlgoKind::Identity, AlgoKind::Identity));
-        let (a, k) = make_or_default(6, Axis::X, MountClass::StepGuider, &no_params, 0.0);
+        let (a, k) = make_or_default(6, Axis::X, MountClass::StepGuider, &no_params, 0.0, true);
         assert_eq!((a.kind(), k), (AlgoKind::ZFilter, AlgoKind::ZFilter));
-        let (a, k) = make_or_default(5, Axis::Y, MountClass::Scope, &no_params, 0.0);
+        let (a, k) = make_or_default(5, Axis::Y, MountClass::Scope, &no_params, 0.0, true);
         assert_eq!((a.kind(), k), (AlgoKind::GaussianProcess, AlgoKind::GaussianProcess));
-        let (a, k) = make_or_default(3, Axis::X, MountClass::Scope, &no_params, 0.0);
+        let (a, k) = make_or_default(3, Axis::X, MountClass::Scope, &no_params, 0.0, true);
         assert_eq!((a.kind(), k), (AlgoKind::Lowpass2, AlgoKind::Lowpass2));
     }
 
@@ -580,7 +606,7 @@ mod tests {
     fn trait_defaults_and_hooks() {
         // Identity has no min-move and no params; the base defaults apply
         // but for its summary.
-        let mut a = make(AlgoKind::Identity, Axis::X, MountClass::Scope, &no_params, 0.0);
+        let mut a = make(AlgoKind::Identity, Axis::X, MountClass::Scope, &no_params, 0.0, true);
         assert_eq!(a.min_move(), -1.0);
         assert!(a.set_min_move(0.3));
         assert!(a.param_names().is_empty());
@@ -591,7 +617,7 @@ mod tests {
 
         // The hooks that reset drop Hysteresis' last move; the others keep it.
         let ctx = AlgoCtx::default();
-        let mut h = make(AlgoKind::Hysteresis, Axis::X, MountClass::Scope, &no_params, 0.0);
+        let mut h = make(AlgoKind::Hysteresis, Axis::X, MountClass::Scope, &no_params, 0.0, true);
         let prime = |h: &mut Box<dyn GuideAlgorithm>| {
             h.result(1.0, &ctx);
         };
