@@ -17,7 +17,9 @@ pub struct Config {
 
     /// PHD2 instance number: the event server listens on 4400 + instance - 1
     /// and the config file is suffixed with the instance, like PHD2's `-i`.
-    #[arg(long, env = "GUIDER_INSTANCE", default_value_t = 1)]
+    /// Up to 61136, the last that gives a port.
+    #[arg(long, env = "GUIDER_INSTANCE", default_value_t = 1,
+          value_parser = clap::value_parser!(u32).range(0..=61136))]
     pub instance: u32,
 
     /// Event-server port override (0 = an ephemeral port, for the tests).
@@ -56,15 +58,31 @@ pub struct Config {
     #[arg(long, value_name = "FILE")]
     pub save: Option<PathBuf>,
 
-    /// Reset every setting to its default before starting: PHD2's `-R`.
+    /// Reset every setting to its default before starting, deleting the
+    /// profiles' dark libraries and defect maps: PHD2's `-R`.
     #[arg(long, default_value_t = false)]
     pub reset: bool,
 }
 
 impl Config {
-    /// The event-server port: `--server-port` or `4400 + instance - 1`.
+    /// The event-server port: `--server-port` or `4400 + instance - 1`
+    /// (event_server.cpp:2588), so instance 0 listens on 4399 as PHD2's does.
     pub fn event_server_port(&self) -> u16 {
-        self.server_port.unwrap_or(4400 + self.instance.saturating_sub(1) as u16)
+        self.server_port.unwrap_or((4399 + self.instance) as u16)
+    }
+
+    /// Where the dark libraries and defect maps live: `<--data-dir>/darks`,
+    /// else `$XDG_DATA_HOME/junos-guider/darks`, else
+    /// `~/.local/share/junos-guider/darks`.
+    pub fn darks_dir(&self) -> PathBuf {
+        if let Some(dir) = &self.data_dir {
+            return PathBuf::from(dir).join("darks");
+        }
+        let xdg = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute());
+        let base = xdg
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+            .unwrap_or_else(|| PathBuf::from("."));
+        base.join("junos-guider").join("darks")
     }
 
     /// Where the profile store lives: `--data-dir`, else

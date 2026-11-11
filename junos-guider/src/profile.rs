@@ -65,6 +65,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 
 use crate::engine::calibration::ProfileAccess;
+use crate::engine::darks::{dark_lib_file_name, defect_map_file_name};
 use crate::engine::log::cfmt::{fmt_f, fmt_g};
 
 /// `PhdConfig::DefaultProfileName`.
@@ -330,6 +331,28 @@ impl ProfileStore {
         self.clear();
         self.initialize_profile();
         self.is_new_instance = true;
+    }
+
+    /// `PhdApp::ResetConfiguration` (PHD2's `-R`): the dark library and the
+    /// defect map of each profile, from `darks_dir`, then
+    /// [`delete_all`](Self::delete_all). Quirk kept: PHD2 counts ids from 0
+    /// to `NumProfiles() - 1` instead of taking the profiles' own, so a lone
+    /// profile 1 keeps its files. The defect map's master darks stay, as in
+    /// PHD2.
+    pub fn reset_configuration(&mut self, darks_dir: &Path, instance: u32) {
+        for id in 0..self.num_profiles() as i32 {
+            let lib = darks_dir.join(dark_lib_file_name(instance as i32, id));
+            if lib.exists() {
+                self.debug(format!("Removing dark library file: {}", lib.display()));
+                let _ = fs::remove_file(&lib);
+            }
+            let map = darks_dir.join(defect_map_file_name(instance as i32, id));
+            if map.exists() {
+                self.debug(format!("Removing defect map file: {}", map.display()));
+                let _ = fs::remove_file(&map);
+            }
+        }
+        self.delete_all();
     }
 
     /// `GetCurrentProfileId`.
@@ -1447,6 +1470,36 @@ mod tests {
         assert!(s.is_new_instance());
         assert_eq!(names(&s), ["My Equipment=1"]);
         assert_eq!(s.save_all(), "PHD Config 1\n/profile/1/name\t1\tMy Equipment\n/currentProfile\t1\t1\n");
+    }
+
+    #[test]
+    fn reset_deletes_the_dark_files_of_ids_0_to_n_minus_1() {
+        let d = dir("reset");
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        let files = |id: i32| [dark_lib_file_name(2, id), defect_map_file_name(2, id)];
+        for id in 0..=2 {
+            for f in files(id) {
+                fs::write(d.join(f), "x").unwrap();
+            }
+        }
+        fs::write(d.join("PHD2_defect_map_master_2_1.fit"), "x").unwrap();
+        let mut s = fresh();
+        s.create_profile("Second");
+        s.take_debug();
+        s.reset_configuration(&d, 2);
+        // Two profiles: ids 0 and 1 go, 2 stays, the master dark stays.
+        for id in 0..=2 {
+            for f in files(id) {
+                assert_eq!(d.join(&f).exists(), id == 2, "{f}");
+            }
+        }
+        assert!(d.join("PHD2_defect_map_master_2_1.fit").exists());
+        let debug = s.take_debug();
+        let lib = d.join("PHD2_dark_lib_2_0.fit");
+        assert_eq!(debug[0], format!("Removing dark library file: {}", lib.display()));
+        assert!(debug.contains(&"Deleting all configuration data".to_string()));
+        assert_eq!(names(&s), ["My Equipment=1"]);
     }
 
     #[test]

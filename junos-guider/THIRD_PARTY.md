@@ -9,6 +9,13 @@ workspace license (GPL-3.0-or-later), which the BSD-3-Clause permits.
 
 Copyright holders of the ported code:
 
+- Copyright (c) 2006-2010 Craig Stark, and Copyright (c) 2012 Bret McKee
+  (the PHD Guiding code PHD2 grew from, heading `src/phd.cpp`,
+  `src/phdconfig.cpp`, `src/myframe.cpp`, `src/scope.cpp`, `src/mount.cpp`,
+  `src/guider.cpp` and others). Their license's clause 3 reads "Neither the
+  name of Craig Stark, Stark Labs nor the names of its contributors may be
+  used to endorse or promote products derived from this software without
+  specific prior written permission."
 - Copyright (c) 2013-2019, Open PHD Guiding development team
   (`src/*.cpp` — guide algorithms by Bret McKee and Craig Stark, star finding,
   calibration, backlash compensation, Guiding Assistant, polar tools, logs,
