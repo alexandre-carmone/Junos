@@ -3,9 +3,11 @@
 //! walks UNINITIALIZED → SELECTING → SELECTED → CALIBRATING_PRIMARY →
 //! CALIBRATING_SECONDARY → CALIBRATED → GUIDING, and hands back the moves
 //! PHD2 schedules (`SchedulePrimaryMove`, `ScheduleAxisMove`) for the engine
-//! to make before the next exposure. It owns the lock position and the pause
-//! state (PHD2's `Guider::m_paused`, which `MyFrame::SetPaused` wraps with
-//! the events and the exposure restart).
+//! to make before the next exposure. It owns the lock position (moved by a
+//! dither with the fast recenter after it, or shifted at a set rate for a
+//! comet), the measurement mode of the Guiding Assistant's backlash test,
+//! and the pause state (PHD2's `Guider::m_paused`, which `MyFrame::SetPaused`
+//! wraps with the events and the exposure restart).
 //!
 //! The mounts come in through [`GuiderMount`] — the primary (`pMount`: the
 //! AO when there is one, else the scope) and the secondary (`pSecondaryMount`:
@@ -22,9 +24,9 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::algo::AlgoCtx;
-use super::calibration::{Adjustment, ProfileAccess, ScopePointing};
+use super::calibration::{Adjustment, ProfileAccess, ScopePointing, degrees};
 use super::image::UsImage;
-use super::log::cfmt::fmt_f;
+use super::log::cfmt::{fmt_f, fmt_gp};
 use super::mount::{AlertKind, GuiderOffset, Mount, MountEvent, PointingSource, stopwatch_seconds};
 use super::multistar::{
     BoxState, FindParams, FrameErrorInfo, GuidingView, MAX_SEARCH_REGION, MIN_SEARCH_REGION, MultiStar,
@@ -32,7 +34,7 @@ use super::multistar::{
 };
 use super::scope::{CalibrationEnv, CalibrationNext, Scope};
 use super::star::{AutoFindParams, FindResult, Star};
-use super::traits::{Dir, MoveOpts, Point, Rect};
+use super::traits::{Dir, MoveOpts, Parity, Point, Rect};
 
 /// Profile keys the guider itself reads (the star settings are
 /// [`multistar::keys`](super::multistar::keys)).
@@ -112,6 +114,31 @@ impl AppState {
             AppState::Paused => "Paused",
             AppState::Looping => "Looping",
         }
+    }
+}
+
+/// PHD2's `GRAPH_UNITS`, the unit of a lock shift rate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShiftUnits {
+    Pixels = 0,
+    Arcsec = 1,
+}
+
+/// PHD2's `LockPosShiftParams`: the lock shift as set (comet tracking).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LockShiftParams {
+    pub enabled: bool,
+    /// Per hour, in `units`.
+    pub rate: Point,
+    pub units: ShiftUnits,
+    /// The rate is along RA and Dec rather than the camera's X and Y.
+    pub mount_coords: bool,
+}
+
+impl Default for LockShiftParams {
+    /// `Guider::Guider`'s: off, no rate, ″/hr along RA and Dec.
+    fn default() -> Self {
+        LockShiftParams { enabled: false, rate: Point::default(), units: ShiftUnits::Arcsec, mount_coords: true }
     }
 }
 
@@ -206,6 +233,15 @@ pub enum GuiderEvent {
     LockPositionSet(Point),
     /// `LockPositionLost`.
     LockPositionLost,
+    /// `LockPositionShiftLimitReached`: the shifted lock left the frame's
+    /// valid area, and the shift was turned off.
+    LockShiftLimitReached,
+    /// `GuidingAssistant::NotifyBacklashStep`: a guiding frame of the
+    /// backlash measurement, the star there; no guide move was made.
+    BacklashStep(Point),
+    /// `GuidingAssistant::NotifyBacklashError`: guiding ended during the
+    /// measurement, which ends it.
+    BacklashError,
     /// A mount began calibrating: the guide log's calibration header and the
     /// `StartCalibration` event.
     StartCalibration(MountRole),
@@ -486,18 +522,52 @@ enum CalStep {
     Failed,
 }
 
-/// The lock position: PHD2's `PHD_Point`, whose coordinates outlive an
-/// invalidation.
+/// The lock position: PHD2's `ShiftPoint`, whose coordinates outlive an
+/// invalidation and can drift at a set rate from where they were last set.
 #[derive(Clone, Copy, Debug, Default)]
 struct Lock {
     x: f64,
     y: f64,
     valid: bool,
+    /// Where and when (UTC ms) the shift started.
+    x0: f64,
+    y0: f64,
+    t0: i64,
+    /// Camera px per second; `None` when not shifting.
+    rate: Option<Point>,
 }
 
 impl Lock {
     fn point(&self) -> Point {
         Point::new(self.x, self.y)
+    }
+
+    /// `SetXY`: valid there, and any shift starts over from there.
+    fn set_xy(&mut self, x: f64, y: f64, now_ms: i64) {
+        (self.x, self.y, self.valid) = (x, y, true);
+        self.begin_shift(now_ms);
+    }
+
+    /// `BeginShift`.
+    fn begin_shift(&mut self, now_ms: i64) {
+        if self.valid {
+            (self.x0, self.y0, self.t0) = (self.x, self.y, now_ms);
+        }
+    }
+
+    /// `SetShiftRate`.
+    fn set_shift_rate(&mut self, rate: Point, now_ms: i64) {
+        self.rate = Some(rate);
+        self.begin_shift(now_ms);
+    }
+
+    /// `UpdateShift`: where the shift has taken it by now.
+    fn update_shift(&mut self, now_ms: i64) {
+        if let (true, Some(r)) = (self.valid, self.rate) {
+            let dt = (now_ms - self.t0) as f64 / 1000.0;
+            self.x = self.x0 + r.x * dt;
+            self.y = self.y0 + r.y * dt;
+        }
     }
 }
 
@@ -535,6 +605,11 @@ pub struct Guider {
     fast_recenter_enabled: bool,
     /// `None` when not recentering (`m_ditherRecenterRemaining` invalid).
     recenter: Option<Recenter>,
+    lock_shift: LockShiftParams,
+    /// `m_userMultiStarMode`: the multi-star mode the lock shift put aside.
+    user_multi_star: bool,
+    /// `m_measurementMode`: guiding frames go to the Guiding Assistant.
+    measurement_mode: bool,
     force_full_frame: bool,
     auto_sel_downsample: u32,
     /// `m_pCurrentImage`: the last frame, an empty one at first.
@@ -566,6 +641,11 @@ impl Guider {
             ignore_lost_star_looping: false,
             fast_recenter_enabled: true,
             recenter: None,
+            lock_shift: LockShiftParams::default(),
+            // Read in `Guider::Guider`, where the virtual call still answers
+            // the base class' false.
+            user_multi_star: false,
+            measurement_mode: false,
             force_full_frame: false,
             auto_sel_downsample: 0,
             current_image: Arc::new(UsImage::default()),
@@ -1133,7 +1213,7 @@ impl Guider {
                 )));
             }
         }
-        self.lock = Lock { x: pos.x, y: pos.y, valid: true };
+        self.lock.set_xy(pos.x, pos.y, cx.now_ms);
         if self.multistar.cfg.multi_star {
             debug(ev, "MultiStar: stabilizing after lock position change");
         }
@@ -1290,6 +1370,210 @@ impl Guider {
         }
         out.saturation_adu = res.saturation_adu_set;
         (selected, out)
+    }
+
+    // ----------------------------------------------------------- lock shift
+
+    /// `GetLockPosShiftParams`.
+    pub fn lock_shift_params(&self) -> LockShiftParams {
+        self.lock_shift
+    }
+
+    /// `LockPosition().ShiftRate()`: the shift in camera px per second, as
+    /// last worked out; `None` before that.
+    pub fn lock_shift_rate(&self) -> Option<Point> {
+        self.lock.rate
+    }
+
+    /// `SetLockPosShiftRate`: a rate per hour in `units`, along RA and Dec
+    /// when `mount_coords`. Once the camera angle is known (CALIBRATED or
+    /// GUIDING) it is turned into camera px per second at once, and the
+    /// guide log notes it when the shift is on.
+    pub fn set_lock_shift_rate(
+        &mut self,
+        rate: Point,
+        units: ShiftUnits,
+        mount_coords: bool,
+        cx: &mut GuiderCx,
+        ev: &mut Vec<GuiderEvent>,
+    ) {
+        debug(
+            ev,
+            format!(
+                "SetLockPosShiftRate: rate = {},{} units = {} isMountCoords = {}",
+                fmt_f(rate.x, 2),
+                fmt_f(rate.y, 2),
+                units as i32,
+                mount_coords as i32
+            ),
+        );
+        (self.lock_shift.rate, self.lock_shift.units, self.lock_shift.mount_coords) = (rate, units, mount_coords);
+        if matches!(self.state, GuiderState::Calibrated | GuiderState::Guiding) {
+            self.update_lock_shift_camera_coords(cx, ev);
+            if self.lock_shift.enabled {
+                self.log_lock_shift(ev);
+            }
+        }
+    }
+
+    /// `EnableLockPosShift`. Turning it on puts multi-star guiding aside
+    /// (the secondaries would hold the lock back) and starts the shift from
+    /// the lock as it is; turning it off restores the user's mode, which may
+    /// re-select the star ([`Guider::set_multi_star_mode`], whose update is
+    /// returned). The guide log notes it once the camera angle is known.
+    pub fn enable_lock_shift(&mut self, enable: bool, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) -> GuideUpdate {
+        let mut out = GuideUpdate::default();
+        if enable == self.lock_shift.enabled {
+            return out;
+        }
+        debug(ev, format!("EnableLockPosShift: enable = {}", enable as i32));
+        self.lock_shift.enabled = enable;
+        if enable {
+            self.user_multi_star = self.multistar.cfg.multi_star;
+            out = self.set_multi_star_mode(false, cx, ev);
+            debug(ev, "Multi-star mode disabled for comet tracking");
+            self.lock.begin_shift(cx.now_ms);
+        } else {
+            out = self.set_multi_star_mode(self.user_multi_star, cx, ev);
+            debug(ev, "Comet tracking disabled, user's multi-star mode restored");
+        }
+        if matches!(self.state, GuiderState::Calibrated | GuiderState::Guiding) {
+            self.log_lock_shift(ev);
+        }
+        out
+    }
+
+    /// `ShiftLockPosition`: move the lock along the shift; true when that
+    /// left the valid lock area.
+    fn shift_lock_position(&mut self, now_ms: i64, ev: &mut Vec<GuiderEvent>) -> bool {
+        self.lock.update_shift(now_ms);
+        let valid = self.is_valid_lock_position(self.lock.point());
+        debug(
+            ev,
+            format!(
+                "ShiftLockPos: new pos = {}, {} valid={}",
+                fmt_f(self.lock.x, 2),
+                fmt_f(self.lock.y, 2),
+                valid as i32
+            ),
+        );
+        !valid
+    }
+
+    /// `UpdateLockPosShiftCameraCoords`: the rate in camera px per second.
+    /// Along RA and Dec it goes through the scope's calibration (the scope
+    /// behind an AO); in ″ it is taken as an ephemeris rate, so the axes'
+    /// parities apply when known and RA is scaled by cos(Dec) when the
+    /// pointing source knows it, then divided by the image scale. PHD2's
+    /// "no shift rate set" branch is left out: its rate is always set.
+    fn update_lock_shift_camera_coords(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        let p = self.lock_shift;
+        let arcsec = p.units == ShiftUnits::Arcsec;
+        let mut rate = Point::default();
+        if p.mount_coords {
+            let mut radec = p.rate;
+            debug(
+                ev,
+                format!(
+                    "UpdateLockPosShiftCameraCoords: shift rate mount coords = {},{}",
+                    fmt_f(radec.x, 2),
+                    fmt_f(radec.y, 2)
+                ),
+            );
+            // TheScope(): the secondary when the primary is an AO.
+            let ao = cx.primary.as_deref().is_some_and(|m| m.mount().is_step_guider());
+            let pointing = cx.pointing;
+            let (scope, _) = cx.split(if ao { MountRole::Secondary } else { MountRole::Primary });
+            if let Some(scope) = scope {
+                let scope = scope.mount();
+                if arcsec {
+                    let (ra_parity, dec_parity) = (scope.ra_parity(), scope.dec_parity());
+                    if ra_parity != Parity::Unknown || dec_parity != Parity::Unknown {
+                        if ra_parity == Parity::Odd {
+                            radec.x = -radec.x;
+                        }
+                        if dec_parity == Parity::Odd {
+                            radec.y = -radec.y;
+                        }
+                        debug(
+                            ev,
+                            format!(
+                                "UpdateLockPosShiftCameraCoords: after parity adjustment: {},{}",
+                                fmt_f(radec.x, 2),
+                                fmt_f(radec.y, 2)
+                            ),
+                        );
+                    }
+                    if let Some(dec) = pointing.and_then(|p| p.declination_radians()) {
+                        radec.x *= dec.cos();
+                        debug(
+                            ev,
+                            format!(
+                                "UpdateLockPosShiftCameraCoords: RA shift rate adjusted for declination {}",
+                                fmt_f(degrees(dec), 1)
+                            ),
+                        );
+                    }
+                }
+                let role = if ao { MountRole::Secondary } else { MountRole::Primary };
+                let mut mev = Vec::new();
+                rate = scope.mount_to_camera(radec, true, &mut mev);
+                wrap(ev, role, mev);
+            }
+        } else {
+            rate = p.rate;
+        }
+        debug(
+            ev,
+            format!(
+                "UpdateLockPosShiftCameraCoords: shift rate camera coords = {},{} {}/hr",
+                fmt_f(rate.x, 2),
+                fmt_f(rate.y, 2),
+                if arcsec { "arcsec" } else { "pixels" }
+            ),
+        );
+        if arcsec {
+            rate = Point::new(rate.x / cx.cal_env.image_scale, rate.y / cx.cal_env.image_scale);
+        }
+        rate = Point::new(rate.x / 3600.0, rate.y / 3600.0);
+        debug(
+            ev,
+            format!("UpdateLockPosShiftCameraCoords: shift rate {},{} px/sec", fmt_gp(rate.x, 2), fmt_gp(rate.y, 2)),
+        );
+        self.lock.set_shift_rate(rate, cx.now_ms);
+    }
+
+    /// `GuidingLog::NotifyLockShiftParams`: the `LOCK SHIFT` line, the rate
+    /// as set and in camera px per hour.
+    fn log_lock_shift(&self, ev: &mut Vec<GuiderEvent>) {
+        let p = &self.lock_shift;
+        let mut line = format!("LOCK SHIFT, enabled = {} ", p.enabled as i32);
+        if p.enabled {
+            let cam = self.lock.rate.unwrap_or_default();
+            line += &format!(
+                "{} rate ({},{}) {}/hr ({},{}) px/hr",
+                if p.mount_coords { "RA,Dec" } else { "X,Y" },
+                fmt_f(p.rate.x, 2),
+                fmt_f(p.rate.y, 2),
+                if p.units == ShiftUnits::Arcsec { "arc-sec" } else { "pixels" },
+                fmt_f(cam.x * 3600.0, 2),
+                fmt_f(cam.y * 3600.0, 2)
+            );
+        }
+        ev.push(GuiderEvent::Info(line));
+    }
+
+    /// `EnableMeasurementMode`: from GUIDING, the frames go to the Guiding
+    /// Assistant's backlash measurement ([`GuiderEvent::BacklashStep`])
+    /// instead of the mount, until it is turned off or guiding ends
+    /// ([`GuiderEvent::BacklashError`]). Turning it on in another state
+    /// changes nothing.
+    pub fn enable_measurement_mode(&mut self, enable: bool) {
+        if !enable {
+            self.measurement_mode = false;
+        } else if self.state == GuiderState::Guiding {
+            self.measurement_mode = true;
+        }
     }
 
     // ------------------------------------------------------- error averages
@@ -1466,6 +1750,17 @@ impl Guider {
                 break 'frame true;
             }
 
+            if self.lock_shift.enabled && self.is_guiding() && self.shift_lock_position(cx.now_ms, ev) {
+                ev.push(GuiderEvent::LockShiftLimitReached);
+                ev.push(GuiderEvent::Alert {
+                    msg: "Shifted lock position outside allowable area. Lock Position Shift disabled.".into(),
+                    kind: AlertKind::Warning,
+                });
+                // From GUIDING a multi-star re-selection stops at SELECTED,
+                // so nothing of its own frame comes back here.
+                out = self.enable_lock_shift(false, cx, ev);
+            }
+
             let frame = self.current_image.frame_num;
             let u = match self.update_current_position(cx, ev) {
                 Ok(u) => u,
@@ -1578,10 +1873,18 @@ impl Guider {
                     }
                     self.set_state(Guiding, cx, ev);
                     self.notify_guiding_started(cx, ev);
+                    // The camera angle is known now.
+                    self.update_lock_shift_camera_coords(cx, ev);
+                    if self.lock_shift.enabled {
+                        self.log_lock_shift(ev);
+                    }
                     self.check_calibration_auto_load(cx, ev);
                 }
                 Guiding => match self.recenter {
                     Some(rc) => self.recenter_step(rc, &mut out, cx, ev),
+                    None if self.measurement_mode => {
+                        ev.push(GuiderEvent::BacklashStep(self.multistar.primary().position()));
+                    }
                     // PHD2's star deflection logger is compiled out.
                     None => schedule(&mut out, ScheduledMove::Offset { ofs, opts: MoveOpts::GUIDE_STEP }, cx, ev),
                 },
@@ -1593,6 +1896,10 @@ impl Guider {
         // While calibrating the mount keeps the status line.
         if failed && self.state != CalibratingPrimary && self.state != CalibratingSecondary {
             ev.push(GuiderEvent::Status(status.clone()));
+        }
+        if self.measurement_mode && self.state != Guiding {
+            ev.push(GuiderEvent::BacklashError);
+            self.measurement_mode = false;
         }
         debug(ev, image_display_line(&self.current_image, cx.gamma));
         debug(ev, format!("UpdateGuideState exits: {status}"));
@@ -1739,6 +2046,29 @@ mod tests {
         }
     }
 
+    /// A mount that reports its declination only.
+    struct Pointing {
+        dec: f64,
+    }
+
+    impl PointingSource for Pointing {
+        fn coordinates(&self) -> Option<(f64, f64, f64)> {
+            Some((0.0, self.dec, 0.0))
+        }
+        fn pier_side(&self) -> PierSide {
+            PierSide::Unknown
+        }
+        fn guide_rates(&self) -> Option<(f64, f64)> {
+            None
+        }
+        fn is_slewing(&self) -> bool {
+            false
+        }
+        fn can_report_position(&self) -> bool {
+            false
+        }
+    }
+
     /// Records the pulses; the bench then moves the star by them.
     #[derive(Default)]
     struct Pulses(Vec<(Dir, u32)>);
@@ -1807,6 +2137,7 @@ mod tests {
         now_ms: i64,
         frame: u32,
         busy: bool,
+        pointing: Option<Pointing>,
         ev: Vec<GuiderEvent>,
         /// What the scope said while the bench made the moves.
         mev: Vec<MountEvent>,
@@ -1850,6 +2181,7 @@ mod tests {
                 now_ms: 1_700_000_000_000,
                 frame: 0,
                 busy: false,
+                pointing: None,
                 ev,
                 mev: Vec::new(),
             }
@@ -1860,7 +2192,7 @@ mod tests {
                 primary: Some(&mut self.scope),
                 secondary: None,
                 profile: &mut self.profile,
-                pointing: None,
+                pointing: self.pointing.as_ref().map(|p| p as &dyn PointingSource),
                 cal_env: &self.env,
                 scope_pointing: &self.sp,
                 algo: &self.algo,
@@ -2378,6 +2710,132 @@ mod tests {
         assert_eq!(b.profile.get_i32(FAST_RECENTER_KEY, -1), 0);
         let upd = b.frame();
         assert!(matches!(upd.moves[..], [ScheduledMove::Offset { opts: MoveOpts::GUIDE_STEP, .. }]));
+    }
+
+    fn infos(b: &Bench) -> Vec<&str> {
+        b.ev.iter()
+            .filter_map(|e| match e {
+                GuiderEvent::Info(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_lock_shifts_at_the_set_rate() {
+        let mut b = guiding_at(Point::new(100.0, 100.0));
+        let lock0 = b.guider.lock_position().unwrap();
+        b.ev.clear();
+        // 36 px/hr right, 72 px/hr up, on the camera's axes.
+        b.call(|g, cx, ev| g.set_lock_shift_rate(Point::new(36.0, -72.0), ShiftUnits::Pixels, false, cx, ev));
+        let rate = b.guider.lock_shift_rate().unwrap();
+        assert!((rate.x - 0.01).abs() < 1e-15 && (rate.y + 0.02).abs() < 1e-15, "{rate:?}");
+        assert!(b.debug("UpdateLockPosShiftCameraCoords: shift rate camera coords = 36.00,-72.00 pixels/hr"));
+        assert!(b.debug("UpdateLockPosShiftCameraCoords: shift rate 0.01,-0.02 px/sec"));
+        assert!(infos(&b).is_empty());
+        b.call(|g, cx, ev| {
+            g.enable_lock_shift(true, cx, ev);
+        });
+        assert!(b.debug("Multi-star mode disabled for comet tracking"));
+        assert_eq!(infos(&b), ["LOCK SHIFT, enabled = 1 X,Y rate (36.00,-72.00) pixels/hr (36.00,-72.00) px/hr"]);
+        assert!(b.guider.lock_shift_params().enabled);
+
+        for _ in 0..10 {
+            b.frame();
+        }
+        // 20 s later.
+        let lock = b.guider.lock_position().unwrap();
+        assert!((lock.x - lock0.x - 0.2).abs() < 1e-9 && (lock.y - lock0.y + 0.4).abs() < 1e-9, "{lock:?}");
+        let line = format!("ShiftLockPos: new pos = {}, {} valid=1", fmt_f(lock.x, 2), fmt_f(lock.y, 2));
+        assert!(b.debug(&line));
+        // The star follows the lock.
+        assert!(b.star.distance(&lock) < 0.5);
+    }
+
+    #[test]
+    fn an_ephemeris_rate_turns_into_camera_pixels() {
+        let mut b = Bench::new();
+        b.pointing = Some(Pointing { dec: 60.0 });
+        b.calibrate_scope();
+        b.select();
+        // Before the camera angle is known, the rate is only kept.
+        b.call(|g, cx, ev| g.set_lock_shift_rate(Point::new(15.0, -30.0), ShiftUnits::Arcsec, true, cx, ev));
+        b.call(|g, cx, ev| {
+            g.enable_lock_shift(true, cx, ev);
+        });
+        assert_eq!(b.guider.lock_shift_rate(), None);
+        assert!(infos(&b).is_empty());
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        b.ev.clear();
+        b.frame();
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+        // RA × cos 60°, through the calibration (this camera turns RA by
+        // 180° and mirrors Dec), over 2″/px and 3600 s.
+        let rate = b.guider.lock_shift_rate().unwrap();
+        assert!((rate.x + 7.5 / 7200.0).abs() < 1e-12 && (rate.y + 30.0 / 7200.0).abs() < 1e-12, "{rate:?}");
+        assert!(b.debug("UpdateLockPosShiftCameraCoords: shift rate mount coords = 15.00,-30.00"));
+        assert!(b.debug("UpdateLockPosShiftCameraCoords: after parity adjustment: 15.00,-30.00"));
+        assert!(b.debug("UpdateLockPosShiftCameraCoords: RA shift rate adjusted for declination 60.0"));
+        assert!(b.debug("UpdateLockPosShiftCameraCoords: shift rate camera coords = -7.50,-30.00 arcsec/hr"));
+        assert!(b.debug("UpdateLockPosShiftCameraCoords: shift rate -0.001,-0.0042 px/sec"));
+        assert_eq!(infos(&b), ["LOCK SHIFT, enabled = 1 RA,Dec rate (15.00,-30.00) arc-sec/hr (-3.75,-15.00) px/hr"]);
+    }
+
+    #[test]
+    fn a_lock_shifted_off_the_frame_turns_the_shift_off() {
+        let mut b = guiding_at(Point::new(170.0, 100.0));
+        // Multi-star on while guiding: guiding restarts on a fresh pick.
+        b.call(|g, cx, ev| {
+            g.set_multi_star_mode(true, cx, ev);
+        });
+        assert!(b.debug("MultiStar mode enabled, AutoFind forced"));
+        assert_eq!(b.guider.state(), GuiderState::Calibrated);
+        b.frame();
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+        b.call(|g, cx, ev| g.set_lock_shift_rate(Point::new(36000.0, 0.0), ShiftUnits::Pixels, false, cx, ev));
+        b.call(|g, cx, ev| {
+            g.enable_lock_shift(true, cx, ev);
+        });
+        assert!(!b.guider.multistar().cfg.multi_star);
+
+        // 20 px in the next 2 s: past the valid area.
+        b.ev.clear();
+        b.frame();
+        let at = |e: &GuiderEvent| b.ev.iter().position(|x| x == e).unwrap();
+        let limit = at(&GuiderEvent::LockShiftLimitReached);
+        let GuiderEvent::Alert { kind: AlertKind::Warning, msg } = &b.ev[limit + 1] else { panic!() };
+        assert!(msg.starts_with("Shifted lock"));
+        assert!(!b.guider.lock_shift_params().enabled);
+        // The user's multi-star mode is back, which re-selects the star and
+        // starts guiding again within the frame.
+        assert!(b.guider.multistar().cfg.multi_star);
+        assert!(at(&GuiderEvent::GuidingStopped) > limit);
+        assert!(at(&GuiderEvent::GuidingStarted) > at(&GuiderEvent::GuidingStopped));
+        assert!(b.debug("Comet tracking disabled, user's multi-star mode restored"));
+        assert!(infos(&b).contains(&"LOCK SHIFT, enabled = 0 "));
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+        assert!(b.guider.lock_position().unwrap().distance(&b.star) < 0.5);
+    }
+
+    #[test]
+    fn measurement_mode_hands_the_frames_to_the_assistant() {
+        let mut b = Bench::new();
+        b.select();
+        // Not guiding: nothing.
+        b.guider.enable_measurement_mode(true);
+        assert!(!b.guider.measurement_mode);
+
+        let mut b = guiding_at(Point::new(100.0, 100.0));
+        b.guider.enable_measurement_mode(true);
+        b.ev.clear();
+        let upd = b.frame();
+        assert!(upd.moves.is_empty());
+        let star = b.guider.primary_star().position();
+        assert!(b.has(&GuiderEvent::BacklashStep(star)));
+        // Guiding ends: the measurement fails.
+        b.call(|g, cx, ev| g.update_guide_state(None, true, cx, ev));
+        assert!(b.has(&GuiderEvent::BacklashError));
+        assert!(!b.guider.measurement_mode);
     }
 
     #[test]
