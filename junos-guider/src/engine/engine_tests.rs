@@ -1154,3 +1154,51 @@ fn the_pier_flip_tool_calibrates_on_the_first_side() {
     r.cmd(Command::PierFlipClose).unwrap();
     assert!(r.e.snapshot().tools["pierflip"].is_null());
 }
+
+#[test]
+fn drift_align_drifts_in_ra_only_then_adjusts() {
+    use crate::engine::DriftAlignCmd as D;
+    use crate::engine::scope::DecGuideMode;
+    let mut n = Rig::new(SimParams::new(scale()), false, |_| {});
+    n.cmd(Command::DriftAlign(D::Open)).unwrap();
+    n.cmd(Command::DriftAlign(D::Drift)).unwrap();
+    let v = n.e.snapshot().drift_align.clone();
+    let idle = (v["mode"].as_str(), v["status"].as_str());
+    assert_eq!(idle, (Some("Idle"), Some("Please calibrate before starting drift alignment")));
+
+    let mut r = Rig::guiding(SimParams::new(scale()), false, |_| {});
+    r.cmd(Command::DriftAlign(D::Open)).unwrap();
+    assert_eq!(r.e.snapshot().drift_align["slew"], serde_json::json!({"ra": 0.0, "dec": 0.0}));
+    // Opening it stopped guiding (its idle mode); Drift guides again.
+    r.cmd(Command::DriftAlign(D::Drift)).unwrap();
+    assert_eq!(r.e.snapshot().drift_align["status"], "Start guiding...");
+    for _ in 0..10 {
+        if r.e.snapshot().drift_align["drifting"] == true {
+            break;
+        }
+        r.step();
+    }
+    let v = r.e.snapshot().drift_align.clone();
+    let drifting = (v["drifting"].as_bool(), v["status"].as_str());
+    assert_eq!(drifting, (Some(true), Some("Drifting... click Adjust when done drifting")));
+    assert_eq!(r.e.snapshot().dec_guide_mode, Some(DecGuideMode::None));
+    for _ in 0..20 {
+        r.step();
+    }
+    let v = r.e.snapshot().drift_align.clone();
+    assert!(v["trend"]["points"].as_u64().unwrap() >= 5, "{v}");
+    assert!(v["trend"]["error_arcmin"].as_f64().is_some(), "{v}");
+    assert!(v["circle"]["radius"].as_f64().is_some(), "{v}");
+    r.cmd(Command::DriftAlign(D::Adjust)).unwrap();
+    r.step();
+    let v = r.e.snapshot().drift_align.clone();
+    let adjust = (v["mode"].as_str(), v["status"].as_str());
+    assert_eq!(adjust, (Some("Adjust"), Some("Adjust azimuth, click Drift when done")));
+    assert!(r.e.snapshot().guider_state != Some(crate::engine::guider::GuiderState::Guiding));
+    r.cmd(Command::DriftAlign(D::Phase)).unwrap();
+    assert_eq!(r.e.snapshot().drift_align["slew"]["ra"], -65.0);
+    r.cmd(Command::DriftAlign(D::Close)).unwrap();
+    assert!(r.e.snapshot().drift_align.is_null());
+    assert_eq!(r.e.snapshot().dec_guide_mode, Some(DecGuideMode::Auto));
+    assert!(r.debug_log().contains("EndDecDrift: DecGuideMode set to Auto (1)"));
+}

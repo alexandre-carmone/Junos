@@ -203,6 +203,7 @@ impl Engine {
     pub fn finish(&mut self) {
         self.comet_check();
         self.pierflip_check();
+        self.drift_check();
         self.flush_profile();
     }
 
@@ -395,6 +396,7 @@ impl Engine {
             MountEvent::GuideStep(step) => {
                 self.glog.guide_step(&step);
                 self.ga_guide_step(&step);
+                self.drift_guide_step(&step);
                 let mount = self.mount_name(role);
                 self.events.push(EngineEvent::GuideStep { mount, step });
             }

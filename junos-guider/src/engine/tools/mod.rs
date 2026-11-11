@@ -8,6 +8,7 @@
 pub mod bookmarks;
 pub mod cal_assistant;
 pub mod comet;
+pub mod drift_align;
 pub mod pierflip;
 pub mod polar_drift;
 pub mod starcross;

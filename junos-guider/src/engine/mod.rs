@@ -48,6 +48,7 @@ pub mod camera;
 pub mod command;
 pub mod control;
 pub mod darks;
+mod drift_align_win;
 pub mod event;
 pub mod fits;
 pub mod guider;
@@ -99,7 +100,7 @@ use self::windows::{DarksJob, GaCommand};
 use crate::profile::ProfileStore;
 
 pub use self::command::{
-    BookmarkOp, CalAssistCmd, CmdError, Command, DarksBuildKind, Gear, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator,
+    BookmarkOp, CalAssistCmd, CmdError, Command, DriftAlignCmd, DarksBuildKind, Gear, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator,
     ScopeGear, ScopeOutput, SingleFrame, Which,
 };
 pub use self::static_pa_win::StaticPaSet;
@@ -261,6 +262,7 @@ pub struct Engine {
     tools: secondary::Tools,
     static_pa: Option<static_pa_win::StaticPaWin>,
     cal_assist: Option<cal_assistant_win::CalAssistWin>,
+    drift: Option<drift_align_win::DriftWin>,
 
     // The logs.
     glog: GuideLog,
@@ -332,6 +334,7 @@ impl Engine {
             tools: secondary::Tools::default(),
             static_pa: None,
             cal_assist: None,
+            drift: None,
             glog: GuideLog::new(),
             dlog: DebugLog::new(now),
             ilog: ImageLogger::new(),
@@ -1364,6 +1367,7 @@ impl Engine {
             Command::StarCrossStop => self.starcross_stop(),
             Command::StaticPaOpen => self.static_pa_open(),
             Command::CometTrainStart => self.comet_train_start(),
+            Command::DriftAlign(c) => self.drift_align(c),
             Command::PierFlipOpen => self.pierflip_open(),
             Command::PierFlipNext => self.pierflip_next(),
             Command::PierFlipRestart => self.pierflip_restart(),
@@ -1707,6 +1711,7 @@ impl Engine {
             polar_drift: self.polar_drift_view(),
             tools: self.tools_view(),
             static_pa: self.static_pa_view(),
+            drift_align: self.drift_align_view(),
             connecting: self.connecting,
             port: None,
             port_error: None,

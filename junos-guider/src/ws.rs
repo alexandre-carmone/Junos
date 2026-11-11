@@ -326,6 +326,7 @@ async fn hub(d: Daemon, sh: Arc<Shared>, mut part: ProfilePart, mut track: Track
                     || s.ga.is_some()
                     || s.polar_drift.is_some()
                     || !s.static_pa.is_null()
+                    || !s.drift_align.is_null()
                     || s.darks_build.is_some();
                 publish(&d, &sh, &s, &part, &mut track, active);
             }
@@ -498,7 +499,7 @@ fn publish(d: &Daemon, sh: &Shared, s: &Snapshot, part: &ProfilePart, track: &mu
             })),
         })
     });
-    sh.sticky("guider_pa", &json!({"drift": drift, "static": s.static_pa}));
+    sh.sticky("guider_pa", &json!({"drift": drift, "static": s.static_pa, "drift_align": s.drift_align}));
     sh.sticky("guider_tools", &s.tools);
 }
 

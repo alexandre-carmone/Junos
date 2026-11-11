@@ -4,7 +4,7 @@
 //! Guiding Assistant, the darks, the polar drift tool, the logs. Each maps
 //! onto an engine [`Command`] or the profile store; parameters are named
 //! (or positional in the table's order). The tools the engine does not
-//! have yet (drift align,
+//! have yet (
 //! bad-pixel editing, a single device's connect) answer
 //! code 1 "not available".
 //!
@@ -22,7 +22,7 @@ use crate::engine::calibration::Calibration;
 use crate::engine::control::DitherMode;
 use crate::engine::log::image_log::ImageLoggerSettings;
 use crate::engine::traits::{PierSide, Point};
-use crate::engine::{BookmarkOp, CalAssistCmd, Command, StaticPaSet, DarksBuildKind, Engine, ManualPointing, Which};
+use crate::engine::{BookmarkOp, CalAssistCmd, Command, DriftAlignCmd, StaticPaSet, DarksBuildKind, Engine, ManualPointing, Which};
 use crate::indi::client::Role;
 
 /// PHD2's `pConfig->Global` keys the UI edits through `set_profile_value`
@@ -325,6 +325,16 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
         "pa_static_stop" => command(d, Command::StaticPaClose).await,
         "comet_train_start" => command(d, Command::CometTrainStart).await,
         "pierflip_start" => command(d, Command::PierFlipOpen).await,
+        "drift_align_start" => command(d, Command::DriftAlign(DriftAlignCmd::Open)).await,
+        "drift_align_slew" => {
+            let (ra, dec) = (p.param("ra").and_then(float_param), p.param("dec").and_then(float_param));
+            command(d, Command::DriftAlign(DriftAlignCmd::Slew { ra, dec })).await
+        }
+        "drift_align_drift" => command(d, Command::DriftAlign(DriftAlignCmd::Drift)).await,
+        "drift_align_adjust" => command(d, Command::DriftAlign(DriftAlignCmd::Adjust)).await,
+        "drift_align_phase" => command(d, Command::DriftAlign(DriftAlignCmd::Phase)).await,
+        "drift_align_notes" => command(d, Command::DriftAlign(DriftAlignCmd::Notes(text(p, "text")?.to_string()))).await,
+        "drift_align_stop" => command(d, Command::DriftAlign(DriftAlignCmd::Close)).await,
         "pierflip_next" => command(d, Command::PierFlipNext).await,
         "pierflip_restart" => command(d, Command::PierFlipRestart).await,
         "pierflip_stop" => command(d, Command::PierFlipClose).await,
@@ -537,7 +547,7 @@ mod tests {
         assert_eq!((d.snapshot().profile_name.as_str(), d.snapshot().exposure_setting_ms), ("Mak", 1500));
         assert_eq!(call(&d, "ga_history", json!({})).await, Ok(json!([])));
         assert_eq!(call(&d, "list_devices", json!({})).await.unwrap()["devices"], json!([]));
-        assert_eq!(call(&d, "drift_align_start", json!({})).await, Err(e1("not available")));
+        assert_eq!(call(&d, "bpm_save", json!({})).await, Err(e1("not available")));
         // The image logger's dialog: the thresholds held to 1–10.
         let r = call(&d, "set_image_logger", json!({"enabled": true, "dropped": true, "thresh_px": 20.0})).await;
         assert_eq!(r, Ok(json!(0)));

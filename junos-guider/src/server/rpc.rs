@@ -258,6 +258,11 @@ pub static METHODS: &[Method] = &[
     ws("pa_static_set", &["manual", "north", "hour_angle", "flip", "ref_star"]),
     ws("pa_static_stop", &[]),
     ws("drift_align_start", &[]),
+    ws("drift_align_slew", &["ra", "dec"]),
+    ws("drift_align_drift", &[]),
+    ws("drift_align_adjust", &[]),
+    ws("drift_align_phase", &[]),
+    ws("drift_align_notes", &["text"]),
     ws("drift_align_stop", &[]),
     ws("cal_assistant_start", &[]),
     ws("cal_assistant_set", &["offset", "dec", "east"]),
@@ -1186,7 +1191,7 @@ mod tests {
         use crate::engine::log::image_log::ImageLoggerSettings;
         use crate::engine::scope::DecGuideMode;
         use crate::engine::traits::Dir;
-        use crate::engine::{BookmarkOp, CalAssistCmd, Command as C, StaticPaSet, DarksBuildKind, Gear, SingleFrame, Which};
+        use crate::engine::{BookmarkOp, CalAssistCmd, Command as C, DriftAlignCmd, StaticPaSet, DarksBuildKind, Gear, SingleFrame, Which};
         let settle = SettleParams::default();
         let commands = [
             C::Loop,
@@ -1251,6 +1256,13 @@ mod tests {
             C::CometTrainStart,
             C::CometTrainStop,
             C::PierFlipOpen,
+            C::DriftAlign(DriftAlignCmd::Open),
+            C::DriftAlign(DriftAlignCmd::Slew { ra: None, dec: None }),
+            C::DriftAlign(DriftAlignCmd::Drift),
+            C::DriftAlign(DriftAlignCmd::Adjust),
+            C::DriftAlign(DriftAlignCmd::Phase),
+            C::DriftAlign(DriftAlignCmd::Notes(String::new())),
+            C::DriftAlign(DriftAlignCmd::Close),
             C::PierFlipNext,
             C::PierFlipRestart,
             C::PierFlipClose,

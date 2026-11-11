@@ -203,6 +203,22 @@ pub enum CalAssistCmd {
     Close,
 }
 
+/// The Drift Align window's controls.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DriftAlignCmd {
+    Open,
+    /// Slew to the phase's location; the fields (degrees: RA offset from
+    /// the meridian, Dec) when sent.
+    Slew { ra: Option<f64>, dec: Option<f64> },
+    Drift,
+    Adjust,
+    /// "> Altitude" / "< Azimuth".
+    Phase,
+    /// The phase's adjustment notes.
+    Notes(String),
+    Close,
+}
+
 /// Everything that changes the engine. The read-only RPCs answer from the
 /// snapshot, without the engine thread.
 pub enum Command {
@@ -348,6 +364,7 @@ pub enum Command {
     PierFlipNext,
     PierFlipRestart,
     PierFlipClose,
+    DriftAlign(DriftAlignCmd),
 }
 
 impl Command {
@@ -424,6 +441,15 @@ impl Command {
             Command::StaticPaClose => "pa_static_stop",
             Command::CometTrainStart => "comet_train_start",
             Command::CometTrainStop => "comet_train_stop",
+            Command::DriftAlign(c) => match c {
+                DriftAlignCmd::Open => "drift_align_start",
+                DriftAlignCmd::Slew { .. } => "drift_align_slew",
+                DriftAlignCmd::Drift => "drift_align_drift",
+                DriftAlignCmd::Adjust => "drift_align_adjust",
+                DriftAlignCmd::Phase => "drift_align_phase",
+                DriftAlignCmd::Notes(_) => "drift_align_notes",
+                DriftAlignCmd::Close => "drift_align_stop",
+            },
             Command::PierFlipOpen => "pierflip_start",
             Command::PierFlipNext => "pierflip_next",
             Command::PierFlipRestart => "pierflip_restart",
