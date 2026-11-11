@@ -11,5 +11,6 @@
 
 pub mod config;
 pub mod engine;
+pub mod profile;
 #[cfg(any(test, feature = "sim"))]
 pub mod sim;
