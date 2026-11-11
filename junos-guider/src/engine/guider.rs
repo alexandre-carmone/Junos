@@ -352,7 +352,9 @@ fn image_display_line(img: &UsImage, gamma: f64) -> String {
 }
 
 /// The virtual `Mount` interface the guider drives: the [`Mount`] half, and
-/// what the scope and the AO each do their own way.
+/// what the scope and the AO each do their own way. The scope implements it
+/// itself; the AO through [`AoMount`](super::stepguider::AoMount), which
+/// lends it its device.
 pub trait GuiderMount {
     fn mount(&self) -> &Mount;
     fn mount_mut(&mut self) -> &mut Mount;
@@ -371,7 +373,8 @@ pub trait GuiderMount {
         profile: &mut dyn ProfileAccess,
         events: &mut Vec<MountEvent>,
     ) -> bool;
-    /// `UpdateCalibrationState` with the star at `cur`.
+    /// `UpdateCalibrationState` with the star at `cur`: the calibration
+    /// moves to schedule (two at most, on an AO), or the failure.
     fn update_calibration_state(
         &mut self,
         cur: Point,
@@ -390,7 +393,7 @@ pub trait GuiderMount {
         events: &mut Vec<MountEvent>,
     ) -> Adjustment;
     /// `NotifyGuidingStopped`: the scope also resets its backlash
-    /// compensation.
+    /// compensation; the AO forgets its bump and steps back to the centre.
     fn notify_guiding_stopped(&mut self, ctx: &AlgoCtx, profile: &mut dyn ProfileAccess, events: &mut Vec<MountEvent>);
     /// `NotifyGuidingDithered`: the mount's, which the AO overrides.
     fn notify_guiding_dithered(
@@ -973,7 +976,7 @@ impl Guider {
     }
 
     /// One calibration frame on a mount not yet calibrated:
-    /// `UpdateCalibrationState`, its move scheduled.
+    /// `UpdateCalibrationState`, its moves scheduled in order.
     fn calibration_step(
         &mut self,
         role: MountRole,
@@ -993,12 +996,11 @@ impl Guider {
         let next = m.update_calibration_state(cur, env, pointing, profile, &mut mev);
         let calibrated = m.is_calibrated();
         wrap(ev, role, mev);
-        match next {
-            CalibrationNext::Failed => return CalStep::Failed,
-            CalibrationNext::Move(dir, amount) => {
-                schedule(out, ScheduledMove::Calibration { role, dir, amount }, cx, ev);
-            }
-            CalibrationNext::NoMove => {}
+        let CalibrationNext::Moves(moves) = next else {
+            return CalStep::Failed;
+        };
+        for (dir, amount) in moves {
+            schedule(out, ScheduledMove::Calibration { role, dir, amount }, cx, ev);
         }
         if calibrated { CalStep::Done } else { CalStep::Pending }
     }
@@ -2075,6 +2077,7 @@ mod tests {
     use crate::engine::mount::{GuideOutput, StepFrame};
     use crate::engine::scope::ScopeIo;
     use crate::engine::star::{FindMode, FindResult};
+    use crate::engine::stepguider::{AoMount, BumpEnv, StepGuider, StepGuiderDevice, StepResult};
     use crate::engine::traits::{CancelToken, MoveResult, Parity, PierSide};
 
     #[derive(Default)]
@@ -2206,7 +2209,7 @@ mod tests {
             if self.calls >= self.cal_frames {
                 self.calibrated = true;
             }
-            CalibrationNext::NoMove
+            CalibrationNext::Moves(Vec::new())
         }
         fn adjust_calibration_for_scope_pointing(
             &mut self,
@@ -2227,6 +2230,42 @@ mod tests {
     const H: i32 = 200;
     /// px per ms of pulse: West moves the star +x, North +y.
     const RATE: f64 = 0.01;
+    /// px per AO step: right moves the star +x, up +y.
+    const AO_RATE: f64 = 0.25;
+
+    /// The bench's AO device: 10 steps of travel each way, its position
+    /// kept so the star can follow it.
+    #[derive(Default)]
+    struct BenchAo {
+        x: i32,
+        y: i32,
+    }
+
+    impl StepGuiderDevice for BenchAo {
+        fn name(&self) -> String {
+            "AO-Simulator".into()
+        }
+        fn step(&mut self, dir: Dir, steps: u32) -> StepResult {
+            let n = steps as i32;
+            match dir {
+                Dir::North => self.y += n,
+                Dir::South => self.y -= n,
+                Dir::East => self.x += n,
+                Dir::West => self.x -= n,
+            }
+            StepResult::Ok
+        }
+        fn max_position(&self, _: Dir) -> i32 {
+            10
+        }
+        fn set_max_position(&mut self, _: i32) -> bool {
+            true
+        }
+        fn center(&mut self) -> bool {
+            (self.x, self.y) = (0, 0);
+            true
+        }
+    }
 
     /// Saturation by ADU with no level yet: AutoSelect sets one. The
     /// bench's 2″/px makes "Auto" downsampling 1×.
@@ -2283,6 +2322,8 @@ mod tests {
         /// Scripted mounts the calls drive instead of the scope: the
         /// primary and the secondary.
         fakes: Option<(FakeMount, Option<FakeMount>)>,
+        /// An AO as the primary mount, the scope behind it.
+        ao: Option<(StepGuider, BenchAo)>,
         ev: Vec<GuiderEvent>,
         /// What the scope said while the bench made the moves.
         mev: Vec<MountEvent>,
@@ -2330,15 +2371,21 @@ mod tests {
                 fp: FP,
                 pointing: None,
                 fakes: None,
+                ao: None,
                 ev,
                 mev: Vec::new(),
             }
         }
 
         fn call<R>(&mut self, f: impl FnOnce(&mut Guider, &mut GuiderCx, &mut Vec<GuiderEvent>) -> R) -> R {
-            let (primary, secondary): (&mut dyn GuiderMount, _) = match &mut self.fakes {
-                Some((p, s)) => (p, s.as_mut().map(|s| s as &mut dyn GuiderMount)),
-                None => (&mut self.scope, None),
+            let mut ao_mount;
+            let (primary, secondary): (&mut dyn GuiderMount, _) = match (&mut self.fakes, &mut self.ao) {
+                (Some((p, s)), _) => (p, s.as_mut().map(|s| s as &mut dyn GuiderMount)),
+                (None, Some((ao, dev))) => {
+                    ao_mount = AoMount { ao, dev };
+                    (&mut ao_mount, Some(&mut self.scope as &mut dyn GuiderMount))
+                }
+                (None, None) => (&mut self.scope, None),
             };
             let mut cx = GuiderCx {
                 primary: Some(primary),
@@ -2375,6 +2422,25 @@ mod tests {
 
         fn make_moves(&mut self, moves: &[ScheduledMove]) {
             for mv in moves {
+                if let Some((ao, dev)) = &mut self.ao {
+                    // The AO's moves; the star follows its steps.
+                    let before = (dev.x, dev.y);
+                    match *mv {
+                        ScheduledMove::Calibration { role: MountRole::Primary, dir, amount } => {
+                            ao.move_axis(dir, amount, MoveOpts::CALIBRATION_MOVE, dev, &mut self.mev);
+                        }
+                        ScheduledMove::Offset { mut ofs, opts } => {
+                            let env = BumpEnv::default();
+                            let (algo, profile) = (&self.algo, &self.profile);
+                            ao.move_offset(&mut ofs, opts, StepFrame::default, algo, &env, dev, profile, &mut self.mev);
+                        }
+                        ScheduledMove::Calibration { .. } => panic!("the scope behind the AO is calibrated"),
+                    }
+                    self.star.x += AO_RATE * (dev.x - before.0) as f64;
+                    self.star.y += AO_RATE * (dev.y - before.1) as f64;
+                    self.call(|g, cx, ev| g.move_complete(cx, ev));
+                    continue;
+                }
                 let mut out = Pulses::default();
                 let cancel = CancelToken::new();
                 let mut io = ScopeIo { output: &mut out, pointing: None, cancel: &cancel, now: 0.0 };
@@ -2736,6 +2802,61 @@ mod tests {
         b.calibrate_scope();
         GuiderMount::clear_calibration(&mut b.scope);
         assert!(!GuiderMount::is_calibrated(&b.scope));
+    }
+
+    /// An AO as the primary mount, the scope behind it already calibrated:
+    /// the AO's calibration schedules two moves on a frame (down and right
+    /// to the lower-right corner), guiding starts on the AO with its
+    /// pointing adjustment (the binning only), and stopping recentres it.
+    #[test]
+    fn the_guider_calibrates_and_guides_an_ao() {
+        use crate::engine::calibration::AdjustStep;
+        let mut b = Bench::new();
+        b.calibrate_scope();
+        let mut ao = StepGuider::new(&mut b.profile, 0.0, &mut Vec::new());
+        let dev = BenchAo::default();
+        ao.connect(&dev, &mut Vec::new());
+        b.ao = Some((ao, dev));
+        b.select();
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        assert_eq!(b.guider.state(), GuiderState::CalibratingPrimary);
+        assert!(b.has(&GuiderEvent::StartCalibration(MountRole::Primary)));
+
+        let upd = b.frame();
+        let cal = |dir, amount| ScheduledMove::Calibration { role: MountRole::Primary, dir, amount };
+        assert_eq!(upd.moves, [cal(Dir::DOWN, 4), cal(Dir::RIGHT, 4)]);
+        for _ in 0..60 {
+            b.frame();
+            if b.guider.state() == GuiderState::Guiding {
+                break;
+            }
+        }
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+        let c = b.ao.as_ref().unwrap().0.mount().mount_cal().clone();
+        // Right moves the star along +x, up along +y.
+        assert!(c.x_angle.abs() < 0.01 && (c.y_angle - PI / 2.0).abs() < 0.01, "{c:?}");
+        assert!((c.x_rate - AO_RATE).abs() < 0.005 && (c.y_rate - AO_RATE).abs() < 0.005, "{c:?}");
+        let adj = b.ev.iter().find_map(|e| match e {
+            GuiderEvent::PointingAdjusted(MountRole::Primary, a) => Some(a),
+            _ => None,
+        });
+        let no_change = AdjustStep::Log("stepguider: scope pointing change, no change to calibration".into());
+        assert_eq!(adj.unwrap().steps, [no_change]);
+
+        // The AO takes up a drift on its own.
+        let lock = b.guider.lock_position().unwrap();
+        b.drift = Point::new(0.1, -0.05);
+        for _ in 0..10 {
+            let upd = b.frame();
+            assert!(matches!(upd.moves[..], [ScheduledMove::Offset { opts: MoveOpts::GUIDE_STEP, .. }]));
+        }
+        assert!(b.star.distance(&lock) < 0.5, "{:?} vs {lock:?}", b.star);
+        assert!(b.ao.as_ref().unwrap().1.x < -2);
+
+        b.call(|g, cx, ev| g.stop_guiding(cx, ev));
+        let (ao, dev) = b.ao.as_ref().unwrap();
+        assert_eq!((ao.ao_pos(), (dev.x, dev.y)), ((0, 0), (0, 0)));
+        assert!(b.has(&GuiderEvent::GuidingStopped));
     }
 
     #[test]

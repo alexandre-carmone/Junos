@@ -33,6 +33,7 @@ use crate::engine::camera::{CaptureKind, GuideCamera};
 use crate::engine::image::UsImage;
 use crate::engine::mount::{GuideOutput, PointingSource};
 use crate::engine::rng::Rng;
+use crate::engine::stepguider::{StepGuiderDevice, StepResult};
 use crate::engine::traits::{CancelToken, Clock, Dir, MoveResult, PierSide, Rect, c_int};
 
 /// The camera's fixed gain and offset in the noise and star formulas
@@ -816,10 +817,6 @@ impl PointingSource for SimMount {
 pub struct SimAo(Shared);
 
 impl SimAo {
-    pub fn name(&self) -> String {
-        "AO-Simulator".into()
-    }
-
     /// Connect, centred (`ZeroCurrentPosition`).
     pub fn connect(&mut self) {
         lock(&self.0).ao = Some((0, 0));
@@ -833,9 +830,20 @@ impl SimAo {
         lock(&self.0).ao.is_some()
     }
 
+    /// The position in steps (right, up).
+    pub fn position(&self) -> (i32, i32) {
+        lock(&self.0).ao.unwrap_or_default()
+    }
+}
+
+impl StepGuiderDevice for SimAo {
+    fn name(&self) -> String {
+        "AO-Simulator".into()
+    }
+
     /// `Step`: `steps` steps one way (North = up, East = right), 5 ms
     /// each. Never fails: the base class keeps the moves inside the travel.
-    pub fn step(&mut self, dir: Dir, steps: u32) -> MoveResult {
+    fn step(&mut self, dir: Dir, steps: u32) -> StepResult {
         let mut s = lock(&self.0);
         let n = steps as i32;
         if let Some((x, y)) = s.ao.as_mut() {
@@ -848,31 +856,27 @@ impl SimAo {
         }
         // `wxMilliSleep`: not interruptible.
         s.now_ms += steps as u64 * AO_MS_PER_STEP;
-        MoveResult::Ok
+        StepResult::Ok
     }
 
     /// `MaxPosition`: the same travel every way.
-    pub fn max_position(&self, _dir: Dir) -> i32 {
+    fn max_position(&self, _dir: Dir) -> i32 {
         lock(&self.0).p.ao_max_position
     }
 
-    /// `SetMaxPosition`; the caller stores `/SimAo/max_steps`.
-    pub fn set_max_position(&mut self, steps: i32) {
+    /// `SetMaxPosition`: never fails. The caller stores `/SimAo/max_steps`.
+    fn set_max_position(&mut self, steps: i32) -> bool {
         lock(&self.0).p.ao_max_position = steps;
+        false
     }
 
     /// `Center`: back to the middle of the travel; always succeeds.
-    pub fn center(&mut self) -> bool {
+    fn center(&mut self) -> bool {
         let mut s = lock(&self.0);
         if s.ao.is_some() {
             s.ao = Some((0, 0));
         }
         true
-    }
-
-    /// The position in steps (right, up).
-    pub fn position(&self) -> (i32, i32) {
-        lock(&self.0).ao.unwrap_or_default()
     }
 }
 
@@ -907,6 +911,7 @@ mod tests {
     use crate::engine::mount::MountEvent;
     use crate::engine::scope::{CalibrationEnv, CalibrationNext, DecGuideMode, Scope, ScopeIo};
     use crate::engine::star::{FindMode, Star};
+    use crate::engine::stepguider::StepGuider;
     use crate::engine::traits::{MoveOpts, Point};
 
     /// Star 12 of the seed-2 field: bright, alone, well inside the frame.
@@ -1188,14 +1193,11 @@ mod tests {
                     clearing += 1;
                 }
             }
-            match next {
-                CalibrationNext::Move(dir, ms) => {
-                    let now = clock.mono();
-                    let mut io = ScopeIo { output: &mut output, pointing: Some(&pointing), cancel: &cancel, now };
-                    assert_eq!(scope.move_axis(dir, ms, MoveOpts::CALIBRATION_MOVE, &mut io, &mut ev), MoveResult::Ok);
-                }
-                CalibrationNext::NoMove => {}
-                CalibrationNext::Failed => panic!("calibration failed"),
+            let CalibrationNext::Moves(moves) = next else { panic!("calibration failed") };
+            for (dir, ms) in moves {
+                let now = clock.mono();
+                let mut io = ScopeIo { output: &mut output, pointing: Some(&pointing), cancel: &cancel, now };
+                assert_eq!(scope.move_axis(dir, ms, MoveOpts::CALIBRATION_MOVE, &mut io, &mut ev), MoveResult::Ok);
             }
             if scope.is_calibrated() {
                 return clearing;
@@ -1237,13 +1239,48 @@ mod tests {
         assert!(degrees(norm_angle(scope.mount.x_angle() - radians(-165.0))).abs() < 1.0);
     }
 
+    /// PHD2's step guider on its AO simulator: the calibration finds the
+    /// simulator's 0.1 px per step at 35° to the camera.
+    #[test]
+    fn the_step_guider_calibrates_on_the_simulated_ao() {
+        let mut cam = connected(quiet(1.0));
+        let mut dev = cam.ao();
+        dev.connect();
+        let mut profile = Profile::default();
+        let mut ev = Vec::new();
+        let mut sg = StepGuider::new(&mut profile, 0.0, &mut ev);
+        sg.mount_mut().set_name(&dev.name());
+        sg.connect(&dev, &mut ev);
+        let env = CalibrationEnv { binning: 1, image_scale: 1.0, timestamp: "T".into(), ..CalibrationEnv::default() };
+        let mut pos = bright(&mut cam);
+        assert!(sg.begin_calibration(Some(pos), &mut ev));
+        for _ in 0..200 {
+            pos = locate(&mut cam, pos, None);
+            let next = sg.update_calibration_state(pos, &env, &mut dev, &mut profile, &mut ev);
+            let CalibrationNext::Moves(moves) = next else { panic!("calibration failed") };
+            for (dir, steps) in moves {
+                assert_eq!(sg.move_axis(dir, steps, MoveOpts::CALIBRATION_MOVE, &mut dev, &mut ev), MoveResult::Ok);
+            }
+            if sg.is_calibrated() {
+                break;
+            }
+        }
+        let c = sg.mount().mount_cal();
+        assert!((degrees(c.x_angle) - 35.0).abs() < 0.5, "{}", degrees(c.x_angle));
+        assert!((degrees(c.y_angle) - 125.0).abs() < 0.5, "{}", degrees(c.y_angle));
+        assert!((c.x_rate - 0.1).abs() < 0.002 && (c.y_rate - 0.1).abs() < 0.002, "{} {}", c.x_rate, c.y_rate);
+        // The device followed, back at the centre: 44 steps each way are 11
+        // calibration iterations of 4.
+        assert_eq!((sg.ao_pos(), dev.position()), ((0, 0), (0, 0)));
+    }
+
     #[test]
     fn the_ao_offsets_the_field_and_the_clock_runs_with_its_steps() {
         let mut cam = connected(quiet(1.0));
         let mut ao = cam.ao();
         let before = field_pos(&cam, BRIGHT);
         ao.connect();
-        assert_eq!(ao.step(Dir::East, 20), MoveResult::Ok);
+        assert_eq!(ao.step(Dir::East, 20), StepResult::Ok);
         ao.step(Dir::North, 10);
         assert_eq!(ao.position(), (20, 10));
         assert!((cam.clock().mono() - 0.15).abs() < 1e-9);

@@ -16,6 +16,7 @@
 //! hands back the mount bump (`ScheduleSecondaryMove` with
 //! `MoveOpts::AO_BUMP`); the engine makes them. The device comes in through
 //! [`StepGuiderDevice`], whatever PHD2 tells the outside as [`MountEvent`]s.
+//! The guider drives the AO through [`AoMount`], its [`GuiderMount`].
 //!
 //! An AO calibration ends with [`MountEvent::CalibrationComplete`] like the
 //! scope's, but PHD2 only writes the guide-log line for it and never sends
@@ -31,14 +32,15 @@
 use super::algo::{AlgoCtx, MountClass};
 use super::calibration::{
     self, Adjustment, Calibration, CalibrationDetails, CalibrationIssue, ProfileAccess, ROTATOR_POSITION_UNKNOWN,
-    UNKNOWN_DECLINATION, degrees, point_angle,
+    ScopePointing, UNKNOWN_DECLINATION, degrees, point_angle,
 };
+use super::guider::GuiderMount;
 use super::log::cfmt::fmt_f;
 use super::mount::{
-    AlertKind, AxisMover, CalibrationStepInfo, GuiderOffset, Mount, MountEvent, MoveResultInfo, StepFrame,
-    dump_move_option_bits,
+    AlertKind, AxisMover, CalibrationStepInfo, GuiderOffset, Mount, MountEvent, MoveResultInfo, PointingSource,
+    StepFrame, dump_move_option_bits,
 };
-use super::scope::CalibrationEnv;
+use super::scope::{CalibrationEnv, CalibrationNext};
 use super::traits::{Dir, MoveOpts, MoveResult, Parity, PierSide, Point};
 
 /// `DefaultSamplesToAverage`: frames averaged at each end of a calibration leg.
@@ -81,10 +83,8 @@ pub trait StepGuiderDevice {
     /// engine copies it into the mount half (`Mount::set_name`) when the
     /// device is chosen.
     fn name(&self) -> String;
-    /// `Step`: move `steps` (> 0) one way, fire-and-forget. `Ok`, `AoLimit`
-    /// when the device hit the end of its travel (PHD2's
-    /// `STEP_LIMIT_REACHED`), anything else is a failure.
-    fn step(&mut self, dir: Dir, steps: u32) -> MoveResult;
+    /// `Step`: move `steps` (> 0) one way, fire-and-forget.
+    fn step(&mut self, dir: Dir, steps: u32) -> StepResult;
     /// `MaxPosition`: the travel from the centre to one end, in steps.
     fn max_position(&self, dir: Dir) -> i32;
     /// `SetMaxPosition`: the AO Travel setting, which the device keeps in
@@ -93,11 +93,16 @@ pub trait StepGuiderDevice {
     /// `Center`: return to the centre of the travel. True when it did; the
     /// step guider then zeroes its position, as each PHD2 device does.
     fn center(&mut self) -> bool;
-    /// The device's own limit sensor (INDI `AT_LIMIT`), `None` when it has
-    /// none or has not reported yet. PHD2 2.6.14 never asks.
-    fn is_at_limit(&self, _dir: Dir) -> Option<bool> {
-        None
-    }
+}
+
+/// `STEP_RESULT`: what a device step did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepResult {
+    Ok,
+    /// The device hit the end of its travel: the AO must recentre.
+    LimitReached,
+    /// Any other failure.
+    Error,
 }
 
 /// `StepInfo`: where a step that hit the travel limit started and how far
@@ -122,18 +127,6 @@ pub enum AoCalibrationState {
     AverageEndingLocation,
     Recenter,
     Complete,
-}
-
-/// What [`StepGuider::update_calibration_state`] asks for next.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AoCalibrationNext {
-    /// Make these AO moves ([`StepGuider::move_axis`] with
-    /// `MoveOpts::CALIBRATION_MOVE`) before the next frame, in this order
-    /// (Up, Down, Right, Left — at most two). Empty while averaging, and once
-    /// calibrated (see [`StepGuider::is_calibrated`]).
-    Moves(Vec<(Dir, i32)>),
-    /// The calibration gave up and was cleared (PHD2's `true` return).
-    Failed,
 }
 
 /// What the bump logic reads from the rest of the rig on each move.
@@ -256,8 +249,8 @@ impl AoPosition {
 
                 if steps > 0 {
                     let sres = dev.step(dir, steps as u32);
-                    if sres != MoveResult::Ok {
-                        if sres == MoveResult::AoLimit {
+                    if sres != StepResult::Ok {
+                        if sres == StepResult::LimitReached {
                             debug(events, "AO: limit reached!");
                             self.failed_step = StepInfo { x: self.x, y: self.y, dx: xd * steps, dy: yd * steps };
                             // Recover by centering.
@@ -316,9 +309,7 @@ impl AxisMover for AoMover<'_> {
 pub struct StepGuider {
     /// The `Mount` half: algorithms (Hysteresis on both axes by default),
     /// guiding enabled (`AOGuidingEnabled`), the calibration in use.
-    /// Setting or clearing the calibration goes through the step guider's
-    /// own methods, which keep its copy and its state machine.
-    pub mount: Mount,
+    mount: Mount,
     pos: AoPosition,
     samples_to_average: i32,
     bump_percentage: i32,
@@ -404,6 +395,19 @@ impl StepGuider {
         events.append(&mut algo_events);
         s.bump_on_dither = profile.get_i32(KEY_BUMP_ON_DITHER, 1) != 0;
         s
+    }
+
+    /// The `Mount` half.
+    pub fn mount(&self) -> &Mount {
+        &self.mount
+    }
+
+    /// The `Mount` half, for its settings and notices. The calibration is
+    /// set and cleared with [`set_calibration`](Self::set_calibration) and
+    /// [`clear_calibration`](Self::clear_calibration), never on the mount:
+    /// PHD2's are virtual, and the bump reads the step guider's copy.
+    pub fn mount_mut(&mut self) -> &mut Mount {
+        &mut self.mount
     }
 
     // ------------------------------------------------------------ settings
@@ -616,15 +620,10 @@ impl StepGuider {
         (dev.max_position(Dir::RIGHT), dev.max_position(Dir::UP))
     }
 
-    /// `WouldHitLimit`.
-    pub fn would_hit_limit(&self, dev: &dyn StepGuiderDevice, dir: Dir, steps: i32) -> bool {
-        self.pos.would_hit_limit(dev, dir, steps)
-    }
-
-    /// `IsAtLimit`: the device's sensor when it has one, else the base
-    /// class' rule — one step short of the end of the travel.
-    pub fn is_at_limit(&self, dev: &dyn StepGuiderDevice, dir: Dir) -> bool {
-        dev.is_at_limit(dir).unwrap_or_else(|| self.current_position(dir) == dev.max_position(dir) - 1)
+    /// `m_xBumpPos1`, `m_yBumpPos1`: past these AO steps from the centre a
+    /// bump starts. PHD2's AO graph draws them (`SetLimits`).
+    pub fn bump_limits(&self) -> (i32, i32) {
+        (self.x_bump_pos1, self.y_bump_pos1)
     }
 
     /// `GetFailedStepInfo`: the last step that hit the travel limit.
@@ -1084,6 +1083,8 @@ impl StepGuider {
     ///   details. No sanity check.
     ///
     /// More than 12 failed moves give up. The status line comes every frame.
+    /// The moves come in PHD2's order (Up, Down, Right, Left), two at most;
+    /// none while averaging, nor once calibrated.
     pub fn update_calibration_state(
         &mut self,
         cur: Point,
@@ -1091,7 +1092,7 @@ impl StepGuider {
         dev: &mut dyn StepGuiderDevice,
         profile: &mut impl ProfileAccess,
         events: &mut Vec<MountEvent>,
-    ) -> AoCalibrationNext {
+    ) -> CalibrationNext {
         use AoCalibrationState::*;
 
         let max_up = dev.max_position(Dir::UP);
@@ -1119,7 +1120,7 @@ impl StepGuider {
             );
             debug(events, "Error thrown from stepguider.cpp:562->too many move errors during calibration");
             self.clear_calibration();
-            return AoCalibrationNext::Failed;
+            return CalibrationNext::Failed;
         }
 
         if self.calibration_starting_location.is_none() {
@@ -1412,7 +1413,7 @@ impl StepGuider {
         } else if !status1.is_empty() {
             events.push(MountEvent::Status(status1));
         }
-        AoCalibrationNext::Moves(moves)
+        CalibrationNext::Moves(moves)
     }
 
     /// One averaging frame: adds `cur`, sets the status. True once
@@ -1452,6 +1453,96 @@ impl StepGuider {
         d.orig_timestamp = env.timestamp.clone();
         let details = d.clone();
         self.mount.save_calibration_details(&details, profile, None, events);
+    }
+}
+
+/// The AO as the guider drives it ([`GuiderMount`]): the step guider and
+/// its device, one object in PHD2. The engine lends both for each guider
+/// call while the AO is the primary mount (`pMount`).
+pub struct AoMount<'a> {
+    pub ao: &'a mut StepGuider,
+    pub dev: &'a mut dyn StepGuiderDevice,
+}
+
+impl GuiderMount for AoMount<'_> {
+    fn mount(&self) -> &Mount {
+        &self.ao.mount
+    }
+
+    fn mount_mut(&mut self) -> &mut Mount {
+        &mut self.ao.mount
+    }
+
+    fn is_calibrated(&self) -> bool {
+        self.ao.is_calibrated()
+    }
+
+    fn calibration_tot_distance(&self) -> i32 {
+        self.ao.calibration_tot_distance()
+    }
+
+    fn begin_calibration(
+        &mut self,
+        location: Option<Point>,
+        _env: &CalibrationEnv,
+        _pointing: Option<&dyn PointingSource>,
+        _profile: &mut dyn ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) -> bool {
+        self.ao.begin_calibration(location, events)
+    }
+
+    fn update_calibration_state(
+        &mut self,
+        cur: Point,
+        env: &CalibrationEnv,
+        _pointing: Option<&dyn PointingSource>,
+        mut profile: &mut dyn ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) -> CalibrationNext {
+        self.ao.update_calibration_state(cur, env, self.dev, &mut profile, events)
+    }
+
+    /// Only the camera binning counts on an AO.
+    fn adjust_calibration_for_scope_pointing(
+        &mut self,
+        pointing: &ScopePointing,
+        timestamp: &str,
+        mut profile: &mut dyn ProfileAccess,
+        _events: &mut Vec<MountEvent>,
+    ) -> Adjustment {
+        self.ao.adjust_calibration_for_scope_pointing(pointing.binning, timestamp, &mut profile)
+    }
+
+    fn notify_guiding_stopped(&mut self, _: &AlgoCtx, _: &mut dyn ProfileAccess, events: &mut Vec<MountEvent>) {
+        self.ao.notify_guiding_stopped(self.dev, events)
+    }
+
+    fn notify_guiding_dithered(
+        &mut self,
+        dx: f64,
+        dy: f64,
+        mount_coords: bool,
+        ctx: &AlgoCtx,
+        events: &mut Vec<MountEvent>,
+    ) {
+        self.ao.notify_guiding_dithered(dx, dy, mount_coords, ctx, events)
+    }
+
+    fn clear_calibration(&mut self) {
+        self.ao.clear_calibration()
+    }
+
+    fn notify_guiding_resumed(&mut self, ctx: &AlgoCtx, events: &mut Vec<MountEvent>) {
+        self.ao.notify_guiding_resumed(ctx, events)
+    }
+
+    fn is_bump_in_progress(&self) -> bool {
+        self.ao.is_bump_in_progress()
+    }
+
+    fn dither_bump(&mut self, events: &mut Vec<MountEvent>) {
+        self.ao.dither_bump(events)
     }
 }
 
@@ -1515,7 +1606,7 @@ mod tests {
         fn name(&self) -> String {
             "AO-Simulator".into()
         }
-        fn step(&mut self, dir: Dir, steps: u32) -> MoveResult {
+        fn step(&mut self, dir: Dir, steps: u32) -> StepResult {
             let n = steps as i32;
             let (nx, ny) = match dir {
                 Dir::North => (self.x, self.y + n),
@@ -1524,10 +1615,10 @@ mod tests {
                 Dir::West => (self.x - n, self.y),
             };
             if nx.abs() > self.hard_limit || ny.abs() > self.hard_limit {
-                return MoveResult::AoLimit;
+                return StepResult::LimitReached;
             }
             (self.x, self.y) = (nx, ny);
-            MoveResult::Ok
+            StepResult::Ok
         }
         fn max_position(&self, _dir: Dir) -> i32 {
             self.max
@@ -1718,17 +1809,17 @@ mod tests {
             out.push(format!("FRAME: {frame}"));
             let next = sg.update_calibration_state(sky.star(frame, &ao), &env, &mut ao, &mut profile, &mut ev);
             render(&mut ev, &mut out);
-            let AoCalibrationNext::Moves(moves) = next else { panic!("calibration failed") };
+            let CalibrationNext::Moves(moves) = next else { panic!("calibration failed") };
             for (dir, n) in moves {
                 let r = sg.move_axis(dir, n, MoveOpts::CALIBRATION_MOVE, &mut ao, &mut ev);
                 render(&mut ev, &mut out);
                 out.push(format!("CALMOVE: {} {n} -> {}", ao_char(dir), r as i32));
                 if r != MoveResult::Ok {
-                    sg.mount.increment_error_count();
+                    sg.mount_mut().increment_error_count();
                 }
             }
         }
-        let c = sg.mount.mount_cal();
+        let c = sg.mount().mount_cal();
         out.push(format!(
             "CALIBRATION: {} {} {} {} pos={},{}",
             g(c.x_angle),
@@ -1756,8 +1847,8 @@ mod tests {
 
         let lock = sky.star(frame, &ao);
         sky.noise = 0.12;
-        sg.mount.algo_mut(Axis::X).set_min_move(0.05);
-        sg.mount.algo_mut(Axis::Y).set_min_move(0.05);
+        sg.mount_mut().algo_mut(Axis::X).set_min_move(0.05);
+        sg.mount_mut().algo_mut(Axis::Y).set_min_move(0.05);
         for n in 1..=75 {
             frame += 1;
             sky.mx += if n <= 30 { 0.7 } else { 0.02 };
@@ -1868,7 +1959,7 @@ mod tests {
         );
         assert_eq!(profile.f[KEY_BUMP_MAX_STEPS_PER_CYCLE], 1.0);
         assert_eq!(profile.i["/stepguider/XGuideAlgorithm"], AlgoKind::Hysteresis as i32);
-        assert_eq!(sg.mount.guide_algorithm_selection(Axis::Y), AlgoKind::Hysteresis);
+        assert_eq!(sg.mount().guide_algorithm_selection(Axis::Y), AlgoKind::Hysteresis);
 
         sg.set_bump_on_dither(true, &mut profile);
         assert_eq!(profile.i[KEY_BUMP_ON_DITHER], 1);
@@ -1877,6 +1968,7 @@ mod tests {
         let ao = Ao::new(45);
         assert!(!sg.set_bump_percentage(50, Some(&ao), &mut profile, &mut ev));
         assert_eq!(rendered(&mut ev), ["DEBUG: StepGuider: Bump Limits: X: 22, 33; Y: 22, 33; center: 9"]);
+        assert_eq!(sg.bump_limits(), (22, 22));
         assert!(!sg.set_bump_percentage(90, None, &mut profile, &mut ev));
         assert!(ev.is_empty());
         assert_eq!(sg.calibration_settings_summary(), "Calibration steps = 4, Samples to average = 3");
@@ -1904,10 +1996,10 @@ mod tests {
         // Twelve failures are tolerated: the first frame heads for the
         // corner, 4 steps down and right.
         for _ in 0..12 {
-            sg.mount.increment_error_count();
+            sg.mount_mut().increment_error_count();
         }
         let next = sg.update_calibration_state(p, &cal_env(), &mut ao, &mut profile, &mut ev);
-        assert_eq!(next, AoCalibrationNext::Moves(vec![(Dir::DOWN, 4), (Dir::RIGHT, 4)]));
+        assert_eq!(next, CalibrationNext::Moves(vec![(Dir::DOWN, 4), (Dir::RIGHT, 4)]));
         assert_eq!(
             rendered(&mut ev),
             [
@@ -1915,9 +2007,9 @@ mod tests {
                 "STATUS: Init Calibration:   3, distance  0.0 px",
             ]
         );
-        sg.mount.increment_error_count();
+        sg.mount_mut().increment_error_count();
         let next = sg.update_calibration_state(p, &cal_env(), &mut ao, &mut profile, &mut ev);
-        assert_eq!(next, AoCalibrationNext::Failed);
+        assert_eq!(next, CalibrationNext::Failed);
         assert_eq!(
             rendered(&mut ev),
             [
@@ -1955,8 +2047,7 @@ mod tests {
         );
         assert_eq!((sg.ao_pos(), sg.ao_max_pos(&ao)), ((0, 9), (10, 10)));
         assert_eq!((sg.current_position(Dir::UP), sg.current_position(Dir::DOWN)), (9, -9));
-        assert!(sg.is_at_limit(&ao, Dir::UP) && !sg.is_at_limit(&ao, Dir::DOWN));
-        assert!(sg.would_hit_limit(&ao, Dir::UP, 1) && !sg.would_hit_limit(&ao, Dir::DOWN, 18));
+        assert!(sg.pos.would_hit_limit(&ao, Dir::UP, 1) && !sg.pos.would_hit_limit(&ao, Dir::DOWN, 18));
 
         // The device refuses the step: the AO recentres and reports the limit.
         ao.hard_limit = 8;
@@ -1991,7 +2082,7 @@ mod tests {
 
         // Guiding disabled: only manual moves step, and the recentring fails.
         ao.hard_limit = 999;
-        sg.mount.set_guiding_enabled(false, &AlgoCtx::default(), &mut ev);
+        sg.mount_mut().set_guiding_enabled(false, &AlgoCtx::default(), &mut ev);
         ev.clear();
         assert_eq!(sg.move_axis(Dir::UP, 1, MoveOpts::CALIBRATION_MOVE, &mut ao, &mut ev), MoveResult::Error);
         assert_eq!(rendered(&mut ev)[2], "DEBUG: Throw from stepguider.cpp:916->Guiding disabled");
@@ -2012,8 +2103,8 @@ mod tests {
     /// where it is, 37 steps right: one past the 80 % zone of a 45-step AO.
     fn parked_right(profile: &mut Profile, ao: &mut Ao) -> StepGuider {
         let mut sg = calibrated(profile, ao);
-        sg.mount.algo_mut(Axis::X).set_min_move(5.0);
-        sg.mount.algo_mut(Axis::Y).set_min_move(5.0);
+        sg.mount_mut().algo_mut(Axis::X).set_min_move(5.0);
+        sg.mount_mut().algo_mut(Axis::Y).set_min_move(5.0);
         sg.move_axis(Dir::RIGHT, 37, MoveOpts::MANUAL, ao, &mut Vec::new());
         sg
     }
@@ -2082,7 +2173,7 @@ mod tests {
         assert_eq!(rendered(&mut ev), ["DEBUG: StepGuider: deferring bump for deduced move"]);
 
         // Guiding disabled: the move fails and nothing is bumped.
-        sg.mount.set_guiding_enabled(false, &AlgoCtx::default(), &mut ev);
+        sg.mount_mut().set_guiding_enabled(false, &AlgoCtx::default(), &mut ev);
         ev.clear();
         let (r, bump) = guide(&mut sg, &mut ao, &profile, cam, MoveOpts::GUIDE_STEP, &env, &mut ev);
         assert_eq!((r, bump), (MoveResult::Error, None));
@@ -2094,7 +2185,7 @@ mod tests {
                 "DEBUG: Throw from stepguider.cpp:1041->Guiding disabled",
             ]
         );
-        sg.mount.set_guiding_enabled(true, &AlgoCtx::default(), &mut ev);
+        sg.mount_mut().set_guiding_enabled(true, &AlgoCtx::default(), &mut ev);
 
         // Stopping clears the bump and steps back to the centre.
         sg.notify_guiding_stopped(&mut ao, &mut ev);
@@ -2143,7 +2234,7 @@ mod tests {
         let mut profile = Profile::default();
         let mut ao = Ao::new(45);
         let mut sg = parked_right(&mut profile, &mut ao);
-        sg.mount.algo_mut(Axis::X).set_min_move(0.05);
+        sg.mount_mut().algo_mut(Axis::X).set_min_move(0.05);
         let mut ev = Vec::new();
         let env = BumpEnv { secondary_connected: true, max_move_pixels: 4, settling: true, ..BumpEnv::default() };
 
@@ -2154,7 +2245,7 @@ mod tests {
         let cam = Point::new(4.0 * radians(200.0).cos(), 4.0 * radians(200.0).sin());
         let (r, bump) = guide(&mut sg, &mut ao, &profile, cam, MoveOpts::GUIDE_STEP, &env, &mut ev);
         assert_eq!(r, MoveResult::Ok);
-        let step = sg.mount.last_step().unwrap();
+        let step = sg.mount().last_step().unwrap();
         assert_eq!((step.duration_ra, step.direction_ra, step.ra_limited), (7, Dir::RIGHT, true));
         assert_eq!(sg.ao_pos(), (44, 0));
         let b = bump.unwrap().camera_ofs;
@@ -2188,7 +2279,7 @@ mod tests {
             AdjustStep::Log("Stepguider Cal: Binning 1 -> 2, rates (0.300, 0.250) -> (0.150, 0.125)".into())
         );
         assert_eq!(adj.steps.len(), 3);
-        assert_eq!((sg.mount.x_rate(), sg.mount.y_rate(), sg.mount.mount_cal().binning), (0.15, 0.125, 2));
+        assert_eq!((sg.mount().x_rate(), sg.mount().y_rate(), sg.mount().mount_cal().binning), (0.15, 0.125, 2));
         assert_eq!((sg.calibration.x_rate, sg.calibration.binning), (0.15, 2));
         assert_eq!(profile.f["/stepguider/calibration/xRate"], 0.15);
         assert_eq!(profile.s["/stepguider/calibration/timestamp"], "T2");
@@ -2200,7 +2291,7 @@ mod tests {
         let mut ao = Ao::new(45);
         profile.set_f64(KEY_BUMP_MAX_STEPS_PER_CYCLE, 0.125);
         let mut sg = connected(&mut profile, &ao);
-        sg.mount.set_name("AO-Simulator");
+        sg.mount_mut().set_name("AO-Simulator");
         let mut ev = Vec::new();
         assert_eq!(
             sg.settings_summary(None, &mut profile, None, &mut ev),
@@ -2216,7 +2307,7 @@ mod tests {
         assert!(sg.begin_calibration(Some(sky.star(0, &ao)), &mut ev));
         let env = CalibrationEnv { timestamp: "2026-11-11 21:00:00".into(), ..cal_env() };
         while !sg.is_calibrated() {
-            let AoCalibrationNext::Moves(moves) =
+            let CalibrationNext::Moves(moves) =
                 sg.update_calibration_state(sky.star(0, &ao), &env, &mut ao, &mut profile, &mut ev)
             else {
                 panic!("calibration failed")

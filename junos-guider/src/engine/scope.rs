@@ -156,15 +156,17 @@ pub struct SuppressedAlerts {
     pub calibration: Vec<CalibrationIssue>,
 }
 
-/// What [`Scope::update_calibration_state`] asks for next.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What [`Scope::update_calibration_state`] and the AO's
+/// [`StepGuider::update_calibration_state`](super::stepguider::StepGuider::update_calibration_state)
+/// ask for next.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CalibrationNext {
-    /// Make this calibration move ([`Scope::move_axis`] with
-    /// `MoveOpts::CALIBRATION_MOVE`) before the next frame.
-    Move(Dir, i32),
-    /// No move: wait for the next frame, or calibrated (see
-    /// [`Scope::is_calibrated`]).
-    NoMove,
+    /// Make these calibration moves (`move_axis` with
+    /// `MoveOpts::CALIBRATION_MOVE`: ms on a scope, steps on an AO) before
+    /// the next frame, in this order. A scope makes at most one, an AO two
+    /// (PHD2's `ScheduleAxisMove` calls). None: wait for the next frame,
+    /// or calibrated.
+    Moves(Vec<(Dir, i32)>),
     /// The calibration failed and was cleared (PHD2's `true` return).
     Failed,
 }
@@ -1212,7 +1214,7 @@ impl Scope {
 
         loop {
             match self.cw.state {
-                Cleared => return CalibrationNext::NoMove,
+                Cleared => return CalibrationNext::Moves(Vec::new()),
 
                 GoWest => {
                     // The step number in the log is the step that just finished.
@@ -1235,7 +1237,7 @@ impl Scope {
                             format!("West step {:3}, dist={:>4}", self.cw.steps, fmt_f(dist, 1)),
                             events,
                         );
-                        return CalibrationNext::Move(Dir::West, dur);
+                        return CalibrationNext::Moves(vec![(Dir::West, dur)]);
                     }
 
                     // West complete.
@@ -1308,7 +1310,7 @@ impl Scope {
                         self.cw.recenter_remaining -= d;
                         self.cw.steps -= 1;
                         self.cw.last_location = cur;
-                        return CalibrationNext::Move(Dir::East, d);
+                        return CalibrationNext::Moves(vec![(Dir::East, d)]);
                     }
 
                     // On an ST-4 cable, check for an obvious cable problem.
@@ -1340,7 +1342,7 @@ impl Scope {
                         self.calibration.y_angle = norm_angle(self.calibration.x_angle + PI / 2.0);
                         self.calibration.y_rate = CALIBRATION_RATE_UNCALIBRATED;
                         self.calibration.dec_guide_parity = Parity::Unknown;
-                        return CalibrationNext::NoMove;
+                        return CalibrationNext::Moves(Vec::new());
                     }
 
                     self.cw.state = ClearBacklash;
@@ -1378,7 +1380,7 @@ impl Scope {
                         debug(events, format!("Backlash: Starting north clearing using pulse width of {dur}"));
                         self.cw.steps = 1;
                         status(row, "Clearing backlash step 1".into(), events);
-                        return CalibrationNext::Move(Dir::North, dur);
+                        return CalibrationNext::Moves(vec![(Dir::North, dur)]);
                     }
 
                     if bl_delta >= self.cw.bl_expected_backlash_step {
@@ -1419,7 +1421,7 @@ impl Scope {
                                     fmt_f(bl_cum_delta, 2)
                                 ),
                             );
-                            return CalibrationNext::Move(Dir::North, dur);
+                            return CalibrationNext::Moves(vec![(Dir::North, dur)]);
                         } else if bl_cum_delta >= BL_MIN_CLEARING_DISTANCE as f64 {
                             // Out of attempts but the mount did move (as PHD1).
                             self.cw.steps = 0;
@@ -1492,7 +1494,7 @@ impl Scope {
                             format!("North step {:3}, dist={:>4}", self.cw.steps, fmt_f(dist, 1)),
                             events,
                         );
-                        return CalibrationNext::Move(Dir::North, dur);
+                        return CalibrationNext::Moves(vec![(Dir::North, dur)]);
                     }
 
                     // The angle runs from the leg's start to the star, the
@@ -1590,7 +1592,7 @@ impl Scope {
                         );
                         self.cw.recenter_remaining -= d;
                         self.cw.steps -= 1;
-                        return CalibrationNext::Move(Dir::South, d);
+                        return CalibrationNext::Moves(vec![(Dir::South, d)]);
                     }
 
                     // A cable problem or a huge Dec backlash shows as little
@@ -1672,7 +1674,7 @@ impl Scope {
                                 self.cw.steps += 1;
                                 let nudge = info("NudgeSouth", self.cw.steps, dx, dy, cur, dist);
                                 status(nudge, format!("Nudge South {:3}", self.cw.steps), events);
-                                return CalibrationNext::Move(Dir::South, pulse);
+                                return CalibrationNext::Moves(vec![(Dir::South, pulse)]);
                             }
                         }
                     } else {
@@ -1710,7 +1712,7 @@ impl Scope {
                     events.push(MountEvent::Status("Calibration complete".into()));
                     events.push(MountEvent::CalibrationComplete);
                     debug(events, "Calibration Complete");
-                    return CalibrationNext::NoMove;
+                    return CalibrationNext::Moves(Vec::new());
                 }
             }
         }
@@ -2096,27 +2098,24 @@ mod tests {
                 ev.retain(|e| !matches!(e, MountEvent::Calibrating(_)));
             }
             render(&mut ev, out);
-            match next {
-                CalibrationNext::Failed => {
-                    out.push("RESULT: failed".into());
-                    return moves;
+            let CalibrationNext::Moves(next) = next else {
+                out.push("RESULT: failed".into());
+                return moves;
+            };
+            for (dir, ms) in next {
+                moves += 1;
+                out.push(format!("MOVE: {} {ms}", dir.mount_label()));
+                let mut pulses = Pulses::default();
+                let cancel = CancelToken::new();
+                let mut io = ScopeIo { output: &mut pulses, pointing: Some(&*rig), cancel: &cancel, now: 1000.0 };
+                scope.move_axis(dir, ms, MoveOpts::CALIBRATION_MOVE, &mut io, &mut ev);
+                if brief {
+                    ev.clear();
                 }
-                CalibrationNext::Move(dir, ms) => {
-                    moves += 1;
-                    out.push(format!("MOVE: {} {ms}", dir.mount_label()));
-                    let mut pulses = Pulses::default();
-                    let cancel = CancelToken::new();
-                    let mut io = ScopeIo { output: &mut pulses, pointing: Some(&*rig), cancel: &cancel, now: 1000.0 };
-                    scope.move_axis(dir, ms, MoveOpts::CALIBRATION_MOVE, &mut io, &mut ev);
-                    if brief {
-                        ev.clear();
-                    }
-                    render(&mut ev, out);
-                    for (d, ms) in pulses.sent {
-                        rig.pulse(d, ms as i32);
-                    }
+                render(&mut ev, out);
+                for (d, ms) in pulses.sent {
+                    rig.pulse(d, ms as i32);
                 }
-                CalibrationNext::NoMove => {}
             }
             if scope.is_calibrated() {
                 out.push("RESULT: calibrated".into());
