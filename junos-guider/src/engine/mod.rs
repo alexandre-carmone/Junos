@@ -11,6 +11,7 @@ pub mod darks;
 pub mod fits;
 pub mod image;
 pub mod log;
+pub mod mount;
 pub mod multistar;
 pub mod rng;
 pub mod star;
