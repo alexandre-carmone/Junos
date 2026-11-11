@@ -10,6 +10,7 @@ pub mod calibration;
 pub mod fits;
 pub mod image;
 pub mod log;
+pub mod multistar;
 pub mod rng;
 pub mod star;
 pub mod stats;
