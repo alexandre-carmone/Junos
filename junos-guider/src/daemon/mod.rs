@@ -303,7 +303,10 @@ impl Daemon {
         if self.0.connecting.load(Ordering::SeqCst) {
             return Err(CmdError::new(1, "cannot disconnect equipment when Connect Equipment dialog is open"));
         }
-        if self.snapshot().capture_active {
+        // Nothing connected answers 0 before the capture check, as in PHD2.
+        let snap = self.snapshot();
+        let devices = [&snap.camera, &snap.mount, &snap.aux_mount, &snap.ao, &snap.rotator];
+        if snap.capture_active && devices.iter().any(|d| d.as_ref().is_some_and(|d| d.connected)) {
             return Err(CmdError::new(1, "cannot disconnect equipment while capture active"));
         }
         self.0.cancel.cancel();

@@ -527,15 +527,24 @@ fn an_ao_calibrates_then_bumps_the_mount() {
 }
 
 
-/// The simulator's camera, failing its captures on demand.
+/// The simulator's camera, failing its captures on demand, under another
+/// name or pixel size when asked.
 struct Flaky {
     cam: SimCamera,
     fail: Arc<AtomicBool>,
+    name: String,
+    pixel_um: Option<f64>,
+}
+
+impl Flaky {
+    fn new(cam: &SimCamera) -> Flaky {
+        Flaky { cam: cam.clone(), fail: Arc::default(), name: cam.name(), pixel_um: None }
+    }
 }
 
 impl GuideCamera for Flaky {
     fn name(&self) -> String {
-        self.cam.name()
+        self.name.clone()
     }
     fn is_connected(&self) -> bool {
         self.cam.is_connected()
@@ -553,7 +562,7 @@ impl GuideCamera for Flaky {
         self.cam.max_binning()
     }
     fn pixel_size_um(&self) -> Option<f64> {
-        self.cam.pixel_size_um()
+        self.pixel_um
     }
     fn bits_per_pixel(&self) -> u8 {
         self.cam.bits_per_pixel()
@@ -585,8 +594,8 @@ impl GuideCamera for Flaky {
 #[test]
 fn a_capture_error_stops_guiding_and_looping() {
     let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
-    let fail = Arc::new(AtomicBool::new(false));
-    let flaky = Flaky { cam: r.cam.clone(), fail: fail.clone() };
+    let flaky = Flaky::new(&r.cam);
+    let fail = flaky.fail.clone();
     let gear = r.gear(Box::new(flaky), false);
     r.cmd(Command::Attach(gear)).unwrap();
     r.cmd(Command::Loop).unwrap();
@@ -644,13 +653,21 @@ fn connecting_restores_the_calibration_and_loads_the_darks() {
     let dbg = r.debug_log();
     assert!(dbg.contains("Auto-loading calibration data") && dbg.contains("loaded dark library from /darks/"));
 
-    // Another camera in the profile: the calibration goes.
-    r.e.store().profile().set_str("/camera/LastMenuChoice", "INDI Camera [Other]");
+    // Another camera than the profile chose when it was loaded
+    // (`m_lastCamera`): the calibration goes, and is not restored.
     r.cmd(Command::Detach).unwrap();
+    r.e.store().profile().set_str("/camera/LastMenuChoice", "INDI Camera [Other]");
+    r.cmd(Command::ProfileChanged).unwrap();
+    // The profile's gear went with it: its darks too.
+    let snap = r.e.snapshot();
+    assert!(snap.camera.is_none() && snap.mount.is_none() && !snap.dark_loaded);
     let gear = r.gear(Box::new(r.cam.clone()), false);
     r.cmd(Command::Attach(gear)).unwrap();
     assert!(!r.e.snapshot().calibrated);
-    assert!(r.debug_log().contains("Clearing calibration data because camera was changed"));
+    let dbg = r.debug_log();
+    assert!(dbg.contains("DoConnectCamera: reconnecting=0 warningIssued=0 lastCam=[INDI Camera [Other]] scaleRatio=1.000"));
+    assert!(dbg.contains("DoConnectCamera: displaying camera-change warning"));
+    assert!(dbg.contains("Clearing calibration data because camera was changed"));
     // Equipment cannot change while capturing.
     r.cmd(Command::Loop).unwrap();
     let gear = r.gear(Box::new(r.cam.clone()), false);
@@ -658,6 +675,58 @@ fn connecting_restores_the_calibration_and_loads_the_darks() {
         r.cmd(Command::Attach(gear)).unwrap_err(),
         CmdError::new(1, "cannot connect equipment when capture is active")
     );
+}
+
+#[test]
+fn an_indi_camera_switch_keeps_the_calibration_a_new_pixel_size_does_not() {
+    let mut r = Rig::guiding(SimParams::new(scale()), false, |_| {});
+    r.cmd(Command::StopCapture).unwrap();
+    while r.e.has_work() {
+        r.step();
+    }
+    let step = r.e.store().profile().get_i32("/scope/CalibrationDuration", 0);
+    // The profile chose an INDI camera when it was loaded; another one
+    // matches it (`DeviceSelectionMatches`): the calibration is restored.
+    r.cmd(Command::Detach).unwrap();
+    r.e.store().profile().set_str("/camera/LastMenuChoice", "INDI Camera [A]");
+    r.cmd(Command::ProfileChanged).unwrap();
+    let mut cam = Flaky::new(&r.cam);
+    cam.name = "INDI Camera [B]".into();
+    let gear = r.gear(Box::new(cam), false);
+    r.cmd(Command::Attach(gear)).unwrap();
+    assert!(r.e.snapshot().calibrated);
+    assert!(!r.debug_log().contains("DoConnectCamera: camera changed"));
+
+    // The driver's pixels are 20 % smaller than the profile's: the image
+    // scale changed, so the calibration is cleared and the step and the
+    // min-moves are worked out again (`MakeImageScaleAdjustments`).
+    let mut cam = Flaky::new(&r.cam);
+    cam.name = "INDI Camera [B]".into();
+    cam.pixel_um = Some(PIXEL_UM * 0.8);
+    r.cmd(Command::Detach).unwrap();
+    let gear = r.gear(Box::new(cam), false);
+    r.cmd(Command::Attach(gear)).unwrap();
+    assert!(!r.e.snapshot().calibrated);
+    let dbg = r.debug_log();
+    for line in [
+        "scaleRatio=0.800",
+        "DoConnectCamera: camera changed",
+        "Clearing calibration data because camera was changed",
+        "GearDialog::EndModal: imageScaleRatio changed",
+        "New image scale properties:  fl= 400, px= 3.000u, bin= 1",
+        "Calibrations cleared because of image scale change",
+    ] {
+        assert!(dbg.contains(line), "{line}");
+    }
+    // 25 px at 1.55″/px in 12 steps at the simulator's guide speed (1×
+    // sidereal): 214 ms, rounded up to 250.
+    let new_step = r.e.store().profile().get_i32("/scope/CalibrationDuration", 0);
+    assert_eq!(new_step, 250);
+    assert!(dbg.contains(&format!("Cal step-size changed from {step} ms to 250 ms")));
+    let min_move = algo::smart_default_min_move_for(FOCAL_MM, PIXEL_UM * 0.8, 1);
+    let snap = r.e.snapshot();
+    let mm = |a: &Option<AlgoView>| a.as_ref().unwrap().params.iter().find(|(n, _)| n == "minMove").unwrap().1;
+    assert_eq!((mm(&snap.algo_x), mm(&snap.algo_y)), (min_move, min_move));
 }
 
 #[test]

@@ -34,7 +34,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Local, Utc};
 use serde_json::{Value, json};
 
-use super::algo::{Axis, MountClass};
+use super::algo::{self, Axis, MountClass};
 use super::calibration::{self, ProfileAccess, ROTATOR_POSITION_UNKNOWN};
 use super::camera::{self, DEFAULT_CAMERA_GAIN};
 use super::command::{CmdError, Gear, Reply};
@@ -49,7 +49,7 @@ use super::log::guide_log::{
     self,    CameraSummary, GuideLogHeader, MountKind, MountSummary, PointingSummary, SUMMARY_TAIL_BYTES, ScopeSummary,
 };
 use super::log::image_log::{ImageLogCall, ImageLogOut, ImageLoggerSettings, SaveCx};
-use super::mount::{AlertKind, MountEvent, stopwatch_seconds};
+use super::mount::{self, AlertKind, MountEvent, stopwatch_seconds};
 use super::scope::Scope;
 use super::stepguider::StepGuider;
 use super::{AoDev, Engine, ScopeDev, THREAD};
@@ -287,22 +287,24 @@ impl Engine {
         match e {
             GuiderEvent::Mount(role, m) => self.emit_mount(role, m),
             GuiderEvent::PointingAdjusted(_, adj) => {
+                let mut new_pixel_size = adj.new_pixel_size;
                 for step in adj.steps {
                     match step {
                         calibration::AdjustStep::Log(l) => self.debug(&l),
                         calibration::AdjustStep::Alert(msg) => self.alert(msg, AlertKind::Warning),
                         calibration::AdjustStep::Status(s) => self.status(&s),
                         calibration::AdjustStep::ImageScaleChange => {
-                            self.debug("HandleImageScaleChange: image scale changed, calibration cleared")
+                            // PHD2 set the camera's pixel size before
+                            // (mount.cpp:1310): the adjustments read it.
+                            if let Some(px) = new_pixel_size.take() {
+                                self.set_camera_pixel_size(px);
+                            }
+                            self.handle_image_scale_change();
                         }
                     }
                 }
-                if let Some(px) = adj.new_pixel_size {
-                    let mut lines = Vec::new();
-                    self.cam.set_pixel_size(px, &mut self.store.profile(), &mut lines);
-                    for l in lines {
-                        self.debug(&l);
-                    }
+                if let Some(px) = new_pixel_size {
+                    self.set_camera_pixel_size(px);
                 }
             }
             GuiderEvent::LoopingExposures { frame, star, dropped } => {
@@ -858,11 +860,22 @@ impl Engine {
         self.debug("gear_dialog: OnButtonConnectAll");
         let now = self.clock.mono();
         let Gear { camera, scope, aux_mount, ao, rotator } = gear;
-        let mut cam_changed = false;
-        match camera {
-            Some(c) => cam_changed = self.connect_camera(c),
-            None => self.camera = None,
-        }
+
+        // `TheScope()` is the gear dialog's object, made from the choice
+        // before anything connects: the camera's binning check adjusts it.
+        let mut mev = Vec::new();
+        self.scope = scope.map(|g| {
+            let s = match self.scope.take() {
+                Some(old) if old.name == g.name => old.scope,
+                _ => Scope::new(&mut self.store.profile(), false, now, &mut mev),
+            };
+            ScopeDev { scope: s, name: g.name, output: g.output, pointing: g.pointing }
+        });
+        let scope_role = if ao.is_some() { MountRole::Secondary } else { MountRole::Primary };
+        self.emit_mount_events(scope_role, mev);
+
+        self.camera = camera;
+        self.connect_camera(false);
 
         // The AO, then the scope (OnButtonConnectAll's order).
         let mut mev = Vec::new();
@@ -880,27 +893,35 @@ impl Engine {
             AoDev { sg, dev }
         });
         self.emit_mount_events(MountRole::Primary, mev);
-        let mut mev = Vec::new();
-        self.scope = scope.map(|g| {
-            let mut s = match self.scope.take() {
-                Some(old) if old.name == g.name => old.scope,
-                _ => Scope::new(&mut self.store.profile(), false, now, &mut mev),
-            };
-            s.mount.set_name(&g.name);
-            s.mount.connect();
+        if let Some(s) = self.scope.as_mut() {
+            s.scope.mount.set_name(&s.name);
+            s.scope.mount.connect();
             // A new pointing source checks the stored guide speeds again.
-            *s.cal_details_validated_mut() = false;
-            ScopeDev { scope: s, name: g.name, output: g.output, pointing: g.pointing }
-        });
-        let role = self.scope_role();
-        self.emit_mount_events(role, mev);
-        if self.scope.is_some() {
-            self.status("Mount connected");
+            *s.scope.cal_details_validated_mut() = false;
         }
+        if self.scope.is_some() {
+            self.status("Mount Connected");
+        }
+        let name = self.scope.as_ref().map_or("None".to_string(), |s| s.name.clone());
+        self.debug(&format!("Connected Scope:{name}"));
         self.aux = aux_mount;
         self.rotator = rotator;
 
-        // `EndModal`: the calibration restored, or cleared for a new camera.
+        self.end_modal();
+        self.refresh_ra_guide_speed();
+        Ok(json!(0))
+    }
+
+    /// `GearDialog::LoadGearChoices`' part the engine keeps: the camera the
+    /// profile chose when it was loaded (`m_lastCamera`).
+    pub(super) fn load_gear_choices(&mut self) {
+        self.last_camera = self.store.profile().get_str("/camera/LastMenuChoice", "None");
+    }
+
+    /// `GearDialog::EndModal` (gear_dialog.cpp:543): the calibration
+    /// restored, or cleared on the connected mounts after a camera change;
+    /// then the image-scale change the camera's pixel size made.
+    pub(super) fn end_modal(&mut self) {
         let primary_ok = match (&self.ao, &self.scope) {
             (Some(a), _) => a.sg.mount().is_connected(),
             (None, Some(s)) => s.scope.mount.is_connected(),
@@ -910,60 +931,124 @@ impl Engine {
             (Some(_), Some(s)) => s.scope.mount.is_connected(),
             _ => true,
         };
-        if self.auto_load_calibration && !cam_changed {
+        if self.auto_load_calibration && !self.cam_changed {
             if primary_ok && secondary_ok {
                 self.debug("Auto-loading calibration data");
                 self.load_calibration();
             }
-        } else if cam_changed {
+        } else if self.cam_changed {
             self.debug("Clearing calibration data because camera was changed");
-            if let Some(a) = self.ao.as_mut() {
+            if let Some(a) = self.ao.as_mut().filter(|a| a.sg.mount().is_connected()) {
                 a.sg.clear_calibration();
             }
-            if let Some(s) = self.scope.as_mut() {
+            if let Some(s) = self.scope.as_mut().filter(|s| s.scope.mount.is_connected()) {
                 s.scope.clear_calibration();
             }
         }
-        self.refresh_ra_guide_speed();
-        Ok(json!(0))
+        if (self.image_scale_ratio - 1.0).abs() >= 0.01 {
+            self.debug("GearDialog::EndModal: imageScaleRatio changed");
+            self.handle_image_scale_change();
+        }
     }
 
-    /// `DoConnectCamera` once the camera is connected (gear_dialog.cpp:1077):
-    /// its pixel size, the camera-change check, the default gain, a
-    /// binning the camera cannot do, the dark library and defect map loaded
-    /// when the profile says so. True when the camera changed.
-    fn connect_camera(&mut self, mut c: Box<dyn camera::GuideCamera>) -> bool {
-        let name = c.name();
+    /// `DoConnectCamera` (gear_dialog.cpp:1077) on the camera in place. At
+    /// attach the daemon has connected it already; `reconnecting` (PHD2's
+    /// `autoReconnecting`, after a capture timeout) connects it here and
+    /// skips the camera-change check and the darks. Then its pixel size
+    /// (and the image-scale ratio), the change check, the default gain, a
+    /// binning the camera cannot do, and the dark library and defect map
+    /// loaded when the profile says so. A failed connect leaves the camera
+    /// disconnected.
+    pub(super) fn connect_camera(&mut self, reconnecting: bool) {
+        let Some(name) = self.camera.as_ref().map(|c| c.name()) else { return };
         self.debug(&format!("gear_dialog: DoConnectCamera [{name}]"));
         self.status("Connecting to Camera ...");
-        let profile_binning = camera::profile_binning(&self.store.profile());
-        c.set_binning(profile_binning);
+        // `SelectedCameraId`: the profile's `/cam_hash/<hash>/whichCamera`,
+        // written only by the cameras that list their units, which INDI's
+        // does not: the default, empty.
+        self.debug(&format!("Connecting to camera [{name}] id = []"));
+        let c = self.camera.as_deref_mut().expect("camera");
+        let profile_binning = if reconnecting {
+            c.binning()
+        } else {
+            let b = camera::profile_binning(&self.store.profile());
+            c.set_binning(b);
+            b
+        };
+        if reconnecting {
+            let res = c.reconnect(&self.cancel);
+            self.drain_camera_debug();
+            if let Err(e) = res {
+                if !e.is_empty() {
+                    self.debug(&e);
+                }
+                self.debug("Throw from gear_dialog.cpp:1106->DoConnectCamera: connect failed");
+                self.status("Camera Connect Failed");
+                return;
+            }
+        }
+        let c = self.camera.as_deref().expect("camera");
+        let (device_px, has_gain, max_binning) = (c.pixel_size_um(), c.has_gain_control(), c.max_binning());
+        let (dark_path, defect_path) = (self.dark_lib_path(), self.defect_map_path());
         let mut lines = Vec::new();
-        let mut cam_changed = false;
+        let mut mev = Vec::new();
         {
             let mut prof = self.store.profile();
-            if let Some(px) = c.pixel_size_um() {
+            // `GetProfilePixelSize`: the profile's, as last written.
+            let prev_px = prof.get_f64("/camera/pixelsize", camera::UNKNOWN_PIXEL_SIZE);
+            if let Some(px) = device_px {
                 self.cam.set_pixel_size(px, &mut prof, &mut lines);
+                if prev_px != camera::UNKNOWN_PIXEL_SIZE {
+                    self.image_scale_ratio *= px / prev_px;
+                }
             }
-            let last = prof.get_str("/camera/LastMenuChoice", "");
-            if !last.is_empty() && last != name {
-                cam_changed = true;
-                lines.push("DoConnectCamera: camera changed".into());
+            lines.push(format!(
+                "DoConnectCamera: reconnecting={} warningIssued={} lastCam=[{}] scaleRatio={}",
+                reconnecting as i32,
+                self.cam_warning_issued as i32,
+                self.last_camera,
+                super::log::cfmt::fmt_f(self.image_scale_ratio, 3)
+            ));
+            if !self.cam_warning_issued && !reconnecting {
+                let last = &self.last_camera;
+                if (last != "None" && name != "None" && !device_selection_matches(last, &name))
+                    || (self.image_scale_ratio - 1.0).abs() >= 0.01
+                {
+                    self.cam_changed = true;
+                    if self.files.exists(&dark_path) || self.files.exists(&defect_path) {
+                        // The warning asks whether to connect anyway. Nobody
+                        // can answer it here: the connect goes on, as on Yes.
+                        lines.push("DoConnectCamera: displaying camera-change warning".into());
+                        self.cam_warning_issued = true;
+                        self.last_camera = name.clone();
+                    }
+                    lines.push("DoConnectCamera: camera changed".into());
+                }
             }
-            prof.set_str("/camera/LastMenuChoice", &name);
-            if c.has_gain_control() && !prof.has("/camera/gain") {
+            if !reconnecting {
+                // `OnChoiceCamera`'s write, made when the daemon chose.
+                prof.set_str("/camera/LastMenuChoice", &name);
+            }
+            if has_gain && !prof.has("/camera/gain") {
                 lines.push(format!("Initializing camera gain to {DEFAULT_CAMERA_GAIN}%"));
                 self.cam.set_gain(DEFAULT_CAMERA_GAIN, &mut prof, &mut lines);
             }
-            if profile_binning > c.max_binning() {
+            if profile_binning > max_binning {
                 if let Some(s) = self.scope.as_mut() {
                     let d = s.scope.calibration_duration() / profile_binning.max(1) as i32;
-                    s.scope.set_calibration_duration(d, &mut prof, &mut Vec::new());
+                    s.scope.set_calibration_duration(d, &mut prof, &mut mev);
                 }
-                camera::set_binning(&mut *c, 1, &mut prof, &mut lines);
+                let c = self.camera.as_deref_mut().expect("camera");
+                camera::set_binning(c, 1, &mut prof, &mut lines);
                 lines.push(format!("CamConfigDlg correcting bogus user binning value from {profile_binning} to 1"));
             }
         }
+        for l in lines.drain(..) {
+            self.debug(&l);
+        }
+        let role = self.scope_role();
+        self.emit_mount_events(role, mev);
+        let c = self.camera.as_deref().expect("camera");
         lines.push(format!("Connected Camera: {name}"));
         let (w, h) = c.frame_size();
         lines.push(format!("FrameSize=({w},{h})"));
@@ -979,22 +1064,121 @@ impl Engine {
         for l in lines {
             self.debug(&l);
         }
-        self.camera = Some(c);
 
+        // On a reconnect the darks are already in place. Otherwise
         // AutoLoadDefectMap, then AutoLoadDarks without a map.
-        if self.store.profile().get_bool("/camera/AutoLoadDefectMap", darks::AUTO_LOAD_DEFECT_MAP_DEFAULT) {
-            self.debug("auto-loading defect map");
-            self.load_defect_map_handler(true);
+        if !reconnecting {
+            if self.store.profile().get_bool("/camera/AutoLoadDefectMap", darks::AUTO_LOAD_DEFECT_MAP_DEFAULT) {
+                self.debug("auto-loading defect map");
+                self.load_defect_map_handler(true);
+            }
+            if self.darks.defect_map.is_none()
+                && self.store.profile().get_bool("/camera/AutoLoadDarks", darks::AUTO_LOAD_DARKS_DEFAULT)
+            {
+                self.debug("Auto-loading dark library");
+                self.load_dark_handler(true);
+            }
+            self.set_dark_menu_state();
         }
-        if self.darks.defect_map.is_none()
-            && self.store.profile().get_bool("/camera/AutoLoadDarks", darks::AUTO_LOAD_DARKS_DEFAULT)
-        {
-            self.debug("Auto-loading dark library");
-            self.load_dark_handler(true);
-        }
-        self.set_dark_menu_state();
         self.status("Camera Connected");
-        cam_changed
+    }
+
+    /// `SetCameraPixelSize`, its lines to the debug log.
+    fn set_camera_pixel_size(&mut self, px: f64) {
+        let mut lines = Vec::new();
+        self.cam.set_pixel_size(px, &mut self.store.profile(), &mut lines);
+        for l in lines {
+            self.debug(&l);
+        }
+    }
+
+    /// `MyFrame::HandleImageScaleChange` (myframe.cpp:2837): with a scope,
+    /// `AdvancedDialog::MakeImageScaleAdjustments` (advanced_dialog.cpp:611)
+    /// — the scope's calibration step worked out again for the new image
+    /// scale, pMount's calibration cleared (and the scope's behind an AO),
+    /// pMount's min-moves reset. The graphs it also clears are the
+    /// browser's.
+    pub(super) fn handle_image_scale_change(&mut self) {
+        if self.scope.is_none() {
+            return;
+        }
+        let (fl, px, bin) = (self.focal_length, self.cam.pixel_size, self.binning());
+        self.debug("Image scale has changed via AD UI - step-size and algo adjustments will be made");
+        self.debug(&format!(
+            "New image scale properties:  fl= {fl}, px= {}u, bin= {bin}",
+            super::log::cfmt::fmt_f(px, 3)
+        ));
+        let speed = self.determine_guide_speed();
+        let distance = calibration::calibration_distance(fl, px, bin as u16);
+        let steps = calibration::CALSTEP_DEFAULT_STEPS;
+        let (_, step) = calibration::calibration_step_size(fl, px, bin as u16, speed, steps, 0.0, distance);
+        let mut mev = Vec::new();
+        let s = self.scope.as_mut().expect("scope");
+        let old = s.scope.calibration_duration();
+        s.scope.set_calibration_duration(step, &mut self.store.profile(), &mut mev);
+        let role = self.scope_role();
+        self.emit_mount_events(role, mev);
+        self.debug(&format!("Cal step-size changed from {old} ms to {step} ms"));
+        if let Some(a) = self.ao.as_mut() {
+            a.sg.clear_calibration();
+        }
+        if let Some(s) = self.scope.as_mut() {
+            s.scope.clear_calibration();
+        }
+        self.debug("Calibrations cleared because of image scale change");
+        let min_move = algo::smart_default_min_move_for(fl, px, bin as u32);
+        self.debug(&format!("Guide algo min moves reset to {}u", super::log::cfmt::fmt_f(min_move, 3)));
+        if let Some(m) = self.primary_mount_mut() {
+            m.algo_mut(Axis::X).set_min_move(min_move);
+            m.algo_mut(Axis::Y).set_min_move(min_move);
+        }
+        self.save_primary_algorithm(Axis::X);
+        self.save_primary_algorithm(Axis::Y);
+    }
+
+    /// `AdvancedDialog::DetermineGuideSpeed` (advanced_dialog.cpp:559): the
+    /// slower guide speed in × sidereal, from the pointing source or else
+    /// the stored calibration; 0.5 when neither has a valid one. The
+    /// scope's connection stands for the pointing source's (an aux mount's
+    /// is not known here).
+    fn determine_guide_speed(&mut self) -> f64 {
+        let mut sid_rate = 0.5;
+        let rates = match self.pointing() {
+            Some(p) if self.scope.as_ref().is_none_or(|s| s.scope.mount.is_connected()) => Some(p.guide_rates()),
+            _ => None,
+        };
+        let Some(rates) = rates else { return sid_rate };
+        let mut mev = Vec::new();
+        {
+            let Engine { scope, store, .. } = self;
+            let mut no_scope = false;
+            match rates {
+                Some((ra, dec)) => {
+                    let validated = match scope.as_mut() {
+                        Some(s) => s.scope.cal_details_validated_mut(),
+                        None => &mut no_scope,
+                    };
+                    if mount::valid_guide_rates(ra, dec, validated, &mut mev) {
+                        let min = if dec != -1.0 { wx_min(ra, dec) } else { ra };
+                        sid_rate = calibration::sidereal_rate_from_guide_speed(min);
+                    }
+                }
+                None => {
+                    if let Some(s) = scope.as_mut() {
+                        let d = s.scope.load_calibration_details(&mut store.profile(), &mut mev);
+                        let (ra, dec) = (d.ra_guide_speed, d.dec_guide_speed);
+                        if d.is_valid()
+                            && mount::valid_guide_rates(ra, dec, s.scope.cal_details_validated_mut(), &mut mev)
+                        {
+                            sid_rate = calibration::sidereal_rate_from_guide_speed(wx_min(ra, dec));
+                        }
+                    }
+                }
+            }
+        }
+        let role = self.scope_role();
+        self.emit_mount_events(role, mev);
+        sid_rate
     }
 
     /// `MyFrame::LoadCalibration`: each mount's stored calibration, when
@@ -1018,22 +1202,64 @@ impl Engine {
         self.emit_mount_events(role, mev);
     }
 
-    /// `set_connected false` once the daemon disconnected the devices:
-    /// `DisconnectAll`'s refusal, then the mounts disconnected.
+    /// `set_connected false`, before the daemon disconnects the devices:
+    /// `DisconnectAll`'s refusal, then `OnButtonDisconnectAll`'s handlers in
+    /// their order, with their lines. The mounts are disconnected here;
+    /// the camera, aux mount and rotator by the daemon right after.
     pub(super) fn detach(&mut self) -> Reply {
         if self.ctrl.capture_active() {
             return Err(CmdError::new(1, "cannot disconnect equipment while capture active"));
         }
         self.debug("gear_dialog: DisconnectAll calls OnButtonDisconnectAll");
         self.debug("gear_dialog: OnButtonDisconnectAll");
-        if let Some(s) = self.scope.as_mut() {
+        let scope = self.scope.as_ref().map(|s| s.scope.mount.is_connected());
+        if let (Some(true), Some(s)) = (scope, self.scope.as_mut()) {
             s.scope.mount.disconnect();
         }
-        if let Some(a) = self.ao.as_mut() {
+        self.disconnect_handler("Scope", (1492, 1497), scope, "Mount Disconnected");
+        // The gear only carries connected devices.
+        let aux = self.aux.as_ref().map(|_| true);
+        self.disconnect_handler("AuxScope", (1526, 1531), aux, "Aux Mount Disconnected");
+        let camera = self.camera.as_ref().map(|c| c.is_connected());
+        self.disconnect_handler("Camera", (1257, 1262), camera, "Camera Disconnected");
+        let ao = self.ao.as_ref().map(|a| a.sg.mount().is_connected());
+        if let (Some(true), Some(a)) = (ao, self.ao.as_mut()) {
             a.sg.disconnect();
         }
+        self.disconnect_handler("StepGuider", (1675, 1680), ao, "AO Disconnected");
+        let rotator = self.rotator.as_ref().map(|r| r.is_connected());
+        self.disconnect_handler("Rotator", (1806, 1811), rotator, "Rotator Disconnected");
         Ok(json!(0))
     }
+
+    /// The lines of `OnButtonDisconnect<what>` (gear_dialog.cpp) for a
+    /// device the choice left out (`None`), one not connected, or one it
+    /// disconnects. `lines` are its two throws' line numbers.
+    fn disconnect_handler(&mut self, what: &str, lines: (u32, u32), connected: Option<bool>, status: &str) {
+        self.debug(&format!("gear_dialog: OnButtonDisconnect{what}"));
+        match connected {
+            None => self.debug(&format!(
+                "Error thrown from gear_dialog.cpp:{}->OnButtonDisconnect{what} called with m_p{what} == NULL",
+                lines.0
+            )),
+            Some(false) => self.debug(&format!(
+                "Throw from gear_dialog.cpp:{}->OnButtonDisconnect{what}: called when not connected",
+                lines.1
+            )),
+            Some(true) => self.status(status),
+        }
+    }
+}
+
+/// `DeviceSelectionMatches` (gear_dialog.cpp:378): any INDI choice matches
+/// any other ("INDI Camera" and "INDI Camera [driver]" name the same kind).
+fn device_selection_matches(val: &str, item: &str) -> bool {
+    if val.contains("INDI") { item.contains("INDI") } else { val == item }
+}
+
+/// `wxMin`: `a < b ? a : b`.
+fn wx_min(a: f64, b: f64) -> f64 {
+    if a < b { a } else { b }
 }
 
 /// `Scope::GetSettingsSummary`'s values (scope.cpp:1904), the stored

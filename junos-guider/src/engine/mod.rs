@@ -222,6 +222,14 @@ pub struct Engine {
     stop_served: bool,
     /// [`Command::Connecting`].
     connecting: bool,
+    // The gear dialog's camera-change state (`m_lastCamera`, `m_camChanged`,
+    // `m_camWarningIssued`, `m_imageScaleRatio`). PHD2 resets the last three
+    // only when its dialog is shown, which never happens here: as in a PHD2
+    // driven through the event server alone, they hold until the end.
+    last_camera: String,
+    cam_changed: bool,
+    cam_warning_issued: bool,
+    image_scale_ratio: f64,
     /// An exposure was scheduled and the cancel token not yet cleared for it.
     exposure_seen: bool,
     single: Option<SingleState>,
@@ -285,6 +293,10 @@ impl Engine {
             stop: Arc::default(),
             stop_served: false,
             connecting: false,
+            last_camera: String::new(),
+            cam_changed: false,
+            cam_warning_issued: false,
+            image_scale_ratio: 1.0,
             exposure_seen: false,
             single: None,
             ga: None,
@@ -305,6 +317,7 @@ impl Engine {
         e.emit_guider_events(gev);
         e.load_frame_settings();
         e.new_control();
+        e.load_gear_choices();
         e.guiding_started = e.clock.mono();
         e.flush_profile();
         e
@@ -1082,6 +1095,18 @@ impl Engine {
             Command::Attach(gear) => self.attach(gear),
             Command::Detach => self.detach(),
             Command::ProfileChanged => {
+                // `LoadGearChoices` makes the gear anew from the new profile:
+                // the camera with its darks and defect map, the mounts with
+                // their algorithms and calibration. The daemon connects the
+                // new profile's devices at the next `set_connected`.
+                self.camera = None;
+                self.scope = None;
+                self.ao = None;
+                self.aux = None;
+                self.rotator = None;
+                self.darks = DarkLibrary::default();
+                self.dark_geometry = DarkGeometry::default();
+                self.load_gear_choices();
                 self.load_frame_settings();
                 self.load_control_settings();
                 let upd = self.call(|c, cx, ev| {
@@ -1091,6 +1116,9 @@ impl Engine {
                     upd
                 });
                 self.queue_moves(&upd.moves);
+                // `SetProfile` then closes the dialog.
+                self.end_modal();
+                self.refresh_ra_guide_speed();
                 ok()
             }
             Command::DeviceLost(which) => {

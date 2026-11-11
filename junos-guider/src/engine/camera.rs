@@ -170,6 +170,13 @@ pub trait GuideCamera: Send {
     fn pixel_size_xy(&self) -> Option<(f64, f64)> {
         None
     }
+    /// `Connect` again (`ReconnectCamera`), after the camera disconnected
+    /// itself on a capture timeout; the daemon made the first connect.
+    /// `Err` holds a debug-log line, or nothing: a camera that cannot do
+    /// it fails the reconnect.
+    fn reconnect(&mut self, _cancel: &CancelToken) -> Result<(), String> {
+        Err(String::new())
+    }
     /// `HasGainControl`: the gain setting is shown.
     fn has_gain_control(&self) -> bool {
         false

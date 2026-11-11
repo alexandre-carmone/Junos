@@ -904,11 +904,10 @@ pub enum AdjustStep {
     Status(String),
     /// `MyFrame::HandleImageScaleChange` (`myframe.cpp:2837`) runs here. The
     /// mount's `calibrated` is already off, so the flip that may follow is
-    /// refused (a rotator turn sets it again). The caller does the rest of
-    /// `AdvancedDialog::MakeImageScaleAdjustments` — new calibration step,
-    /// the other mount cleared, the calibration state machines reset,
-    /// min-moves reset, with their debug lines — and clears the graphs. The
-    /// alert that closes it is the next step.
+    /// refused (a rotator turn sets it again). The engine does the rest of
+    /// `AdvancedDialog::MakeImageScaleAdjustments` when it hands the steps
+    /// on — new calibration step, both mounts cleared, min-moves reset,
+    /// with their debug lines. The alert that closes it is the next step.
     ImageScaleChange,
 }
 
