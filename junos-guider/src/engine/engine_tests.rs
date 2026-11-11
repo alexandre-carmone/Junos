@@ -387,7 +387,17 @@ fn a_dither_moves_the_lock_and_settles() {
     let dithered = r.position(|e| matches!(e, EngineEvent::GuidingDithered { .. })).unwrap();
     let begin = r.position(|e| matches!(e, EngineEvent::SettleBegin)).unwrap();
     assert!(dithered < begin);
+    // The snapshot follows the settling, as its last `Settling` event.
+    r.run_until(100, |e| matches!(e, EngineEvent::Settling { .. }));
+    let last = r.ev.iter().rev().find_map(|e| match *e {
+        EngineEvent::Settling { distance, time, settle_time, star_locked } => {
+            Some(SettleView { distance, time, settle_time, locked: star_locked })
+        }
+        _ => None,
+    });
+    assert_eq!(r.e.snapshot().settle, last);
     r.run_until(100, |e| matches!(e, EngineEvent::SettleDone { .. }));
+    assert_eq!(r.e.snapshot().settle, None);
     let done = r.ev.iter().rev().find_map(|e| match e {
         EngineEvent::SettleDone { error, .. } => Some(error.clone()),
         _ => None,
@@ -895,8 +905,11 @@ fn the_darks_dialog_builds_a_library_and_the_defect_map_darks() {
     assert!(snap.dark_loaded);
     assert!(r.files.0.lock().unwrap().contains_key("/darks/PHD2_dark_lib_1.fit"));
     let complete = "Operation complete: dark library built";
-    let done = |e: &EngineEvent| matches!(e, EngineEvent::Alert { msg, .. } if msg == complete);
+    // The dialog's message box: the junos UI's, not a PHD2 `Alert`.
+    let done = |e: &EngineEvent| matches!(e, EngineEvent::Notice(msg) if msg == complete);
     assert!(r.ev.iter().any(done));
+    assert!(!r.ev.iter().any(|e| matches!(e, EngineEvent::Alert { .. })));
+    assert!(r.debug_log().contains("Dark library - new dark lib created from scratch."));
     let status = "Building master dark at 500 mSec: Taking dark frame 1/2";
     let first = |e: &EngineEvent| matches!(e, EngineEvent::Status(s) if s == status);
     assert!(r.ev.iter().any(first));

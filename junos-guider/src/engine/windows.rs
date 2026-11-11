@@ -28,7 +28,6 @@ pub(super) struct DarksJob {
     build: DarksBuild,
     note: String,
     defect_map: bool,
-    new_library: bool,
 }
 
 impl Engine {
@@ -367,19 +366,13 @@ impl Engine {
                 build: DarksBuild::dark_library(&mut self.darks, exposures_ms, count, new_library),
                 note,
                 defect_map: false,
-                new_library,
             },
             DarksBuildKind::DefectMap { exp_s, count, note } => {
-                DarksJob { build: DarksBuild::defect_map(exp_s, count), note, defect_map: true, new_library: false }
+                DarksJob { build: DarksBuild::defect_map(exp_s, count), note, defect_map: true }
             }
         };
         if !self.camera.as_ref().is_some_and(|c| c.has_shutter()) {
-            self.events.push(super::EngineEvent::Alert {
-                msg: COVER_GUIDE_SCOPE.into(),
-                kind: AlertKind::Info,
-                button: None,
-                dont_show: None,
-            });
+            self.events.push(super::EngineEvent::Notice(COVER_GUIDE_SCOPE.into()));
         }
         self.cam.shutter_closed = true;
         // The dialog captures outside the worker thread: a stop the loop
@@ -457,11 +450,9 @@ impl Engine {
                     self.alert(format!("Error saving darks FITS file {path}"), AlertKind::Warning);
                 }
                 self.load_dark_handler(true);
-                self.debug(if job.new_library {
-                    "Dark library - new dark lib created from scratch."
-                } else {
-                    "Dark library - dark lib modified/extended."
-                });
+                // Quirk kept: PHD2 tests the radio button's pointer, not its
+                // value (darks_dialog.cpp:327), so it always says so.
+                self.debug("Dark library - new dark lib created from scratch.");
             }
             (DarksBuildState::Done, true) => {
                 if let Some(master) = job.build.take_master() {
@@ -498,7 +489,7 @@ impl Engine {
         }
         let has_shutter = self.camera.as_ref().is_some_and(|c| c.has_shutter());
         if let Some(msg) = job.build.wrapup(has_shutter) {
-            self.events.push(super::EngineEvent::Alert { msg, kind: AlertKind::Info, button: None, dont_show: None });
+            self.events.push(super::EngineEvent::Notice(msg));
         }
         let status = job.build.status().to_string();
         self.status(&status);

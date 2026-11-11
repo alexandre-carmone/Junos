@@ -293,7 +293,10 @@ pub fn event(e: &EngineEvent, o: &Origin, now: f64) -> Option<String> {
         }
         EngineEvent::ConfigurationChange => return simple("ConfigurationChange"),
         EngineEvent::AppState(st) => app_state(*st, o, now),
-        EngineEvent::FrameReady(_) | EngineEvent::GuideLogLine(_) | EngineEvent::Status(_) => return None,
+        EngineEvent::FrameReady(_)
+        | EngineEvent::GuideLogLine(_)
+        | EngineEvent::Status(_)
+        | EngineEvent::Notice(_) => return None,
     };
     Some(text)
 }

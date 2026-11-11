@@ -75,6 +75,9 @@ pub enum EngineEvent {
     Settling { distance: f64, time: f64, settle_time: f64, star_locked: bool },
     /// `SettleDone`: `Status` 1 with an error, else 0.
     SettleDone { error: Option<String>, total_frames: i32, dropped_frames: i32 },
+    /// A tool window's `wxMessageBox` (the darks dialog's "cover the
+    /// scope" and its wrap-up): shown by the junos UI, never a PHD2 event.
+    Notice(String),
     /// `SingleFrameComplete`: `path` when the frame was saved.
     SingleFrameComplete { success: bool, error: Option<String>, path: Option<String> },
     /// `Alert`. The event server sends `Msg` and `Type`; the button and the
@@ -163,6 +166,15 @@ pub struct DarksView {
     pub progress: (i32, i32),
 }
 
+/// The settling in progress, as its last `Settling` event told it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SettleView {
+    pub distance: f64,
+    pub time: f64,
+    pub settle_time: f64,
+    pub locked: bool,
+}
+
 /// The Polar Drift tool, while open.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PolarDriftView {
@@ -237,9 +249,16 @@ pub struct Snapshot {
     pub sensor_temperature: Option<f64>,
     pub multistar: bool,
     pub stars_used: u32,
+    pub dither_mode: DitherMode,
     pub dither_ra_only: bool,
     pub dither_scale: f64,
+    /// The settling in progress, `None` when not settling.
+    pub settle: Option<SettleView>,
+    /// The camera's `HasGainControl`.
+    pub gain_supported: bool,
     pub dark_loaded: bool,
+    /// The dark frame in use, its exposure ms.
+    pub dark_exp_ms: Option<i32>,
     pub defect_map_loaded: bool,
     pub profile_id: i32,
     pub profile_name: String,
@@ -254,12 +273,10 @@ pub struct Snapshot {
     /// it retries; the daemon's, the engine leaves them empty.
     pub port: Option<u16>,
     pub port_error: Option<String>,
-    pub dither_mode: DitherMode,
     /// The camera takes a gain.
     pub has_gain_control: bool,
-    /// The exposures of the dark library's frames, ms, and the one in use.
+    /// The exposures of the dark library's frames, ms.
     pub dark_exposures: Vec<i32>,
-    pub dark_exp_ms: Option<i32>,
     /// The multi-star list, the primary first.
     pub guide_stars: Vec<GuideStar>,
 }

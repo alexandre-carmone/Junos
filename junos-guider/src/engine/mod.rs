@@ -100,7 +100,7 @@ pub use self::command::{
     ScopeGear, ScopeOutput, SingleFrame, Which,
 };
 pub use self::event::{
-    AlgoView, CalibrationView, DarksView, DeviceView, EngineEvent, GaView, PolarDriftView, Snapshot,
+    AlgoView, CalibrationView, DarksView, DeviceView, EngineEvent, GaView, PolarDriftView, SettleView, Snapshot,
 };
 pub use self::session::{EngineConfig, Files};
 
@@ -236,6 +236,10 @@ pub struct Engine {
     /// `m_cameraReconnectAttempts`: when each reconnect of the last minute
     /// was tried, wall seconds.
     reconnect_attempts: Vec<i64>,
+    /// The last `Settling` event, for the snapshot.
+    settle: Option<SettleView>,
+    /// `CreateTempFileName`'s names, apart from the dither's generator.
+    temp_rng: rng::Rng,
     /// An exposure was scheduled and the cancel token not yet cleared for it.
     exposure_seen: bool,
     single: Option<SingleState>,
@@ -305,6 +309,8 @@ impl Engine {
             image_scale_ratio: 1.0,
             reconnect: false,
             reconnect_attempts: Vec::new(),
+            settle: None,
+            temp_rng: rng::Rng::new(now.timestamp_micros() as u64),
             exposure_seen: false,
             single: None,
             ga: None,
@@ -316,6 +322,11 @@ impl Engine {
             stamp,
             events: Vec::new(),
         };
+        // The first guider and controller only fill the struct: they are
+        // made again below once the logs are open, so their profile traces
+        // and writes are dropped.
+        let _ = e.store.take_debug();
+        let _ = e.store.take_change();
         e.open_logs(now, &listing);
         // The guider and the frame again, now that the logs are open: their
         // construction writes to both.
@@ -667,6 +678,7 @@ impl Engine {
                     Pending::Manual { dir, amount, .. } => {
                         a.sg.move_axis(dir, amount, MoveOpts::MANUAL, &mut *a.dev, &mut mev)
                     }
+                    // A bump is the scope's (`Secondary`): never the AO's.
                     Pending::Bump(_) => MoveResult::Error,
                 }
             } else if let Some(s) = scope.as_mut() {
@@ -1379,18 +1391,20 @@ impl Engine {
         }
         let camera = self.camera.as_ref().expect("camera");
         let max_binning = camera.max_binning() as i32;
-        let exposure = req.exposure_ms.unwrap_or(self.ctrl.requested_exposure_duration(true));
-        if !(1..=600_000).contains(&exposure) {
+        // Only the parameters sent are checked; the defaults are taken as
+        // they are.
+        if req.exposure_ms.is_some_and(|e| !(1..=600_000).contains(&e)) {
             return Err(CmdError::new(INVALID_PARAMS, "expected exposure param"));
         }
-        let binning = req.binning.unwrap_or(camera.binning() as i32);
-        if !(1..=max_binning).contains(&binning) {
+        let exposure = req.exposure_ms.unwrap_or(self.ctrl.requested_exposure_duration(true));
+        if req.binning.is_some_and(|b| !(1..=max_binning).contains(&b)) {
             return Err(CmdError::new(INVALID_PARAMS, format!("invalid binning value: min=1, max={max_binning}")));
         }
-        let gain = req.gain.unwrap_or(self.cam.gain);
-        if !(0..=100).contains(&gain) {
+        let binning = req.binning.unwrap_or(camera.binning() as i32);
+        if req.gain.is_some_and(|g| !(0..=100).contains(&g)) {
             return Err(CmdError::new(INVALID_PARAMS, "invalid gain value: must be between 0 and 100"));
         }
+        let gain = req.gain.unwrap_or(self.cam.gain);
         if let Some(path) = &req.path {
             if !path.starts_with('/') {
                 return Err(CmdError::new(INVALID_PARAMS, "path param must be an absolute path"));
@@ -1436,7 +1450,6 @@ impl Engine {
         if !self.camera_connected() {
             return Err(CmdError::new(1, "camera not connected"));
         }
-        let setpoint = self.store.profile().get_f64("/camera/CoolerSetpt", 10.0);
         let camera = self.camera.as_deref_mut().expect("camera");
         if !camera.has_cooler() {
             return Err(CmdError::new(1, "camera lacks a cooler"));
@@ -1444,8 +1457,11 @@ impl Engine {
         if camera.set_cooler_on(enable) {
             return Err(CmdError::new(1, "failed to set cooler state"));
         }
-        if enable && camera.set_cooler_setpoint(setpoint) {
-            return Err(CmdError::new(1, "failed to set cooler setpoint"));
+        if enable {
+            let setpoint = self.store.profile().get_f64("/camera/CoolerSetpt", 10.0);
+            if camera.set_cooler_setpoint(setpoint) {
+                return Err(CmdError::new(1, "failed to set cooler setpoint"));
+            }
         }
         Ok(json!(0))
     }
@@ -1457,10 +1473,13 @@ impl Engine {
         if img.data.is_empty() {
             return Err(CmdError::new(2, "no image available"));
         }
-        let name = format!("{}/save_image_{:06x}", self.cfg.data_dir, self.ctrl.rng.next_u64() & 0xff_ffff);
+        let name = self.temp_name("save_image_");
         match self.save_fits(&img, &name) {
             Ok(()) => Ok(json!({ "filename": name })),
-            Err(_) => Err(CmdError::new(3, "error saving image")),
+            Err(_) => {
+                self.files.remove(&name);
+                Err(CmdError::new(3, "error saving image"))
+            }
         }
     }
 
@@ -1628,9 +1647,13 @@ impl Engine {
             sensor_temperature: self.camera.as_ref().filter(|c| c.is_connected()).and_then(|c| c.sensor_temperature()),
             multistar: self.guider.multistar().cfg.multi_star,
             stars_used: self.guider.multistar().stars_used(),
+            dither_mode: self.ctrl.dither_mode(),
             dither_ra_only: self.ctrl.dither_ra_only(),
             dither_scale: self.ctrl.dither_scale_factor(),
+            settle: self.settle.filter(|_| self.ctrl.is_settling()),
+            gain_supported: self.camera.as_ref().is_some_and(|c| c.has_gain_control()),
             dark_loaded: self.darks.current_dark().is_some(),
+            dark_exp_ms: self.darks.current_dark().map(|d| d.img_exp_dur),
             defect_map_loaded: self.darks.defect_map.is_some(),
             profile_id: self.store.current_profile_id(),
             profile_name: self.store.current_profile(),
@@ -1641,10 +1664,8 @@ impl Engine {
             connecting: self.connecting,
             port: None,
             port_error: None,
-            dither_mode: self.ctrl.dither_mode(),
             has_gain_control: self.camera.as_ref().is_some_and(|c| c.has_gain_control()),
             dark_exposures: self.darks.darks.keys().copied().collect(),
-            dark_exp_ms: self.darks.current_dark().map(|d| d.img_exp_dur),
             guide_stars: self.guider.multistar().guide_stars().to_vec(),
         }
     }

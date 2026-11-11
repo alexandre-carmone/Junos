@@ -217,8 +217,8 @@ pub enum Command {
     SetLimitFrame(Option<Rect>),
     /// `set_cooler_state`.
     SetCoolerState(bool),
-    /// `save_image`: the current frame into a new `save_image_*.fit` of the
-    /// default folder.
+    /// `save_image`: the current frame into a new `save_image_*` file (no
+    /// extension, as `CreateTempFileName` makes it) of the default folder.
     SaveImage,
 
     // --------------------------------------------------------- equipment

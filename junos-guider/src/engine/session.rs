@@ -40,7 +40,7 @@ use super::camera::{self, DEFAULT_CAMERA_GAIN};
 use super::command::{CmdError, Gear, Reply};
 use super::control::{Control, ControlEvent};
 use super::darks::{self, DefectMap, FileGeometry};
-use super::event::EngineEvent;
+use super::event::{EngineEvent, SettleView};
 use super::fits::{CameraCards, SaveHeader, write_fits};
 use super::guider::{GuiderEvent, MountRole};
 use super::image::{NoiseReduction, UsImage};
@@ -224,8 +224,12 @@ impl Engine {
             match e {
                 ControlEvent::Guider(g) => self.emit_guider(g),
                 ControlEvent::Mount(role, m) => self.emit_mount(role, m),
-                ControlEvent::SettleBegin => self.events.push(EngineEvent::SettleBegin),
+                ControlEvent::SettleBegin => {
+                    self.settle = None;
+                    self.events.push(EngineEvent::SettleBegin)
+                }
                 ControlEvent::Settling { distance, time, settle_time, star_locked } => {
+                    self.settle = Some(SettleView { distance, time, settle_time, locked: star_locked });
                     self.events.push(EngineEvent::Settling { distance, time, settle_time, star_locked })
                 }
                 ControlEvent::SettleDone { error, total_frames, dropped_frames } => {
@@ -447,26 +451,28 @@ impl Engine {
         let Some(st) = self.single.take() else { return };
         let mut succeeded = error.is_none();
         let mut msg = error.unwrap_or_default().to_string();
-        let mut path = st.path.clone();
+        let mut path = st.path.clone().unwrap_or_default();
         if succeeded && st.save {
-            let p = path.clone().unwrap_or_else(|| self.temp_name("save_image_"));
-            let img = self.guider.current_image().clone();
-            if self.save_fits(&img, &p).is_err() {
-                self.files.remove(&p);
-                succeeded = false;
-                msg = format!("error saving image file [{p}] -- see debug log for more info");
+            let created = path.is_empty();
+            if created {
+                path = self.temp_name("save_image_");
             }
-            path = Some(p);
+            let img = self.guider.current_image().clone();
+            if self.save_fits(&img, &path).is_err() {
+                // Only a file of its own making is removed.
+                if created {
+                    self.files.remove(&path);
+                }
+                succeeded = false;
+                msg = format!("error saving image file [{path}] -- see debug log for more info");
+            }
         }
-        self.debug(&format!(
-            "SingleExposure::Complete ok={} path=[{}]",
-            succeeded as i32,
-            path.clone().unwrap_or_default()
-        ));
+        self.debug(&format!("SingleExposure::Complete ok={} path=[{path}]", succeeded as i32));
+        // A failed capture leaves the path empty when none was given.
         self.events.push(EngineEvent::SingleFrameComplete {
             success: succeeded,
             error: (!succeeded).then_some(msg),
-            path: if st.save { path } else { None },
+            path: st.save.then_some(path),
         });
         let mut lines = Vec::new();
         if let Some(camera) = self.camera.as_deref_mut() {
@@ -483,9 +489,15 @@ impl Engine {
         }
     }
 
-    /// `wxFileName::CreateTempFileName(<default dir>/<prefix>)`.
-    fn temp_name(&mut self, prefix: &str) -> String {
-        format!("{}/{prefix}{:06x}", self.cfg.data_dir, self.ctrl.rng.next_u64() & 0xff_ffff)
+    /// `wxFileName::CreateTempFileName(<default dir>/<prefix>)`: a name
+    /// no file has yet.
+    pub(super) fn temp_name(&mut self, prefix: &str) -> String {
+        loop {
+            let name = format!("{}/{prefix}{:06x}", self.cfg.data_dir, self.temp_rng.next_u64() & 0xff_ffff);
+            if !self.files.exists(&name) {
+                return name;
+            }
+        }
     }
 
     /// `usImage::Save`: the frame as FITS with the cards of the moment.
@@ -505,7 +517,7 @@ impl Engine {
         let p = self.pointing();
         SaveHeader {
             note: String::new(),
-            date: Utc::now(),
+            date: self.clock.wall().with_timezone(&Utc),
             creator: format!("PHD2 {PHD2_VERSION}"),
             profile: self.store.current_profile(),
             camera: self.camera.as_ref().filter(|c| c.is_connected()).map(|c| CameraCards {
@@ -667,7 +679,8 @@ impl Engine {
         // `SetFocalLength` refuses a negative length.
         self.focal_length = if fl < 0 { 0 } else { fl };
         prof.set_i32("/frame/focalLength", self.focal_length);
-        self.gamma = prof.get_i32("/Gamma", 100) as f64 / 100.0;
+        // Clamped to the slider's 10..300 (myframe.cpp:908).
+        self.gamma = prof.get_i32("/Gamma", 100).clamp(10, 300) as f64 / 100.0;
         let shutter_closed = self.cam.shutter_closed;
         self.cam = camera::CameraSettings { shutter_closed, ..camera::CameraSettings::load(&prof) };
         let il = ImageLoggerSettings::load(&prof);
