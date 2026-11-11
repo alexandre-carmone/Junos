@@ -22,11 +22,13 @@ build-wasm: ensure-trunk
 build-server:
     cargo build --release -p junos-server -p junos-guider
 
-# Fast typecheck (no codegen) for both crates.
+# Fast typecheck (no codegen) for the crates, and the i18n keys of both
+# languages (a key missing from en.json or fr.json panics the app).
 check:
     cargo check -p junos-web --target wasm32-unknown-unknown
     cargo check -p junos-server
     cargo check -p junos-guider --features sim
+    python3 scripts/check_i18n.py
 
 # Run the unit tests. Server-side only: junos-web is wasm-only (wgpu's
 # webgpu backend does not build for the host), so its tests need a wasm
