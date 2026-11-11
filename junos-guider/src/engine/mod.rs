@@ -5,6 +5,7 @@
 //! outside leaves as events. The daemon owns the thread and the channels.
 
 pub mod algo;
+pub mod backlash;
 pub mod calibration;
 pub mod fits;
 pub mod image;
