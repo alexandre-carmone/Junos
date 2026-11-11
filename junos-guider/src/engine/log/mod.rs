@@ -4,3 +4,4 @@
 pub mod cfmt;
 pub mod debug_log;
 pub mod guide_log;
+pub mod image_log;
