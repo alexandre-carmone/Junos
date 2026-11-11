@@ -214,6 +214,9 @@ translations! {
     guider_btn_resume, guider_btn_stop, guider_hint_capture_active, guider_hint_stop_aborts_capture,
     guider_no_frame, guider_tap_again, guider_show_graph, guider_show_frame, guider_peak, guider_snr,
     guider_hfd, guider_rms_hint,
+    // Guide tab — junos-guider star profile
+    guider_profile_title, guider_profile_no_star, guider_profile_hint, guider_btn_deselect, guider_mass,
+    guider_fwhm, guider_saturated,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
     // Rig (optical-train) manager — section in the Profiles tab

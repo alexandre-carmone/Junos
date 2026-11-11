@@ -62,6 +62,7 @@ mod native;
 mod protocol;
 mod rows;
 mod settings;
+mod star_profile;
 mod stats;
 mod target;
 mod timeline;

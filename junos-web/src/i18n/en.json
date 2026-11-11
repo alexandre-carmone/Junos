@@ -1532,5 +1532,12 @@
   "guider_peak": "Peak",
   "guider_snr": "SNR",
   "guider_hfd": "HFD",
-  "guider_rms_hint": "Sample standard deviation over the drift window"
+  "guider_rms_hint": "Sample standard deviation over the drift window",
+  "guider_profile_title": "Star profile",
+  "guider_profile_no_star": "No star selected",
+  "guider_profile_hint": "Row (cyan) and column (amber) through the star; background and half maximum dashed",
+  "guider_btn_deselect": "Deselect",
+  "guider_mass": "Mass",
+  "guider_fwhm": "FWHM",
+  "guider_saturated": "Saturated"
 }

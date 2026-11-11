@@ -1622,5 +1622,12 @@
   "guider_peak": "Crête",
   "guider_snr": "SNR",
   "guider_hfd": "HFD",
-  "guider_rms_hint": "Écart type de l'échantillon sur la fenêtre de dérive"
+  "guider_rms_hint": "Écart type de l'échantillon sur la fenêtre de dérive",
+  "guider_profile_title": "Profil de l'étoile",
+  "guider_profile_no_star": "Aucune étoile sélectionnée",
+  "guider_profile_hint": "Ligne (cyan) et colonne (ambre) passant par l'étoile ; fond et mi-hauteur en pointillés",
+  "guider_btn_deselect": "Désélectionner",
+  "guider_mass": "Masse",
+  "guider_fwhm": "FWHM",
+  "guider_saturated": "Saturée"
 }

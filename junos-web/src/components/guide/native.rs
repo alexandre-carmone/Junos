@@ -31,6 +31,7 @@ use crate::Tab;
 use super::frame::{frame_pane, zoom, FramePane};
 use super::protocol::{Reply, Rpc, Settle, CALIBRATING, GUIDING, LOOPING, LOST_LOCK, PAUSED, SELECTED};
 use super::settings::{settings_i64, GuideSettings};
+use super::star_profile::star_profile;
 use super::stats::{compute, stats_tiles};
 use super::target::target_plot;
 use super::timeline::{drift_plot, DriftSeries, WINDOW_MS};
@@ -337,6 +338,7 @@ pub fn NativeGuide(
                             {move || series.with(|s| target_plot(&s.points, accuracy.get().unwrap_or(1.0), unit.get(),
                                                                 ra_only.get(), tr().guide_no_drift))}
                         </div>
+                        {star_profile(guider.frame, rpc.clone(), last, pixel_scale, lang)}
                     </div>
                     {move || pane2(!pin_graph.get(), false)}
                 </div>
