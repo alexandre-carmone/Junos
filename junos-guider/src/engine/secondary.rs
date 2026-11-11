@@ -3,12 +3,14 @@
 //! machines of [`super::tools`]. Their state reaches the UI as one JSON
 //! view ([`Engine::tools_view`]).
 //!
-//! Ported from PHD2 src/starcross_test.cpp (OnStart, ExecuteTest), src/nudge_lock.cpp (UpdateLockPos, DoMove), src/guider.cpp (the bookmarks) — BSD-3-Clause, see THIRD_PARTY.md
+//! Ported from PHD2 src/starcross_test.cpp (OnStart, ExecuteTest), src/nudge_lock.cpp (UpdateLockPos, DoMove), src/comet_tool.cpp (OnStart, OnStop, CalcRate, OnAppStateNotify), src/guider.cpp (the bookmarks) — BSD-3-Clause, see THIRD_PARTY.md
 
 use serde_json::{Value, json};
 
 use super::command::{BookmarkOp, CmdError, INVALID_REQUEST, Reply};
+use super::guider::ShiftUnits;
 use super::tools::bookmarks;
+use super::tools::comet::{self, CometTraining};
 use super::tools::starcross::{self, StarCross};
 use super::traits::{MoveResult, Point};
 use super::{Engine, Pending};
@@ -19,6 +21,8 @@ pub(super) struct Tools {
     starcross: Option<StarCross>,
     /// `m_bookmarks`, read with the guider's profile settings.
     bookmarks: Vec<Point>,
+    /// The comet tool's training.
+    comet: Option<CometTraining>,
 }
 
 impl Engine {
@@ -45,14 +49,54 @@ impl Engine {
 
     // ---------------------------------------------------------- the lock
 
-    /// `UpdateLockPos`: a position inside the frame becomes the lock.
+    /// `UpdateLockPos`: a position inside the frame becomes the lock; a
+    /// comet training takes its rate from it (`NotifyUpdateLockPos`).
     fn update_lock_pos(&mut self, p: Point) -> bool {
+        let now_ms = self.now_ms();
+        let training = self.tools.comet;
         self.call(|c, cx, ev| {
             let mut gev = Vec::new();
             let set = cx.guider.is_valid_lock_position(p) && cx.guider.set_lock_position(p, &mut cx.gcx, &mut gev);
+            if set && let (Some(t), Some(lock)) = (training, cx.guider.lock_position()) {
+                let rate = t.rate(lock, now_ms);
+                cx.guider.set_lock_shift_rate(rate, ShiftUnits::Pixels, false, &mut cx.gcx, &mut gev);
+            }
             c.forward(gev, cx, ev);
             set
         })
+    }
+
+    // -------------------------------------------------------- comet tool
+
+    /// The comet tool's Start: only while guiding (PHD2's button is off
+    /// otherwise). The lock shift goes on.
+    pub(super) fn comet_train_start(&mut self) -> Reply {
+        if !self.guider.is_guiding() {
+            return Err(CmdError::new(1, "not guiding"));
+        }
+        let Some(lock) = self.guider.lock_position() else { return Err(CmdError::new(1, "no lock position")) };
+        self.tools.comet = Some(CometTraining::new(lock, self.now_ms()));
+        let upd = self.call(|c, cx, ev| {
+            let mut gev = Vec::new();
+            let upd = cx.guider.enable_lock_shift(true, &mut cx.gcx, &mut gev);
+            c.forward(gev, cx, ev);
+            upd
+        });
+        self.queue_moves(&upd.moves);
+        Ok(json!(0))
+    }
+
+    /// Its Stop: the rate stays as trained.
+    pub(super) fn comet_train_stop(&mut self) -> Reply {
+        self.tools.comet = None;
+        Ok(json!(0))
+    }
+
+    /// `OnAppStateNotify`: training stops when guiding does.
+    pub(super) fn comet_check(&mut self) {
+        if self.tools.comet.is_some() && !self.guider.is_guiding() {
+            self.tools.comet = None;
+        }
     }
 
     /// The Adjust Lock Position tool's arrows (`DoMove`).
@@ -190,6 +234,10 @@ impl Engine {
         json!({
             "bookmarks": self.tools.bookmarks.iter().map(|b| [b.x, b.y]).collect::<Vec<_>>(),
             "starcross": sct,
+            "comet": {
+                "training": self.tools.comet.is_some(),
+                "status": comet::status(self.tools.comet.as_ref(), self.now_ms()),
+            },
         })
     }
 }

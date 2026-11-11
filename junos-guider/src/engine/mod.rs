@@ -1359,6 +1359,8 @@ impl Engine {
             Command::StarCrossStart { pulse_count, pulse_size } => self.starcross_start(pulse_count, pulse_size),
             Command::StarCrossStop => self.starcross_stop(),
             Command::StaticPaOpen => self.static_pa_open(),
+            Command::CometTrainStart => self.comet_train_start(),
+            Command::CometTrainStop => self.comet_train_stop(),
             Command::StaticPaRotate => self.static_pa_rotate(),
             Command::StaticPaMark(n) => self.static_pa_mark(n),
             Command::StaticPaClear => self.static_pa_clear(),

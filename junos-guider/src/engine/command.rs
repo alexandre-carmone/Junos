@@ -320,6 +320,9 @@ pub enum Command {
     StaticPaClear,
     StaticPaSet(StaticPaSet),
     StaticPaClose,
+    /// The comet tool's Start and Stop of training.
+    CometTrainStart,
+    CometTrainStop,
 }
 
 impl Command {
@@ -394,6 +397,8 @@ impl Command {
             Command::StaticPaClear => "pa_static_clear",
             Command::StaticPaSet(_) => "pa_static_set",
             Command::StaticPaClose => "pa_static_stop",
+            Command::CometTrainStart => "comet_train_start",
+            Command::CometTrainStop => "comet_train_stop",
         }
     }
 }

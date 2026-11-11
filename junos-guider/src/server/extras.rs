@@ -5,7 +5,7 @@
 //! onto an engine [`Command`] or the profile store; parameters are named
 //! (or positional in the table's order). The tools the engine does not
 //! have yet (drift align, calibration assistant, pier-flip,
-//! comet training, bad-pixel editing, a single device's connect) answer
+//! bad-pixel editing, a single device's connect) answer
 //! code 1 "not available".
 //!
 //! The relay socket's own `set_frame_filter` and `get_history` are not
@@ -323,6 +323,8 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
             command(d, Command::StaticPaSet(set)).await
         }
         "pa_static_stop" => command(d, Command::StaticPaClose).await,
+        "comet_train_start" => command(d, Command::CometTrainStart).await,
+        "comet_train_stop" => command(d, Command::CometTrainStop).await,
         "list_logs" => list_logs(&d.options().engine.log_dir),
         "read_log" => {
             let tail = p.param("tail").and_then(Value::as_u64);

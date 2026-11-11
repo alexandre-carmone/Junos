@@ -1060,3 +1060,30 @@ fn the_static_pa_tool_reads_positions_on_selected_frames() {
     assert!(r.e.snapshot().static_pa.is_null());
     assert!(r.debug_log().contains("Close StaticPaTool"));
 }
+
+#[test]
+fn comet_training_takes_the_rate_from_the_lock_moves() {
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    assert_eq!(r.cmd(Command::CometTrainStart).unwrap_err(), CmdError::new(1, "not guiding"));
+    let mut r = Rig::guiding(SimParams::new(scale()), false, |_| {});
+    r.cmd(Command::CometTrainStart).unwrap();
+    assert!(r.e.snapshot().lock_shift.enabled);
+    let t0 = r.mono();
+    while r.mono() - t0 < 36.0 {
+        r.step();
+    }
+    r.cmd(Command::NudgeLock { dx: 1.0, dy: 0.0 }).unwrap();
+    // 1 px in ~36 s: ~100 px/h along x, in camera px.
+    let rate = r.e.snapshot().lock_shift.rate;
+    assert!((rate.x - 3600.0 / (r.mono() - t0)).abs() < 2.0 && rate.y.abs() < 1e-9, "{rate:?}");
+    assert_eq!(r.e.snapshot().tools["comet"]["training"], true);
+    // Training stops with guiding.
+    r.cmd(Command::StopCapture).unwrap();
+    for _ in 0..3 {
+        if r.e.has_work() {
+            r.step();
+        }
+    }
+    assert!(r.e.snapshot().guider_state != Some(crate::engine::guider::GuiderState::Guiding));
+    assert_eq!(r.e.snapshot().tools["comet"]["training"], false);
+}

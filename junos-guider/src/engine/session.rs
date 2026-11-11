@@ -201,6 +201,7 @@ impl Engine {
     /// The end of a command or a frame: the profile's getter traces, and
     /// one `ConfigurationChange` when the profile changed.
     pub fn finish(&mut self) {
+        self.comet_check();
         self.flush_profile();
     }
 

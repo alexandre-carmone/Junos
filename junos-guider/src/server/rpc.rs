@@ -1241,6 +1241,8 @@ mod tests {
             C::StaticPaClear,
             C::StaticPaSet(StaticPaSet::default()),
             C::StaticPaClose,
+            C::CometTrainStart,
+            C::CometTrainStop,
             C::SaveLock,
             C::RestoreLock,
             C::Bookmark(BookmarkOp::Lock),
