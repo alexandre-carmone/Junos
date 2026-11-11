@@ -23,7 +23,7 @@
 use std::cell::RefCell;
 use std::time::Duration;
 
-use super::client::{self, IndiClient, Link, PulseEnd, TIMED_GUIDE_NS, TIMED_GUIDE_WE, TimedGuide};
+use super::client::{self, IndiClient, Link, PulseEnd, TIMED_GUIDE_NS, TIMED_GUIDE_WE, TimedGuide, WaitError};
 use super::store::Property;
 use super::xml::{Kind, PropState};
 use crate::engine::calibration::{ProfileAccess, norm};
@@ -151,15 +151,17 @@ impl IndiMount {
     }
 
     /// `SlewToCoordinates`: the slew, then up to 90 s while the coordinates
-    /// are Busy — as libindi's copy is from the moment they are sent — true
-    /// when they no longer are.
+    /// are Busy — as libindi's copy is from the moment they are sent. True
+    /// once the slew is sent, even when the mount is still Busy after 90 s:
+    /// PHD2 then returns the async call's result (scope_indi.cpp:876-889).
+    /// False when a stop cuts the wait short (the PLAN's cancel token).
     pub fn slew_to(&mut self, ra_hours: f64, dec_deg: f64, cancel: &CancelToken) -> bool {
         if !self.slew_to_async(ra_hours, dec_deg) {
             return false;
         }
         let device = &self.device;
         let done = |l: &mut Link| coord(l, device).is_none_or(|p| p.state != PropState::Busy);
-        self.client.wait(SLEW_TIMEOUT, Some(cancel), |l| done(l).then_some(())).is_ok()
+        self.client.wait(SLEW_TIMEOUT, Some(cancel), |l| done(l).then_some(())) != Err(WaitError::Cancelled)
     }
 
     fn log(&self, line: String) {

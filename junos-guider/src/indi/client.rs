@@ -121,7 +121,6 @@ pub struct Link {
     watched: Vec<String>,
     /// `(device, property)` of the BLOBs asked for.
     blob_props: Vec<(String, String)>,
-    discover: bool,
     blobs: Vec<Blob>,
     debug: Vec<String>,
     /// Per device, the last update that turned its `CONNECT` switch Off.
@@ -206,7 +205,8 @@ impl IndiClient {
     /// Starts the reader thread, which dials `host:port` at once and again
     /// whenever the connection drops, until [`shutdown`](Self::shutdown).
     /// `devices` are watched from the first connection (the profile's
-    /// gear); with none, the server is asked for every device.
+    /// gear); with none, the server is asked for every device: the device
+    /// chooser's client (PHD2's `INDIConfig` has its own connection).
     pub fn start(host: &str, port: u16, devices: &[&str]) -> IndiClient {
         let link = Link { watched: devices.iter().map(|d| d.to_string()).collect(), ..Link::default() };
         let sh = Arc::new(Shared {
@@ -348,17 +348,10 @@ impl IndiClient {
         }
     }
 
-    /// Asks for every device (the chooser's unwatched `connectServer`),
-    /// now and on every reconnect.
-    pub fn discover(&self) {
-        let mut link = self.lock();
-        link.discover = true;
-        if link.up {
-            self.send(&xml::get_properties(None, None));
-        }
-    }
-
     /// The devices the chooser offers for `role`, in the order they came.
+    /// Only a client started with no device sees them all: indiserver
+    /// sends every device only to a client whose first request named none
+    /// (ClInfo.cpp:51), and filters the others by the devices they named.
     pub fn devices(&self, role: Role) -> Vec<DeviceEntry> {
         let link = self.lock();
         link.store
@@ -476,8 +469,8 @@ fn serve(sh: &Shared, sock: TcpStream) {
         link.generation += 1;
         link.debug.push(format!("INDI: connected to {}:{}", sh.host, sh.port));
         // `connectServer`: one request per watched device, or one for all
-        // when nothing is watched or the chooser wants everything.
-        let hello: String = if link.watched.is_empty() || link.discover {
+        // when nothing is watched.
+        let hello: String = if link.watched.is_empty() {
             xml::get_properties(None, None)
         } else {
             link.watched.iter().map(|d| xml::get_properties(Some(d), None)).collect()
@@ -734,6 +727,10 @@ impl TimedGuide {
                 return PulseEnd::Interrupted;
             }
             Err(WaitError::Timeout) => {
+                // guide_active stays set too: PHD2 clears it only on the
+                // axis' answer (it waits for that answer for ever), so
+                // every later pulse is refused until the axis answers. The
+                // deadline only gives the engine its thread back.
                 debug.push(format!("{who}: no answer to a {ms} ms pulse within {} ms", deadline.as_millis()));
                 return PulseEnd::TimedOut;
             }
@@ -841,8 +838,7 @@ mod tests {
             }
         });
         let client = IndiClient::start("127.0.0.1", fake.port, &[]);
-        client.discover();
-        client.wait(Duration::from_secs(2), None, |l| (l.store.devices().len() == 7).then_some(())).unwrap();
+        client.wait(Duration::from_secs(5), None, |l| (l.store.devices().len() == 7).then_some(())).unwrap();
         let names = |role| client.devices(role).into_iter().map(|d| d.name).collect::<Vec<_>>();
         assert_eq!(names(Role::Camera), ["CCD Simulator", "Mystery"]);
         assert_eq!(names(Role::Mount), ["Telescope Simulator", "Guide Port", "Mystery"]);
@@ -851,8 +847,7 @@ mod tests {
         assert_eq!(names(Role::Rotator), ["Rotator Simulator", "Mystery"]);
         let scope = &client.devices(Role::Mount)[0];
         assert_eq!((scope.interfaces, scope.connected), (5, true));
-        // Discovery was asked before the link was up: the hello asks for
-        // every device, once.
+        // Nothing watched: the hello asks for every device, once.
         assert_eq!(asked(&fake), ["getProperties version=1.7"]);
         client.shutdown();
     }

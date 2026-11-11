@@ -13,6 +13,9 @@
 //! neither raises an alert. Its name (`Mount::Name`) is empty: the class
 //! sets a private `m_Name` that hides the base class's.
 //!
+//! Not ported: PHD2's other INDI AO, "SBIG AO (INDI)"
+//! (`StepGuiderSbigAoINDI`, `/indi/INDIao` defaulting to "SBIG CCD").
+//!
 //! Ported from PHD2 src/stepguider_sxao_indi.cpp, src/scope_onboard_st4.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
 use std::time::Instant;
@@ -148,8 +151,11 @@ impl IndiAo {
             let info = link.store.property(device, "DRIVER_INFO");
             let text = |m: &str| info.and_then(|p| p.text(m)).unwrap_or_default().to_owned();
             let firmware = link.store.property(device, "INFO").and_then(|p| p.text("FIRMWARE")).map(str::to_owned);
-            (text("DRIVER_EXEC"), text("DRIVER_VERSION"), firmware)
+            (text("DRIVER_EXEC"), info.and_then(|p| p.text("DRIVER_VERSION")).map(str::to_owned), firmware)
         };
+        // `CheckState` needs `DRIVER_VERSION` among the AO's properties:
+        // without it nothing is checked (stepguider_sxao_indi.cpp:194).
+        let Some(version) = version else { return };
         // `atof`.
         if scan_double(&version).unwrap_or(0.0) < 1.12 {
             self.alerts.push(format!(
@@ -370,8 +376,10 @@ mod tests {
             ("getProperties", _) => {
                 let on = cfg.connected;
                 let mut s = fake::def_switch(DEV, "CONNECTION", "OneOfMany", &[("CONNECT", on), ("DISCONNECT", !on)]);
+                // An empty version: a driver without DRIVER_VERSION.
                 let info =
                     [("DRIVER_EXEC", "indi_sx_ao"), ("DRIVER_VERSION", cfg.version), ("DRIVER_INTERFACE", "260")];
+                let info: Vec<_> = info.into_iter().filter(|(_, v)| !v.is_empty()).collect();
                 s += &fake::def_text(DEV, "DRIVER_INFO", &info);
                 if on {
                     s += &ao_props(cfg);
@@ -528,6 +536,13 @@ mod tests {
               newer, available at http://www.sxccd.com/drivers-downloads,\ncontains the firmware."
             ]
         );
+        ao.client.shutdown();
+
+        // No DRIVER_VERSION at all: PHD2 checks nothing, so no alert.
+        let fake = sx(Sx { connected: true, version: "", ..SXAO });
+        let mut ao = IndiAo::new(IndiClient::start("127.0.0.1", fake.port, &[DEV]), &opts());
+        ao.connect(&CancelToken::new()).unwrap();
+        assert!(ao.take_alerts().is_empty());
         ao.client.shutdown();
     }
 }

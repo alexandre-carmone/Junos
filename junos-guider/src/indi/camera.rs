@@ -13,7 +13,7 @@
 //! driver's compression is turned off and its transfer format set to FITS
 //! when it has those properties, and a capture waits on the cancel token as
 //! well as on the watchdog (exposure + `/camera/TimeoutMs`), so a stop does
-//! not wait for the frame. The dark, the Bayer reconstruction and the
+//! not wait for the frame and aborts the exposure. The dark, the Bayer reconstruction and the
 //! square pixels are the engine's, on the returned frame.
 //!
 //! The camera is connected when its driver's `CONNECT` switch is On; it
@@ -251,7 +251,8 @@ impl IndiCamera {
         if let Some(((_, xmax), (_, ymax))) = self.binning_members(link) {
             self.max_binning.set(c_int(xmax.min(ymax)) as u8);
         }
-        let cfa = link.store.property(&self.device, &self.prop("CFA")).filter(|p| p.kind == Kind::Text);
+        // `newProperty` only: an update of the CFA changes nothing (cam_indi.cpp:529).
+        let cfa = link.store.property(&self.device, &self.prop("CFA")).filter(|p| p.kind == Kind::Text && p.updated == 0);
         if cfa.and_then(|p| p.text("CFA_TYPE")).is_some_and(|t| !t.is_empty()) {
             self.bayer.set(true);
         }
@@ -304,6 +305,7 @@ impl IndiCamera {
         &mut self,
         generation: u64,
         dur_ms: u32,
+        kind: CaptureKind,
         subframe: Option<Rect>,
         settings: &CameraSettings,
         cancel: &CancelToken,
@@ -391,7 +393,18 @@ impl IndiCamera {
                 self.disconnect();
                 return Err(CaptureError::Disconnected { msg: "INDI server disconnected".into(), reconnect: false });
             }
-            Err(WaitError::Cancelled) => return Err(CaptureError::Interrupted),
+            Err(WaitError::Cancelled) => {
+                // PHD2 waits for the frame, so its next exposure never finds
+                // this one running; the PLAN's stop does not, so the
+                // exposure is aborted (indiccd.cpp:318), or the next capture
+                // would wait it out and could time out on it.
+                let mut link = client.lock();
+                let abort = self.prop("ABORT_EXPOSURE");
+                if self.has(&link, &abort, Kind::Switch) {
+                    client.send_switch(&mut link, &device, &abort, &[("ABORT", true)]);
+                }
+                return Err(CaptureError::Interrupted);
+            }
             Err(WaitError::Timeout) => {
                 let video = self.video(&client.lock()).is_some();
                 if self.first_frame && video && !self.force_exposure {
@@ -399,7 +412,7 @@ impl IndiCamera {
                     self.alerts.push(format!("Camera  {device}, exposure error. Trying to use streaming instead."));
                     self.force_video = true;
                     self.first_frame = false;
-                    return self.capture(dur_ms, CaptureKind::Light, subframe, settings, cancel);
+                    return self.capture(dur_ms, kind, subframe, settings, cancel);
                 }
                 self.first_frame = false;
                 self.disconnect();
@@ -423,9 +436,17 @@ impl IndiCamera {
 
     /// The camera without an exposure setting: the stream's 8-bit frames
     /// summed for the exposure's length, three at least. The stream is left
-    /// on between captures, as in PHD2, which has no watchdog here; a
-    /// server drop ends the wait.
-    fn capture_video(&mut self, generation: u64, dur_ms: u32, cancel: &CancelToken) -> Result<UsImage, CaptureError> {
+    /// on between captures, as in PHD2. PHD2 has no watchdog here; the
+    /// PLAN gives this wait the exposure's (exposure + `TimeoutMs`), so a
+    /// stream that stops, or sends only frames of another size, ends as a
+    /// timed-out exposure does. A server drop ends the wait too.
+    fn capture_video(
+        &mut self,
+        generation: u64,
+        dur_ms: u32,
+        settings: &CameraSettings,
+        cancel: &CancelToken,
+    ) -> Result<UsImage, CaptureError> {
         let client = self.client.clone();
         let device = self.device.clone();
         self.first_frame = false;
@@ -449,6 +470,7 @@ impl IndiCamera {
         };
         let mut img = UsImage::new(self.frame_size.0, self.frame_size.1);
         let loopwait = Duration::from_millis(if dur_ms > 100 { 10 } else { 1 });
+        let watchdog = Duration::from_millis(dur_ms.wrapping_add(settings.timeout_ms as u32) as u64);
         let start = Instant::now();
         let mut frames = 0;
         loop {
@@ -483,6 +505,10 @@ impl IndiCamera {
                 // Streaming stops on the way out of a stop or an exit.
                 client.send_switch(&mut client.lock(), &device, &prop, &[(on, false), (off, true)]);
                 return Err(CaptureError::Interrupted);
+            }
+            if start.elapsed() >= watchdog {
+                self.disconnect();
+                return Err(CaptureError::Timeout);
             }
         }
     }
@@ -536,9 +562,10 @@ impl GuideCamera for IndiCamera {
         self.bayer.get()
     }
 
+    /// `PixSizeX/Y`, which `ClearStatus` zeroes: none while disconnected.
     fn pixel_size_xy(&self) -> Option<(f64, f64)> {
         let link = self.client.lock();
-        let info = link.store.property(&self.device, &self.prop("INFO"))?;
+        let info = link.store.property(&self.device, &self.prop("INFO")).filter(|_| self.is_connected_in(&link))?;
         Some((info.number("CCD_PIXEL_SIZE_X").unwrap_or(0.0), info.number("CCD_PIXEL_SIZE_Y").unwrap_or(0.0)))
     }
 
@@ -546,9 +573,12 @@ impl GuideCamera for IndiCamera {
         true
     }
 
-    /// `m_hasGuideOutput`: the driver has the GUIDER interface.
+    /// `m_hasGuideOutput`: the driver has the GUIDER interface; false while
+    /// disconnected (`ClearStatus`).
     fn has_guide_output(&self) -> bool {
-        self.client.lock().store.device(&self.device).is_some_and(|d| d.driver_interface() & GUIDER_INTERFACE != 0)
+        let link = self.client.lock();
+        let device = link.store.device(&self.device).filter(|_| self.is_connected_in(&link));
+        device.is_some_and(|d| d.driver_interface() & GUIDER_INTERFACE != 0)
     }
 
     fn take_debug(&mut self) -> Vec<String> {
@@ -572,7 +602,7 @@ impl GuideCamera for IndiCamera {
     fn capture(
         &mut self,
         dur_ms: u32,
-        _kind: CaptureKind,
+        kind: CaptureKind,
         subframe: Option<Rect>,
         settings: &CameraSettings,
         cancel: &CancelToken,
@@ -588,10 +618,10 @@ impl GuideCamera for IndiCamera {
             (self.has(&link, &self.prop("EXPOSURE"), Kind::Number), self.video(&link).is_some())
         };
         if expose && !self.force_video {
-            return self.capture_exposure(generation, dur_ms, subframe, settings, cancel);
+            return self.capture_exposure(generation, dur_ms, kind, subframe, settings, cancel);
         }
         if video {
-            return self.capture_video(generation, dur_ms, cancel);
+            return self.capture_video(generation, dur_ms, settings, cancel);
         }
         let msg = if self.force_video {
             "Camera has no VIDEO_STREAM property, please uncheck the option: Camera does not support exposure time."
@@ -667,6 +697,7 @@ mod tests {
         ] {
             s += &fake::def_number(DEV, p, "Idle", &[(a, 0.0, 0.0, 60000.0), (b, 0.0, 0.0, 60000.0)]);
         }
+        s += &fake::def_switch(DEV, "CCD_ABORT_EXPOSURE", "AtMostOne", &[("ABORT", false)]);
         if video {
             s += &fake::def_switch(DEV, "CCD_VIDEO_STREAM", "OneOfMany", &[("STREAM_ON", false), ("STREAM_OFF", true)]);
         }
@@ -788,6 +819,13 @@ mod tests {
         assert_eq!(cam.frame_size(), (64, 48));
         assert_eq!((cam.max_binning(), cam.bits_per_pixel(), cam.pixel_size_um()), (4, 16, Some(5.2)));
         assert_eq!((cam.pixel_size_xy(), cam.has_bayer(), cam.has_guide_output()), (Some((5.2, 5.2)), false, true));
+        // A CFA defined empty, then updated: PHD2 reads it on its definition only.
+        let cfa = fake::def_text(DEV, "CCD_CFA", &[("CFA_TYPE", "")])
+            + "<setTextVector device='CCD Simulator' name='CCD_CFA' state='Ok'><oneText name='CFA_TYPE'>RGGB</oneText></setTextVector>\n";
+        fake.push(&cfa);
+        let updated = |l: &mut Link| l.store.property(DEV, "CCD_CFA").filter(|p| p.updated > 0).map(|_| ());
+        cam.client.wait(Duration::from_secs(5), None, updated).unwrap();
+        assert!(!cam.has_bayer());
         assert_eq!(
             sent(&fake),
             [
@@ -900,6 +938,9 @@ mod tests {
         });
         assert_eq!(r.unwrap_err(), CaptureError::Interrupted);
         assert!(t.elapsed() < Duration::from_millis(2000));
+        // The exposure is aborted, not left running for the next capture.
+        let abort = "newSwitchVector CCD Simulator.CCD_ABORT_EXPOSURE ABORT=On";
+        assert!(fake.wait_for(|r| r.iter().any(|e| fake::summary(e) == abort)));
         assert!(cam.is_connected());
         cam.client.shutdown();
     }
@@ -908,13 +949,18 @@ mod tests {
     fn a_camera_that_cannot_expose_falls_back_to_its_stream() {
         let fake = ccd(Ccd { answer: false, video: true, ..SIM });
         let mut cam = connected(&fake);
-        let img = cam.capture(100, CaptureKind::Light, None, &settings(100), &CancelToken::new()).unwrap();
+        let img = cam.capture(100, CaptureKind::Light, None, &settings(1000), &CancelToken::new()).unwrap();
         assert_eq!(cam.take_alerts(), ["Camera  CCD Simulator, exposure error. Trying to use streaming instead."]);
         // Four frames of 10 stacked; the 5-byte one is dropped.
         assert_eq!((img.w, img.h), (64, 48));
         assert!(img.data.iter().all(|&v| v == 40));
         assert!(cam.take_debug().contains(&"INDI Camera: discarding blob with size 5, expected 3072".to_string()));
         assert_eq!(sent(&fake).last().unwrap(), "newSwitchVector CCD Simulator.CCD_VIDEO_STREAM STREAM_ON=On");
+        // The stream stays on and sends nothing more: the watchdog
+        // (exposure + TimeoutMs) ends the capture as it ends an exposure.
+        let r = cam.capture(100, CaptureKind::Light, None, &settings(1000), &CancelToken::new());
+        assert_eq!(r.unwrap_err(), CaptureError::Timeout);
+        assert!(!cam.is_connected());
         cam.client.shutdown();
     }
 
@@ -959,6 +1005,11 @@ mod tests {
                     re-connect the camera.";
         assert_eq!((alert.as_str(), reconnect), (text, false));
         assert_eq!(cam.check_connection(), None);
+        // `ClearStatus`: no guide output while disconnected, even with the
+        // device known again.
+        let known = |l: &mut Link| l.store.property(DEV, "DRIVER_INFO").map(|_| ());
+        cam.client.wait(Duration::from_secs(5), None, known).unwrap();
+        assert_eq!((cam.pixel_size_xy(), cam.has_guide_output()), (None, false));
         // Connected again: the BLOB is enabled again, at its definition or
         // at once (which comes first depends on when CCD1 is defined again,
         // before or after check_connection's Never).

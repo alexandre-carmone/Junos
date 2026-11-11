@@ -315,7 +315,8 @@ pub fn list_devices(d: &Daemon) -> Value {
     let Some(c) = d.indi_client() else {
         return json!({"host": null, "port": null, "connected": false, "devices": []});
     };
-    c.discover();
+    // The client asks indiserver for its watched devices only (PHD2's
+    // watchDevice), so the list holds those and whatever else it sent.
     let link = c.lock();
     let roles = [
         (Role::Camera, "camera"),
