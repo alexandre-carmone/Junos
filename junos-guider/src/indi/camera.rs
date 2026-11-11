@@ -63,8 +63,8 @@ impl CameraOptions {
         CameraOptions {
             device: p.get_str("/indi/INDIcam", UNSET_CAMERA),
             ccd: p.get_i32("/indi/INDIcam_ccd", 0),
-            force_video: p.get_i32("/indi/INDIcam_forcevideo", 0) != 0,
-            force_exposure: p.get_i32("/indi/INDIcam_forceexposure", 0) != 0,
+            force_video: p.get_bool("/indi/INDIcam_forcevideo", false),
+            force_exposure: p.get_bool("/indi/INDIcam_forceexposure", false),
             pulse_min_wait: client::pulse_min_wait(p),
         }
     }

@@ -582,13 +582,13 @@ impl Scope {
         s.set_dec_guide_mode(v, profile, events);
         // The guide algorithms come next in PHD2: `Mount::new` built them.
         events.append(&mut algo_events);
-        let flip = profile.get_i32("/scope/CalFlipRequiresDecFlip", 0) != 0;
+        let flip = profile.get_bool("/scope/CalFlipRequiresDecFlip", false);
         s.set_calibration_flip_requires_dec_flip(flip, profile);
-        let ortho = profile.get_i32("/scope/AssumeOrthogonal", 0) != 0;
+        let ortho = profile.get_bool("/scope/AssumeOrthogonal", false);
         s.set_assume_orthogonal(ortho, profile);
-        let dec_comp = profile.get_i32("/scope/UseDecComp", 1) != 0;
+        let dec_comp = profile.get_bool("/scope/UseDecComp", true);
         s.enable_dec_compensation(dec_comp, profile);
-        s.has_hp_encoders = profile.get_i32("/scope/HiResEncoders", 0) != 0;
+        s.has_hp_encoders = profile.get_bool("/scope/HiResEncoders", false);
 
         let cfg = {
             let p = &*profile;
@@ -598,7 +598,7 @@ impl Scope {
         s.mv.blc = Some(blc);
         s.mv.absorb(fx, profile, events);
 
-        let stop = profile.get_i32("/scope/StopGuidingWhenSlewing", can_check_slewing as i32) != 0;
+        let stop = profile.get_bool("/scope/StopGuidingWhenSlewing", can_check_slewing);
         s.enable_stop_guiding_when_slewing(stop, profile, events);
         s
     }
@@ -735,7 +735,7 @@ impl Scope {
     /// `SetCalibrationFlipRequiresDecFlip`.
     pub fn set_calibration_flip_requires_dec_flip(&mut self, val: bool, profile: &mut impl ProfileAccess) {
         self.cal_flip_requires_dec_flip = val;
-        profile.set_i32("/scope/CalFlipRequiresDecFlip", val as i32);
+        profile.set_bool("/scope/CalFlipRequiresDecFlip", val);
     }
 
     /// `IsAssumeOrthogonal`.
@@ -746,7 +746,7 @@ impl Scope {
     /// `SetAssumeOrthogonal`.
     pub fn set_assume_orthogonal(&mut self, val: bool, profile: &mut impl ProfileAccess) {
         self.assume_orthogonal = val;
-        profile.set_i32("/scope/AssumeOrthogonal", val as i32);
+        profile.set_bool("/scope/AssumeOrthogonal", val);
     }
 
     /// `DecCompensationEnabled`.
@@ -757,7 +757,7 @@ impl Scope {
     /// `EnableDecCompensation`.
     pub fn enable_dec_compensation(&mut self, enable: bool, profile: &mut impl ProfileAccess) {
         self.use_dec_compensation = enable;
-        profile.set_i32("/scope/UseDecComp", enable as i32);
+        profile.set_bool("/scope/UseDecComp", enable);
     }
 
     /// `HasHPEncoders` (`/scope/HiResEncoders`, set by the profile wizard).
@@ -788,7 +788,7 @@ impl Scope {
                 "Scope: slew check disabled"
             },
         );
-        profile.set_i32("/scope/StopGuidingWhenSlewing", enable as i32);
+        profile.set_bool("/scope/StopGuidingWhenSlewing", enable);
         self.mv.stop_guiding_when_slewing = enable;
     }
 

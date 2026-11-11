@@ -311,6 +311,18 @@ pub trait ProfileAccess {
     fn set_i32(&mut self, key: &str, value: i32);
     fn set_str(&mut self, key: &str, value: &str);
 
+    /// `GetBoolean`: the stored number `!= 0`. The profile store has its own,
+    /// which logs `GetBoolean(…)` as PHD2 does; a store without one goes
+    /// through `get_i32`.
+    fn get_bool(&self, key: &str, default: bool) -> bool {
+        self.get_i32(key, default as i32) != 0
+    }
+
+    /// `SetBoolean`.
+    fn set_bool(&mut self, key: &str, value: bool) {
+        self.set_i32(key, value as i32)
+    }
+
     /// `GetGroupNames`: the names of the groups directly under `group`
     /// (`"/GA"` → the Guiding Assistant's run timestamps), sorted as
     /// wxFileConfig enumerates them. A store without groups has none.
@@ -345,6 +357,12 @@ impl<P: ProfileAccess + ?Sized> ProfileAccess for &mut P {
     }
     fn set_str(&mut self, key: &str, value: &str) {
         (**self).set_str(key, value)
+    }
+    fn get_bool(&self, key: &str, default: bool) -> bool {
+        (**self).get_bool(key, default)
+    }
+    fn set_bool(&mut self, key: &str, value: bool) {
+        (**self).set_bool(key, value)
     }
     fn group_names(&self, group: &str) -> Vec<String> {
         (**self).group_names(group)

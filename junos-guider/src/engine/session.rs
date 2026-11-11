@@ -111,7 +111,7 @@ impl Engine {
         if let Err(e) = res {
             self.dlog.add_line(now, THREAD, &format!("cannot open the guide log: {e}"));
         }
-        self.store.global().set_i32("/LoggingMode", self.glog.is_enabled() as i32);
+        self.store.global().set_bool("/LoggingMode", self.glog.is_enabled());
     }
 
     /// `CheckLogRollover`: on the first guide start of a new imaging day,
@@ -405,7 +405,7 @@ impl Engine {
     fn set_auto_load_calibration(&mut self, on: bool) {
         if self.auto_load_calibration != on {
             self.auto_load_calibration = on;
-            self.store.profile().set_i32("/AutoLoadCalibration", on as i32);
+            self.store.profile().set_bool("/AutoLoadCalibration", on);
         }
     }
 
@@ -644,7 +644,7 @@ impl Engine {
         self.cam = camera::CameraSettings { shutter_closed, ..camera::CameraSettings::load(&prof) };
         let il = ImageLoggerSettings::load(&prof);
         drop(prof);
-        self.server_mode = self.store.global().get_i32("/ServerMode", 1) != 0;
+        self.server_mode = self.store.global().get_bool("/ServerMode", true);
         let line = self.ilog.apply_settings(il);
         self.debug(&line);
     }
@@ -730,7 +730,7 @@ impl Engine {
             self.dark_geometry.darks_checked = false;
             return false;
         }
-        self.store.profile().set_i32("/camera/AutoLoadDarks", check as i32);
+        self.store.profile().set_bool("/camera/AutoLoadDarks", check);
         if check {
             self.dark_geometry.darks_checked = true;
             if self.darks.defect_map.is_some() {
@@ -786,7 +786,7 @@ impl Engine {
             self.dark_geometry.defect_map_checked = false;
             return;
         }
-        self.store.profile().set_i32("/camera/AutoLoadDefectMap", check as i32);
+        self.store.profile().set_bool("/camera/AutoLoadDefectMap", check);
         if check {
             let path = self.defect_map_path();
             self.debug(&format!("Loading defect map file {path}"));
@@ -953,12 +953,12 @@ impl Engine {
         self.camera = Some(c);
 
         // AutoLoadDefectMap, then AutoLoadDarks without a map.
-        if self.store.profile().get_i32("/camera/AutoLoadDefectMap", darks::AUTO_LOAD_DEFECT_MAP_DEFAULT as i32) != 0 {
+        if self.store.profile().get_bool("/camera/AutoLoadDefectMap", darks::AUTO_LOAD_DEFECT_MAP_DEFAULT) {
             self.debug("auto-loading defect map");
             self.load_defect_map_handler(true);
         }
         if self.darks.defect_map.is_none()
-            && self.store.profile().get_i32("/camera/AutoLoadDarks", darks::AUTO_LOAD_DARKS_DEFAULT as i32) != 0
+            && self.store.profile().get_bool("/camera/AutoLoadDarks", darks::AUTO_LOAD_DARKS_DEFAULT)
         {
             self.debug("Auto-loading dark library");
             self.load_dark_handler(true);

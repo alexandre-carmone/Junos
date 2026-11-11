@@ -738,11 +738,11 @@ impl Guider {
 
     /// The settings part of `LoadProfileSettings`; the multi-star flag read.
     fn load_settings(&mut self, profile: &mut dyn ProfileAccess, gamma: f64, ev: &mut Vec<GuiderEvent>) -> bool {
-        let fast = profile.get_i32(FAST_RECENTER_KEY, 1) != 0;
+        let fast = profile.get_bool(FAST_RECENTER_KEY, true);
         self.enable_fast_recenter(fast, profile);
         // `SetScaleImage` writes it back; the display scaling is the UI's.
-        let scale = profile.get_i32(SCALE_IMAGE_KEY, 1) != 0;
-        profile.set_i32(SCALE_IMAGE_KEY, scale as i32);
+        let scale = profile.get_bool(SCALE_IMAGE_KEY, true);
+        profile.set_bool(SCALE_IMAGE_KEY, scale);
 
         let (cfg, raw_threshold, raw_region) = {
             let p = &*profile;
@@ -772,11 +772,10 @@ impl Guider {
         }
         for (key, value) in cfg.profile_values() {
             match key {
-                keys::SEARCH_REGION
-                | keys::MASS_CHANGE_THRESHOLD_ENABLED
-                | keys::TOLERATE_JUMPS_ENABLED
-                | keys::MULTISTAR_ENABLED
-                | keys::AUTO_SEL_DOWNSAMPLE => profile.set_i32(key, value as i32),
+                keys::SEARCH_REGION | keys::AUTO_SEL_DOWNSAMPLE => profile.set_i32(key, value as i32),
+                keys::MASS_CHANGE_THRESHOLD_ENABLED | keys::TOLERATE_JUMPS_ENABLED | keys::MULTISTAR_ENABLED => {
+                    profile.set_bool(key, value != 0.0)
+                }
                 _ => profile.set_f64(key, value),
             }
         }
@@ -2074,7 +2073,7 @@ fn schedule(out: &mut GuideUpdate, mv: ScheduledMove, cx: &GuiderCx, ev: &mut Ve
 /// The end of `SetMultiStarMode`: saved, logged, announced as a string
 /// parameter logged even when not guiding.
 fn announce_multi_star(on: bool, forced: bool, profile: &mut dyn ProfileAccess, ev: &mut Vec<GuiderEvent>) {
-    profile.set_i32(keys::MULTISTAR_ENABLED, on as i32);
+    profile.set_bool(keys::MULTISTAR_ENABLED, on);
     let forced = if forced { ", AutoFind forced" } else { "" };
     debug(ev, format!("MultiStar mode {}{forced}", if on { "enabled" } else { "disabled" }));
     ev.push(GuiderEvent::ParamChange { name: "MultiStar", value: Value::from(on.to_string()), force_log: true });

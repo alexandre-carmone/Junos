@@ -559,7 +559,7 @@ pub fn connect_device(client: &IndiClient, device: &str, cancel: &CancelToken) -
 
 /// `/indi/PulseMinWait`, default on: see [`TimedGuide`].
 pub fn pulse_min_wait(p: &impl ProfileAccess) -> bool {
-    p.get_i32("/indi/PulseMinWait", 1) != 0
+    p.get_bool("/indi/PulseMinWait", true)
 }
 
 /// The two pulse properties: `TELESCOPE_TIMED_GUIDE_NS` / `_WE`.

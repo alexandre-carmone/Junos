@@ -394,7 +394,7 @@ impl StepGuider {
         s.set_calibration_steps_per_iteration(v, profile, events);
         // The guide algorithms come next in PHD2: `Mount::new` built them.
         events.append(&mut algo_events);
-        s.bump_on_dither = profile.get_i32(KEY_BUMP_ON_DITHER, 1) != 0;
+        s.bump_on_dither = profile.get_bool(KEY_BUMP_ON_DITHER, true);
         s
     }
 
@@ -521,7 +521,7 @@ impl StepGuider {
     /// `SetBumpOnDither`.
     pub fn set_bump_on_dither(&mut self, val: bool, profile: &mut impl ProfileAccess) {
         self.bump_on_dither = val;
-        profile.set_i32(KEY_BUMP_ON_DITHER, val as i32);
+        profile.set_bool(KEY_BUMP_ON_DITHER, val);
     }
 
     /// `CalibrationMoveSize`: the manual-guide default, AO steps.

@@ -463,12 +463,12 @@ impl Control {
     /// the pre-2017 `/ExposureDuration` string is not read.
     pub fn load_profile_settings(&mut self, profile: &mut dyn ProfileAccess, ev: &mut Vec<ControlEvent>) {
         self.set_dither_scale_factor(profile.get_f64(keys::DITHER_SCALE_FACTOR, 1.0), profile, ev);
-        self.set_dither_ra_only(profile.get_i32(keys::DITHER_RA_ONLY, 0) != 0, profile);
+        self.set_dither_ra_only(profile.get_bool(keys::DITHER_RA_ONLY, false), profile);
         let mode = if profile.get_i32(keys::DITHER_MODE, 0) == 0 { DitherMode::Random } else { DitherMode::Spiral };
         self.set_dither_mode(mode, profile, ev);
         self.set_time_lapse(profile.get_i32(keys::TIME_LAPSE, 0), profile, ev);
         self.set_variable_delay_config(
-            profile.get_i32(keys::VAR_DELAY_ENABLED, 0) != 0,
+            profile.get_bool(keys::VAR_DELAY_ENABLED, false),
             profile.get_i32(keys::VAR_DELAY_SHORT, 1000),
             profile.get_i32(keys::VAR_DELAY_LONG, 10000),
             profile,
@@ -1277,7 +1277,7 @@ impl Control {
     /// `SetDitherRaOnly`.
     pub fn set_dither_ra_only(&mut self, ra_only: bool, profile: &mut dyn ProfileAccess) {
         self.dither_ra_only = ra_only;
-        profile.set_i32(keys::DITHER_RA_ONLY, ra_only as i32);
+        profile.set_bool(keys::DITHER_RA_ONLY, ra_only);
     }
 
     pub fn dither_scale_factor(&self) -> f64 {
@@ -1535,7 +1535,7 @@ impl Control {
         self.var_delay = VarDelayCfg { enabled, short_ms, long_ms: long_used };
         profile.set_i32(keys::VAR_DELAY_SHORT, short_ms);
         profile.set_i32(keys::VAR_DELAY_LONG, long_ms);
-        profile.set_i32(keys::VAR_DELAY_ENABLED, enabled as i32);
+        profile.set_bool(keys::VAR_DELAY_ENABLED, enabled);
     }
 
     /// `GetExposureDelay`: the wait before an exposure, ms — the time lapse,

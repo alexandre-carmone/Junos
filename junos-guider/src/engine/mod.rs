@@ -266,7 +266,7 @@ impl Engine {
         e.open_logs(now);
         // The guider and the frame again, now that the logs are open: their
         // construction writes to both.
-        let sticky = e.store.global().get_i32("/StickyLockPosition", 0) != 0;
+        let sticky = e.store.global().get_bool("/StickyLockPosition", false);
         let mut gev = Vec::new();
         e.guider = Guider::new(&mut e.store.profile(), sticky, &mut gev);
         e.emit_guider_events(gev);

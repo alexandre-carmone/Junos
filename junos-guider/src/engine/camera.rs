@@ -307,13 +307,13 @@ pub struct CameraSettings {
 impl CameraSettings {
     pub fn load(p: &impl ProfileAccess) -> Self {
         CameraSettings {
-            use_subframes: p.get_i32("/camera/UseSubframes", 0) != 0,
+            use_subframes: p.get_bool("/camera/UseSubframes", false),
             gain: p.get_i32("/camera/gain", DEFAULT_CAMERA_GAIN),
             timeout_ms: p.get_i32("/camera/TimeoutMs", DEFAULT_CAMERA_TIMEOUT_MS),
             // `(unsigned short) wxMin(GetInt(..), 65535)`: a negative value
             // wraps like the C cast.
             saturation_adu: p.get_i32("/camera/SaturationADU", 0).min(65535) as u16,
-            saturation_by_adu: p.get_i32("/camera/SaturationByADU", 1) != 0,
+            saturation_by_adu: p.get_bool("/camera/SaturationByADU", true),
             pixel_size: p.get_f64("/camera/pixelsize", UNKNOWN_PIXEL_SIZE),
             shutter_closed: false,
         }
@@ -350,7 +350,7 @@ impl CameraSettings {
     /// ADU. The debug-log line goes to `log`.
     pub fn set_saturation_by_adu(&mut self, by_adu: bool, adu: u16, p: &mut impl ProfileAccess, log: &mut Vec<String>) {
         self.saturation_by_adu = by_adu;
-        p.set_i32("/camera/SaturationByADU", by_adu as i32);
+        p.set_bool("/camera/SaturationByADU", by_adu);
         if by_adu {
             self.saturation_adu = adu;
             p.set_i32("/camera/SaturationADU", adu as i32);
@@ -376,7 +376,7 @@ impl CameraSettings {
     /// `/camera/UseSubframes`, written by the settings dialog.
     pub fn set_use_subframes(&mut self, on: bool, p: &mut impl ProfileAccess) {
         self.use_subframes = on;
-        p.set_i32("/camera/UseSubframes", on as i32);
+        p.set_bool("/camera/UseSubframes", on);
     }
 
     /// `CameraConfigDialogCtrlSet::UnloadValues` (camera.cpp:1233): the

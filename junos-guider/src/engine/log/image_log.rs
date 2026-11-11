@@ -93,7 +93,7 @@ impl ImageLoggerSettings {
     /// `LoadImageLoggerSettings` (`myframe.cpp:806`), run with the profile's
     /// other settings: the series always comes back off, count 1.
     pub fn load(p: &dyn ProfileAccess) -> Self {
-        let flag = |key: &str| p.get_i32(key, 0) != 0;
+        let flag = |key: &str| p.get_bool(key, false);
         ImageLoggerSettings {
             logging_enabled: flag(keys::LOGGING_ENABLED),
             log_frames_over_thresh_rel: flag(keys::LOG_FRAMES_OVER_THRESH_REL),
@@ -109,11 +109,11 @@ impl ImageLoggerSettings {
 
     /// `SaveImageLoggerSettings` (`myframe.cpp:823`): everything but the series.
     pub fn save(&self, p: &mut dyn ProfileAccess) {
-        p.set_i32(keys::LOGGING_ENABLED, self.logging_enabled as i32);
-        p.set_i32(keys::LOG_FRAMES_OVER_THRESH_REL, self.log_frames_over_thresh_rel as i32);
-        p.set_i32(keys::LOG_FRAMES_OVER_THRESH_PX, self.log_frames_over_thresh_px as i32);
-        p.set_i32(keys::LOG_FRAMES_DROPPED, self.log_frames_dropped as i32);
-        p.set_i32(keys::LOG_AUTO_SELECT_FRAMES, self.log_auto_select_frames as i32);
+        p.set_bool(keys::LOGGING_ENABLED, self.logging_enabled);
+        p.set_bool(keys::LOG_FRAMES_OVER_THRESH_REL, self.log_frames_over_thresh_rel);
+        p.set_bool(keys::LOG_FRAMES_OVER_THRESH_PX, self.log_frames_over_thresh_px);
+        p.set_bool(keys::LOG_FRAMES_DROPPED, self.log_frames_dropped);
+        p.set_bool(keys::LOG_AUTO_SELECT_FRAMES, self.log_auto_select_frames);
         p.set_f64(keys::ERROR_THRESH_REL, self.guide_error_thresh_rel);
         p.set_f64(keys::ERROR_THRESH_PX, self.guide_error_thresh_px);
     }

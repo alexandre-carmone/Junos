@@ -31,9 +31,13 @@ fn main() {
         store.delete_all();
     }
     store.initialize_profile();
-    if let Err(e) = store.flush() {
+    // PHD2 writes its config at exit and at its own Flush calls; a daemon
+    // writes it now, without PHD2's "PhdConfig flush" line.
+    if let Err(e) = store.persist() {
         tracing::warn!(dir = %dir.display(), "cannot write the config: {e}");
     }
+    // PHD2's event server drops the changes made before it starts.
+    store.take_change();
     tracing::info!(
         port = cfg.event_server_port(),
         ws = %cfg.ws_addr,

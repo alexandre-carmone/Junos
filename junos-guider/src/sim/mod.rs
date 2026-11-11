@@ -163,7 +163,7 @@ impl SimParams {
     pub fn from_profile(p: &impl ProfileAccess, image_scale: f64) -> SimParams {
         // `range_check`: wxMin(wxMax(v, lo), hi).
         let range = |key: &str, default: f64, lo: f64, hi: f64| p.get_f64(key, default).max(lo).min(hi);
-        let flag = |key: &str, default: bool| p.get_i32(key, default as i32) != 0;
+        let flag = |key: &str, default: bool| p.get_bool(key, default);
         SimParams {
             width: 752,
             height: 580,

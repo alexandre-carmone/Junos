@@ -35,15 +35,23 @@
 //! directory the daemon picks: `{version, current_profile, global{key:
 //! value}, profiles{"<id>": {name, values{key: value}}}}`, `version` being
 //! `ConfigVersion` and `current_profile` `/currentProfile`. Like wxConfig's
-//! `Flush`, [`ProfileStore::flush`] writes it only when something changed,
-//! atomically (a temporary file renamed over it).
+//! `Flush`, [`ProfileStore::persist`] writes it only when something changed,
+//! atomically (a temporary file renamed over it); [`ProfileStore::flush`] is
+//! PHD2's `PhdConfig::Flush`, which also logs, for PHD2's four call sites
+//! only — the daemon's own writes go through `persist`.
 //!
 //! Every change counts as PHD2's `EvtServer.NotifyConfigurationChange()`;
 //! the daemon polls [`ProfileStore::take_change`] and sends one
 //! `ConfigurationChange` event when it is set — PHD2's debouncer sends the
 //! first change at once and swallows the rest until its event loop turns.
+//! PHD2 drops the notifications made before its event server starts (the
+//! debouncer does not exist yet, event_server.cpp:3021), so the daemon calls
+//! `take_change` once when it starts the server, dropping the start-up's.
 //! The getters' and the profile functions' debug-log lines collect in
-//! [`ProfileStore::take_debug`].
+//! [`ProfileStore::take_debug`]; [`ProfileStore::open`]'s are dropped, PHD2
+//! building its config before it opens the debug log (phd.cpp:532, 557).
+//! [`ProfileStore::profiles`] and the `*_entries` listings log nothing, for
+//! the snapshots the daemon rebuilds.
 //!
 //! Ported from PHD2 src/phdconfig.h, src/phdconfig.cpp, src/phd.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
@@ -103,23 +111,9 @@ impl Section<'_> {
         format!("{}{name}", self.prefix)
     }
 
-    /// `GetBoolean`.
-    pub fn get_bool(&self, name: &str, default: bool) -> bool {
-        let path = self.path(name);
-        let value = self.store.read_long(&path).map_or(default, |l| l != 0);
-        self.store.debug(format!("GetBoolean(\"{path}\", {}) returns {}", default as i32, value as i32));
-        value
-    }
-
     /// `GetLong`.
     pub fn get_i64(&self, name: &str, default: i64) -> i64 {
         self.store.get_long_at(&self.path(name), default)
-    }
-
-    /// `SetBoolean`.
-    pub fn set_bool(&mut self, name: &str, value: bool) {
-        let path = self.path(name);
-        self.store.set_at(&path, Value::Bool(value));
     }
 
     /// `SetLong`.
@@ -131,8 +125,10 @@ impl Section<'_> {
     /// `DeleteEntry`.
     pub fn delete_entry(&mut self, name: &str) {
         let key = fold(&absolute(&self.path(name)));
-        self.store.entries.remove(&key);
-        self.store.dirty = true;
+        // wxFileConfig is dirty only when an entry went; PHD2 notifies anyway.
+        if self.store.entries.remove(&key).is_some() {
+            self.store.dirty = true;
+        }
         self.store.notify();
     }
 }
@@ -176,6 +172,19 @@ impl ProfileAccess for Section<'_> {
         self.store.set_at(&path, Value::String(value.to_string()));
     }
 
+    /// `GetBoolean`: wxFileConfig reads a long, `!= 0`.
+    fn get_bool(&self, key: &str, default: bool) -> bool {
+        let path = self.path(key);
+        let value = self.store.read_long(&path).map_or(default, |l| l != 0);
+        self.store.debug(format!("GetBoolean(\"{path}\", {}) returns {}", default as i32, value as i32));
+        value
+    }
+
+    fn set_bool(&mut self, key: &str, value: bool) {
+        let path = self.path(key);
+        self.store.set_at(&path, Value::Bool(value));
+    }
+
     /// `GetGroupNames`, in wxFileConfig's (case-insensitive) order.
     fn group_names(&self, group: &str) -> Vec<String> {
         self.store.children(&self.path(group)).0
@@ -189,14 +198,13 @@ impl ProfileAccess for Section<'_> {
 }
 
 impl ProfileStore {
-    /// `PhdConfig::PhdConfig`: load `config.json` (`config-<instance>.json`
-    /// from instance 2) from `dir` when it exists, and stamp a new config
-    /// with `ConfigVersion`. Nothing is written until [`flush`](Self::flush);
-    /// a file that is not the store's JSON is an error.
+    /// `PhdConfig::PhdConfig`: load [`file_path`](Self::file_path) when it
+    /// exists, and stamp a new config with `ConfigVersion`. Nothing is
+    /// written until [`persist`](Self::persist); a file that is not the
+    /// store's JSON is an `InvalidData` error.
     pub fn open(dir: &Path, instance: u32) -> io::Result<ProfileStore> {
-        let file = if instance > 1 { format!("config-{instance}.json") } else { "config.json".to_string() };
         let mut store = ProfileStore {
-            path: dir.join(file),
+            path: Self::file_path(dir, instance),
             entries: BTreeMap::new(),
             phantoms: RefCell::default(),
             profile_prefix: String::new(),
@@ -217,7 +225,16 @@ impl ProfileStore {
             store.debug(format!("Initializing a new config, m_pConfig={:p}", &store.entries));
             store.set_at("ConfigVersion", Value::from(CURRENT_CONFIG_VERSION));
         }
+        // PHD2 builds its config before the debug log is open, which drops
+        // these lines (debuglog.cpp:184).
+        store.debug_lines.take();
         Ok(store)
+    }
+
+    /// The file [`open`](Self::open) reads in `dir`: `config.json`, or
+    /// `config-<instance>.json` from instance 2.
+    pub fn file_path(dir: &Path, instance: u32) -> PathBuf {
+        dir.join(if instance > 1 { format!("config-{instance}.json") } else { "config.json".to_string() })
     }
 
     /// `pConfig->Global`.
@@ -253,24 +270,38 @@ impl ProfileStore {
         self.debug_lines.take()
     }
 
-    /// `PhdConfig::Flush`: write the file when something changed — to a
-    /// temporary file first, renamed over the old one so a crash never
-    /// leaves half a config.
+    /// `PhdConfig::Flush`: its debug line, then [`persist`](Self::persist).
     pub fn flush(&mut self) -> io::Result<()> {
         self.debug("PhdConfig flush");
+        self.persist()
+    }
+
+    /// wxFileConfig's write: the file when something changed — to a
+    /// temporary file first, renamed over the old one so a crash never
+    /// leaves half a config. Logs nothing.
+    pub fn persist(&mut self) -> io::Result<()> {
         if !self.dirty {
             return Ok(());
         }
-        if let Some(dir) = self.path.parent() {
-            fs::create_dir_all(dir)?;
-        }
+        let dir = self.path.parent().unwrap_or(Path::new("."));
+        fs::create_dir_all(dir)?;
         let text = serde_json::to_string_pretty(&self.to_json()).map_err(io::Error::other)?;
-        let tmp = self.path.with_extension("json.tmp");
-        let mut f = fs::File::create(&tmp)?;
-        f.write_all(text.as_bytes())?;
-        f.write_all(b"\n")?;
-        f.sync_all()?;
-        fs::rename(&tmp, &self.path)?;
+        // One temporary name per process, so another writer never truncates ours.
+        let name = self.path.file_name().unwrap_or_default().to_string_lossy();
+        let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
+        let written = (|| {
+            let mut f = fs::File::create(&tmp)?;
+            f.write_all(text.as_bytes())?;
+            f.write_all(b"\n")?;
+            f.sync_all()?;
+            fs::rename(&tmp, &self.path)
+        })();
+        if let Err(e) = written {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+        // The rename lasts once the directory is on disk too.
+        fs::File::open(dir)?.sync_all()?;
         self.dirty = false;
         Ok(())
     }
@@ -460,6 +491,42 @@ impl ProfileStore {
         self.children("/profile").0.iter().filter(|g| to_long(g).is_some()).count() as u32
     }
 
+    /// `get_profiles` (event_server.cpp:654) without the debug lines its
+    /// getters write: `(id, name, selected)` per numeric `/profile` group,
+    /// the id being `GetProfileId(name)` — two profiles of one name both
+    /// list the first one's id — and a profile whose id comes back 0 left
+    /// out. Empty groups a read left are listed, as `Profile <id>`.
+    pub fn profiles(&self) -> Vec<(i32, String, bool)> {
+        let ids: Vec<i32> = self.children("/profile").0.iter().filter_map(|g| to_long(g)).map(|id| id as i32).collect();
+        let name = |id: i32| {
+            let key = fold(&format!("/profile/{id}/name"));
+            let name = self.entries.get(&key).map(|(_, v)| wx_text(v)).unwrap_or_default();
+            if name.is_empty() { format!("Profile {id}") } else { name }
+        };
+        ids.iter()
+            .filter_map(|&g| {
+                let n = name(g);
+                let id = ids.iter().copied().find(|&i| fold(&name(i)) == fold(&n))?;
+                (id != 0).then(|| (id, n, id == self.current))
+            })
+            .collect()
+    }
+
+    /// The current profile's entries, keys relative to it (`/scope/…`), in
+    /// the store's (case-insensitive) order; no debug line.
+    pub fn profile_entries(&self) -> impl Iterator<Item = (&str, &Value)> {
+        let prefix = format!("/profile/{}/", self.current);
+        self.entries.iter().filter_map(move |(folded, (key, v))| {
+            folded.starts_with(&prefix).then_some(())?;
+            Some((key.get(prefix.len() - 1..)?, v))
+        })
+    }
+
+    /// The global entries (all but `/profile`), absolute keys; no debug line.
+    pub fn global_entries(&self) -> impl Iterator<Item = (&str, &Value)> {
+        self.entries.iter().filter(|(folded, _)| !folded.starts_with("/profile/")).map(|(_, (key, v))| (key.as_str(), v))
+    }
+
     /// `WriteProfile`: the current profile as a `PHD Profile 1` file —
     /// `key\ttype\tvalue` lines, keys relative to the profile, groups before
     /// entries at each level.
@@ -470,18 +537,21 @@ impl ProfileStore {
         out
     }
 
-    /// `ReadProfile`: import a `PHD Profile 1` file as the profile `name`
-    /// (PHD2 takes the file name without its extension), replacing a profile
-    /// of that name, and make it current. Its `/name` line is skipped; bad
-    /// lines are skipped with a debug line. True on a wrong first line.
-    pub fn read_profile(&mut self, name: &str, text: &str) -> bool {
+    /// `ReadProfile`: import the `PHD Profile 1` file `file` read as `text`,
+    /// as the profile named after the file without its folder and extension
+    /// (`wxFileName::GetName`), replacing a profile of that name, and make it
+    /// current. Its `/name` line is skipped; bad lines are skipped with a
+    /// debug line. True on a wrong first line.
+    pub fn read_profile(&mut self, file: &str, text: &str) -> bool {
         // wxTextInputStream::ReadLine ends a line at \n, \r or \r\n; the
         // empty pieces this split leaves are skipped like empty lines.
         let mut lines = text.split(['\r', '\n']);
         if lines.next() != Some(PROFILE_HEADER) {
-            self.debug(format!("invalid profile file '{name}'"));
+            self.debug(format!("invalid profile file '{file}'"));
             return true;
         }
+        let stem = Path::new(file).file_stem().map(|s| s.to_string_lossy().into_owned());
+        let name = stem.as_deref().unwrap_or(file);
         let id = self.profile_id(name);
         if id > 0 {
             self.remove_group(&format!("/profile/{id}"));
@@ -518,10 +588,12 @@ impl ProfileStore {
     /// cannot be read or its first line is wrong.
     pub fn restore_all_file(&mut self, path: &Path) -> bool {
         let shown = path.display();
-        let Ok(text) = fs::read_to_string(path) else {
+        // wxMBConvUTF8 reads past bad bytes; a lossy decode comes closest.
+        let Ok(bytes) = fs::read(path) else {
             self.debug(format!("Cannot open file '{shown}'"));
             return true;
         };
+        let text = String::from_utf8_lossy(&bytes);
         let mut lines = text.split(['\r', '\n']);
         if lines.next() != Some(CONFIG_HEADER) {
             self.debug(format!("invalid config file '{shown}'"));
@@ -715,7 +787,7 @@ impl ProfileStore {
         let path = format!("{prefix}{name}");
         // wxConfigBase::EntryType: 1 String, 2 Boolean, 3 Integer, 4 Float.
         match to_long(typ) {
-            Some(1) => self.set_at(&path, Value::String(unescape(val))),
+            Some(1) => self.set_at(&path, typed_text(unescape(val))),
             Some(2) => match to_long(val) {
                 Some(l) => self.set_at(&path, Value::Bool(l != 0)),
                 None => self.debug(format!("bad bool val '{val}' in file; line = {line}")),
@@ -846,6 +918,22 @@ fn double_value(v: f64) -> Value {
         Some(n) => Value::Number(n),
         None => Value::String(text),
     }
+}
+
+/// A type-1 (String) line's value. PHD2 on Linux exports every entry as
+/// type 1, so a number comes back as a JSON number when its text is the one
+/// the store writes for it (`2001`, `0.5`, `1e+06`): the getters and the
+/// exports read the same text either way, and the JSON keeps its types.
+fn typed_text(s: String) -> Value {
+    if let Ok(i) = s.parse::<i64>()
+        && i.to_string() == s
+    {
+        return Value::from(i);
+    }
+    if let Some(n) = s.parse::<f64>().ok().filter(|&f| fmt_g(f) == s).and_then(Number::from_f64) {
+        return Value::Number(n);
+    }
+    Value::String(s)
 }
 
 /// The text wxFileConfig would hold for a value: what the getters parse
@@ -1059,10 +1147,9 @@ mod tests {
         assert_eq!(s.change_count(), 3);
         assert!(s.take_change());
         assert!(!s.take_change());
+        // The constructor's lines never reach PHD2's debug log.
         let debug = s.take_debug();
-        assert_eq!(debug[0], "GetLong(\"ConfigVersion\", 0) returns 0");
-        assert!(debug[1].starts_with("Initializing a new config, m_pConfig=0x"));
-        assert_eq!(debug[2..4], [
+        assert_eq!(debug[..2], [
             "GetInt(\"/currentProfile\", 0) returns 0",
             "GetString(\"/profile/1/name\", \"\") returns \"My Equipment\""
         ]);
@@ -1382,6 +1469,11 @@ mod tests {
         assert_eq!(p.group_names("/GA"), ["2026-11-10 21:00:00", "2026-11-11 01:15:00", "BLT"]);
         p.delete_entry("/GA/loose");
         assert!(!p.has("/GA/loose"));
+        // Deleting what is not there notifies but leaves nothing to write.
+        s.dirty = false;
+        let before = s.change_count();
+        s.profile().delete_entry("/GA/none");
+        assert_eq!((s.change_count() - before, s.dirty), (1, false));
     }
 
     #[test]
@@ -1420,7 +1512,13 @@ mod tests {
         s.create_profile("Second");
         s.flush().unwrap();
         assert!(d.join("config.json").exists());
-        assert!(!d.join("config.json.tmp").exists());
+        let names: Vec<_> = fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        assert_eq!(names, ["config.json"]);
+        assert_eq!(s.take_debug().last().map(String::as_str), Some("PhdConfig flush"));
+        // persist logs nothing.
+        s.profile().set_i32("/x", 1);
+        s.persist().unwrap();
+        assert!(s.take_debug().is_empty());
         let json: Value = serde_json::from_str(&fs::read_to_string(d.join("config.json")).unwrap()).unwrap();
         assert_eq!(json["version"], 2001);
         assert_eq!(json["current_profile"], 1);
@@ -1449,6 +1547,71 @@ mod tests {
 
         fs::write(d.join("config.json"), "not json").unwrap();
         assert_eq!(ProfileStore::open(&d, 1).err().map(|e| e.kind()), Some(io::ErrorKind::InvalidData));
+    }
+
+    #[test]
+    fn imported_numbers_stay_numbers() {
+        let mut s = fresh();
+        let text = "PHD Profile 1\n/i\t1\t750\n/neg\t1\t-1\n/f\t1\t0.0123457\n/e\t1\t1e+06\n/plus\t1\t+5\n\
+                    /lead\t1\t007\n/long\t1\t0.123456789\n/nan\t1\tnan\n/s\t1\tabc\n";
+        assert!(!s.read_profile("/home/u/PHD2/rig.phd", text));
+        assert_eq!(s.current_profile(), "rig");
+        let p = s.profile();
+        let got = |k: &str| p.store.entries[&fold(&format!("/profile/2{k}"))].1.clone();
+        assert_eq!(got("/i"), serde_json::json!(750));
+        assert_eq!(got("/neg"), serde_json::json!(-1));
+        assert_eq!(got("/f"), serde_json::json!(0.0123457));
+        assert_eq!(got("/e"), serde_json::json!(1e6));
+        for k in ["/plus", "/lead", "/long", "/nan", "/s"] {
+            assert!(got(k).is_string(), "{k}");
+        }
+        // The same text comes back out.
+        let mut sent: Vec<_> = text.lines().collect();
+        let out = s.write_profile();
+        let mut back: Vec<_> = out.lines().filter(|l| !l.starts_with("/name\t")).collect();
+        sent.sort();
+        back.sort();
+        assert_eq!(back, sent);
+        assert!(s.read_profile("/tmp/x.phd", "PHD Profile 2\n"));
+        assert_eq!(s.take_debug().last().map(String::as_str), Some("invalid profile file '/tmp/x.phd'"));
+    }
+
+    #[test]
+    fn engine_booleans_go_through_get_boolean() {
+        use crate::engine::log::image_log::ImageLoggerSettings;
+        let mut s = fresh();
+        s.take_debug();
+        let mut settings = ImageLoggerSettings::load(&s.profile());
+        assert!(s.take_debug().contains(&"GetBoolean(\"/profile/1/ImageLogger/LoggingEnabled\", 0) returns 0".into()));
+        settings.logging_enabled = true;
+        settings.save(&mut s.profile());
+        assert_eq!(s.to_json().profiles["1"].values["/ImageLogger/LoggingEnabled"], Value::Bool(true));
+        // GetInt wraps, GetBoolean does not.
+        s.profile().set_str("/big", "4294967296");
+        assert!(s.profile().get_bool("/big", false));
+        assert_eq!(s.profile().get_i32("/big", 7), 0);
+    }
+
+    #[test]
+    fn quiet_listings() {
+        let mut s = fresh();
+        s.create_profile("Second");
+        s.create_profile("second-dup");
+        // A second profile of the same name (case aside), as a hand edit leaves.
+        s.put("/profile/3/name", Value::String("SECOND".into()));
+        s.profile_name(9); // an empty group
+        s.take_debug();
+        assert_eq!(
+            s.profiles(),
+            [(1, "My Equipment".into(), true), (2, "Second".into(), false), (2, "SECOND".into(), false), (9, "Profile 9".into(), false)]
+        );
+        s.profile().set_i32("/scope/CalibrationDuration", 750);
+        s.global().set_bool("/ServerMode", true);
+        let prof: Vec<_> = s.profile_entries().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        assert_eq!(prof, [("/name".into(), Value::from("My Equipment")), ("/scope/CalibrationDuration".into(), Value::from(750))]);
+        let global: Vec<_> = s.global_entries().map(|(k, _)| k.to_string()).collect();
+        assert_eq!(global, ["/ConfigVersion", "/currentProfile", "/ServerMode"]);
+        assert!(s.take_debug().is_empty());
     }
 
     #[test]
