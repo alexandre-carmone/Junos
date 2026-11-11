@@ -322,13 +322,17 @@ pub fn square_pixels(img: &mut UsImage, xsize: f32, ysize: f32) {
 }
 
 /// `Subtract` (image_math.cpp:652), the dark subtraction:
-/// `pedestal = median(dark) - median(light)` when the dark is brighter
-/// (otherwise the pedestal is left as it was — 0 on a fresh frame), medians
-/// over the light's subframe when set (the light's from its stats, the
-/// dark's recomputed over that region), then
-/// `px = clamp(light + pedestal - dark, 0, 65535)` over that region.
-/// The light must have had [`UsImage::calc_stats`] run. Errors when either
-/// frame is empty or the sizes differ, in which case nothing is changed.
+/// `pedestal = median(dark) - light.median_adu` when the dark is brighter
+/// (otherwise the pedestal is left as it was — 0 on a fresh frame), the
+/// dark's median over the light's subframe when one is set (recomputed
+/// there), then `px = clamp(light + pedestal - dark, 0, 65535)` over that
+/// region. Errors when either frame is empty or the sizes differ, in which
+/// case nothing is changed.
+///
+/// PHD2 calls it (`GuideCamera::SubtractDark`, camera.cpp:1496) on the raw
+/// frame straight from the camera, before [`UsImage::calc_stats`]: the
+/// light's `median_adu` is still 0 from `Init`, so the pedestal is the
+/// dark's median (over the subframe when set). Call it the same way.
 pub fn subtract(light: &mut UsImage, dark: &UsImage) -> Result<(), &'static str> {
     if light.data.is_empty() || dark.data.is_empty() {
         return Err("no image data");
@@ -382,6 +386,8 @@ pub enum NoiseReduction {
 impl NoiseReduction {
     /// From the profile value; anything else is the default, as
     /// `MyFrame::SetNoiseReductionMethod` (myframe.cpp:2193) falls back.
+    /// PHD2 also writes the value it kept back to `/NoiseReductionMethod`
+    /// (myframe.cpp:2218); the profile layer must persist the fallback.
     pub fn from_config(v: i64) -> NoiseReduction {
         match v {
             1 => NoiseReduction::Mean2x2,
@@ -511,11 +517,20 @@ mod tests {
 
     #[test]
     fn subtract_pedestal_rule() {
-        // light median 100, dark median 120 → pedestal 20.
+        // The capture pipeline's shape: a fresh light without stats
+        // (median_adu 0), so the pedestal is the dark's median, 120.
         let mut light = image(3, 3, &[90, 100, 110, 100, 100, 100, 120, 100, 95]);
-        light.calc_stats();
         let mut dark = image(3, 3, &[120, 120, 120, 130, 110, 115, 100, 200, 120]);
         dark.calc_stats();
+        subtract(&mut light, &dark).unwrap();
+        assert_eq!(light.pedestal, dark.median_adu);
+        assert_eq!(light.pedestal, 120);
+        assert_eq!(light.data, [90, 100, 110, 90, 110, 105, 140, 20, 95]);
+
+        // With the light's stats (which PHD2 never has at this point) the
+        // pedestal is the difference of the medians: 120 - 100.
+        let mut light = image(3, 3, &[90, 100, 110, 100, 100, 100, 120, 100, 95]);
+        light.calc_stats();
         subtract(&mut light, &dark).unwrap();
         assert_eq!(light.pedestal, 20);
         assert_eq!(light.data, [0, 0, 10, 0, 10, 5, 40, 0, 0]);
@@ -538,9 +553,9 @@ mod tests {
 
     #[test]
     fn subtract_uses_the_subframe_medians() {
-        // Dark: 300 everywhere except 10 inside the 2×2 centre. The light's
-        // subframe is that centre, so the dark's median there is 10 (not the
-        // full-frame 300) and the pedestal stays 0.
+        // Dark: 300 everywhere except 10 inside the 2×2 centre. The light is
+        // fresh (no stats) with its subframe on that centre, so the pedestal
+        // is the dark's median there, 10, not the full-frame 300.
         let mut dark_px = [300u16; 16];
         for y in 1..3 {
             for x in 1..3 {
@@ -550,6 +565,14 @@ mod tests {
         let mut dark = image(4, 4, &dark_px);
         dark.calc_stats();
         assert_eq!(dark.median_adu, 300);
+        let mut light = image(4, 4, &[50; 16]);
+        light.subframe = Some(Rect::new(1, 1, 2, 2));
+        subtract(&mut light, &dark).unwrap();
+        assert_eq!(light.pedestal, 10);
+        // Inside: 50 + 10 - 10; outside: untouched.
+        assert!(light.data.iter().all(|&v| v == 50));
+
+        // With the light's stats (median 50 > 10) the pedestal stays 0.
         let mut light = image(4, 4, &[50; 16]);
         light.subframe = Some(Rect::new(1, 1, 2, 2));
         light.calc_stats();
