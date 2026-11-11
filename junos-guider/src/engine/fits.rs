@@ -17,6 +17,7 @@
 use chrono::{DateTime, Utc};
 
 use super::image::UsImage;
+use super::log::cfmt::fmt_gp;
 use super::traits::{PierSide, Point, Rect};
 
 const BLOCK: usize = 2880;
@@ -372,34 +373,11 @@ pub struct SaveHeader {
     pub lock_pos: Option<Point>,
 }
 
-/// C's `%.{prec}G` of a double (what cfitsio's `ffr2e` uses for a float
-/// card with `decim = -7`): the shorter of fixed and exponent notation,
-/// trailing zeros removed, at least two exponent digits.
-fn c_g(v: f64, prec: usize) -> String {
-    if !v.is_finite() {
-        return format!("{v}");
-    }
-    if v == 0.0 {
-        return if v.is_sign_negative() { "-0".into() } else { "0".into() };
-    }
-    let sci = format!("{:.*e}", prec - 1, v);
-    let (mant, exp) = sci.split_once('e').unwrap();
-    let exp: i32 = exp.parse().unwrap();
-    if exp < -4 || exp >= prec as i32 {
-        format!("{}E{}{:02}", strip_zeros(mant), if exp < 0 { '-' } else { '+' }, exp.abs())
-    } else {
-        strip_zeros(&format!("{:.*}", (prec as i32 - 1 - exp) as usize, v))
-    }
-}
-
-fn strip_zeros(s: &str) -> String {
-    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s.to_string() }
-}
-
 /// cfitsio's text for a `TFLOAT` card (`ffr2e`): `%.7G`, then a decimal
 /// point is forced — `2` becomes `2.`, `1E+07` is rewritten as `1.0E+07`.
 fn float_text(v: f32) -> String {
-    let s = c_g(v as f64, 7);
+    // glibc's `%G` is its `%g` with `E`, `INF` and `NAN` in capitals.
+    let s = fmt_gp(v as f64, 7).to_uppercase();
     if s.contains('.') {
         s
     } else if s.contains('E') {
