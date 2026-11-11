@@ -49,11 +49,11 @@ use crate::engine::mount::{CalibrationStepInfo, GuideStepInfo};
 use crate::engine::scope::DecGuideMode;
 use crate::engine::traits::{Dir, Parity, PierSide, Point};
 
-/// Days a guide log is kept (`guidinglog.cpp:42`).
+/// Days a guide log is kept (`guidinglog.cpp:43`).
 pub const RETENTION_DAYS: u64 = 60;
 
 /// How much of an existing file's end its summary is read back from
-/// (`guidinglog.cpp:222`).
+/// (`guidinglog.cpp:233`).
 pub const SUMMARY_TAIL_BYTES: u64 = 128;
 
 const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -212,7 +212,7 @@ pub struct PointingSummary {
     pub rotator: Option<f64>,
 }
 
-/// `GuideLogSummaryInfo` (`guidinglog.h:100`).
+/// `GuideLogSummaryInfo` (`guidinglog.h:101`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Summary {
     /// False when an existing file had no summary to read back: no
@@ -225,7 +225,7 @@ struct Summary {
 }
 
 impl Summary {
-    /// `LoadSummaryInfo` (`guidinglog.cpp:194`): the counters of the first
+    /// `LoadSummaryInfo` (`guidinglog.cpp:210`): the counters of the first
     /// `Log Summary: ` line in the file's tail.
     fn load(tail: &[u8]) -> Summary {
         let text = String::from_utf8_lossy(tail);
@@ -244,19 +244,44 @@ impl Summary {
     }
 }
 
-/// `strtoul` cast to `unsigned int`, on the digits a summary holds.
-fn strtoul(s: &str) -> u32 {
-    s.trim_start()
-        .bytes()
-        .take_while(u8::is_ascii_digit)
-        .fold(0u32, |n, d| n.wrapping_mul(10).wrapping_add(u32::from(d - b'0')))
+/// The blanks `strto*` skip, then an optional sign: true for `-`.
+fn split_sign(s: &str) -> (bool, &str) {
+    let s = s.trim_start();
+    match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    }
 }
 
-/// `strtod` on the `%.f` a summary holds.
+/// `strtoul` (64-bit `unsigned long`) cast to `unsigned int`: `-N` wraps,
+/// an overflow gives `ULONG_MAX`.
+fn strtoul(s: &str) -> u32 {
+    let (neg, s) = split_sign(s);
+    let n = s
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .try_fold(0u64, |n, d| n.checked_mul(10)?.checked_add(u64::from(d - b'0')));
+    let n = match n {
+        Some(n) if neg => n.wrapping_neg(),
+        Some(n) => n,
+        None => u64::MAX,
+    };
+    n as u32
+}
+
+/// `strtod` on the `%.f` a summary holds, a sign included: the guiding
+/// time goes negative when the clock steps back (`wxStopWatch`).
 fn strtod(s: &str) -> f64 {
-    let s = s.trim_start();
-    let end = s.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(s.len());
-    s[..end].parse().unwrap_or(0.0)
+    let (neg, s) = split_sign(s);
+    let int = s.bytes().take_while(u8::is_ascii_digit).count();
+    let frac = s[int..].strip_prefix('.').map_or(0, |f| 1 + f.bytes().take_while(u8::is_ascii_digit).count());
+    match s[..int + frac].parse::<f64>() {
+        Ok(v) if neg => -v,
+        Ok(v) => v,
+        // No digits: no conversion, 0.
+        Err(_) => 0.0,
+    }
 }
 
 /// `mount.cpp`'s own `ParityStr`, which `Mount::GetSettingsSummary` sees —
@@ -431,7 +456,7 @@ pub(crate) fn calibration_settings(m: &MountSummary) -> String {
     }
 }
 
-/// `GetAltAz` (`guidinglog.cpp:90`): latitude and declination in degrees,
+/// `GetAltAz` (`guidinglog.cpp:92`): latitude and declination in degrees,
 /// hour angle in hours; altitude and azimuth in degrees.
 fn alt_az(latitude: f64, ha: f64, dec: f64) -> (f64, f64) {
     const HRS_TO_RAD: f64 = 0.2617993881;
@@ -504,7 +529,7 @@ fn position_lines(h: &GuideLogHeader) -> String {
     )
 }
 
-/// `GuidingHeader` (`guidinglog.cpp:171`).
+/// `GuidingHeader` (`guidinglog.cpp:168`).
 fn guiding_header(h: &GuideLogHeader) -> String {
     let mut s = common_header(h);
     for m in [&h.mount, &h.secondary_mount].into_iter().flatten() {
@@ -525,7 +550,7 @@ pub fn remove_old_files(
     remove_matching_files(files, "PHD2_GuideLog*.txt", RETENTION_DAYS, now, remove)
 }
 
-/// PHD2's `GuidingLog` (`guidinglog.h:117`). `W` is the file (append mode)
+/// PHD2's `GuidingLog` (`guidinglog.h:121`). `W` is the file (append mode)
 /// in the daemon, a buffer in the tests.
 pub struct GuideLog<W: Write = Box<dyn Write + Send>> {
     enabled: bool,
@@ -672,7 +697,7 @@ impl<W: Write> GuideLog<W> {
         if enabled { self.enable(stamp, guiding, open) } else { Ok(()) }
     }
 
-    /// `StartCalibration` (`guidinglog.cpp:418`): the calibration header,
+    /// `StartCalibration` (`guidinglog.cpp:417`): the calibration header,
     /// `mount` being the mount calibrated.
     pub fn start_calibration(&mut self, now: DateTime<Local>, h: &GuideLogHeader, mount: &MountSummary) {
         self.is_guiding = true;
@@ -1463,6 +1488,14 @@ mod tests {
         );
         // A tail without the line: no summary at close.
         assert_eq!(Summary::load(b"mmary: calcnt:1\r\nLog closed at\r\n"), Summary::default());
+        // Signs as glibc's wcstoul / wcstod read them (a 6-line C check).
+        assert_eq!(
+            Summary::load(b"Log Summary: calcnt:-1 gcnt:+2 gdur:-5 gacnt:4294967297\n"),
+            Summary { valid: true, cal_cnt: 4294967295, guide_cnt: 2, guide_dur: -5.0, ga_cnt: 1 }
+        );
+        assert_eq!((strtoul(" -5x"), strtoul("99999999999999999999999"), strtoul("-")), (4294967291, 4294967295, 0));
+        assert_eq!((strtod("+7.5"), strtod("-"), strtod("5."), strtod("1.2.3")), (7.5, 0.0, 5.0, 1.2));
+        assert!(strtod(" -0").is_sign_negative());
         let mut dir = Folder::default();
         dir.0.insert("PHD2_GuideLog_2026-11-13_100000.txt".into(), Buf::default());
         dir.0["PHD2_GuideLog_2026-11-13_100000.txt"].0.borrow_mut().extend_from_slice(b"x\n");

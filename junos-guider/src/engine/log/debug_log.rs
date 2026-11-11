@@ -44,7 +44,7 @@ use chrono::{DateTime, Days, Local, NaiveDate, NaiveDateTime, TimeDelta, Timelik
 /// PHD2's `FULLVER`, as both logs print it.
 pub const PHD2_VERSION: &str = "2.6.14";
 
-/// Days a debug log is kept (`debuglog.cpp:40`).
+/// Days a debug log is kept (`debuglog.cpp:41`).
 pub const RETENTION_DAYS: u64 = 30;
 
 /// `PhdApp::ImagingDay` (`phd.cpp:715`): a time before 09:00 belongs to the
@@ -71,7 +71,7 @@ pub struct LogFileStamp {
 
 impl LogFileStamp {
     /// `PHD2_<kind>_[N_]YYYY-mm-dd_HHMMSS.txt`, `kind` being `GuideLog` or
-    /// `DebugLog` (`guidinglog.cpp:271`, `debuglog.cpp:113`).
+    /// `DebugLog` (`guidinglog.cpp:271`, `debuglog.cpp:116`).
     pub fn file_name(&self, kind: &str) -> String {
         let qualifier = if self.instance > 1 { format!("{}_", self.instance) } else { String::new() };
         format!("PHD2_{kind}_{qualifier}{}", self.time.format("%Y-%m-%d_%H%M%S.txt"))
@@ -252,7 +252,7 @@ impl<W: Write> DebugLog<W> {
         self.write(now, thread, &format!("{text}\n"));
     }
 
-    /// `DebugLog::ChangeDirLog` (`debuglog.cpp:126`), after the caller tried
+    /// `DebugLog::ChangeDirLog` (`debuglog.cpp:127`), after the caller tried
     /// to make `new_dir` the log folder (`dir_ok`, PHD2's `SetLogDir`, see
     /// the module doc): two records in the old file — "Changed log dir"
     /// even on failure, as in PHD2 — then the file reopened through `open`,
