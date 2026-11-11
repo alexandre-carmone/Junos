@@ -85,7 +85,7 @@ Pass `--no-https` to skip TLS for headless/CI runs. `config.rs` (clap, env-aware
 - `planning.rs` — `/api/planning/{list,raw,rename,delete}` for Files › Planning: four flat folders keyed by `kind` — `schedules` (`~/.junos-schedules/*.esl`), `sequences` (`~/.junos-sequences/*.esq`), `queues` / `scripts` (the task-queue dir). Bare file names with the kind's extension, canonicalize-checked; only schedules can be renamed (the others are referenced by absolute path), reserved queues can't be deleted. `main.rs` creates both `~/.junos-*` folders at startup, since KStars' `QFile` won't — KStars is assumed to run on the same host as the same user.
 - `main.rs` — also serves `GET /api/config`, which reports the resolved captures dir. The frontend reads it once into `CaptureDirCtx` so the sequencer forms default to a folder the Files tab can browse.
 
-There is **no protocol translation** in the server. Messages flow through opaque. All Ekos Live semantics live in the WASM client. The one exception is the `junos_*` control family (`junos_media_filter`, above), consumed by `proxy.rs`.
+There is **no protocol translation** in the server. Messages flow through opaque. All Ekos Live semantics live in the WASM client. Two exceptions: the `junos_*` control family (`junos_media_filter`, above), consumed by `proxy.rs`; and junos-guider's `guider_*` traffic (`guider.rs`), which the relay routes itself — `guider_rpc` ids wrapped per browser so each `guider_rpc_result` reaches only its caller, `guider_frame` turned into a `+J` `new_preview_image`, `guider_history` rebuilt from the events for the replay.
 
 ### Frontend (`junos-web`)
 

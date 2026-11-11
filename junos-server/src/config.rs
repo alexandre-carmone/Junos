@@ -72,7 +72,8 @@ pub struct Config {
 
     /// junos-guider's local WebSocket. The relay dials it and carries its
     /// `guider_*` traffic to and from the browsers (`guider.rs`), retrying
-    /// for as long as the daemon is not running.
+    /// for as long as the daemon is not running. A junos-guider the Profiles
+    /// tab launches gets its `host:port` as `--ws-addr` (`apps.rs`).
     #[arg(long, default_value = "ws://127.0.0.1:4410", env = "GUIDER_WS")]
     pub guider_ws: String,
 }

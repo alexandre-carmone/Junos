@@ -7,9 +7,11 @@
 //! - **Launch**: `POST /api/apps/launch {"app": "kstars"|"phd2"|"junos-guider"}`
 //!   — spawns the process if it is not already running and stores the `Child`
 //!   handle. PHD2 and junos-guider both serve PHD2's event server on :4400, so
-//!   either is refused while the other runs.
-//! - **Stop**: `POST /api/apps/stop {"app": …}` — sends SIGTERM
-//!   to the child; clears the handle once the process exits.
+//!   either is refused while the other runs. junos-guider gets `--ws-addr`
+//!   from the relay's `--guider-ws`, so the two meet whatever the address.
+//! - **Stop**: `POST /api/apps/stop {"app": …}` — sends SIGTERM (junos-guider
+//!   then closes its guide log and disconnects the gear), waits up to 5 s for
+//!   a child of ours to exit, then kills it; clears the handle.
 //! - **Monitor**: a background task polls every 2 s; when a process that was
 //!   running exits (whether by our stop or externally), it broadcasts an
 //!   `app_state` message to all browsers.
@@ -26,15 +28,19 @@
 //!   KStars and its session bus, like the cover script in
 //!   `sequence_editor/cover.rs`.
 //!
-//! ## Initial state
+//! ## Processes we did not start
 //!
-//! On startup `AppManager::scan_existing()` walks `/proc/*/comm` to detect
-//! already-running instances.  Such processes are tracked as "external" (no
-//! `Child` handle); the Stop button still works for those via `libc::kill`
-//! rather than `Child::kill`.
+//! Whenever an app has no live handle (each 2 s poll, each launch, each
+//! status read), `/proc/*/comm` is walked for it: one already running when
+//! the server started, or started later — a systemd unit, restarted under a
+//! new PID. Such processes are tracked as "external" (no `Child` handle);
+//! the Stop button still works for those via `libc::kill` rather than
+//! `Child::kill`. junos-guider also counts as running while the relay is
+//! attached to it (`guider.rs`), wherever it runs.
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{extract::State, response::Json};
 use serde::Deserialize;
@@ -42,6 +48,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+use crate::guider::GuiderLink;
 use crate::hub::Hub;
 use crate::AppState;
 
@@ -51,6 +58,12 @@ use crate::AppState;
 pub const APP_KSTARS: &str = "kstars";
 pub const APP_PHD2:   &str = "phd2";
 pub const APP_GUIDER: &str = "junos-guider";
+
+/// The three, in the order of `running()`'s flags.
+const APPS: [&str; 3] = [APP_KSTARS, APP_PHD2, APP_GUIDER];
+
+/// How long Stop waits for a child to exit on SIGTERM before killing it.
+const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// The app that cannot run next to `app`, and the refusal to launch `app`
 /// while it does: PHD2 and junos-guider both listen on PHD2's :4400.
@@ -118,9 +131,15 @@ impl AppEntry {
         match &mut self.handle {
             None => Ok(()),
             Some(ProcessHandle::Owned(child)) => {
-                child.start_kill()?;
-                // Wait to reap so we don't leave zombies.
-                let _ = child.wait().await;
+                #[cfg(unix)]
+                if let Some(pid) = child.id() {
+                    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+                }
+                // Reaped either way, so we don't leave zombies.
+                if tokio::time::timeout(STOP_GRACE, child.wait()).await.is_err() {
+                    child.start_kill()?;
+                    let _ = child.wait().await;
+                }
                 self.handle = None;
                 Ok(())
             }
@@ -145,6 +164,10 @@ pub struct AppManager {
     inner: Arc<Mutex<Inner>>,
     /// Pushes `app_state` JSON to all browser WebSockets.
     hub: Hub,
+    /// The relay's link to junos-guider: attached means it runs.
+    guider: GuiderLink,
+    /// junos-guider's arguments when we launch it.
+    guider_args: Vec<String>,
 }
 
 struct Inner {
@@ -152,56 +175,72 @@ struct Inner {
 }
 
 impl Inner {
-    /// Whether kstars, phd2 and junos-guider run, in that order.
+    /// Whether kstars, phd2 and junos-guider run, in `APPS` order, looking
+    /// in `/proc` for any without a live handle.
     fn running(&mut self) -> [bool; 3] {
-        [APP_KSTARS, APP_PHD2, APP_GUIDER].map(|app| self.apps.get_mut(app).is_some_and(|e| e.is_running()))
+        let running = APPS.map(|app| self.apps.get_mut(app).is_some_and(|e| e.is_running()));
+        if !running.contains(&false) {
+            return running;
+        }
+        for (app, pid) in scan_proc() {
+            if let Some(entry) = self.apps.get_mut(app).filter(|e| e.handle.is_none()) {
+                info!("apps: detected running {app} (pid {pid})");
+                entry.handle = Some(ProcessHandle::External(pid));
+            }
+        }
+        APPS.map(|app| self.apps.get(app).is_some_and(|e| e.handle.is_some()))
+    }
+}
+
+/// The first PID `/proc/*/comm` shows for each of the three apps.
+fn scan_proc() -> HashMap<&'static str, u32> {
+    let mut found = HashMap::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return found; // not Linux
+    };
+    for entry in entries.flatten() {
+        // Only numeric PID directories.
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
+        let Ok(comm) = std::fs::read_to_string(format!("/proc/{pid}/comm")) else { continue };
+        // Nix wrappers exec the real binary as `.kstars-wrapped` /
+        // `.phd2-wrapped.bin`, so drop the leading dot before matching
+        // (`comm` keeps 15 bytes: `junos-guider-w` still matches).
+        let comm = comm.trim().trim_start_matches('.').to_lowercase();
+        for app in APPS {
+            if comm.starts_with(app) {
+                found.entry(app).or_insert(pid);
+            }
+        }
+    }
+    found
+}
+
+/// `--ws-addr host:port` for a junos-guider we launch, from the relay's
+/// `--guider-ws` URL (`ws://host:port`); none when it has another shape.
+fn guider_args(guider_ws: &str) -> Vec<String> {
+    let addr = guider_ws.strip_prefix("ws://").and_then(|rest| rest.split('/').next());
+    match addr {
+        Some(addr) if !addr.is_empty() => vec!["--ws-addr".to_string(), addr.to_string()],
+        _ => Vec::new(),
     }
 }
 
 impl AppManager {
-    pub fn new(hub: Hub) -> Self {
-        let mut apps = HashMap::new();
-        apps.insert(APP_KSTARS.to_string(), AppEntry::new_idle());
-        apps.insert(APP_PHD2.to_string(),   AppEntry::new_idle());
-        apps.insert(APP_GUIDER.to_string(), AppEntry::new_idle());
+    pub fn new(hub: Hub, guider: GuiderLink, guider_ws: &str) -> Self {
+        let apps = APPS.iter().map(|app| (app.to_string(), AppEntry::new_idle())).collect();
         Self {
             inner: Arc::new(Mutex::new(Inner { apps })),
             hub,
+            guider,
+            guider_args: guider_args(guider_ws),
         }
     }
 
-    /// Scan `/proc/*/comm` for already-running instances of the three apps.
-    /// Call once at server startup before starting the monitor task.
-    pub async fn scan_existing(&self) {
-        let entries = match std::fs::read_dir("/proc") {
-            Ok(e) => e,
-            Err(_) => return, // not Linux, skip
-        };
-        let mut found: HashMap<String, u32> = HashMap::new();
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            // Only numeric PID directories.
-            let Ok(pid) = name_str.parse::<u32>() else { continue };
-            let comm_path = format!("/proc/{pid}/comm");
-            let Ok(comm) = std::fs::read_to_string(&comm_path) else { continue };
-            // Nix wrappers exec the real binary as `.kstars-wrapped` /
-            // `.phd2-wrapped.bin`, so drop the leading dot before matching
-            // (`comm` keeps 15 bytes: `junos-guider-w` still matches).
-            let comm = comm.trim().trim_start_matches('.').to_lowercase();
-            for app in [APP_KSTARS, APP_PHD2, APP_GUIDER] {
-                if comm == app || comm.starts_with(app) {
-                    found.entry(app.to_string()).or_insert(pid);
-                }
-            }
-        }
-        let mut g = self.inner.lock().await;
-        for (app, pid) in found {
-            info!("apps: detected existing {app} (pid {pid})");
-            if let Some(entry) = g.apps.get_mut(&app) {
-                entry.handle = Some(ProcessHandle::External(pid));
-            }
-        }
+    /// Whether kstars, phd2 and junos-guider run, in `APPS` order.
+    fn running(&self, g: &mut Inner) -> [bool; 3] {
+        let mut running = g.running();
+        running[2] |= self.guider.attached();
+        running
     }
 
     /// Start the background monitor task that polls process status and pushes
@@ -211,7 +250,7 @@ impl AppManager {
             let mut prev = [false; 3];
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                let cur = self.inner.lock().await.running();
+                let cur = self.running(&mut *self.inner.lock().await);
                 if cur != prev {
                     prev = cur;
                     self.hub.broadcast_text(build_app_state_msg(cur));
@@ -222,26 +261,30 @@ impl AppManager {
 
     /// Current status snapshot (non-mutating read).
     pub async fn status_json(&self) -> serde_json::Value {
-        status(self.inner.lock().await.running())
+        status(self.running(&mut *self.inner.lock().await))
     }
 
     /// The `app_state` message for the current status.
     pub async fn state_msg(&self) -> String {
-        build_app_state_msg(self.inner.lock().await.running())
+        build_app_state_msg(self.running(&mut *self.inner.lock().await))
     }
 
     async fn launch_app(&self, app: &str) -> Result<(), String> {
         let mut g = self.inner.lock().await;
+        let running = self.running(&mut g);
+        let is_running = |a: &str| APPS.iter().position(|x| *x == a).is_some_and(|i| running[i]);
         if let Some((other, refusal)) = rival(app) {
-            if g.apps.get_mut(other).is_some_and(|e| e.is_running()) {
+            if is_running(other) {
                 return Err(refusal.to_string());
             }
         }
-        let entry = g.apps.get_mut(app).ok_or_else(|| format!("unknown app: {app}"))?;
-        if entry.is_running() {
+        if is_running(app) {
             return Ok(()); // already up
         }
+        let entry = g.apps.get_mut(app).ok_or_else(|| format!("unknown app: {app}"))?;
+        let args: &[String] = if app == APP_GUIDER { &self.guider_args } else { &[] };
         let child = Command::new(app)
+            .args(args)
             .spawn()
             .map_err(|e| format!("failed to spawn {app}: {e}"))?;
         info!("apps: launched {app} (pid {:?})", child.id());
@@ -444,6 +487,14 @@ mod tests {
         assert_eq!(rival(APP_GUIDER), Some((APP_PHD2, "PHD2 is running on :4400")));
         assert_eq!(rival(APP_PHD2), Some((APP_GUIDER, "junos-guider is running on :4400")));
         assert_eq!(rival(APP_KSTARS), None);
+    }
+
+    #[test]
+    fn a_launched_junos_guider_listens_where_the_relay_dials() {
+        assert_eq!(guider_args("ws://127.0.0.1:4410"), vec!["--ws-addr", "127.0.0.1:4410"]);
+        assert_eq!(guider_args("ws://astro.local:5000/"), vec!["--ws-addr", "astro.local:5000"]);
+        assert!(guider_args("wss://host:4410").is_empty());
+        assert!(guider_args("ws://").is_empty());
     }
 
     #[test]

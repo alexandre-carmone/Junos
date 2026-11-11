@@ -87,15 +87,15 @@ async fn main() -> anyhow::Result<()> {
     let skymap = Arc::new(skymap::SkymapState::new(&config.resolved_skymap_dir(), config.skymap_online));
 
     let hub = Hub::new();
-    let app_manager = AppManager::new(hub.clone());
-    app_manager.scan_existing().await;
+
+    info!("junos-guider link → {}", config.guider_ws);
+    let guider = guider::GuiderLink::spawn(hub.clone(), config.guider_ws.clone());
+
+    let app_manager = AppManager::new(hub.clone(), guider.clone(), &config.guider_ws);
     app_manager.clone().start_monitor();
 
     let stack = stack::StackWatch::new();
     stack.clone().spawn(hub.clone());
-
-    info!("junos-guider link → {}", config.guider_ws);
-    let guider = guider::GuiderLink::spawn(hub.clone(), config.guider_ws.clone());
 
     let state = AppState {
         hub,

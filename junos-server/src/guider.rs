@@ -157,6 +157,11 @@ impl GuiderLink {
         link
     }
 
+    /// A session with the daemon is up.
+    pub fn attached(&self) -> bool {
+        self.attached.load(Ordering::SeqCst)
+    }
+
     /// Queue browser `browser`'s `guider_*` message for the daemon, its
     /// `id` wrapped so the reply comes back to that browser alone. `Err`
     /// holds the `guider_rpc_result` error the browser gets instead when the
