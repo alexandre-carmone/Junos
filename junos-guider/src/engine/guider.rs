@@ -409,6 +409,12 @@ impl ProfileAccess for DynProfile<'_> {
     fn set_str(&mut self, key: &str, value: &str) {
         self.0.set_str(key, value)
     }
+    fn group_names(&self, group: &str) -> Vec<String> {
+        self.0.group_names(group)
+    }
+    fn delete_group(&mut self, group: &str) {
+        self.0.delete_group(group)
+    }
 }
 
 impl GuiderMount for Scope {

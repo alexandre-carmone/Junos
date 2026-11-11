@@ -793,6 +793,12 @@ impl Scope {
         self.mv.blc.as_ref()
     }
 
+    /// The backlash compensation, for the Guiding Assistant's backlash
+    /// tool, whose clean-up resets it.
+    pub fn backlash_comp_mut(&mut self) -> Option<&mut BacklashComp> {
+        self.mv.blc.as_mut()
+    }
+
     /// `BacklashComp::EnableBacklashComp`, with its effects carried out.
     pub fn enable_backlash_comp(
         &mut self,

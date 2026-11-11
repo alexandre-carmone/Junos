@@ -487,6 +487,13 @@ impl Mount {
         *slot = algorithm;
     }
 
+    /// Write an axis' algorithm settings and kind to the profile, what
+    /// PHD2's algorithm setters do on each change: the caller runs it after
+    /// changing a parameter through [`algo_mut`](Self::algo_mut).
+    pub fn save_algorithm(&self, axis: Axis, profile: &mut impl ProfileAccess) {
+        persist_algorithm(self.class, axis, self.algo(axis), profile);
+    }
+
     fn slot(&mut self, axis: Axis) -> &mut Box<dyn GuideAlgorithm> {
         match axis {
             Axis::X => &mut self.x_algo,

@@ -310,6 +310,16 @@ pub trait ProfileAccess {
     fn set_f64(&mut self, key: &str, value: f64);
     fn set_i32(&mut self, key: &str, value: i32);
     fn set_str(&mut self, key: &str, value: &str);
+
+    /// `GetGroupNames`: the names of the groups directly under `group`
+    /// (`"/GA"` → the Guiding Assistant's run timestamps), sorted as
+    /// wxFileConfig enumerates them. A store without groups has none.
+    fn group_names(&self, _group: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// `DeleteGroup`: drop `group` and everything under it.
+    fn delete_group(&mut self, _group: &str) {}
 }
 
 /// `pier_side` (`mount.cpp:1648`): a stored side back; anything but East
