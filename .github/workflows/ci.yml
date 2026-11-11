@@ -34,13 +34,17 @@ jobs:
       - name: cargo check (guider)
         run: cargo check -p junos-guider --features sim
 
+      # The packages build it without the simulator.
+      - name: cargo check (guider, as packaged)
+        run: cargo check -p junos-guider
+
       - name: cargo check (web / wasm)
         run: cargo check -p junos-web --target wasm32-unknown-unknown
 
       - name: i18n keys (en + fr)
         run: python3 scripts/check_i18n.py
 
-      # junos-web is wasm-only, so only the server tests run here.
+      # junos-web is wasm-only, so only the server and guider tests run here.
       - name: cargo test (server)
         run: cargo test -p junos-server
 
