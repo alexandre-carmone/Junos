@@ -18,7 +18,9 @@
 //! raises PHD2's alert and disconnects the mount or AO in the engine; once
 //! the INDI connection is back (the client redials by itself, the PLAN's
 //! addition) the daemon connects the gear again and attaches it, once per
-//! new connection.
+//! new connection: the connection's number is the rig's only once a
+//! connect was attached, so a reconnect the engine refused (capture still
+//! active) is tried again at the next tick.
 //!
 //! With `--sim` the rig is the gear simulator, on the real clock: its
 //! camera, the "On Camera" mount pulsing through the camera with the
@@ -151,6 +153,8 @@ pub(super) struct Rig {
     /// The INDI connection the devices were connected in: another one
     /// means the server came back, and the gear is connected again.
     generation: u64,
+    /// The INDI connection the reconnect was last tried for.
+    tried: u64,
 }
 
 impl Rig {
@@ -231,11 +235,19 @@ impl Rig {
     /// without `--sim`) is not made, and fails as a missing device.
     fn build_indi(&mut self, c: &Choices, client: Option<IndiClient>) {
         let indi = |choice: &str| choice.contains("INDI");
+        if ![&c.camera, &c.scope, &c.aux, &c.ao, &c.rotator].iter().any(|ch| indi(ch)) {
+            // No INDI device: no connection dialling the server for ever.
+            if let Some(old) = client {
+                close(old);
+            }
+            self.build_ports(c, None, None);
+            return;
+        }
         let client = match client {
-            Some(cl) if cl.host() == c.host && cl.port() == c.port => cl,
+            Some(cl) if !cl.is_stopped() && cl.host() == c.host && cl.port() == c.port => cl,
             old => {
                 if let Some(old) = old {
-                    old.shutdown();
+                    close(old);
                 }
                 let mut watched = Vec::new();
                 if indi(&c.camera) {
@@ -275,7 +287,29 @@ impl Rig {
                     pointing: Some(Box::new(e.clone())),
                 }),
             });
-        } else if c.scope == "On-camera" {
+        } else {
+            self.build_ports(c, camera, ao);
+        }
+        if indi(&c.aux) {
+            let m = Shared::new(IndiMount::new(client.clone(), &c.mount_opts, true));
+            let e = m.clone();
+            self.aux = Some(Slot {
+                dev: Box::new(m),
+                engine: Box::new(move || (e.lock().name(), Box::new(e.clone()) as Box<dyn PointingSource + Send>)),
+            });
+        }
+        if indi(&c.rotator) {
+            let r = Shared::new(IndiRotator::new(client.clone(), &c.rotator_device));
+            let e = r.clone();
+            self.rotator = Some(Slot { dev: Box::new(r), engine: Box::new(move || Box::new(e.clone())) });
+        }
+        self.client = Some(client);
+    }
+
+    /// The "On-camera" and "On-AO" mounts, on the INDI camera or AO when
+    /// there is one.
+    fn build_ports(&mut self, c: &Choices, camera: Option<Shared<IndiCamera>>, ao: Option<Shared<IndiAo>>) {
+        if c.scope == "On-camera" {
             let cam = camera.clone();
             self.scope = Some(Slot {
                 dev: Box::new(Port::new(move || {
@@ -297,20 +331,6 @@ impl Rig {
                 }),
             });
         }
-        if indi(&c.aux) {
-            let m = Shared::new(IndiMount::new(client.clone(), &c.mount_opts, true));
-            let e = m.clone();
-            self.aux = Some(Slot {
-                dev: Box::new(m),
-                engine: Box::new(move || (e.lock().name(), Box::new(e.clone()) as Box<dyn PointingSource + Send>)),
-            });
-        }
-        if indi(&c.rotator) {
-            let r = Shared::new(IndiRotator::new(client.clone(), &c.rotator_device));
-            let e = r.clone();
-            self.rotator = Some(Slot { dev: Box::new(r), engine: Box::new(move || Box::new(e.clone())) });
-        }
-        self.client = Some(client);
     }
 
     /// The engine's side of the connected devices.
@@ -393,7 +413,33 @@ impl Rig {
             }
         }
         if let Some(c) = self.client.take() {
-            c.shutdown();
+            close(c);
+        }
+    }
+
+    /// A connect the engine refused, `live` the rig it keeps: the devices
+    /// this one connected let go, except where `live` holds its role
+    /// connected (the same driver, whose BLOBs `live`'s camera still
+    /// wants), and its INDI connection closed unless `live` shares it.
+    pub(super) fn discard(mut self, live: &Rig, e: &mut Engine) {
+        fn let_go<T>(s: &mut Option<Slot<T>>, live: &Option<Slot<T>>, e: &mut Engine) {
+            let Some(s) = s.as_mut() else { return };
+            if s.dev.is_connected() && !live.as_ref().is_some_and(|l| l.dev.is_connected()) {
+                s.dev.disconnect();
+            }
+            for l in s.dev.take_debug() {
+                e.debug(&l);
+            }
+        }
+        let_go(&mut self.scope, &live.scope, e);
+        let_go(&mut self.aux, &live.aux, e);
+        let_go(&mut self.camera, &live.camera, e);
+        let_go(&mut self.ao, &live.ao, e);
+        let_go(&mut self.rotator, &live.rotator, e);
+        if let Some(c) = self.client.take()
+            && !live.client.as_ref().is_some_and(|l| l.same(&c))
+        {
+            close(c);
         }
     }
 
@@ -420,22 +466,32 @@ impl Rig {
         if lost(snap.ao.as_ref(), &self.ao) {
             let _ = e.handle(Command::DeviceLost(Which::Ao));
         }
-        // The PLAN's addition: once the server is back, connect again.
+        // The PLAN's addition: once the server is back, connect again,
+        // until a connect is attached (which makes its generation ours).
         let back = self.client.as_ref().map(|c| {
             let l = c.lock();
             (l.is_up(), l.generation())
         });
         if let Some((true, generation)) = back
             && generation != self.generation
+            && !daemon.0.connecting.load(std::sync::atomic::Ordering::SeqCst)
         {
-            self.generation = generation;
-            e.debug("INDI server connection back: connecting the gear again");
+            if self.tried != generation {
+                self.tried = generation;
+                e.debug("INDI server connection back: connecting the gear again");
+            }
             let d = daemon.clone();
             std::thread::spawn(move || {
                 let _ = d.connect_all();
             });
         }
     }
+}
+
+/// An INDI connection closed off the engine thread: its reader may take a
+/// dial's timeout to end.
+fn close(c: IndiClient) {
+    std::thread::spawn(move || c.shutdown());
 }
 
 /// A device behind a lock: the engine drives it through its trait, the

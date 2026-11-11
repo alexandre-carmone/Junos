@@ -10,9 +10,11 @@ use serde_json::json;
 use tokio::sync::broadcast::{self, error::RecvError};
 
 use super::files::DiskFiles;
+use super::gear::{Choices, Rig};
 use super::{Daemon, DaemonOptions};
 use crate::engine::calibration::ProfileAccess;
 use crate::engine::control::SettleParams;
+use crate::engine::traits::CancelToken;
 use crate::engine::{CmdError, Command, EngineConfig, EngineEvent};
 use crate::profile::{ProfileStore, Section};
 
@@ -285,22 +287,77 @@ async fn an_indi_mount_connects_drops_and_comes_back() {
     assert!(mount().connected);
     assert!(!d.snapshot().connected);
 
+    // Two connects at once: the second waits for the first, then answers
+    // from its own try, never with the gear dialog's error.
+    let failed = Err(CmdError::new(1, "equipment failed to connect: camera"));
+    let (a, b) = tokio::join!(d.set_connected(true), d.set_connected(true));
+    assert_eq!((a, b), (failed.clone(), failed));
+    assert!(mount().connected);
+
+    // A connect the engine refuses lets go of its own devices only: the
+    // live rig keeps its INDI connection and its connected mount.
+    let opts = d.options().clone();
+    let kept = d
+        .run(move |e, rig| {
+            let choices = Choices::read(e, &opts);
+            let (new, _gear, _) = Rig::connect(&choices, rig.client(), &CancelToken::new());
+            new.discard(rig, e);
+            rig.client().is_some_and(|c| !c.is_stopped()) && rig.any_connected()
+        })
+        .await;
+    assert_eq!(kept, Some(true));
+
     // The server goes: PHD2's alert, the mount disconnected; then the
     // client redials and the daemon connects the mount again.
     fake.drop_conns();
-    let seen = wait_for(&mut ev, 5, |e| matches!(e, EngineEvent::Alert { .. })).await;
+    let seen = wait_for(&mut ev, 30, |e| matches!(e, EngineEvent::Alert { .. })).await;
     let Some(EngineEvent::Alert { msg, .. }) = seen.last().map(|e| &**e) else { unreachable!() };
     assert_eq!(msg, "INDI server disconnected");
-    // The mount shows connected from the reconnect's attach on, before
-    // that connect lets go of the gear dialog: wait for both.
+    // The snapshot went out before the alert. The mount shows connected
+    // from the reconnect's attach on, before that connect lets go of the
+    // gear dialog: wait for all of it, generously (the whole suite at once
+    // slows the redial).
+    assert!(!mount().connected);
     let t = Instant::now();
-    while !mount().connected || d.0.connecting.load(std::sync::atomic::Ordering::SeqCst) {
-        assert!(t.elapsed() < Duration::from_secs(10), "the mount did not come back");
+    while !mount().connected || d.0.connecting.load(std::sync::atomic::Ordering::SeqCst) || fake.accepted() < 2 {
+        assert!(t.elapsed() < Duration::from_secs(30), "the mount did not come back");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(fake.accepted() >= 2);
 
     assert_eq!(d.set_connected(false).await, Ok(json!(0)));
     assert!(!mount().connected);
+    // The INDI connection went with the gear, so it brings nothing back.
+    assert_eq!(d.run(|_, rig| rig.client().is_none()).await, Some(true));
+    assert!(d.indi_client().is_none());
+    d.close();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_profile_makes_the_gear_anew() {
+    let path = dir("profile");
+    let d = start(&path, |_| {});
+    let id = d
+        .with_engine(|e| {
+            let cur = e.store().current_profile();
+            // True is an error.
+            assert!(!e.store().clone_profile("Other", &cur));
+            e.store().profile_id("Other")
+        })
+        .await
+        .unwrap();
+    d.set_connected(true).await.unwrap();
+    let refused = Err(CmdError::new(1, "cannot set profile when equipment is connected"));
+    assert_eq!(d.set_profile(id).await, refused);
+
+    assert_eq!(d.set_connected(false).await, Ok(json!(0)));
+    assert_eq!(d.set_profile(id).await, Ok(json!(0)));
+    // `LoadGearChoices`: the engine's gear and the rig are gone, so the
+    // next connect builds the new profile's devices and mounts.
+    let snap = d.snapshot();
+    assert!(snap.camera.is_none() && snap.mount.is_none() && snap.ao.is_none());
+    assert_eq!(d.run(|_, rig| rig.client().is_none() && !rig.any_connected()).await, Some(true));
+    assert_eq!(d.set_connected(true).await, Ok(json!(0)));
+    assert_eq!(d.snapshot().profile_id, id);
+    d.shutdown().await;
     d.close();
 }

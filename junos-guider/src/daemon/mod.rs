@@ -25,7 +25,11 @@
 //!
 //! `set_connected true` runs off the engine thread ([`gear`]: an INDI
 //! device may take 30 s); meanwhile the engine is told it is connecting, and
-//! `loop` and `guide` answer "all equipment must be connected first".
+//! `loop` and `guide` answer "all equipment must be connected first". One
+//! connect runs at a time: a `set_connected true` that comes while another
+//! runs (the INDI reconnect's, another client's) waits for it, then finds
+//! the gear connected or tries again what failed. PHD2 answers its modal
+//! dialog's error there, which Ekos takes for a disconnect.
 //!
 //! [`files`] puts the engine's files on the disk.
 //!
@@ -34,7 +38,7 @@
 pub mod files;
 mod gear;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -113,8 +117,13 @@ struct Inner {
     cancel: CancelToken,
     /// A `set_connected true` is running (PHD2's modal gear dialog).
     connecting: AtomicBool,
+    /// Held by the connect running, so that connects run one at a time.
+    connect_one: Mutex<()>,
     /// Cuts the running connect short (shutdown).
     connect_cancel: Mutex<CancelToken>,
+    /// Counts the shutdowns: a connect begun before one is given up, and
+    /// its gear is not attached.
+    epoch: AtomicU64,
     /// The INDI connection of the gear last connected, for the device list.
     indi: Mutex<Option<IndiClient>>,
     thread: Mutex<Option<JoinHandle<()>>>,
@@ -129,13 +138,26 @@ fn internal() -> CmdError {
     CmdError::new(INTERNAL_ERROR, "internal error")
 }
 
-/// Clears the `connecting` flag when the connect ends, however it ends.
-struct Connecting<'a>(&'a AtomicBool);
+/// Clears the `connecting` flags when the connect ends, however it ends
+/// (a device that panicked included): the daemon's, and the engine's while
+/// `engine` (told, and not yet cleared by the attach).
+struct Connecting<'a> {
+    d: &'a Daemon,
+    engine: bool,
+}
 
 impl Drop for Connecting<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        if self.engine {
+            let (tx, _) = oneshot::channel();
+            let _ = self.d.0.jobs.send(Job::Command(Command::Connecting(false), tx));
+        }
+        self.d.0.connecting.store(false, Ordering::SeqCst);
     }
+}
+
+fn cancelled() -> CmdError {
+    CmdError::new(1, "equipment connection cancelled")
 }
 
 impl Daemon {
@@ -160,7 +182,9 @@ impl Daemon {
             stop: engine.stop_request(),
             cancel: engine.cancel_token(),
             connecting: AtomicBool::new(false),
+            connect_one: Mutex::default(),
             connect_cancel: Mutex::default(),
+            epoch: AtomicU64::new(0),
             indi: Mutex::default(),
             thread: Mutex::new(None),
         });
@@ -271,10 +295,13 @@ impl Daemon {
     /// connected camera → AO → mount → aux mount → rotator, then handed to
     /// the engine. Also the INDI reconnect's.
     fn connect_all(&self) -> Reply {
-        if self.0.connecting.swap(true, Ordering::SeqCst) {
-            return Err(CmdError::new(1, "cannot connect equipment when Connect Equipment dialog is open"));
+        let epoch = self.0.epoch.load(Ordering::SeqCst);
+        let _one = lock(&self.0.connect_one);
+        if self.0.epoch.load(Ordering::SeqCst) != epoch {
+            return Err(cancelled());
         }
-        let _connecting = Connecting(&self.0.connecting);
+        self.0.connecting.store(true, Ordering::SeqCst);
+        let mut connecting = Connecting { d: self, engine: false };
         let opts = self.0.opts.clone();
         let (choices, done, client) = self
             .run_blocking(move |e, rig| (Choices::read(e, &opts), rig.all_connected(), rig.client()))
@@ -286,27 +313,37 @@ impl Daemon {
         let (tx, rx) = oneshot::channel();
         self.0.jobs.send(Job::Command(Command::Connecting(true), tx)).map_err(|_| internal())?;
         rx.blocking_recv().map_err(|_| internal())??;
+        connecting.engine = true;
 
         let cancel = CancelToken::new();
         *lock(&self.0.connect_cancel) = cancel.clone();
+        // A shutdown between the check above and the token stored.
+        if self.0.epoch.load(Ordering::SeqCst) != epoch {
+            cancel.cancel();
+        }
         let (rig, gear, notes) = Rig::connect(&choices, client, &cancel);
         let fail = rig.failures();
-        *lock(&self.0.indi) = rig.client();
-        self.run_blocking(move |e, old| {
+        let d = self.clone();
+        let reply = self.run_blocking(move |e, old| {
             for n in notes {
                 n.apply(e);
             }
-            let reply = e.handle(Command::Attach(gear));
-            let mut rig = rig;
+            let reply = if d.0.epoch.load(Ordering::SeqCst) != epoch {
+                Err(cancelled())
+            } else {
+                e.handle(Command::Attach(gear))
+            };
             if reply.is_ok() {
+                *lock(&d.0.indi) = rig.client();
                 *old = rig;
             } else {
-                rig.disconnect_all(e);
+                rig.discard(old, e);
             }
             let _ = e.handle(Command::Connecting(false));
             reply
-        })
-        .ok_or_else(internal)??;
+        });
+        connecting.engine = reply.is_none();
+        reply.ok_or_else(internal)??;
         if fail.is_empty() { Ok(json!(0)) } else { Err(CmdError::new(1, format!("equipment failed to connect:{fail}"))) }
     }
 
@@ -326,7 +363,10 @@ impl Daemon {
         *lock(&self.0.indi) = None;
         self.run(|e, rig| {
             if !rig.any_connected() {
-                // Nothing connected.
+                // Nothing connected (the gear dropped with the INDI
+                // server): the connection closed all the same, so that it
+                // does not bring the gear back.
+                rig.disconnect_all(e);
                 return Ok(json!(0));
             }
             let reply = e.handle(Command::Detach);
@@ -340,9 +380,12 @@ impl Daemon {
     }
 
     /// `set_profile`: `GearDialog::SetProfile`, with its error texts. The
-    /// gear choices are read again at the next connect.
+    /// engine makes its gear anew from the new profile, as `LoadGearChoices`
+    /// does; the rig and its INDI connection go, and the new profile's
+    /// devices are connected at the next `set_connected`.
     pub async fn set_profile(&self, id: i32) -> Reply {
         let connecting = self.0.connecting.load(Ordering::SeqCst);
+        let d = self.clone();
         self.run(move |e, rig| {
             if id == e.store().current_profile_id() {
                 return Ok(json!(0));
@@ -358,6 +401,9 @@ impl Daemon {
             }
             let name = e.store().profile_name(id);
             e.store().set_current_profile(&name);
+            rig.disconnect_all(e);
+            *rig = Rig::default();
+            *lock(&d.0.indi) = None;
             e.handle(Command::ProfileChanged)
         })
         .await
@@ -374,16 +420,22 @@ impl Daemon {
     /// stopped, a connect in progress given up, every device disconnected
     /// (`GearDialog::Shutdown`, no capture check left to fail).
     pub async fn shutdown(&self) {
+        self.0.epoch.fetch_add(1, Ordering::SeqCst);
         lock(&self.0.connect_cancel).cancel();
         let _ = self.command(Command::StopCapture).await;
         self.0.cancel.cancel();
+        // The connect given up has ended (and its gear was not attached).
+        let d = self.clone();
+        let _ = tokio::task::spawn_blocking(move || drop(lock(&d.0.connect_one))).await;
+        *lock(&self.0.indi) = None;
         self.run(|e, rig| {
             e.debug("MyFrame::OnClose proceeding");
             e.debug("Shutdown: forced=0");
             if rig.any_connected() {
                 let _ = e.handle(Command::Detach);
-                rig.disconnect_all(e);
             }
+            // The INDI connection closed too: it would bring the gear back.
+            rig.disconnect_all(e);
             e.debug("Shutdown complete");
         })
         .await;

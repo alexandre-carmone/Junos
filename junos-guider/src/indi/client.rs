@@ -236,6 +236,16 @@ impl IndiClient {
         self.sh.port
     }
 
+    /// [`shutdown`](Self::shutdown) was called: the client dials no more.
+    pub fn is_stopped(&self) -> bool {
+        self.sh.stop.load(Ordering::SeqCst)
+    }
+
+    /// The same connection as `other` (a clone of it).
+    pub fn same(&self, other: &IndiClient) -> bool {
+        Arc::ptr_eq(&self.sh, &other.sh)
+    }
+
     /// Closes the connection and stops the reader thread.
     pub fn shutdown(&self) {
         self.sh.stop.store(true, Ordering::SeqCst);

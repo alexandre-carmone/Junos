@@ -996,7 +996,8 @@ mod tests {
         let fake = ccd(SIM);
         let mut cam = connected(&fake);
         fake.drop_conns();
-        cam.client.wait(Duration::from_secs(3), None, |l| (l.generation() == 2).then_some(())).unwrap();
+        // Generous waits: the whole suite at once slows the redial.
+        cam.client.wait(Duration::from_secs(30), None, |l| (l.generation() == 2).then_some(())).unwrap();
         assert!(!cam.is_connected());
         let e = cam.check_connection().unwrap();
         assert_eq!(e, CaptureError::Disconnected { msg: "INDI server disconnected".into(), reconnect: false });
@@ -1008,15 +1009,21 @@ mod tests {
         // `ClearStatus`: no guide output while disconnected, even with the
         // device known again.
         let known = |l: &mut Link| l.store.property(DEV, "DRIVER_INFO").map(|_| ());
-        cam.client.wait(Duration::from_secs(5), None, known).unwrap();
+        cam.client.wait(Duration::from_secs(30), None, known).unwrap();
         assert_eq!((cam.pixel_size_xy(), cam.has_guide_output()), (None, false));
         // Connected again: the BLOB is enabled again, at its definition or
         // at once (which comes first depends on when CCD1 is defined again,
         // before or after check_connection's Never).
         cam.connect(&CancelToken::new()).unwrap();
         assert_eq!(capture(&mut cam, 20, None).unwrap().w, 64);
-        let modes: Vec<String> = sent(&fake).into_iter().filter(|s| s.starts_with("enableBLOB")).collect();
-        assert_eq!(modes.last().map(String::as_str), Some("enableBLOB device=CCD Simulator name=CCD1 Also"));
+        // The enable sent at the definition may reach the driver after the
+        // frame did: wait for it.
+        let last_mode = || sent(&fake).into_iter().filter(|s| s.starts_with("enableBLOB")).last();
+        let t = Instant::now();
+        while last_mode().as_deref() != Some("enableBLOB device=CCD Simulator name=CCD1 Also") {
+            assert!(t.elapsed() < Duration::from_secs(10), "{:?}", last_mode());
+            std::thread::sleep(Duration::from_millis(20));
+        }
         // The device switched off once ready: "INDI camera disconnected",
         // although the driver deletes the capture properties right after.
         let mut off = fake::set_switch(DEV, "CONNECTION", "Ok", &[("CONNECT", false), ("DISCONNECT", true)]);
@@ -1025,7 +1032,7 @@ mod tests {
         }
         fake.push(&off);
         let gone = |l: &mut Link| l.store.property(DEV, "CCD_FRAME").is_none();
-        cam.client.wait(Duration::from_secs(5), None, |l| gone(l).then_some(())).unwrap();
+        cam.client.wait(Duration::from_secs(30), None, |l| gone(l).then_some(())).unwrap();
         let dropped = CaptureError::Disconnected { msg: "INDI camera disconnected".into(), reconnect: false };
         assert_eq!(capture(&mut cam, 20, None).unwrap_err(), dropped);
         cam.client.shutdown();
