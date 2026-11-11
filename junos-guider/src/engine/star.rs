@@ -414,9 +414,13 @@ fn find_body(
         n = 1;
         thresh = 0;
     } else {
-        // (unsigned short) of the double: truncation; `as u16` also saturates
-        // where PHD2 would overflow
-        thresh = (mean_bg + 3.0 * sigma_bg + 0.5) as u16;
+        // (unsigned short) of the double: g++ on x86-64 truncates it to a
+        // 32-bit int (cvttsd2si) and keeps the low 16 bits, so a threshold
+        // over 65535 (a background near saturation) wraps, e.g. 70000.3 →
+        // 4464, and lets almost the whole aperture through. Kept: it changes
+        // mass, SNR and HFD. The value stays far below 2^31, so the i32 step
+        // never saturates.
+        thresh = ((mean_bg + 3.0 * sigma_bg + 0.5) as i32) as u16;
 
         // find pixels over threshold within aperture; compute mass and centroid
         start_x = (peak_x - A).max(minx);
@@ -1064,6 +1068,14 @@ mod tests {
         field(64, 64, 100.0, 5.0, 7, &[Gauss { x: 31.3, y: 28.7, sigma: 1.5, peak }])
     }
 
+    /// A star's (x, y, mass, snr, hfd, peak_val, result), to compare with
+    /// PHD2's C++ output bit for bit.
+    type Measured = (f64, f64, f64, f64, f64, u16, FindResult);
+
+    fn measured(s: &Star) -> Measured {
+        (s.x, s.y, s.mass, s.snr, s.hfd, s.peak_val, s.result)
+    }
+
     #[test]
     fn centroid_snr_and_hfd_of_a_gaussian() {
         let img = one_star(2000.0);
@@ -1127,6 +1139,17 @@ mod tests {
         ped.pedestal = 200;
         let s = Star::find(&ped, 15, 32.0, 28.0, FindMode::Centroid, 1.5, 10.0, 2000);
         assert_eq!(s.result, FindResult::Ok);
+    }
+
+    #[test]
+    fn threshold_wraps_near_saturation() {
+        // a sky at 60000 ± 3000: mean + 3σ + 0.5 is over 65535, and the
+        // wrapped threshold lets the whole aperture in. The values are PHD2's
+        // C++ (star.cpp built with g++ on x86-64) on this frame; a threshold
+        // capped at 65535 would give mass 53037 and the 2.9 SNR guard.
+        let img = field(64, 64, 60000.0, 3000.0, 13, &[Gauss { x: 31.3, y: 28.7, sigma: 1.5, peak: 5000.0 }]);
+        let s = Star::find(&img, 15, 32.0, 28.0, FindMode::Centroid, 1.5, 20.0, 0);
+        assert_eq!(measured(&s), (32.0, 28.0, 18760.978417266655, 0.5725783353898136, 0.0, 65535, FindResult::LowSnr));
     }
 
     #[test]
