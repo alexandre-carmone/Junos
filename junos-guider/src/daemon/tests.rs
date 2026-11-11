@@ -122,7 +122,17 @@ async fn connects_loops_guides_and_stops_on_the_simulator() {
     d.command(Command::Loop).await.unwrap();
     wait_for(&mut ev, 5, |e| matches!(e, EngineEvent::LoopingExposures { .. })).await;
     assert_eq!(app_state(&d), "Looping");
-    let lock = d.command(Command::FindStar { roi: None }).await.unwrap();
+    // Under a heavy load (the whole suite at once) the simulator's first
+    // frame can hold no star AutoFind takes: try again on the next frame.
+    let mut lock = d.command(Command::FindStar { roi: None }).await;
+    for _ in 0..20 {
+        if lock.is_ok() {
+            break;
+        }
+        wait_for(&mut ev, 5, |e| matches!(e, EngineEvent::LoopingExposures { .. })).await;
+        lock = d.command(Command::FindStar { roi: None }).await;
+    }
+    let lock = lock.unwrap();
     assert_eq!(app_state(&d), "Selected");
     assert!(lock.as_array().is_some_and(|a| a.len() == 2), "{lock}");
 

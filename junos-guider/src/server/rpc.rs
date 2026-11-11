@@ -584,6 +584,14 @@ pub fn reply(outcome: &Result<Value, RpcError>, id: &Value) -> String {
     s
 }
 
+/// A value as PHD2 writes the ones it builds: numbers as given, strings
+/// escaped as PHD2 escapes them (the events' values).
+pub fn json_text(v: &Value) -> String {
+    let mut s = String::new();
+    write_json(&mut s, v, false);
+    s
+}
+
 /// PHD2's `json_format`, which writes what it parsed back (`echo`: integers
 /// as `%d`, floats as `%g`), and the writer of the values it builds (numbers
 /// as given). Strings are escaped as PHD2 escapes; member names never are.

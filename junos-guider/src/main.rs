@@ -10,6 +10,7 @@ use junos_guider::daemon::{Daemon, DaemonOptions};
 use junos_guider::engine::EngineConfig;
 use junos_guider::engine::calibration::ProfileAccess;
 use junos_guider::profile::ProfileStore;
+use junos_guider::server::{EventServer, ServerOptions};
 
 fn main() {
     tracing_subscriber::fmt()
@@ -66,6 +67,8 @@ fn main() {
         Some(dir) => dir.clone(),
         None => store.global().get_str("/frame/LogDir", ""),
     };
+    // PHD2 starts its servers only in server mode (myframe.cpp:228, 353).
+    let server_mode = store.global().get_bool("/ServerMode", true);
     let path = |p: std::path::PathBuf| p.to_string_lossy().into_owned();
     let opts = DaemonOptions {
         engine: EngineConfig {
@@ -94,6 +97,12 @@ fn main() {
     };
     rt.block_on(async {
         let daemon = Daemon::start(opts, store, Box::new(DiskFiles));
+        if server_mode {
+            let port = cfg.event_server_port();
+            EventServer::start(daemon.clone(), ServerOptions { port, instance: cfg.instance });
+        } else {
+            tracing::info!("server mode is off (/ServerMode): no event server");
+        }
         wait_for_signal().await;
         tracing::info!("junos-guider stopping");
         daemon.shutdown().await;

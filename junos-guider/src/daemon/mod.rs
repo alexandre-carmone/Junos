@@ -88,6 +88,10 @@ struct Inner {
     jobs: mpsc::Sender<Job>,
     events: broadcast::Sender<Arc<EngineEvent>>,
     snapshot: watch::Receiver<Arc<Snapshot>>,
+    /// Held while a job's events and snapshot go out, so that a new
+    /// client's catch-up and its events are taken at one point
+    /// ([`Daemon::subscribe_with_snapshot`]).
+    publishing: Arc<Mutex<()>>,
     stop: StopRequest,
     cancel: CancelToken,
     /// A `set_connected true` is running (PHD2's modal gear dialog).
@@ -123,11 +127,13 @@ impl Daemon {
         let (jobs, rx) = mpsc::channel();
         let (events, _) = broadcast::channel(EVENT_BACKLOG);
         let (snap_tx, snapshot) = watch::channel(Arc::new(engine.snapshot()));
+        let publishing = Arc::new(Mutex::new(()));
         let inner = Arc::new(Inner {
             opts,
             jobs,
             events: events.clone(),
             snapshot,
+            publishing: publishing.clone(),
             stop: engine.stop_request(),
             cancel: engine.cancel_token(),
             connecting: AtomicBool::new(false),
@@ -138,7 +144,7 @@ impl Daemon {
         let weak = Arc::downgrade(&daemon.0);
         let t = thread::Builder::new()
             .name("guider-engine".into())
-            .spawn(move || run(engine, rx, events, snap_tx, weak))
+            .spawn(move || run(engine, rx, events, snap_tx, publishing, weak))
             .expect("spawn the engine thread");
         *lock(&daemon.0.thread) = Some(t);
         daemon
@@ -157,6 +163,14 @@ impl Daemon {
     /// The latest snapshot.
     pub fn snapshot(&self) -> Arc<Snapshot> {
         self.0.snapshot.borrow().clone()
+    }
+
+    /// The events from now on and the snapshot as it stands, taken
+    /// together: every event before the snapshot is in it, every one after
+    /// comes on the receiver (a client's catch-up, `send_catchup_events`).
+    pub fn subscribe_with_snapshot(&self) -> (broadcast::Receiver<Arc<EngineEvent>>, Arc<Snapshot>) {
+        let _publishing = lock(&self.0.publishing);
+        (self.0.events.subscribe(), self.snapshot())
     }
 
     /// One command, answered once the engine handled it. `stop_capture`
@@ -308,14 +322,17 @@ fn run(
     jobs: mpsc::Receiver<Job>,
     events: broadcast::Sender<Arc<EngineEvent>>,
     snapshot: watch::Sender<Arc<Snapshot>>,
+    publishing: Arc<Mutex<()>>,
     daemon: std::sync::Weak<Inner>,
 ) {
     let publish = |engine: &mut Engine, evs: Vec<EngineEvent>| {
+        let snap = Arc::new(engine.snapshot());
+        let _publishing = lock(&publishing);
         for e in evs {
             // No subscriber is not an error.
             let _ = events.send(Arc::new(e));
         }
-        snapshot.send_replace(Arc::new(engine.snapshot()));
+        snapshot.send_replace(snap);
     };
     let mut rig = Rig::default();
     let mut last_tick = Instant::now();
