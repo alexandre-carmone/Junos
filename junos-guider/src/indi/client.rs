@@ -22,9 +22,12 @@
 //! it then reports itself disconnected, as PHD2's did on
 //! `serverDisconnected`, until the daemon connects it again.
 //!
-//! The device chooser keeps a device by the interface bits of its
-//! `DRIVER_INFO` (`INDIConfig::newProperty`); a device that has not defined
-//! `DRIVER_INFO` stays listed, as in PHD2's dialog. [`IndiClient::set_driver_connection`]
+//! The device chooser keeps a device by the interface bits its
+//! `DRIVER_INFO` had when defined (`INDIConfig::newProperty`, never
+//! re-tested on updates); a device that has not defined `DRIVER_INFO` stays
+//! listed, as in PHD2's dialog. The writes mirror libindi's local copy
+//! ([`PropertyStore::sent`]), except `CONNECTION`'s: see
+//! [`IndiClient::set_driver_connection`]. [`IndiClient::set_driver_connection`]
 //! follows INDI libs/indiabstractclient/abstractbaseclient.cpp
 //! (`setDriverConnection`, LGPL-2.1-or-later, see THIRD_PARTY.md).
 //!
@@ -41,7 +44,7 @@ use super::store::{
     AO_INTERFACE, Blob, CCD_INTERFACE, ChangeKind, GUIDER_INTERFACE, PropertyStore, ROTATOR_INTERFACE,
     TELESCOPE_INTERFACE,
 };
-use super::xml::{self, BlobMode, Element, Kind, Message, PropState, Value, XmlStream};
+use super::xml::{self, BlobMode, Element, Kind, Message, PropState, Update, Value, XmlStream};
 use crate::engine::calibration::ProfileAccess;
 use crate::engine::traits::{CancelToken, Dir};
 
@@ -334,7 +337,7 @@ impl IndiClient {
         link.store
             .devices()
             .iter()
-            .filter(|d| d.property("DRIVER_INFO").is_none() || role.includes(d.driver_interface()))
+            .filter(|d| d.interface_at_definition.is_none_or(|i| role.includes(i)))
             .map(|d| DeviceEntry {
                 name: d.name.clone(),
                 interfaces: d.driver_interface(),
@@ -344,8 +347,9 @@ impl IndiClient {
     }
 
     /// `sendNewNumber` of a defined number vector: every member, in the
-    /// driver's order, with the values given and the others as they are.
-    pub fn send_number(&self, link: &Link, device: &str, property: &str, values: &[(&str, f64)]) -> bool {
+    /// driver's order, with the values given and the others as they are;
+    /// the store's copy goes Busy with them, as libindi's does.
+    pub fn send_number(&self, link: &mut Link, device: &str, property: &str, values: &[(&str, f64)]) -> bool {
         let Some(p) = link.store.property(device, property).filter(|p| p.kind == Kind::Number) else { return false };
         let members: Vec<(&str, f64)> = p
             .members
@@ -358,11 +362,14 @@ impl IndiClient {
                 (m.name.as_str(), values.iter().find(|(n, _)| *n == m.name).map_or(current, |(_, v)| *v))
             })
             .collect();
-        self.send(&xml::new_number_vector(device, property, &members))
+        let sent = self.send(&xml::new_number_vector(device, property, &members));
+        let local: Vec<Update> = members.iter().map(|&(_, value)| Update::Number { value, min: None, max: None }).collect();
+        link.store.sent(device, property, &local);
+        sent
     }
 
     /// `sendNewSwitch` of a defined switch vector, as [`send_number`](Self::send_number).
-    pub fn send_switch(&self, link: &Link, device: &str, property: &str, states: &[(&str, bool)]) -> bool {
+    pub fn send_switch(&self, link: &mut Link, device: &str, property: &str, states: &[(&str, bool)]) -> bool {
         let Some(p) = link.store.property(device, property).filter(|p| p.kind == Kind::Switch) else { return false };
         let members: Vec<(&str, bool)> = p
             .members
@@ -372,13 +379,19 @@ impl IndiClient {
                 (m.name.as_str(), states.iter().find(|(n, _)| *n == m.name).map_or(current, |(_, on)| *on))
             })
             .collect();
-        self.send(&xml::new_switch_vector(device, property, p.rule, &members))
+        let sent = self.send(&xml::new_switch_vector(device, property, p.rule, &members));
+        let local: Vec<Update> = members.iter().map(|&(_, on)| Update::Switch(on)).collect();
+        link.store.sent(device, property, &local);
+        sent
     }
 
     /// libindi's `setDriverConnection`: the `CONNECTION` members by
     /// position, the first On to connect, the second to disconnect, every
     /// other Off; nothing when that member is On already. False when there
-    /// was nothing to send to.
+    /// was nothing to send to. libindi also sets its own copy On; the store's
+    /// stays as the driver last said, since the wrappers read `CONNECT` as
+    /// PHD2's `Connected`, which only the driver's updates set
+    /// (cam_indi.cpp:326, 575).
     pub fn set_driver_connection(&self, link: &Link, device: &str, on: bool) -> bool {
         let Some(p) = link.store.property(device, "CONNECTION").filter(|p| p.kind == Kind::Switch) else {
             return false;
@@ -620,7 +633,7 @@ impl TimedGuide {
     /// else sent).
     fn in_progress(&mut self, link: &Link, device: &str) -> bool {
         if let Some((prop, seq0, generation)) = self.active {
-            let answered = link.store.property(device, prop).is_none_or(|p| p.seq > seq0 && p.state != PropState::Busy);
+            let answered = link.store.property(device, prop).is_none_or(|p| p.updated > seq0 && p.state != PropState::Busy);
             if answered || !link.up || link.generation != generation {
                 self.active = None;
             }
@@ -645,7 +658,7 @@ impl TimedGuide {
         let (prop, pulsed, other) = timed_guide_members(dir);
         let start = Instant::now();
         let (seq0, generation) = {
-            let link = client.lock();
+            let mut link = client.lock();
             let has = |n: &str| link.store.property(device, n).is_some_and(|p| p.kind == Kind::Number);
             if !has(TIMED_GUIDE_NS) || !has(TIMED_GUIDE_WE) {
                 return PulseEnd::Missing;
@@ -655,10 +668,11 @@ impl TimedGuide {
                 return PulseEnd::Busy;
             }
             let seq0 = link.store.seq();
-            self.active = Some((prop, seq0, link.generation));
+            let generation = link.generation;
+            self.active = Some((prop, seq0, generation));
             // Despite the INDI standard, every driver reads milliseconds.
-            client.send_number(&link, device, prop, &[(pulsed, ms as f64), (other, 0.0)]);
-            (seq0, link.generation)
+            client.send_number(&mut link, device, prop, &[(pulsed, ms as f64), (other, 0.0)]);
+            (seq0, generation)
         };
         let deadline = Duration::from_millis((ms as u64 + 2000).max(5000));
         let r = client.wait(deadline, Some(cancel), |link| {
@@ -668,7 +682,8 @@ impl TimedGuide {
                 return Some(());
             }
             let p = link.store.property(device, prop)?;
-            (p.seq > seq0 && p.state != PropState::Busy).then_some(())
+            // An update, not a redefinition: PHD2 clears guide_active in updateProperty only.
+            (p.updated > seq0 && p.state != PropState::Busy).then_some(())
         });
         match r {
             Ok(()) => self.active = None,

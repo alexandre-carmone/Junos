@@ -1,17 +1,32 @@
 //! What an INDI client knows of the server's devices: their properties as
 //! libindiclient keeps them, and a sequence number on every change, so a
-//! waiter can tell an update that came after its request (`seq > seq0`) from
-//! the state it saw before — the pulse completion PHD2 gets from setting
-//! `guide_active` before `sendNewNumber`.
+//! waiter can tell an update that came after its request from the state it
+//! saw before — the pulse completion PHD2 gets from setting `guide_active`
+//! before `sendNewNumber` and clearing it in `updateProperty` only. The rule:
+//! record [`PropertyStore::seq`] before sending, then wait for an
+//! [`ChangeKind::Updated`] change past it (a property's
+//! [`updated`](Property::updated) past it) whose state is not Busy; a
+//! redefinition after a driver restart is no answer.
 //!
 //! The rules are libindiclient's (`WatchDeviceProperty::processXml`,
 //! `BaseDevice::buildProp` / `setValue`, `delPropertyCmd`, `messageCmd`):
-//! a second definition of a property is ignored; an update whose state is
-//! not one of the four is refused, as is one for a property of another type;
-//! a `delProperty` without a name removes the whole device. BLOBs are decoded
-//! here (base64, then zlib when the format ends in `.z`, which is stripped)
-//! and handed out with the outcome, never kept: the store only records their
-//! format and size, a `size` of 0 being a state-only update.
+//! a device appears with the first def or set that names it and a property
+//! (`newDevice`; libindi also creates it for one without a property name or
+//! with an unknown tag, which no driver sends); a second definition of a
+//! property is ignored; an update whose state is not one of the four is
+//! refused, as is one for a property of another type; a `delProperty`
+//! without a name removes the whole device (`removeDevice` alone, no
+//! `removeProperty` per property). [`PropertyStore::sent`] is libindi's own
+//! write on `sendNew*`: the property goes Busy with the values sent.
+//!
+//! BLOBs are decoded here (base64, then zlib when the format ends in `.z`,
+//! which is stripped) and handed out with the outcome, never kept: the store
+//! only records their format and size, a `size` of 0 being a state-only
+//! update. Deliberate addition (PLAN): libindi's `endsWith(".z")` is
+//! `find_last_of(".z", 0)`, which only matches two-character formats, so it
+//! never inflates the `.<ext>.z` INDI's CCD sends when compression is on
+//! (indiccd.cpp:2749); here those are inflated, and [`Blob::sent_format`]
+//! keeps the format as sent for PHD2's "Unknown image format" alert.
 //!
 //! Follows INDI libs/indidevice/basedevice.cpp, libs/indidevice/watchdeviceproperty.cpp,
 //! libs/indiabstractclient/abstractbaseclient.cpp — LGPL-2.1-or-later, see THIRD_PARTY.md
@@ -39,8 +54,12 @@ pub struct Property {
     /// Switches only.
     pub rule: Rule,
     pub timeout: f64,
-    /// The store's sequence number at this property's last change.
+    /// The store's sequence number at this property's definition or last
+    /// update.
     pub seq: u64,
+    /// The sequence number of its last update (`updateProperty`), 0 before
+    /// the first: what a waiter compares with the `seq` it recorded.
+    pub updated: u64,
     pub members: Vec<Member>,
 }
 
@@ -77,6 +96,10 @@ impl Property {
 pub struct Device {
     pub name: String,
     pub properties: Vec<Property>,
+    /// [`driver_interface`](Self::driver_interface) as `DRIVER_INFO` was
+    /// defined, `None` before: what PHD2's chooser tests, once, at that
+    /// definition (config_indi.cpp:393), never on later updates.
+    pub interface_at_definition: Option<u16>,
 }
 
 impl Device {
@@ -97,21 +120,29 @@ pub enum ChangeKind {
     Defined,
     Updated,
     Deleted,
+    /// libindi's `newDevice`: the first message naming the device, even one
+    /// that is then refused. `property` is empty.
+    DeviceDefined,
+    /// `removeDevice`: a `delProperty` without a name (a driver that died).
+    /// Its properties go with it, without a `Deleted` each; `property` is
+    /// empty.
+    DeviceDeleted,
 }
 
-/// One property defined, updated or deleted.
+/// One property or device defined, updated or deleted.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Change {
     pub device: String,
     pub property: String,
     pub kind: ChangeKind,
-    /// The property's state after the change (its last one when deleted).
+    /// The property's state after the change (its last one when deleted);
+    /// Idle for a device.
     pub state: PropState,
     pub seq: u64,
 }
 
-/// A BLOB as it arrived, decoded. `data.len()` is the size PHD2 reads
-/// (`IBLOB::size`): the `size` attribute, or the inflated length.
+/// A BLOB as it arrived, decoded: base64 decoded and cut to `size`, or
+/// inflated. `data` can be shorter than `size` when less was sent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Blob {
     pub device: String,
@@ -119,6 +150,9 @@ pub struct Blob {
     pub member: String,
     /// Without the `.z` of a compressed BLOB.
     pub format: String,
+    /// The format as the driver sent it, `.z` included: what PHD2, whose
+    /// libindi does not inflate, names in its "Unknown image format" alert.
+    pub sent_format: String,
     pub data: Vec<u8>,
 }
 
@@ -137,7 +171,9 @@ pub struct Outcome {
     pub changes: Vec<Change>,
     pub blobs: Vec<Blob>,
     pub message: Option<DriverMessage>,
-    /// Why libindi would refuse the message (its "Dispatch command error").
+    /// Why libindi would refuse or skip the message (most go to its
+    /// "Dispatch command error" log line; a def with no member is only
+    /// `IDLog`ged). For the debug log, never shown to PHD2.
     pub error: Option<String>,
 }
 
@@ -180,6 +216,27 @@ impl PropertyStore {
         self.devices.clear();
     }
 
+    /// What libindi's `sendNew*` does to its own copy of the property
+    /// (abstractbaseclient.cpp:463-544): it goes Busy and holds the values
+    /// sent, given in the property's member order — no change reported, no
+    /// sequence number. So a look right after sending sees Busy, as PHD2's
+    /// `while (Slewing())` loop does (scope_indi.cpp:880, 922).
+    pub fn sent(&mut self, device: &str, name: &str, values: &[Update]) {
+        let Some(p) = self.devices.iter_mut().find(|d| d.name == device).and_then(|d| d.properties.iter_mut().find(|p| p.name == name))
+        else {
+            return;
+        };
+        p.state = PropState::Busy;
+        for (m, u) in p.members.iter_mut().zip(values) {
+            match (&mut m.value, u) {
+                (Value::Number { value, .. }, Update::Number { value: v, .. }) => *value = *v,
+                (Value::Switch(on), Update::Switch(v)) => *on = *v,
+                (Value::Text(t), Update::Text(v)) => t.clone_from(v),
+                _ => {}
+            }
+        }
+    }
+
     /// Applies a message from the server. Pings and the server's own
     /// `getProperties` change nothing: the client answers the former.
     pub fn apply(&mut self, msg: Message) -> Outcome {
@@ -204,13 +261,16 @@ impl PropertyStore {
         out
     }
 
-    /// The device's index, created on first mention (`ensureDeviceByName`),
-    /// even by a message that is then refused.
-    fn ensure(&mut self, name: &str) -> usize {
+    /// The device's index, created on first mention (`ensureDeviceByName`,
+    /// `newDevice`), even by a message that is then refused.
+    fn ensure(&mut self, name: &str, out: &mut Outcome) -> usize {
         if let Some(i) = self.devices.iter().position(|d| d.name == name) {
             return i;
         }
-        self.devices.push(Device { name: name.to_owned(), properties: Vec::new() });
+        self.devices.push(Device { name: name.to_owned(), properties: Vec::new(), interface_at_definition: None });
+        let seq = self.next_seq();
+        let kind = ChangeKind::DeviceDefined;
+        out.changes.push(Change { device: name.to_owned(), property: String::new(), kind, state: PropState::Idle, seq });
         self.devices.len() - 1
     }
 
@@ -224,7 +284,7 @@ impl PropertyStore {
         if d.device.is_empty() {
             return;
         }
-        let i = self.ensure(&d.device);
+        let i = self.ensure(&d.device, out);
         // INDI_PROPERTY_DUPLICATED, silently ignored, whatever the new type:
         // a driver deletes a property before defining it again.
         if self.devices[i].property(&d.name).is_some() {
@@ -246,8 +306,13 @@ impl PropertyStore {
             rule: d.rule,
             timeout: d.timeout,
             seq,
+            updated: 0,
             members,
         });
+        if d.name == "DRIVER_INFO" {
+            let interface = self.devices[i].driver_interface();
+            self.devices[i].interface_at_definition = Some(interface);
+        }
         out.changes.push(Change { device: d.device, property: d.name, kind: ChangeKind::Defined, state: d.state, seq });
     }
 
@@ -255,7 +320,7 @@ impl PropertyStore {
         if s.device.is_empty() {
             return;
         }
-        let i = self.ensure(&s.device);
+        let i = self.ensure(&s.device, out);
         // checkMessage comes first: the message is kept even when the update is refused.
         if let Some(m) = &s.message {
             out.message = Some(driver_message(Some(s.device.clone()), s.timestamp.clone(), m));
@@ -265,6 +330,8 @@ impl PropertyStore {
             return;
         };
         let Some(state) = s.state else {
+            // toIPState's default lands before the refusal (basedevice.cpp:626).
+            p.state = PropState::Ok;
             out.error = Some(format!("INDI: <set{}Vector> bogus state for {}", s.kind.tag(), s.name));
             return;
         };
@@ -290,10 +357,10 @@ impl PropertyStore {
                     // on a member the property lacks.
                     let Some(member) = member.filter(|_| size != 0) else { continue };
                     match blob(&format, size, &data) {
-                        Ok((format, data)) => {
-                            member.value = Value::Blob { format: format.clone(), size: data.len() };
+                        Ok((decoded, data)) => {
+                            member.value = Value::Blob { format: decoded.clone(), size: data.len() };
                             let (device, property) = (s.device.clone(), s.name.clone());
-                            out.blobs.push(Blob { device, property, member: name, format, data });
+                            out.blobs.push(Blob { device, property, member: name, format: decoded, sent_format: format, data });
                         }
                         Err(e) => {
                             out.error = Some(format!("INDI: {}.{}.{name} compression error: {e}", s.device, s.name));
@@ -328,6 +395,7 @@ impl PropertyStore {
         }
         self.seq += 1;
         p.seq = self.seq;
+        p.updated = self.seq;
         let seq = self.seq;
         out.changes.push(Change { device: s.device, property: s.name, kind: ChangeKind::Updated, state, seq });
     }
@@ -340,20 +408,22 @@ impl PropertyStore {
         if let Some(m) = &message {
             out.message = Some(driver_message(Some(device.clone()), timestamp, m));
         }
-        let gone = match name {
-            None => self.devices.remove(i).properties,
-            Some(name) => match self.devices[i].properties.iter().position(|p| p.name == name) {
-                Some(j) => vec![self.devices[i].properties.remove(j)],
-                None => {
-                    out.error = Some(format!("Cannot delete property {name} as it is not defined yet. Check driver."));
-                    return;
-                }
-            },
-        };
-        for p in gone {
+        let Some(name) = name else {
+            self.devices.remove(i);
             let seq = self.next_seq();
-            out.changes.push(Change { device: device.clone(), property: p.name, kind: ChangeKind::Deleted, state: p.state, seq });
-        }
+            let kind = ChangeKind::DeviceDeleted;
+            out.changes.push(Change { device, property: String::new(), kind, state: PropState::Idle, seq });
+            return;
+        };
+        let Some(j) = self.devices[i].properties.iter().position(|p| p.name == name) else {
+            // libindi says so only to a client with a BLOB mode set
+            // (abstractbaseclient.cpp:171), here for the debug log.
+            out.error = Some(format!("Cannot delete property {name} as it is not defined yet. Check driver."));
+            return;
+        };
+        let p = self.devices[i].properties.remove(j);
+        let seq = self.next_seq();
+        out.changes.push(Change { device, property: p.name, kind: ChangeKind::Deleted, state: p.state, seq });
     }
 }
 
@@ -368,11 +438,8 @@ fn driver_message(device: Option<String>, timestamp: Option<String>, message: &s
 
 /// One BLOB's bytes and format: base64 decoded, cut to `size` (all PHD2
 /// reads), or inflated into at most `size` bytes when the format ends in
-/// `.z` (`uncompress`, which fails on a larger result).
-///
-/// libindi tests the suffix with `LilXmlValue::endsWith`, which only looks at
-/// the first character (`find_last_of(".z", 0)`) and so never matches
-/// `.fits.z`; this decodes what drivers mean.
+/// `.z` (`uncompress`, which fails on a larger result) — a deliberate
+/// addition, see the module doc.
 fn blob(format: &str, size: i64, text: &[u8]) -> Result<(String, Vec<u8>), String> {
     let size = usize::try_from(size).map_err(|_| "bad size".to_string())?;
     let mut data = base64(text);
@@ -561,17 +628,19 @@ mod tests {
         assert_eq!(
             changes,
             [
-                ("CCD Simulator", "DRIVER_INFO", Defined, Idle, 1),
-                ("CCD Simulator", "CONNECTION", Defined, Ok, 2),
-                ("CCD Simulator", "CCD_EXPOSURE", Defined, Idle, 3),
-                ("CCD Simulator", "CCD1", Defined, Idle, 4),
-                ("CCD Simulator", "CCD1", Updated, Ok, 5),
+                ("CCD Simulator", "", DeviceDefined, Idle, 1),
+                ("CCD Simulator", "DRIVER_INFO", Defined, Idle, 2),
+                ("CCD Simulator", "CONNECTION", Defined, Ok, 3),
+                ("CCD Simulator", "CCD_EXPOSURE", Defined, Idle, 4),
+                ("CCD Simulator", "CCD1", Defined, Idle, 5),
                 ("CCD Simulator", "CCD1", Updated, Ok, 6),
-                ("Telescope Simulator", "DRIVER_INFO", Defined, Idle, 7),
-                ("Telescope Simulator", "TELESCOPE_TIMED_GUIDE_NS", Defined, Idle, 8),
-                ("Telescope Simulator", "TELESCOPE_TIMED_GUIDE_NS", Updated, Busy, 9),
-                ("Telescope Simulator", "TELESCOPE_TIMED_GUIDE_NS", Updated, Ok, 10),
-                ("CCD Simulator", "CCD1", Deleted, Ok, 11),
+                ("CCD Simulator", "CCD1", Updated, Ok, 7),
+                ("Telescope Simulator", "", DeviceDefined, Idle, 8),
+                ("Telescope Simulator", "DRIVER_INFO", Defined, Idle, 9),
+                ("Telescope Simulator", "TELESCOPE_TIMED_GUIDE_NS", Defined, Idle, 10),
+                ("Telescope Simulator", "TELESCOPE_TIMED_GUIDE_NS", Updated, Busy, 11),
+                ("Telescope Simulator", "TELESCOPE_TIMED_GUIDE_NS", Updated, Ok, 12),
+                ("CCD Simulator", "CCD1", Deleted, Ok, 13),
             ]
         );
         assert!(outcomes.iter().all(|o| o.error.is_none()));
@@ -582,6 +651,7 @@ mod tests {
         assert_eq!(blobs.len(), 2);
         for b in blobs {
             assert_eq!((b.device.as_str(), b.property.as_str(), b.member.as_str(), b.format.as_str()), ("CCD Simulator", "CCD1", "CCD1", ".fits"));
+            assert!(b.sent_format == ".fits" || b.sent_format == ".fits.z");
             assert_eq!(b.data, fits);
             let img = read_fits_blob(&b.data, None).unwrap();
             assert_eq!((img.w, img.h, &img.data), (4, 3, &px));
@@ -608,8 +678,8 @@ mod tests {
         );
         assert_eq!((exp.perm, exp.timeout, exp.label.as_str(), exp.group.as_str()), (Perm::Rw, 60.0, "Expose", "Main Control"));
         let guide = store.property("Telescope Simulator", "TELESCOPE_TIMED_GUIDE_NS").unwrap();
-        assert_eq!((guide.state, guide.seq, guide.number("TIMED_GUIDE_N")), (Ok, 10, Some(0.0)));
-        assert_eq!(store.seq(), 11);
+        assert_eq!((guide.state, guide.seq, guide.updated, guide.number("TIMED_GUIDE_N")), (Ok, 12, 12, Some(0.0)));
+        assert_eq!(store.seq(), 13);
 
         let ifs: Vec<_> = store.devices().iter().map(|d| (d.name.as_str(), d.driver_interface())).collect();
         assert_eq!(ifs, [("CCD Simulator", 22), ("Telescope Simulator", 5)]);
@@ -642,16 +712,27 @@ mod tests {
         apply(&mut store, &guide("Ok", 0.0));
         // The axis already reads Ok before the pulse: only a later update counts.
         let seq0 = store.seq();
-        let done = |o: &Outcome| o.changes.iter().any(|c| c.seq > seq0 && c.state != PropState::Busy);
+        let done =
+            |o: &Outcome| o.changes.iter().any(|c| c.kind == ChangeKind::Updated && c.seq > seq0 && c.state != PropState::Busy);
+        // libindi's own write on sendNewNumber: Busy at once, no change, no number.
+        store.sent("M", "TELESCOPE_TIMED_GUIDE_NS", &[Update::Number { value: 1500.0, min: None, max: None }]);
+        let p = store.property("M", "TELESCOPE_TIMED_GUIDE_NS").unwrap();
+        assert_eq!((p.state, p.number("TIMED_GUIDE_N"), p.updated, store.seq()), (PropState::Busy, Some(1500.0), 3, seq0));
         assert!(!done(&apply(&mut store, &guide("Busy", 1500.0))));
         let o = apply(&mut store, &guide("Ok", 0.0));
         assert!(done(&o));
-        assert_eq!((o.changes[0].seq, store.property("M", "TELESCOPE_TIMED_GUIDE_NS").unwrap().seq), (4, 4));
-        // Deleting and defining again keeps the numbers growing.
+        let p = store.property("M", "TELESCOPE_TIMED_GUIDE_NS").unwrap();
+        assert_eq!((o.changes[0].seq, p.seq, p.updated), (5, 5, 5));
+        // Deleting and defining again keeps the numbers growing, and a
+        // redefinition in state Idle is no answer to a waiter.
+        let seq0 = store.seq();
         let o = apply(&mut store, "<delProperty device='M' name='TELESCOPE_TIMED_GUIDE_NS'/>");
-        assert_eq!((o.changes[0].kind, o.changes[0].seq), (ChangeKind::Deleted, 5));
-        assert_eq!(apply(&mut store, GUIDE_NS).changes[0].seq, 6);
-        assert_eq!(store.seq(), 6);
+        assert_eq!((o.changes[0].kind, o.changes[0].seq), (ChangeKind::Deleted, 6));
+        let o = apply(&mut store, GUIDE_NS);
+        assert!(!done(&o));
+        let p = store.property("M", "TELESCOPE_TIMED_GUIDE_NS").unwrap();
+        assert_eq!((o.changes[0].seq, p.seq, p.updated > seq0), (7, 7, false));
+        assert_eq!(store.seq(), 7);
     }
 
     #[test]
@@ -662,7 +743,9 @@ mod tests {
         let o = apply(&mut store, "<defSwitchVector device='M' name='TELESCOPE_TIMED_GUIDE_NS'><defSwitch name='X'>On</defSwitch></defSwitchVector>");
         assert_eq!(o, Outcome::default());
         assert_eq!(store.property("M", "TELESCOPE_TIMED_GUIDE_NS").unwrap().kind, Kind::Number);
-        // A bad state refuses the update, but the message is kept.
+        // A bad state refuses the update, but the message is kept and the
+        // state reads Ok, toIPState's default.
+        apply(&mut store, &guide("Busy", 0.0));
         let o = apply(
             &mut store,
             "<setNumberVector device='M' name='TELESCOPE_TIMED_GUIDE_NS' state='Bad' timestamp='T' message='hi'>\
@@ -670,12 +753,14 @@ mod tests {
         );
         assert!(o.changes.is_empty() && o.error.is_some());
         assert_eq!(o.message, Some(DriverMessage { device: Some("M".into()), line: "T: hi ".into() }));
-        assert_eq!(store.property("M", "TELESCOPE_TIMED_GUIDE_NS").unwrap().number("TIMED_GUIDE_N"), Some(0.0));
+        let p = store.property("M", "TELESCOPE_TIMED_GUIDE_NS").unwrap();
+        assert_eq!((p.number("TIMED_GUIDE_N"), p.state), (Some(0.0), PropState::Ok));
         // So does another type, and an unknown property; the device appears anyway.
         let o = apply(&mut store, "<setSwitchVector device='M' name='TELESCOPE_TIMED_GUIDE_NS' state='Ok'/>");
         assert_eq!(o.error.as_deref(), Some("INDI: Could not find property TELESCOPE_TIMED_GUIDE_NS in M"));
-        apply(&mut store, "<setTextVector device='Ghost' name='X' state='Ok'/>");
+        let o = apply(&mut store, "<setTextVector device='Ghost' name='X' state='Ok'/>");
         assert!(store.device("Ghost").is_some_and(|d| d.properties.is_empty()));
+        assert_eq!(o.changes.iter().map(|c| (c.device.as_str(), c.kind)).collect::<Vec<_>>(), [("Ghost", ChangeKind::DeviceDefined)]);
         // Members need a name; a vector with none is not defined.
         let o = apply(&mut store, "<defTextVector device='M' name='T'><defText label='x'>a</defText></defTextVector>");
         assert_eq!(o.error.as_deref(), Some("T: defTextVector with no valid members"));
@@ -693,13 +778,17 @@ mod tests {
         let o = apply(&mut store, "<delProperty device='M' name='NOPE'/>");
         assert_eq!(o.error.as_deref(), Some("Cannot delete property NOPE as it is not defined yet. Check driver."));
         apply(&mut store, "<defLightVector device='M' name='L'><defLight name='A'>Busy</defLight></defLightVector>");
+        // The whole device: libindi's removeDevice alone, also for a device
+        // with no property left.
         let o = apply(&mut store, "<delProperty device='M'/>");
-        let gone: Vec<_> = o.changes.iter().map(|c| (c.property.as_str(), c.kind)).collect();
-        assert_eq!(gone, [("TELESCOPE_TIMED_GUIDE_NS", ChangeKind::Deleted), ("L", ChangeKind::Deleted)]);
+        let gone: Vec<_> = o.changes.iter().map(|c| (c.device.as_str(), c.property.as_str(), c.kind)).collect();
+        assert_eq!(gone, [("M", "", ChangeKind::DeviceDeleted)]);
         assert!(store.device("M").is_none());
+        let o = apply(&mut store, "<delProperty device='Ghost'/>");
+        assert_eq!((o.changes.len(), o.changes[0].kind), (1, ChangeKind::DeviceDeleted));
         // A def's message is never read (buildProp has no checkMessage).
         let o = apply(&mut store, "<defTextVector device='M' name='T2' message='hi'><defText name='A'>a</defText></defTextVector>");
-        assert_eq!((o.message, o.changes.len()), (None, 1));
+        assert_eq!((o.message, o.changes.len()), (None, 2));
         // A message for no known device has no trailing space.
         let o = apply(&mut store, "<message device='Nobody' timestamp='T' message='x'/>");
         assert_eq!(o.message, Some(DriverMessage { device: None, line: "T: x".into() }));
@@ -752,6 +841,13 @@ mod tests {
         apply(&mut store, "<defTextVector device='E' name='OTHER'><defText name='A'>5</defText></defTextVector>");
         let ifs: Vec<_> = store.devices().iter().map(|d| d.driver_interface()).collect();
         assert_eq!(ifs, [6, 4464, 0, 0, 0]); // 70000 - 65536
+        // The chooser's value is the one DRIVER_INFO was defined with, and
+        // none without it.
+        let at_def: Vec<_> = store.devices().iter().map(|d| d.interface_at_definition).collect();
+        assert_eq!(at_def, [Some(6), Some(4464), Some(0), Some(0), None]);
+        apply(&mut store, "<setTextVector device='A' name='DRIVER_INFO' state='Ok'><oneText name='DRIVER_INTERFACE'>1</oneText></setTextVector>");
+        let a = store.device("A").unwrap();
+        assert_eq!((a.driver_interface(), a.interface_at_definition), (1, Some(6)));
         assert_eq!(AO_INTERFACE | ROTATOR_INTERFACE, 0x1100);
     }
 }

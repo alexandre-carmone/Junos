@@ -125,9 +125,9 @@ impl IndiRotator {
         };
         self.seen.set(true);
         let conn = device.property("CONNECTION").filter(|p| p.kind == Kind::Switch);
-        let first = *self.conn_seq.get().get_or_insert(conn.map_or(u64::MAX, |p| p.seq));
+        let first = *self.conn_seq.get().get_or_insert(conn.map_or(u64::MAX, |p| p.updated));
         self.conn_seq.set(conn.map(|_| first));
-        let updated_off = conn.is_some_and(|p| p.seq > first && p.switch("CONNECT") == Some(false));
+        let updated_off = conn.is_some_and(|p| p.updated > first && p.switch("CONNECT") == Some(false));
         // `m_ready`: the angle property.
         let ready = device.property("ABS_ROTATOR_ANGLE").is_some_and(|p| p.kind == Kind::Number);
         (ready && updated_off).then_some(Some("INDI rotator was disconnected"))

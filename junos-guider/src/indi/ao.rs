@@ -249,12 +249,12 @@ impl StepGuiderDevice for IndiAo {
             Dir::East => ("AO_WE", "AO_E", "AO_W"),
             Dir::West => ("AO_WE", "AO_W", "AO_E"),
         };
-        let link = self.client.lock();
+        let mut link = self.client.lock();
         let has = |p: &str| link.store.property(&self.device, p).is_some_and(|x| x.kind == Kind::Number);
         if !self.is_connected_in(&link) || !has("AO_NS") || !has("AO_WE") {
             return StepResult::Error;
         }
-        self.client.send_number(&link, &self.device, prop, &[(member, steps as f64), (other, 0.0)]);
+        self.client.send_number(&mut link, &self.device, prop, &[(member, steps as f64), (other, 0.0)]);
         StepResult::Ok
     }
 
@@ -273,12 +273,12 @@ impl StepGuiderDevice for IndiAo {
     /// TODO), so the position is zeroed anyway.
     fn center(&mut self) -> bool {
         self.debug.push("StepGuiderSxAoINDI::Center".into());
-        let link = self.client.lock();
+        let mut link = self.client.lock();
         let has = link.store.property(&self.device, "AO_CENTER").is_some_and(|p| p.kind == Kind::Switch);
         if !has || !self.is_connected_in(&link) {
             return false;
         }
-        self.client.send_switch(&link, &self.device, "AO_CENTER", &[("CENTER", true), ("UNJAM", false)]);
+        self.client.send_switch(&mut link, &self.device, "AO_CENTER", &[("CENTER", true), ("UNJAM", false)]);
         true
     }
 }
@@ -298,12 +298,12 @@ impl GuideOutput for IndiAo {
         }
         let (prop, pulsed, other) = client::timed_guide_members(dir);
         {
-            let link = self.client.lock();
+            let mut link = self.client.lock();
             let has = |p: &str| link.store.property(&self.device, p).is_some_and(|x| x.kind == Kind::Number);
             if !has(TIMED_GUIDE_NS) || !has(TIMED_GUIDE_WE) {
                 return MoveResult::Error;
             }
-            self.client.send_number(&link, &self.device, prop, &[(pulsed, ms as f64), (other, 0.0)]);
+            self.client.send_number(&mut link, &self.device, prop, &[(pulsed, ms as f64), (other, 0.0)]);
         }
         if self.pulse_min_wait {
             if !self.pulse_min_wait_logged {

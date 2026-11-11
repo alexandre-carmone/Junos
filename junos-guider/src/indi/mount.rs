@@ -144,9 +144,8 @@ impl IndiMount {
     }
 
     /// `SlewToCoordinates`: the slew, then up to 90 s while the coordinates
-    /// are Busy; true when they no longer are. Quirk kept: the first look
-    /// comes right after the request, before the driver could answer Busy,
-    /// so a slew the driver has not started yet counts as done.
+    /// are Busy — as libindi's copy is from the moment they are sent — true
+    /// when they no longer are.
     pub fn slew_to(&mut self, ra_hours: f64, dec_deg: f64, cancel: &CancelToken) -> bool {
         if !self.slew_to_async(ra_hours, dec_deg) {
             return false;
@@ -215,20 +214,20 @@ impl IndiMount {
             Dir::South => ("TELESCOPE_MOTION_NS", "MOTION_SOUTH", "MOTION_NORTH"),
         };
         {
-            let link = self.client.lock();
+            let mut link = self.client.lock();
             let rate = link.store.property(&self.device, "TELESCOPE_MOTION_RATE").filter(|p| p.kind == Kind::Number);
             let rate_member = rate.and_then(|p| p.members.first()).map(|m| m.name.clone());
             let switches = self.has(&link, "TELESCOPE_MOTION_NS", Kind::Switch)
                 && self.has(&link, "TELESCOPE_MOTION_WE", Kind::Switch);
             let (Some(rate_member), true) = (rate_member, switches) else { return None };
-            self.client.send_number(&link, &self.device, "TELESCOPE_MOTION_RATE", &[(&rate_member, 0.3 * 15.0 / 60.0)]);
-            self.client.send_switch(&link, &self.device, prop, &[(on, true), (other, false)]);
+            self.client.send_number(&mut link, &self.device, "TELESCOPE_MOTION_RATE", &[(&rate_member, 0.3 * 15.0 / 60.0)]);
+            self.client.send_switch(&mut link, &self.device, prop, &[(on, true), (other, false)]);
         }
         // PHD2 sleeps the pulse out whatever happens; a stop cuts it short
         // here, and the motion still stops.
         client::sleep_ms(ms as u64, cancel);
-        let link = self.client.lock();
-        self.client.send_switch(&link, &self.device, prop, &[(on, false), (other, false)]);
+        let mut link = self.client.lock();
+        self.client.send_switch(&mut link, &self.device, prop, &[(on, false), (other, false)]);
         Some(MoveResult::Ok)
     }
 }
@@ -333,7 +332,7 @@ impl PointingSource for IndiMount {
     /// `SlewToCoordinatesAsync`: `ON_COORD_SET` to SLEW, then the target
     /// written to the coordinates property.
     fn slew_to_async(&mut self, ra_hours: f64, dec_deg: f64) -> bool {
-        let link = self.client.lock();
+        let mut link = self.client.lock();
         let set = self.has(&link, "ON_COORD_SET", Kind::Switch);
         let Some(name) =
             coord(&link, &self.device).filter(|_| set && self.is_connected_in(&link)).map(|p| p.name.clone())
@@ -341,16 +340,16 @@ impl PointingSource for IndiMount {
             return false;
         };
         let modes = [("SLEW", true), ("TRACK", false), ("SYNC", false)];
-        self.client.send_switch(&link, &self.device, "ON_COORD_SET", &modes);
-        self.client.send_number(&link, &self.device, &name, &[("RA", ra_hours), ("DEC", dec_deg)]);
+        self.client.send_switch(&mut link, &self.device, "ON_COORD_SET", &modes);
+        self.client.send_number(&mut link, &self.device, &name, &[("RA", ra_hours), ("DEC", dec_deg)]);
         true
     }
 
     /// `AbortSlew`: `TELESCOPE_ABORT_MOTION.ABORT` On.
     fn abort_slew(&mut self) {
-        let link = self.client.lock();
+        let mut link = self.client.lock();
         if self.is_connected_in(&link) {
-            self.client.send_switch(&link, &self.device, "TELESCOPE_ABORT_MOTION", &[("ABORT", true)]);
+            self.client.send_switch(&mut link, &self.device, "TELESCOPE_ABORT_MOTION", &[("ABORT", true)]);
         }
     }
 
@@ -716,9 +715,12 @@ mod tests {
         assert!(mount.can_report_position() && mount.can_slew_async() && !mount.is_slewing());
         assert!((mount.declination_radians().unwrap() - 20f64.to_radians()).abs() < 1e-15);
 
+        let seq0 = mount.client.lock().store.seq();
         assert!(mount.slew_to_async(6.0, 30.0));
-        mount.client.wait(Duration::from_secs(2), None, |l| mount_busy(l).then_some(())).unwrap();
+        // libindi's own copy is Busy from the send on, before the driver says so.
         assert!(mount.is_slewing());
+        let driver_busy = |l: &mut Link| coord(l, DEV).is_some_and(|p| p.updated > seq0 && p.state == PropState::Busy);
+        mount.client.wait(Duration::from_secs(2), None, |l| driver_busy(l).then_some(())).unwrap();
         // A synchronous slew waits while the coordinates are Busy (here the
         // first slew's), not for its own.
         assert!(mount.slew_to(6.5, 31.0, &CancelToken::new()));
@@ -751,10 +753,6 @@ mod tests {
         mount.client.shutdown();
     }
 
-    fn mount_busy(l: &mut Link) -> bool {
-        coord(l, DEV).is_some_and(|p| p.state == PropState::Busy)
-    }
-
     #[test]
     fn an_aux_mount_and_the_ways_a_mount_drops() {
         let fake = scope(SIM);
@@ -778,6 +776,9 @@ mod tests {
         assert_eq!(mount.check_connection().as_deref(), Some("INDI mount was disconnected"));
         // The device goes: no alert.
         mount.connect(&CancelToken::new()).unwrap();
+        // The fake writes its connect reply's definitions after the CONNECT
+        // switch that ends connect(): let them land before the device goes.
+        std::thread::sleep(Duration::from_millis(100));
         fake.push(&format!("<delProperty device='{DEV}'/>\n"));
         mount.client.wait(Duration::from_secs(2), None, |l| l.store.device(DEV).is_none().then_some(())).unwrap();
         assert!(!mount.is_connected());

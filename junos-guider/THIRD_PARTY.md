@@ -69,6 +69,7 @@ OF THE POSSIBILITY OF SUCH DAMAGE.
 client's message writers (`libs/indicore/indiuserio.c`, `userio.c`,
 Copyright (C) 2021 Pawel Soja) and the way libindiclient applies what the
 server sends (`libs/indidevice/basedevice.cpp`,
+`libs/indidevice/watchdeviceproperty.cpp`,
 `libs/indiabstractclient/abstractbaseclient.cpp`, Copyright (c) 2011-2016
 Jasem Mutlaq, 2022 Pawel Soja). The INDI library is licensed under the GNU
 Lesser General Public License, version 2.1 or later, whose section 3 allows

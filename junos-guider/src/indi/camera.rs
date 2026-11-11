@@ -264,7 +264,7 @@ impl IndiCamera {
     }
 
     /// `SendBinning`.
-    fn send_binning(&mut self, link: &Link) {
+    fn send_binning(&mut self, link: &mut Link) {
         let b = self.binning as f64;
         self.debug.push(format!("INDI Camera: send binning {}", self.binning));
         self.client.send_number(link, &self.device, &self.prop("BINNING"), &[("HOR_BIN", b), ("VER_BIN", b)]);
@@ -273,10 +273,11 @@ impl IndiCamera {
 
     /// A one-of-many switch set to `member`, the others Off, unless it is
     /// already: the compression and the transfer format.
-    fn select(&self, link: &Link, property: &str, member: &str) {
+    fn select(&self, link: &mut Link, property: &str, member: &str) {
         let Some(p) = link.store.property(&self.device, property).filter(|p| p.kind == Kind::Switch) else { return };
         if p.switch(member) == Some(false) {
-            let states: Vec<(&str, bool)> = p.members.iter().map(|m| (m.name.as_str(), m.name == member)).collect();
+            let names: Vec<String> = p.members.iter().map(|m| m.name.clone()).collect();
+            let states: Vec<(&str, bool)> = names.iter().map(|n| (n.as_str(), n == member)).collect();
             self.client.send_switch(link, &self.device, property, &states);
         }
     }
@@ -296,11 +297,11 @@ impl IndiCamera {
         let mut take_sub = subframe.is_some();
         let mut sf = subframe.unwrap_or_default();
         let busy = {
-            let link = client.lock();
-            self.select(&link, &self.prop("COMPRESSION"), "INDI_DISABLED");
-            self.select(&link, "CCD_TRANSFER_FORMAT", "FORMAT_FITS");
+            let mut link = client.lock();
+            self.select(&mut link, &self.prop("COMPRESSION"), "INDI_DISABLED");
+            self.select(&mut link, "CCD_TRANSFER_FORMAT", "FORMAT_FITS");
             if self.binning_members(&link).is_some() && self.binning != self.cur_binning {
-                self.send_binning(&link);
+                self.send_binning(&mut link);
                 // The subframe may be out of bounds now; the binned size is
                 // only known from the next frame.
                 take_sub = false;
@@ -326,7 +327,7 @@ impl IndiCamera {
                 let b = self.binning as i32;
                 let v = |x: i32| (x * b) as f64;
                 let values = [("X", v(sf.x)), ("Y", v(sf.y)), ("WIDTH", v(sf.w)), ("HEIGHT", v(sf.h))];
-                client.send_number(&link, &device, &frame, &values);
+                client.send_number(&mut link, &device, &frame, &values);
                 self.roi = sf;
             }
             link.store.property(&device, &expose).is_some_and(|p| p.state == PropState::Busy)
@@ -353,7 +354,7 @@ impl IndiCamera {
             link.take_blobs(&device, self.blob);
             let first = link.store.property(&device, &expose).and_then(|p| p.members.first()).map(|m| m.name.clone());
             client.send_number(
-                &link,
+                &mut link,
                 &device,
                 &expose,
                 &[(first.as_deref().unwrap_or_default(), dur_ms as f64 / 1000.0)],
@@ -391,7 +392,7 @@ impl IndiCamera {
 
         // libindi already inflated a `.fits.z`.
         if blob.format != ".fits" {
-            return Err(CaptureError::Failed(Some(format!("Unknown image format: {}", blob.format))));
+            return Err(CaptureError::Failed(Some(format!("Unknown image format: {}", blob.sent_format))));
         }
         let read = |sub| read_fits_blob(&blob.data, sub).map_err(|m| CaptureError::Failed(Some(m.into())));
         if take_sub {
@@ -413,7 +414,7 @@ impl IndiCamera {
         let (prop, on, off) = {
             let mut link = client.lock();
             if self.binning_members(&link).is_some() && self.binning != self.cur_binning {
-                self.send_binning(&link);
+                self.send_binning(&mut link);
             }
             // No frame size comes with the stream: the maximum over the binning.
             let b = (self.binning as i32).max(1);
@@ -423,7 +424,7 @@ impl IndiCamera {
                 return Err(CaptureError::Failed(None));
             };
             if link.store.property(&device, &prop).and_then(|p| p.switch(on)) != Some(true) {
-                client.send_switch(&link, &device, &prop, &[(on, true), (off, false)]);
+                client.send_switch(&mut link, &device, &prop, &[(on, true), (off, false)]);
             }
             link.take_blobs(&device, self.blob);
             (prop, on, off)
@@ -462,7 +463,7 @@ impl IndiCamera {
             }
             if cancel.is_cancelled() {
                 // Streaming stops on the way out of a stop or an exit.
-                client.send_switch(&client.lock(), &device, &prop, &[(on, false), (off, true)]);
+                client.send_switch(&mut client.lock(), &device, &prop, &[(on, false), (off, true)]);
                 return Err(CaptureError::Interrupted);
             }
         }
