@@ -30,3 +30,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Local wall time for the guide-log file names, headers and the 09:00
 # imaging-day rollover (`time` cannot read the local offset once threads exist).
 chrono             = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# zlib for the INDI BLOBs a driver sends compressed (`.fits.z`).
+flate2             = "1"

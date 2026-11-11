@@ -568,7 +568,7 @@ impl Kind {
         }
     }
 
-    fn tag(self) -> &'static str {
+    pub(crate) fn tag(self) -> &'static str {
         match self {
             Self::Number => "Number",
             Self::Switch => "Switch",
