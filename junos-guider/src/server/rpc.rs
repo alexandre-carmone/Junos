@@ -261,7 +261,7 @@ pub static METHODS: &[Method] = &[
     ws("cal_assistant_stop", &[]),
     ws("pierflip_start", &[]),
     ws("pierflip_stop", &[]),
-    ws("starcross_start", &[]),
+    ws("starcross_start", &["pulse_count", "pulse_size"]),
     ws("starcross_stop", &[]),
     ws("nudge_lock", &["dx", "dy"]),
     ws("save_lock", &[]),
@@ -1224,6 +1224,8 @@ mod tests {
             C::PolarDriftStart,
             C::PolarDriftStop,
             C::PolarDriftClose,
+            C::StarCrossStart { pulse_count: None, pulse_size: None },
+            C::StarCrossStop,
         ];
         for c in &commands {
             assert!(method(c.name(), true).is_some(), "no method for {}", c.name());

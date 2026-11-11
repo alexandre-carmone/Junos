@@ -267,6 +267,8 @@ pub struct Snapshot {
     pub ga: Option<GaView>,
     pub darks_build: Option<DarksView>,
     pub polar_drift: Option<PolarDriftView>,
+    /// The secondary tools' state (`guider_tools`).
+    pub tools: serde_json::Value,
     /// The daemon is connecting the gear ([`Command::Connecting`](super::Command::Connecting)).
     pub connecting: bool,
     /// The event server's port once it listens, and why it does not while

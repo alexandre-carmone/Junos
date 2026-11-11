@@ -5,9 +5,8 @@
 //! onto an engine [`Command`] or the profile store; parameters are named
 //! (or positional in the table's order). The tools the engine does not
 //! have yet (static PA, drift align, calibration assistant, pier-flip,
-//! star-cross, bookmarks, comet training, bad-pixel editing, the image
-//! logger's dialog, a single device's connect) answer code 1 "not
-//! available".
+//! bookmarks, comet training, bad-pixel editing, the image logger's
+//! dialog, a single device's connect) answer code 1 "not available".
 //!
 //! The relay socket's own `set_frame_filter` and `get_history` are not
 //! here: the socket answers them itself.
@@ -263,6 +262,12 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
         "pa_drift_start" => command(d, Command::PolarDriftStart).await,
         "pa_drift_stop" => command(d, Command::PolarDriftStop).await,
         "pa_drift_close" => command(d, Command::PolarDriftClose).await,
+        "starcross_start" => {
+            let pulse_count = p.param("pulse_count").and_then(int_param);
+            let pulse_size = p.param("pulse_size").and_then(int_param);
+            command(d, Command::StarCrossStart { pulse_count, pulse_size }).await
+        }
+        "starcross_stop" => command(d, Command::StarCrossStop).await,
         "list_logs" => list_logs(&d.options().engine.log_dir),
         "read_log" => {
             let tail = p.param("tail").and_then(Value::as_u64);

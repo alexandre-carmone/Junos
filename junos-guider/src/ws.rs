@@ -8,7 +8,7 @@
 //! 5 s while capturing or a tool runs), `guider_settings` (every profile
 //! key under PHD2's name, plus `algo_params`), `guider_profiles`,
 //! `guider_calibration`, `guider_devices`, `guider_darks`, `guider_ga`,
-//! `guider_pa`; and `guider_history` — the last 300 s (at most 2000) of
+//! `guider_pa`, `guider_tools` (the secondary tools' runs); and `guider_history` — the last 300 s (at most 2000) of
 //! guide steps, calibration steps and state changes, kept here from the
 //! events — sent on connect and on `get_history` only, the events carrying
 //! it on. What lives in the profile is read on the engine thread after each
@@ -495,6 +495,7 @@ fn publish(d: &Daemon, sh: &Shared, s: &Snapshot, part: &ProfilePart, track: &mu
         })
     });
     sh.sticky("guider_pa", &json!({"drift": drift}));
+    sh.sticky("guider_tools", &s.tools);
 }
 
 fn state_json(d: &Daemon, s: &Snapshot, part: &ProfilePart, track: &Track) -> Value {
@@ -899,7 +900,16 @@ mod tests {
         let (hist, first) = until(&mut ws, 10, |v| v["type"] == "guider_history").await;
         let types: Vec<&str> = first.iter().map(|v| v["type"].as_str().unwrap()).collect();
         assert_eq!(types[0], "guider_state");
-        for t in ["guider_settings", "guider_profiles", "guider_calibration", "guider_devices", "guider_darks", "guider_ga", "guider_pa"] {
+        for t in [
+            "guider_settings",
+            "guider_profiles",
+            "guider_calibration",
+            "guider_devices",
+            "guider_darks",
+            "guider_ga",
+            "guider_pa",
+            "guider_tools",
+        ] {
             assert!(types.contains(&t), "{t} missing from {types:?}");
         }
         let state = &first[0]["payload"];

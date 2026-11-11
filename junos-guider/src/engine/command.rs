@@ -286,6 +286,10 @@ pub enum Command {
     PolarDriftStart,
     PolarDriftStop,
     PolarDriftClose,
+    /// The star-cross test's Start (pulses per direction, pulse ms; the
+    /// dialog's values when `None`) and Stop.
+    StarCrossStart { pulse_count: Option<i32>, pulse_size: Option<i32> },
+    StarCrossStop,
 }
 
 impl Command {
@@ -346,6 +350,8 @@ impl Command {
             Command::PolarDriftStart => "pa_drift_start",
             Command::PolarDriftStop => "pa_drift_stop",
             Command::PolarDriftClose => "pa_drift_close",
+            Command::StarCrossStart { .. } => "starcross_start",
+            Command::StarCrossStop => "starcross_stop",
         }
     }
 }

@@ -138,6 +138,7 @@ const STICKY_TYPES: &[&str] = &[
     "guider_darks",
     "guider_ga",
     "guider_pa",
+    "guider_tools",
 ];
 
 /// Message types that belong to junos-guider rather than KStars.

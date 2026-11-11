@@ -966,3 +966,33 @@ fn the_polar_drift_tool_measures_the_dec_drift() {
         CmdError::new(1, "Please wait till Calibration is done and stop guiding")
     );
 }
+
+#[test]
+fn the_star_cross_test_pulses_the_cross_then_loops() {
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    r.cmd(Command::StarCrossStart { pulse_count: Some(5), pulse_size: Some(500) }).unwrap();
+    // It loops so something shows; the pulses come first.
+    assert!(r.e.snapshot().capture_active);
+    assert_eq!(
+        r.cmd(Command::StarCrossStart { pulse_count: None, pulse_size: None }).unwrap_err(),
+        CmdError::new(1, "Star-cross test running")
+    );
+    let t0 = r.mono();
+    for _ in 0..41 {
+        r.step();
+    }
+    // 40 pulses of 0.5 s, no exposure between them.
+    assert!((r.mono() - t0 - 20.0).abs() < 1.0, "{}", r.mono() - t0);
+    let view = r.e.snapshot().tools["starcross"].clone();
+    assert_eq!((view["completed"].as_bool(), view["status"].as_str()), (Some(true), Some("Test completed")));
+    assert_eq!(view["progress"], serde_json::json!([40, 40]));
+    let log = r.debug_log();
+    assert!(log.contains("Star-cross move 1/40, West for 500 ms"), "{log}");
+    assert!(log.contains("Star-cross test completed"));
+    assert_eq!(r.e.store().profile().get_f64("/SCT/PulseSize", 0.0), 500.0);
+    // Stop between two pulses.
+    r.cmd(Command::StarCrossStart { pulse_count: None, pulse_size: None }).unwrap();
+    r.step();
+    r.cmd(Command::StarCrossStop).unwrap();
+    assert_eq!(r.e.snapshot().tools["starcross"]["status"], "Test cancelled");
+}

@@ -56,6 +56,7 @@ pub mod mount;
 pub mod multistar;
 pub mod rng;
 pub mod scope;
+mod secondary;
 mod session;
 pub mod star;
 pub mod stats;
@@ -133,13 +134,19 @@ enum Pending {
     Manual { role: MountRole, dir: Dir, amount: i32 },
     /// `ScheduleSecondaryMove(scope, bump, MOVEOPTS_AO_BUMP)`.
     Bump(GuiderOffset),
+    /// A tool's own `MoveAxis(dir, amount, MOVEOPTS_CALIBRATION_MOVE)`,
+    /// made at once from its window (the star-cross test): no
+    /// `OnMoveComplete`, never queued.
+    Tool { role: MountRole, dir: Dir, amount: i32 },
 }
 
 impl Pending {
     fn role(&self) -> MountRole {
         match *self {
             Pending::Move(ScheduledMove::Offset { .. }) => MountRole::Primary,
-            Pending::Move(ScheduledMove::Calibration { role, .. }) | Pending::Manual { role, .. } => role,
+            Pending::Move(ScheduledMove::Calibration { role, .. })
+            | Pending::Manual { role, .. }
+            | Pending::Tool { role, .. } => role,
             Pending::Bump(_) => MountRole::Secondary,
         }
     }
@@ -248,6 +255,7 @@ pub struct Engine {
     ga: Option<GuidingAssistant>,
     darks_job: Option<DarksJob>,
     polar_drift: Option<PolarDrift>,
+    tools: secondary::Tools,
 
     // The logs.
     glog: GuideLog,
@@ -316,6 +324,7 @@ impl Engine {
             ga: None,
             darks_job: None,
             polar_drift: None,
+            tools: secondary::Tools::default(),
             glog: GuideLog::new(),
             dlog: DebugLog::new(now),
             ilog: ImageLogger::new(),
@@ -359,7 +368,10 @@ impl Engine {
     /// scheduled, moves wait or a dark build runs. Otherwise the daemon
     /// waits for a command.
     pub fn has_work(&self) -> bool {
-        self.ctrl.exposure_request().is_some() || !self.moves.is_empty() || self.darks_job.is_some()
+        self.ctrl.exposure_request().is_some()
+            || !self.moves.is_empty()
+            || self.darks_job.is_some()
+            || self.tool_pulsing()
     }
 
     /// The events since the last call, in PHD2's order.
@@ -380,7 +392,9 @@ impl Engine {
     /// the Darks dialog builds, its next dark frame. Returns the events.
     pub fn step(&mut self) -> Vec<EngineEvent> {
         self.run_moves();
-        if self.darks_job.is_some() {
+        if self.tool_pulsing() {
+            self.tool_step();
+        } else if self.darks_job.is_some() {
             self.darks_step();
         } else if let Some(req) = self.ctrl.exposure_request() {
             self.expose(req);
@@ -610,7 +624,7 @@ impl Engine {
     /// The worker thread's queue, in order.
     fn run_moves(&mut self) {
         while let Some(mv) = self.moves.pop_front() {
-            self.make_move(mv);
+            let _ = self.make_move(mv);
         }
     }
 
@@ -625,7 +639,7 @@ impl Engine {
     }
 
     /// `HandleMove` and `OnMoveComplete`.
-    fn make_move(&mut self, mv: Pending) {
+    fn make_move(&mut self, mv: Pending) -> MoveResult {
         let role = mv.role();
         let manual = matches!(mv, Pending::Manual { .. });
         let algo = self.algo_ctx();
@@ -672,7 +686,7 @@ impl Engine {
                         bump = b;
                         r
                     }
-                    Pending::Move(ScheduledMove::Calibration { dir, amount, .. }) => {
+                    Pending::Move(ScheduledMove::Calibration { dir, amount, .. }) | Pending::Tool { dir, amount, .. } => {
                         a.sg.move_axis(dir, amount, MoveOpts::CALIBRATION_MOVE, &mut *a.dev, &mut mev)
                     }
                     Pending::Manual { dir, amount, .. } => {
@@ -703,7 +717,7 @@ impl Engine {
                     Pending::Bump(mut ofs) => {
                         s.scope.move_offset(&mut ofs, MoveOpts::AO_BUMP, frame, &algo, &mut io, &mut prof, &mut mev)
                     }
-                    Pending::Move(ScheduledMove::Calibration { dir, amount, .. }) => {
+                    Pending::Move(ScheduledMove::Calibration { dir, amount, .. }) | Pending::Tool { dir, amount, .. } => {
                         s.scope.move_axis(dir, amount, MoveOpts::CALIBRATION_MOVE, &mut io, &mut mev)
                     }
                     Pending::Manual { dir, amount, .. } => {
@@ -718,6 +732,10 @@ impl Engine {
             self.debug(&l);
         }
         self.drain_camera_debug();
+        if matches!(mv, Pending::Tool { .. }) {
+            self.emit_mount_events(role, mev);
+            return result;
+        }
         self.debug(&format!("move complete, result={}", result as i32));
         if let Some(b) = bump {
             self.debug(&format!(
@@ -735,7 +753,7 @@ impl Engine {
         if manual {
             self.emit_mount_events(role, mev);
             self.debug(&format!("Manual Move completed, result = {}", result as i32));
-            return;
+            return result;
         }
         self.emit_mount_events(role, mev);
         self.call(|c, cx, ev| {
@@ -746,6 +764,7 @@ impl Engine {
         if result != MoveResult::Ok {
             self.move_failed(role, result);
         }
+        result
     }
 
     /// `OnMoveComplete` for a failed move.
@@ -1340,6 +1359,8 @@ impl Engine {
             Command::PolarDriftStart => self.polar_drift_start(),
             Command::PolarDriftStop => self.polar_drift_stop(false),
             Command::PolarDriftClose => self.polar_drift_stop(true),
+            Command::StarCrossStart { pulse_count, pulse_size } => self.starcross_start(pulse_count, pulse_size),
+            Command::StarCrossStop => self.starcross_stop(),
         }
     }
 
@@ -1661,6 +1682,7 @@ impl Engine {
             ga: self.ga_view(),
             darks_build: self.darks_view(),
             polar_drift: self.polar_drift_view(),
+            tools: self.tools_view(),
             connecting: self.connecting,
             port: None,
             port_error: None,
