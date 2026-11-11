@@ -161,7 +161,8 @@ pub fn TabContent(
         </Show>
         <Show when=guide_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
-                <GuideTab guide=guide_snapshot guider=guider capture_status=capture_status send=Arc::clone(&send_guide) />
+                <GuideTab guide=guide_snapshot guider=guider capture_status=capture_status online=store.online
+                          send=Arc::clone(&send_guide) />
             </div>
         </Show>
         <Show when=scheduler_visible>

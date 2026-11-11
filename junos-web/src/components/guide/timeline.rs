@@ -3,8 +3,9 @@
 //! guiding events as marks across the plot, and the guide state as a ribbon
 //! underneath. Each backend builds a [`DriftSeries`] in a Memo — Ekos from
 //! the per-frame `new_guide_state {drift_ra, drift_de}` samples
-//! (kstars/ekos/manager.cpp:2772-2776), in ″ and without pulses — so the plot
-//! only redraws when the series changes.
+//! (kstars/ekos/manager.cpp:2772-2776), in ″ and without pulses; junos-guider
+//! from PHD2's GuideStep and marker events, in ″ or px — so the plot only
+//! redraws when the series changes.
 //!
 //! The SVG stretches to its box (`preserveAspectRatio="none"`, strokes don't
 //! scale) and the labels are HTML on top, so the plot stays legible from a
@@ -14,7 +15,7 @@
 use leptos::prelude::*;
 
 use crate::i18n::Translations;
-use crate::ws::{GuideDriftSample, GuideStateSample, GuiderMarker, GuiderMarkerKind};
+use crate::ws::{GuideDriftSample, GuideStateSample, GuiderMarker, GuiderMarkerKind, GuiderStep};
 
 use super::tone;
 
@@ -55,6 +56,42 @@ impl DriftSeries {
             markers: Vec::new(),
             states: ribbon(history, start_ms),
             unit: "\u{2033}",
+        }
+    }
+
+    /// junos-guider: PHD2's GuideStep raw distances (px, × `scale` for ″)
+    /// and pulses. The window ends at the newest sample, on the daemon's
+    /// clock, never the phone's.
+    pub fn native(
+        steps: &[GuiderStep],
+        markers: &[GuiderMarker],
+        states: &[GuideStateSample],
+        window_ms: f64,
+        scale: Option<f64>,
+    ) -> Self {
+        let end_ms = [steps.last().map(|s| s.t_ms), markers.last().map(|m| m.t_ms), states.last().map(|s| s.t_ms)]
+            .into_iter()
+            .flatten()
+            .fold(0.0, f64::max);
+        let start_ms = end_ms - window_ms;
+        let k = scale.unwrap_or(1.0);
+        let recent: Vec<&GuiderStep> = steps.iter().filter(|s| s.t_ms >= start_ms).collect();
+        let recent = decimate(&recent);
+        // From the direction, never the offset's sign: West / Left and
+        // North / Up positive (PHD2's LEFT = WEST, UP = NORTH).
+        let signed = |ms: f64, dir: &str| match dir {
+            "West" | "Left" | "North" | "Up" => ms,
+            "East" | "Right" | "South" | "Down" => -ms,
+            _ => 0.0,
+        };
+        Self {
+            start_ms,
+            end_ms,
+            points: recent.iter().map(|s| GuideDriftSample { t_ms: s.t_ms, ra: s.ra_raw * k, de: s.dec_raw * k }).collect(),
+            pulses: recent.iter().map(|s| (s.t_ms, signed(s.ra_dur, &s.ra_dir), signed(s.dec_dur, &s.dec_dir))).collect(),
+            markers: markers.iter().filter(|m| m.t_ms >= start_ms).cloned().collect(),
+            states: ribbon(states, start_ms),
+            unit: if scale.is_some() { "\u{2033}" } else { " px" },
         }
     }
 }

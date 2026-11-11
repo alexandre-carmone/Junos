@@ -4,8 +4,8 @@
 //! profile keys the tab touches, the settle / dither defaults the browser
 //! keeps (PHD2 has no key for them), and the guide algorithms with their
 //! parameters as PHD2 2.6.14's dialogs bound them.
-// The native Guide tab calls these from the next commit; the algorithm table
-// waits for its sheet.
+// The keys, the setters and the algorithm table are declared ahead of the
+// settings and algorithms sheets that use them.
 #![allow(dead_code)]
 
 use leptos::prelude::*;

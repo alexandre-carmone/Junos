@@ -207,6 +207,13 @@ translations! {
     // Guide tab — drift plot marks (both backends)
     guider_marker_dither, guider_marker_settle_begin, guider_marker_settled, guider_marker_settle_failed,
     guider_marker_star_lost, guider_marker_cal_done, guider_marker_paused, guider_marker_resumed,
+    // Guide tab — junos-guider native mode (header, footer, frame, numbers)
+    guider_state_stopped, guider_state_looping, guider_state_selected, guider_state_calibrating,
+    guider_state_guiding, guider_state_lostlock, guider_state_paused, guider_settling, guider_via_ekos,
+    guider_btn_loop, guider_btn_autoselect, guider_btn_guide, guider_btn_dither, guider_btn_pause,
+    guider_btn_resume, guider_btn_stop, guider_hint_capture_active, guider_hint_stop_aborts_capture,
+    guider_no_frame, guider_tap_again, guider_show_graph, guider_show_frame, guider_peak, guider_snr,
+    guider_hfd, guider_rms_hint,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
     // Rig (optical-train) manager — section in the Profiles tab

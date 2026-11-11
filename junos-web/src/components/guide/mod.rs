@@ -1,4 +1,6 @@
-//! Guiding module UI — full-screen tab.
+//! Guiding module UI — full-screen tab, on one of two backends: junos-guider
+//! (`native.rs`) while the relay has it attached (`guider_state` in the
+//! store), else Ekos' Guide module, described below.
 //!
 //! Layout (phone-first, like Focus / Scheduler): a header (state · export
 //! log · settings), then cards — RMS, drift plot, target plot, guide frame —
@@ -55,24 +57,31 @@ use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
+mod frame;
+mod native;
 mod protocol;
 mod rows;
 mod settings;
+mod stats;
 mod target;
 mod timeline;
+use native::NativeGuide;
 use settings::{settings_i64, GuideSettings, GUIDERS};
 use target::target_plot;
 use timeline::{drift_plot, DriftSeries};
 
 const EXPORT_ICON: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 L12 15 M7.5 10.5 L12 15 L16.5 10.5 M5 19 L19 19"/></svg>"##;
 
-/// Badge class and paint color for a guide state (ekos.h:20-40), shared by
-/// the header badge and the drift plot's state ribbon.
+/// Badge class and paint color for a guide state (Ekos', ekos.h:20-40, or
+/// PHD2's app state), shared by the header badge and the drift plot's state
+/// ribbon.
 fn tone(status: &str) -> (&'static str, &'static str) {
     match status {
-        "" | "Idle" | "Aborted" | "Disconnected" => ("badge", "var(--text-faint)"),
+        "" | "Idle" | "Aborted" | "Disconnected" | "Stopped" => ("badge", "var(--text-faint)"),
         "Calibrating" | "Selecting star" | "Looping" | "Capturing" | "Subtracting"
-        | "Subframing" | "Reacquiring" => ("badge badge--warn", "var(--state-warn)"),
+        | "Subframing" | "Reacquiring" | "Selected" => ("badge badge--warn", "var(--state-warn)"),
+        "Paused" => ("badge badge--info", "var(--state-info)"),
+        "LostLock" => ("badge badge--err", "var(--state-err)"),
         "Calibrated" | "Connected" => ("badge badge--info", "var(--state-info)"),
         "Guiding" => ("badge badge--ok", "var(--state-ok)"),
         "Dithering" | "Dithering successful" | "Manual Dithering" | "Settling" => {
@@ -131,10 +140,23 @@ pub fn GuideTab(
     guider: GuiderSignals,
     /// Ekos Capture's status, for the coexistence guards.
     #[prop(into)] capture_status: Signal<String>,
+    /// Ekos is started (`new_connection_state.online`).
+    #[prop(into)] online: Signal<bool>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
-    // The native mode reads these as its parts land.
-    let _ = (guider, capture_status);
+    let native = Memo::new(move |_| guider.state.with(Option::is_some));
+    let send_native = send.clone();
+    view! {
+        <Show when=move || native.get() fallback=move || view! { <EkosGuide guide=guide send=send.clone() /> }>
+            <NativeGuide guide=guide guider=guider capture_status=capture_status online=online
+                         send=send_native.clone() />
+        </Show>
+    }
+}
+
+/// The tab on Ekos' Guide module.
+#[component]
+fn EkosGuide(guide: Signal<GuideSnapshot>, send: SendCmd) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
 
