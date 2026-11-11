@@ -2,3 +2,5 @@
 //! logger — and the C `printf` number spelling they all share.
 
 pub mod cfmt;
+pub mod debug_log;
+pub mod guide_log;

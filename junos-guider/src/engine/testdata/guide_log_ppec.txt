@@ -1,0 +1,67 @@
+PHD2 version 2.6.14 [Linux], Log version 2.5. Log enabled at 2026-11-12 20:00:00
+
+Calibration Begins at 2026-11-12 20:01:00
+Equipment Profile = Simulators
+Dither = both axes, Dither scale = 1.000, Image noise reduction = 3x3 median, Guide-frame time lapse = 0, Server enabled
+Pixel scale = 1.20 arc-sec/px, Binning = 1, Focal length = 650 mm
+Search region = 20 px, Star mass tolerance disabled, Multi-star mode, list size = 7
+ Camera = INDI Camera [ZWO ASI120MM Mini], full size = 3096 x 2080, no dark, no defect map, pixel size = 3.8 um
+Exposure = 1500 ms
+Mount = INDI AO [SX AO], Calibration steps = 3, Samples to average = 3
+RA/Dec = Unknown, Hour angle = Unknown, Pier side = Unknown, Rotator pos = N/A, Alt = Unknown, Az = Unknown
+Lock position = 1500.000, 1000.000, Star position = 1500.125, 999.500, HFD = 2.20 px
+Direction,Step,dx,dy,x,y,Dist
+Left,0,0.000,0.000,1500.125,999.500,0.000
+Left,1,-1.875,0.250,1502.000,999.250,1.892
+Left calibration complete. Angle = 68.8 deg, Rate = 0.312 px/sec, Parity = N/A
+Up,1,0.500,1.750,1499.625,997.750,1.820
+Up calibration complete. Angle = -21.2 deg, Rate = 0.298 px/sec, Parity = N/A
+Calibration complete, mount = INDI AO [SX AO].
+
+Guiding Begins at 2026-11-12 20:05:00
+Equipment Profile = Simulators
+Dither = both axes, Dither scale = 1.000, Image noise reduction = 3x3 median, Guide-frame time lapse = 0, Server enabled
+Pixel scale = 1.20 arc-sec/px, Binning = 1, Focal length = 650 mm
+Search region = 20 px, Star mass tolerance disabled, Multi-star mode, list size = 7
+ Camera = INDI Camera [ZWO ASI120MM Mini], full size = 3096 x 2080, no dark, no defect map, pixel size = 3.8 um
+Exposure = 1500 ms
+AO = INDI AO [SX AO], connected, guiding enabled, xAngle = 68.8, xRate = 312.000, yAngle = -21.2, yRate = 298.000, parity = ?/?
+Norm rates X = 374 mas/step, Y = 358 mas/step; ortho.err. = 2.5 deg
+X guide algorithm = Hysteresis, Hysteresis = 0.100, Aggression = 0.700, Minimum move = 0.200
+Y guide algorithm = Hysteresis, Hysteresis = 0.100, Aggression = 0.700, Minimum move = 0.200
+Bump percentage = 75, Bump step = 1.50, Timestamp = 2026-11-12 19:40:00
+Mount = INDI Mount [Telescope Simulator], connected, guiding disabled, xAngle = 3.0, xRate = 5.230, yAngle = -87.3, yRate = 4.900, parity = +/-
+Norm rates RA = 5.2"/s @ dec 0, Dec = 4.9"/s; ortho.err. = unknown
+X guide algorithm = Predictive PEC, Control gain = 0.700
+Prediction gain = 0.500
+Minimum move = 0.200
+Hyperparameters
+	Length scale long range SE kernel = 700.000
+	Signal variance long range SE kernel = 20.000
+	Length scale periodic kernel = 10.000
+	Signal variance periodic kernel = 20.000
+	Length scale short range SE kernel = 25.000
+	Signal variance short range SE kernel = 10.000
+	Period length periodic kernel = 483.300
+	FFT called after = 2.000 worm cycles
+	Auto-adjust period length = On
+Y guide algorithm = None, 
+Backlash comp = disabled, pulse = 0 ms
+Max RA duration = 2500, Max DEC duration = 2000, DEC guide mode = North
+RA Guide Speed = Unknown, Dec Guide Speed = Unknown, Cal Dec = Unknown, Last Cal Issue = Orthogonality, Timestamp = Unknown
+RA/Dec = Unknown, Hour angle = Unknown, Pier side = Unknown, Rotator pos = N/A, Alt = Unknown, Az = Unknown
+Lock position = 1500.000, 1000.000, Star position = 1500.125, 999.500, HFD = 2.20 px
+Frame,Time,mount,dx,dy,RARawDistance,DECRawDistance,RAGuideDistance,DECGuideDistance,RADuration,RADirection,DECDuration,DECDirection,XStep,YStep,StarMass,SNR,ErrorCode
+1,1.500,"AO",-0.500,0.250,-0.463,0.305,-0.324,0.214,,,,,-3,-2,5000,15.00,0
+2,3.000,"AO",0.750,-0.250,0.719,-0.339,0.503,-0.237,,,,,4,1,5000,14.99,0
+2,3.000,"Mount",0.000,0.000,2.100,-0.900,2.100,-0.900,403,W,183,S,,,5000,14.99,0
+INFO: Manual guide (AO) Up 1 step
+INFO: Manual guide (AO) Left 3 steps
+Guiding Ends at 2026-11-12 21:05:00
+
+Log disabled at 2026-11-12 21:10:00
+INFO: Guiding parameter change, Dec guide mode = North
+PHD2 version 2.6.14 [Linux], Log version 2.5. Log enabled at 2026-11-12 20:00:00
+
+Log Summary: calcnt:3 gcnt:2 gdur:5401 gacnt:1
+Log closed at 2026-11-12 21:30:00

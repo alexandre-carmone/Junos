@@ -1,0 +1,62 @@
+PHD2 version 2.6.14 [Linux], Log version 2.5. Log enabled at 2026-11-11 21:58:03
+
+Calibration Begins at 2026-11-11 22:00:00
+Equipment Profile = Simulators
+Dither = both axes, Dither scale = 1.000, Image noise reduction = none, Guide-frame time lapse = 0, Server enabled
+Pixel scale = 1.55 arc-sec/px, Binning = 1, Focal length = 690 mm
+Search region = 15 px, Star mass tolerance = 50.0%, Single-star mode
+Camera = INDI Camera [Guide Simulator], gain = 95, full size = 1280 x 1024, no dark, no defect map, pixel size = 5.2 um
+Exposure = 2000 ms
+Mount = INDI Mount [Telescope Simulator], Calibration Step = 750 ms, Calibration Distance = 25 px, Assume orthogonal axes = no
+RA Guide Speed = 7.5 a-s/s, Dec Guide Speed = 7.5 a-s/s
+RA = 5.59 hr, Dec = -5.4 deg, Hour angle = -2.39 hr, Pier side = West, Rotator pos = N/A, Alt = 27.4 deg, Az = 139.0 deg
+Lock position = 640.123, 512.456, Star position = 640.500, 512.250, HFD = 2.35 px
+Direction,Step,dx,dy,x,y,Dist
+West,0,0.000,0.000,640.500,512.250,0.000
+West,1,-3.905,0.212,644.405,512.038,3.911
+West,2,-7.812,0.438,648.312,511.812,7.825
+West calibration complete. Angle = 3.0 deg, Rate = 5.208 px/sec, Parity = Even
+East,1,3.900,-0.210,644.413,512.023,3.906
+Backlash,1,0.001,0.299,640.500,511.950,0.299
+North,0,0.000,0.000,640.500,511.950,0.000
+North,1,-0.188,3.688,640.687,508.263,3.692
+North calibration complete. Angle = -87.3 deg, Rate = 4.917 px/sec, Parity = Odd
+South,1,0.125,-3.600,640.562,511.868,3.602
+INFO: STAR LOST during calibration, Mass= 1234, SNR= 3.12, Error= 2, Status=Star lost - low SNR
+Calibration complete, mount = INDI Mount [Telescope Simulator].
+
+Calibration Begins at 2026-11-11 22:10:00
+Equipment Profile = Simulators
+Dither = both axes, Dither scale = 1.000, Image noise reduction = none, Guide-frame time lapse = 0, Server enabled
+Pixel scale = 1.55 arc-sec/px, Binning = 1, Focal length = 690 mm
+Search region = 15 px, Star mass tolerance = 50.0%, Single-star mode
+Camera = INDI Camera [Guide Simulator], gain = 95, full size = 1280 x 1024, no dark, no defect map, pixel size = 5.2 um
+Exposure = 2000 ms
+Mount = INDI Mount [Telescope Simulator], Calibration Step = 750 ms, Calibration Distance = 25 px, Assume orthogonal axes = no
+RA Guide Speed = 7.5 a-s/s, Dec Guide Speed = 7.5 a-s/s
+RA = 5.59 hr, Dec = -5.4 deg, Hour angle = -2.39 hr, Pier side = West, Rotator pos = N/A, Alt = 27.4 deg, Az = 139.0 deg
+Lock position = 640.123, 512.456, Star position = 640.500, 512.250, HFD = 2.35 px
+Direction,Step,dx,dy,x,y,Dist
+West,0,0.000,0.000,640.500,512.250,0.000
+Calibration failed: star did not move enough
+
+Log Summary: calcnt:1 gcnt:0 gdur:0 gacnt:0
+Log closed at 2026-11-11 22:30:00
+PHD2 version 2.6.14 [Linux], Log version 2.5. Log enabled at 2026-11-11 21:58:03
+
+Calibration Begins at 2026-11-11 23:00:00
+Equipment Profile = Simulators
+Dither = both axes, Dither scale = 1.000, Image noise reduction = none, Guide-frame time lapse = 0, Server enabled
+Pixel scale = 1.55 arc-sec/px, Binning = 1, Focal length = 690 mm
+Search region = 15 px, Star mass tolerance = 50.0%, Single-star mode
+Camera = INDI Camera [Guide Simulator], gain = 95, full size = 1280 x 1024, no dark, no defect map, pixel size = 5.2 um
+Exposure = 2000 ms
+Mount = INDI Mount [Telescope Simulator], Calibration Step = 750 ms, Calibration Distance = 25 px, Assume orthogonal axes = no
+RA Guide Speed = 7.5 a-s/s, Dec Guide Speed = 7.5 a-s/s
+RA = 5.59 hr, Dec = -5.4 deg, Hour angle = -2.39 hr, Pier side = West, Rotator pos = N/A, Alt = 27.4 deg, Az = 139.0 deg
+Lock position = 640.123, 512.456, Star position = 640.500, 512.250, HFD = 2.35 px
+Direction,Step,dx,dy,x,y,Dist
+Calibration complete, mount = INDI Mount [Telescope Simulator].
+
+Log Summary: calcnt:2 gcnt:0 gdur:0 gacnt:0
+Log closed at 2026-11-11 23:05:00

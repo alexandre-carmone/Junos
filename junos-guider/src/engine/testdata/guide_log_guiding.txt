@@ -1,0 +1,60 @@
+PHD2 version 2.6.14 [Linux], Log version 2.5. Log enabled at 2026-11-12 08:15:42
+Equipment Profile = Simulators
+Dither = RA only, Dither scale = 0.750, Image noise reduction = 2x2 mean, Guide-frame time lapse = 500, Server disabled
+Pixel scale = unspecified, Binning = 2, Focal length = unspecified
+Search region = 15 px, Star mass tolerance = 50.0%, Single-star mode
+Camera = INDI Camera [CCD Simulator], gain = 50, delay = 10, port = 0x378, full size = 1280 x 1024, have dark, dark dur = 3000, defect map in use, pixel size = unspecified
+Exposure = Auto (min = 500 ms, max = 4000 ms, SNR = 6.50), VarDelay (short = 1000 ms, long = 15000 ms)
+Mount = INDI Mount [Telescope Simulator], connected, guiding enabled, AuxMount=INDI Mount [EQMod Mount], xAngle = 3.0, xRate = 5.230, yAngle = -87.3, yRate = 4.900, parity = +/-
+Norm rates RA = 8.1"/s @ dec 0, Dec = 7.6"/s; ortho.err. = 1.2 deg
+X guide algorithm = Hysteresis, Hysteresis = 0.120, Aggression = 0.650, Minimum move = 0.150
+Y guide algorithm = Resist Switch, Minimum move = 0.250 Aggression = 90% FastSwitch = disabled
+Backlash comp = enabled, pulse = 450 ms
+Max RA duration = 2500, Max DEC duration = 2000, DEC guide mode = Auto
+RA Guide Speed = 7.5 a-s/s, Dec Guide Speed = 7.5 a-s/s, Cal Dec = -5.4, Last Cal Issue = None, Timestamp = 2026-11-11 22:05:01
+RA = 10.00 hr, Dec = 48.9 deg, Hour angle = 0.00 hr, Pier side = East, Rotator pos = 329.8, Alt = 90.0 deg, Az = 270.0 deg
+Lock position = 320.000, 240.000, Star position = 320.250, 239.875, HFD = 3.10 px
+Frame,Time,mount,dx,dy,RARawDistance,DECRawDistance,RAGuideDistance,DECGuideDistance,RADuration,RADirection,DECDuration,DECDirection,XStep,YStep,StarMass,SNR,ErrorCode
+
+Guiding Begins at 2026-11-12 08:16:00
+Equipment Profile = Simulators
+Dither = RA only, Dither scale = 0.750, Image noise reduction = 2x2 mean, Guide-frame time lapse = 500, Server disabled
+Pixel scale = unspecified, Binning = 2, Focal length = unspecified
+Search region = 15 px, Star mass tolerance = 50.0%, Single-star mode
+Camera = INDI Camera [CCD Simulator], gain = 50, delay = 10, port = 0x378, full size = 1280 x 1024, have dark, dark dur = 3000, defect map in use, pixel size = unspecified
+Exposure = Auto (min = 500 ms, max = 4000 ms, SNR = 6.50), VarDelay (short = 1000 ms, long = 15000 ms)
+Mount = INDI Mount [Telescope Simulator], connected, guiding enabled, AuxMount=INDI Mount [EQMod Mount], xAngle = 3.0, xRate = 5.230, yAngle = -87.3, yRate = 4.900, parity = +/-
+Norm rates RA = 8.1"/s @ dec 0, Dec = 7.6"/s; ortho.err. = 1.2 deg
+X guide algorithm = Hysteresis, Hysteresis = 0.120, Aggression = 0.650, Minimum move = 0.150
+Y guide algorithm = Resist Switch, Minimum move = 0.250 Aggression = 90% FastSwitch = disabled
+Backlash comp = enabled, pulse = 450 ms
+Max RA duration = 2500, Max DEC duration = 2000, DEC guide mode = Auto
+RA Guide Speed = 7.5 a-s/s, Dec Guide Speed = 7.5 a-s/s, Cal Dec = -5.4, Last Cal Issue = None, Timestamp = 2026-11-11 22:05:01
+RA = 10.00 hr, Dec = 48.9 deg, Hour angle = 0.00 hr, Pier side = East, Rotator pos = 329.8, Alt = 90.0 deg, Az = 270.0 deg
+Lock position = 320.000, 240.000, Star position = 320.250, 239.875, HFD = 3.10 px
+Frame,Time,mount,dx,dy,RARawDistance,DECRawDistance,RAGuideDistance,DECGuideDistance,RADuration,RADirection,DECDuration,DECDirection,XStep,YStep,StarMass,SNR,ErrorCode
+1,2.512,"Mount",0.250,-0.125,0.237,-0.141,0.154,-0.000,30,W,0,,,,12346,25.46,0
+2,5.025,"Mount",-0.050,0.600,-0.071,0.596,0.000,0.417,0,,120,N,,,12002,24.00,0
+3,7.500,"Mount",-0.300,-1.100,-0.357,-1.082,-0.232,-0.974,45,E,200,S,,,65535,112.00,1
+4,10.001,"DROP",,,,,,,,,,,,,0,0.00,2,"Star lost - low SNR"
+INFO: DITHER by 1.234, -2.345, new lock pos = 321.234, 237.655
+INFO: SETTLING STATE CHANGE, Settling started
+INFO: SETTLING STATE CHANGE, Settling complete
+INFO: SET LOCK POSITION, new lock pos = 300.500, 200.250
+INFO: LOCK SHIFT, enabled = 1 RA,Dec rate (1.50,-2.25) arc-sec/hr (0.36,-0.72) px/hr
+INFO: LOCK SHIFT, enabled = 1 X,Y rate (0.00,0.00) pixels/hr (0.00,0.00) px/hr
+INFO: LOCK SHIFT, enabled = 0 
+INFO: Server received PAUSE
+INFO: Server received RESUME
+INFO: Manual guide (Mount) North 500 ms
+INFO: Guiding parameter change, Dither scale = 0.76
+INFO: Guiding parameter change, Dec Max Duration = 2000
+INFO: Guiding parameter change, MountGuidingEnabled = false
+INFO: Guiding parameter change, Dec Guide Mode = Auto
+INFO: GA Result - Polar alignment error = 3.2 arc-min
+Guiding Ends at 2026-11-12 08:46:00
+INFO: SETTLING STATE CHANGE, Settling failed
+INFO: GA Result - Backlash=120 ms
+
+Log Summary: calcnt:2 gcnt:1 gdur:1800 gacnt:1
+Log closed at 2026-11-12 09:00:00
