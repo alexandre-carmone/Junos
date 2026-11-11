@@ -14,11 +14,13 @@
 //! the scope behind an AO) — and everything else PHD2 reads from `pFrame`,
 //! `pCamera` and the pointing source through a [`GuiderCx`]. What PHD2 tells
 //! the outside (events, guide-log lines, alerts, status and debug lines, the
-//! mounts' own) comes back as [`GuiderEvent`]s, in PHD2's order.
+//! mounts' own) comes back as [`GuiderEvent`]s, in PHD2's order. The
+//! tracker's debug lines ([`MultiStar::take_log`]) are moved in right after
+//! each call that writes them; the `ERROR_INFO` / `THROW_INFO` lines of
+//! `GuiderMultiStar`'s throws, and its status messages, are the guider's.
 //!
-//! Ported from PHD2 src/guider.h, src/guider.cpp, src/guider_multistar.cpp (AutoSelect, SetMultiStarMode, SetLockPosition, the UpdateCurrentPosition logging) — BSD-3-Clause, see THIRD_PARTY.md
+//! Ported from PHD2 src/guider.h, src/guider.cpp, src/guider_multistar.cpp (AutoSelect, SetMultiStarMode, SetLockPosition, the UpdateCurrentPosition throws and status) — BSD-3-Clause, see THIRD_PARTY.md
 
-use std::cell::RefCell;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -33,13 +35,12 @@ use super::multistar::{
     MultiStarConfig, PositionLost, PositionUpdate, autoselect_edge_allowance, keys,
 };
 use super::scope::{CalibrationEnv, CalibrationNext, Scope};
-use super::star::{AutoFindParams, FindResult, Star};
+use super::star::Star;
 use super::traits::{Dir, MoveOpts, Parity, Point, Rect};
 
-/// Profile keys the guider itself reads (the star settings are
-/// [`multistar::keys`](super::multistar::keys)).
+/// The profile key the guider itself reads (the star settings, AutoSelect's
+/// downsampling included, are [`multistar::keys`](super::multistar::keys)).
 pub const FAST_RECENTER_KEY: &str = "/guider/FastRecenter";
-pub const AUTO_SEL_DOWNSAMPLE_KEY: &str = "/guider/AutoSelDownsample";
 
 /// `CurrentError` past this long without a star (`THRESHOLD_SECONDS`).
 const STAR_LOST_SECONDS: i64 = 20;
@@ -457,10 +458,10 @@ pub struct GuiderCx<'a> {
     pub scope_pointing: &'a ScopePointing,
     /// For the algorithms' notifications.
     pub algo: &'a AlgoCtx,
-    /// What each `Star::Find` passes.
+    /// What each `Star::Find` and `AutoFind` pass besides the star settings;
+    /// AutoSelect's "Auto" downsampling reads `cal_env.image_scale`
+    /// (`pFrame->GetCameraPixelScale()`).
     pub find: FindParams,
-    /// What `AutoSelect` passes to `AutoFind`.
-    pub autofind: AutoFindParams,
     /// `pCamera->UseSubframes`.
     pub use_subframes: bool,
     /// `MyFrame::GuidingRAOnly`: the scope's Dec guide mode is Off.
@@ -496,23 +497,6 @@ impl<'a> GuiderCx<'a> {
 /// `IsLoopingState`: looping, not calibrating or guiding.
 fn is_looping_state(state: GuiderState) -> bool {
     matches!(state, GuiderState::Uninitialized | GuiderState::Selecting | GuiderState::Selected)
-}
-
-/// `StarStatus` (guider_multistar.cpp:420): the status line of a star found.
-fn star_status(star: &Star, exposure_ms: i32, auto_exposure: bool) -> String {
-    let mut s = format!("m={} SNR={}", fmt_f(star.mass, 0), fmt_f(star.snr, 1));
-    if star.result == FindResult::Saturated {
-        s += " Saturated";
-    }
-    if auto_exposure {
-        // Quirk kept: any exposure of 1 ms or more is shown in seconds.
-        if exposure_ms >= 1 {
-            s += &format!(" Exp={} s", fmt_f(exposure_ms as f64 / 1000.0, 1));
-        } else {
-            s += &format!(" Exp={exposure_ms} ms");
-        }
-    }
-    s
 }
 
 /// What a calibration frame came to for one mount.
@@ -611,7 +595,6 @@ pub struct Guider {
     /// `m_measurementMode`: guiding frames go to the Guiding Assistant.
     measurement_mode: bool,
     force_full_frame: bool,
-    auto_sel_downsample: u32,
     /// `m_pCurrentImage`: the last frame, an empty one at first.
     current_image: Arc<UsImage>,
     multistar: MultiStar,
@@ -647,7 +630,6 @@ impl Guider {
             user_multi_star: false,
             measurement_mode: false,
             force_full_frame: false,
-            auto_sel_downsample: 0,
             current_image: Arc::new(UsImage::default()),
             multistar: MultiStar::new(MultiStarConfig::default()),
         };
@@ -679,15 +661,12 @@ impl Guider {
         let (cfg, raw_threshold, raw_region) = {
             let p = &*profile;
             let get = |k: &str| p.has(k).then(|| p.get_f64(k, 0.0));
-            (MultiStarConfig::from_profile(get), get(keys::MASS_CHANGE_THRESHOLD), get(keys::SEARCH_REGION))
+            (MultiStarConfig::from_profile(&get), get(keys::MASS_CHANGE_THRESHOLD), get(keys::SEARCH_REGION))
         };
         debug(ev, format!("Setting StarMinHFD = {}", fmt_f(cfg.min_star_hfd, 2)));
         debug(ev, format!("Setting MaxHFD = {}", fmt_f(cfg.max_star_hfd, 1)));
         debug(ev, format!("Setting StarMinSNR = {}", fmt_f(cfg.min_star_snr, 1)));
-        // `wxMax(0, GetInt(..))` into an unsigned.
-        self.auto_sel_downsample = profile.get_i32(AUTO_SEL_DOWNSAMPLE_KEY, 0).max(0) as u32;
-        debug(ev, format!("Setting AutoSelDownsample = {}", self.auto_sel_downsample));
-        profile.set_i32(AUTO_SEL_DOWNSAMPLE_KEY, self.auto_sel_downsample as i32);
+        debug(ev, format!("Setting AutoSelDownsample = {}", cfg.auto_sel_downsample));
         if !self.current_image.data.is_empty() {
             self.display_image(Arc::new(UsImage::default()), gamma, ev);
         }
@@ -710,7 +689,8 @@ impl Guider {
                 keys::SEARCH_REGION
                 | keys::MASS_CHANGE_THRESHOLD_ENABLED
                 | keys::TOLERATE_JUMPS_ENABLED
-                | keys::MULTISTAR_ENABLED => profile.set_i32(key, value as i32),
+                | keys::MULTISTAR_ENABLED
+                | keys::AUTO_SEL_DOWNSAMPLE => profile.set_i32(key, value as i32),
                 _ => profile.set_f64(key, value),
             }
         }
@@ -1069,7 +1049,7 @@ impl Guider {
 
     /// `GetAutoSelDownsample`, 0 for Auto.
     pub fn auto_sel_downsample(&self) -> u32 {
-        self.auto_sel_downsample
+        self.multistar.cfg.auto_sel_downsample
     }
 
     /// `ForceFullFrame`: no subframe until a star is found again.
@@ -1155,7 +1135,7 @@ impl Guider {
 
     /// `IsValidLockPosition`: far enough inside the current frame.
     pub fn is_valid_lock_position(&self, pt: Point) -> bool {
-        self.multistar.is_valid_lock_position(pt, Some(&self.current_image))
+        self.multistar.is_valid_lock_position(pt, &self.current_image)
     }
 
     /// `GetBoundingBox` on a camera of `full_size`: the subframe to ask for,
@@ -1214,10 +1194,8 @@ impl Guider {
             }
         }
         self.lock.set_xy(pos.x, pos.y, cx.now_ms);
-        if self.multistar.cfg.multi_star {
-            debug(ev, "MultiStar: stabilizing after lock position change");
-        }
         self.multistar.lock_position_set();
+        self.drain_multistar_log(ev);
         true
     }
 
@@ -1230,7 +1208,9 @@ impl Guider {
         cx: &mut GuiderCx,
         ev: &mut Vec<GuiderEvent>,
     ) -> bool {
-        debug(ev, format!("SetCurrentPosition({},{})", fmt_f(hint.x, 2), fmt_f(hint.y, 2)));
+        let found = self.multistar.set_current_position(&self.current_image, hint, &cx.find);
+        self.drain_multistar_log(ev);
+        // The tracker refuses a hint off the frame without saying which axis.
         let (w, h) = (self.current_image.w as f64, self.current_image.h as f64);
         if hint.x <= 0.0 || hint.x >= w {
             debug(ev, "Error thrown from guider_multistar.cpp:380->invalid x value");
@@ -1240,7 +1220,6 @@ impl Guider {
             debug(ev, "Error thrown from guider_multistar.cpp:385->invalid y value");
             return false;
         }
-        let found = self.multistar.set_current_position(&self.current_image, hint, &cx.find);
         if found && let Some(p) = self.current_position() {
             self.set_lock_position(p, cx, ev);
         }
@@ -1317,11 +1296,6 @@ impl Guider {
         cx: &mut GuiderCx,
         ev: &mut Vec<GuiderEvent>,
     ) -> (Option<Star>, GuideUpdate) {
-        debug(ev, "GuiderMultiStar::AutoSelect enter");
-        if self.current_image.data.is_empty() {
-            debug(ev, "Error thrown from guider_multistar.cpp:457->No Current Image");
-            return (None, GuideUpdate::default());
-        }
         // Leave room for the calibration of a mount that needs one.
         let room = |m: Option<&dyn GuiderMount>| {
             m.filter(|m| m.mount().is_connected() && !m.is_calibrated()).map(|m| m.calibration_tot_distance())
@@ -1329,7 +1303,20 @@ impl Guider {
         let edge = autoselect_edge_allowance(room(cx.primary.as_deref()), room(cx.secondary.as_deref()));
         let img = self.current_image.clone();
         let before = *self.multistar.primary();
-        let res = self.multistar.auto_select(&img, roi, edge, cx.use_subframes, &cx.autofind);
+        let scale = cx.cal_env.image_scale;
+        let res = self.multistar.auto_select(&img, roi, edge, cx.use_subframes, scale, &cx.find);
+        let mut log = self.multistar.take_log();
+        if img.data.is_empty() {
+            ev.extend(log.into_iter().map(GuiderEvent::Debug));
+            debug(ev, "Error thrown from guider_multistar.cpp:457->No Current Image");
+            return (None, GuideUpdate::default());
+        }
+        if res.star.is_none() {
+            // The tracker's last line is its "failed.", which PHD2 writes
+            // after the throw's line; it is written again below.
+            log.pop();
+        }
+        ev.extend(log.into_iter().map(GuiderEvent::Debug));
         let mut out = GuideUpdate::default();
         let mut selected = None;
         match res.star {
@@ -1341,13 +1328,6 @@ impl Guider {
                 debug(ev, format!("Error thrown from guider_multistar.cpp:{line}"));
             }
             Some(star) => {
-                let list = self.multistar.guide_stars();
-                let mut line = format!("MultiStar: List ({}): ", list.len());
-                for gs in list {
-                    let (x, y, snr) = (fmt_f(gs.star.x, 2), fmt_f(gs.star.y, 2), fmt_f(gs.star.snr, 1));
-                    line += &format!("{{{x}, {y}}}({snr}), ");
-                }
-                debug(ev, line);
                 if !self.set_lock_position(star.position(), cx, ev) {
                     debug(ev, "Error thrown from guider_multistar.cpp:497->Unable to set Lock Position");
                 } else {
@@ -1640,8 +1620,9 @@ impl Guider {
     // ---------------------------------------------------------------- frame
 
     /// `GuiderMultiStar::UpdateCurrentPosition` around the tracker: what it
-    /// reads from the guider and the primary mount (with the transform's
-    /// debug lines), its own status and debug lines, and the error averages.
+    /// reads from the guider and the primary mount, its debug lines (the
+    /// transform's among them), the status and throw lines of a loss, and
+    /// the error averages.
     fn update_current_position(
         &mut self,
         cx: &GuiderCx,
@@ -1660,22 +1641,11 @@ impl Guider {
             auto_exposure: cx.auto_exposure,
         };
         let lock = self.lock_position();
-        let log = RefCell::new(Vec::new());
-        let log_ref = &log;
-        let to_mount = primary
-            .filter(|m| m.is_calibrated())
-            .map(|m| move |p: Point| m.mount().camera_to_mount(p, true, &mut log_ref.borrow_mut()));
-        let res = self.multistar.update_current_position(
-            &self.current_image,
-            &cx.find,
-            lock,
-            &view,
-            cx.now_ms,
-            to_mount.as_ref().map(|f| f as &dyn Fn(Point) -> Point),
-        );
+        let cal = primary.filter(|m| m.is_calibrated()).map(|m| &m.mount().calibration().cal);
+        let res = self.multistar.update_current_position(&self.current_image, &cx.find, lock, &view, cx.now_ms, cal);
         match &res {
             Ok(u) => {
-                wrap(ev, MountRole::Primary, log.into_inner());
+                self.drain_multistar_log(ev);
                 if let Some((d, d_ra)) = u.current_distance {
                     self.update_current_distance(d, d_ra, cx.now_ms);
                 }
@@ -1685,36 +1655,29 @@ impl Guider {
         res
     }
 
-    /// What `UpdateCurrentPosition` says when the star is not accepted.
-    /// The tracker does not say why; the loss tells: no star selected skips
-    /// the auto-exposure reset, a mass change carries its limits, and a star
-    /// found but refused for its jump keeps its mass (a found star has at
-    /// least 10), where a star not found reports 0.
-    fn log_position_lost(&self, lost: &PositionLost, ev: &mut Vec<GuiderEvent>) {
+    /// The tracker's lines of a frame whose star was not accepted, with the
+    /// status PHD2 shows and the line of its throw in their places: the
+    /// mass status comes before the tracker's mass line, "Recovering" after
+    /// the distance checker's lines. "No star selected" is a plain return.
+    fn log_position_lost(&mut self, lost: &PositionLost, ev: &mut Vec<GuiderEvent>) {
         let info = &lost.info;
-        if !lost.reset_auto_exposure {
-            debug(ev, "UpdateCurrentPosition: no star selected");
-        } else if let Some([low, median, high, spike]) = lost.mass_limits {
-            ev.push(GuiderEvent::Status(format!("Mass: {} vs {}", fmt_f(info.star_mass, 0), fmt_f(median, 0))));
-            debug(
-                ev,
-                format!(
-                    "UpdateCurrentPosition: star mass new={} exp={} thresh={}% limits=({}, {}, {})",
-                    fmt_f(info.star_mass, 1),
-                    fmt_f(median, 1),
-                    fmt_f(self.multistar.cfg.mass_change_threshold * 100.0, 0),
-                    fmt_f(low, 1),
-                    fmt_f(high, 1),
-                    fmt_f(spike, 1)
-                ),
-            );
+        if let Some(limits) = lost.mass_limits {
+            ev.push(GuiderEvent::Status(format!("Mass: {} vs {}", fmt_f(info.star_mass, 0), fmt_f(limits[1], 0))));
+        }
+        self.drain_multistar_log(ev);
+        if lost.mass_limits.is_some() {
             debug(ev, "Throw from guider_multistar.cpp:989->massChangeThreshold error");
-        } else if info.star_error == FindResult::Error && info.star_mass > 0.0 {
+        } else if lost.jump_rejected {
             ev.push(GuiderEvent::Status("Recovering".into()));
             debug(ev, "Throw from guider_multistar.cpp:1020->CheckDistance error");
-        } else {
+        } else if lost.reset_auto_exposure {
             debug(ev, "Error thrown from guider_multistar.cpp:958->UpdateCurrentPosition():newStar not found");
         }
+    }
+
+    /// The tracker's debug lines since its last call, written now.
+    fn drain_multistar_log(&mut self, ev: &mut Vec<GuiderEvent>) {
+        ev.extend(self.multistar.take_log().into_iter().map(GuiderEvent::Debug));
     }
 
     /// `UpdateGuideState` (guider.cpp:1265): one frame. `img` becomes the
@@ -1803,7 +1766,7 @@ impl Guider {
                 }
             };
 
-            status = star_status(&u.primary, cx.exposure_ms, cx.auto_exposure);
+            status = u.status.clone();
             if is_looping_state(self.state) {
                 ev.push(GuiderEvent::LoopingExposures { frame, star: Some(*self.multistar.primary()), dropped: None });
             }
@@ -2085,15 +2048,9 @@ mod tests {
     /// px per ms of pulse: West moves the star +x, North +y.
     const RATE: f64 = 0.01;
 
-    const FP: FindParams = FindParams { mode: FindMode::Centroid, min_hfd: 1.5, max_hfd: 20.0, max_adu: 0 };
-    const AF: AutoFindParams = AutoFindParams {
-        downsample: 1,
-        min_hfd: 1.5,
-        max_hfd: 20.0,
-        min_snr: 6.0,
-        saturation_by_adu: true,
-        saturation_adu: 0,
-    };
+    /// Saturation by ADU with no level yet: AutoSelect sets one. The
+    /// bench's 2″/px makes "Auto" downsampling 1×.
+    const FP: FindParams = FindParams { mode: FindMode::Centroid, saturation_by_adu: true, saturation_adu: 0 };
 
     /// Fixed pattern noise in −20..=20 ADU.
     fn noise(x: i32, y: i32) -> f64 {
@@ -2104,8 +2061,9 @@ mod tests {
         ((h % 41) as i32 - 20) as f64
     }
 
-    /// A 16-bit frame: 1000 ADU, the noise and a Gaussian star (σ 1.6 px).
-    fn render(star: Option<Point>, frame: u32) -> Arc<UsImage> {
+    /// A 16-bit frame: 1000 ADU, the noise and a Gaussian star (σ 1.6 px)
+    /// `amp` ADU high.
+    fn render(star: Option<Point>, amp: f64, frame: u32) -> Arc<UsImage> {
         let mut img = UsImage::new(W, H);
         img.bits_per_pixel = 16;
         img.frame_num = frame;
@@ -2114,7 +2072,7 @@ mod tests {
                 let mut v = 1000.0 + noise(x, y);
                 if let Some(s) = star {
                     let (dx, dy) = (x as f64 - s.x, y as f64 - s.y);
-                    v += 2000.0 * (-(dx * dx + dy * dy) / (2.0 * 1.6 * 1.6)).exp();
+                    v += amp * (-(dx * dx + dy * dy) / (2.0 * 1.6 * 1.6)).exp();
                 }
                 *img.pixel_mut(x, y) = (v + 0.5).floor() as u16;
             }
@@ -2130,6 +2088,8 @@ mod tests {
         profile: Profile,
         star: Point,
         visible: bool,
+        /// The star's peak over the sky, ADU.
+        amp: f64,
         drift: Point,
         env: CalibrationEnv,
         sp: ScopePointing,
@@ -2156,6 +2116,7 @@ mod tests {
                 profile,
                 star: Point::new(100.0, 100.0),
                 visible: true,
+                amp: 2000.0,
                 drift: Point::default(),
                 env: CalibrationEnv {
                     binning: 1,
@@ -2197,7 +2158,6 @@ mod tests {
                 scope_pointing: &self.sp,
                 algo: &self.algo,
                 find: FP,
-                autofind: AF,
                 use_subframes: false,
                 ra_only: false,
                 settling: false,
@@ -2216,7 +2176,7 @@ mod tests {
             self.frame += 1;
             self.now_ms += 2000;
             self.star = self.star + self.drift;
-            let img = render(self.visible.then_some(self.star), self.frame);
+            let img = render(self.visible.then_some(self.star), self.amp, self.frame);
             let upd = self.call(|g, cx, ev| g.update_guide_state(Some(img), false, cx, ev));
             self.make_moves(&upd.moves);
             upd
@@ -2367,6 +2327,143 @@ mod tests {
         // Off the frame: refused.
         assert!(!b.call(|g, cx, ev| g.set_lock_pos_to_star_at_position(Point::new(0.0, 50.0), cx, ev)));
         assert!(b.debug("Error thrown from guider_multistar.cpp:380->invalid x value"));
+    }
+
+    fn debug_lines(b: &Bench) -> Vec<&str> {
+        b.ev.iter()
+            .filter_map(|e| match e {
+                GuiderEvent::Debug(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Each of PHD2's lines once, the tracker's and the guider's in
+    /// PHD2's order: AutoSelect's throw before the tracker's "failed.",
+    /// SetCurrentPosition's after its line.
+    #[test]
+    fn auto_select_and_set_current_position_lines_in_phd2s_order() {
+        let mut b = Bench::new();
+        b.ev.clear();
+        assert!(b.call(|g, cx, ev| g.auto_select(None, cx, ev)).0.is_none());
+        assert_eq!(
+            debug_lines(&b),
+            ["GuiderMultiStar::AutoSelect enter", "Error thrown from guider_multistar.cpp:457->No Current Image"]
+        );
+
+        // An empty sky: AutoFind finds nothing.
+        b.visible = false;
+        b.frame();
+        b.ev.clear();
+        assert!(b.call(|g, cx, ev| g.auto_select(None, cx, ev)).0.is_none());
+        assert_eq!(
+            debug_lines(&b),
+            [
+                "GuiderMultiStar::AutoSelect enter",
+                "Error thrown from guider_multistar.cpp:474->Unable to AutoFind",
+                "GuiderMultiStar::AutoSelect failed.",
+            ]
+        );
+
+        // Looping without a star: the tracker's line, no throw.
+        b.visible = true;
+        b.ev.clear();
+        b.frame();
+        assert_eq!(
+            debug_lines(&b),
+            [
+                "UpdateGuideState(): m_state=1",
+                "UpdateCurrentPosition: no star selected",
+                "Throw from guider.cpp:1371->unable to update current position",
+                "UpdateImageDisplay: Size=(200,200) min=0, max=0, med=0, FiltMin=0, FiltMax=0, Gamma=0.400",
+                "UpdateGuideState exits: No star selected",
+            ]
+        );
+
+        b.ev.clear();
+        assert!(b.call(|g, cx, ev| g.auto_select(None, cx, ev)).0.is_some());
+        assert_eq!(
+            debug_lines(&b)[..5],
+            [
+                "GuiderMultiStar::AutoSelect enter",
+                "MultiStar: List (1): {99.99, 100.00}(117.0), ",
+                "setting lock position to (99.99, 100.00)",
+                "AutoSelect: state = 1, call UpdateGuideState",
+                "UpdateGuideState(): m_state=1",
+            ]
+        );
+
+        b.ev.clear();
+        assert!(!b.call(|g, cx, ev| g.set_lock_pos_to_star_at_position(Point::new(150.0, 250.0), cx, ev)));
+        assert_eq!(
+            debug_lines(&b),
+            ["SetCurrentPosition(150.00,250.00)", "Error thrown from guider_multistar.cpp:385->invalid y value"]
+        );
+    }
+
+    /// A rejected star: the mass status before the tracker's mass line,
+    /// "Recovering" after the distance checker's lines, each throw last;
+    /// a guide step's transform lines come from the tracker.
+    #[test]
+    fn rejected_stars_and_the_transform_lines_in_phd2s_order() {
+        let mut b = Bench::new();
+        b.select();
+        for _ in 0..5 {
+            b.frame();
+        }
+        b.amp = 6000.0;
+        b.ev.clear();
+        b.frame();
+        assert_eq!(
+            b.ev[..5],
+            [
+                GuiderEvent::Debug("UpdateGuideState(): m_state=2".into()),
+                GuiderEvent::Status("Mass: 95766 vs 31725".into()),
+                GuiderEvent::Debug(
+                    "UpdateCurrentPosition: star mass new=95766.3 exp=31725.2 thresh=50% \
+                     limits=(15862.6, 47587.8, 63450.5)"
+                        .into()
+                ),
+                GuiderEvent::Debug("DistanceChecker: activated".into()),
+                GuiderEvent::Debug("Throw from guider_multistar.cpp:989->massChangeThreshold error".into()),
+            ]
+        );
+
+        let mut b = guiding_at(Point::new(100.0, 100.0));
+        b.guider.multistar_mut().cfg.tolerate_jumps_enabled = true;
+        b.ev.clear();
+        b.frame();
+        assert_eq!(
+            debug_lines(&b)[..5],
+            [
+                "UpdateGuideState(): m_state=6",
+                "CameraToMount -- cameraTheta (0.00) - m_xAngle (3.14) = xAngle (-3.14 = -3.14)",
+                "CameraToMount -- cameraTheta (0.00) - (m_xAngle (3.14) + m_yAngleError (-3.14)) = \
+                 yAngle (0.00 = 0.00)",
+                "CameraToMount -- cameraX=0.00 cameraY=0.00 hyp=0.00 cameraTheta=0.00 mountX=-0.00 mountY=0.00, \
+                 mountTheta=0.00",
+                "SchedulePrimaryMove(, x=0.00, y=0.00, opts=13)",
+            ]
+        );
+        // Ten guiding frames on a still star, then a 6 px jump.
+        for _ in 0..10 {
+            b.frame();
+        }
+        b.star = b.star + Point::new(6.0, 0.0);
+        b.ev.clear();
+        b.frame();
+        assert_eq!(
+            b.ev[..5],
+            [
+                GuiderEvent::Debug("UpdateGuideState(): m_state=6".into()),
+                GuiderEvent::Debug(
+                    "DistanceChecker: reject for large offset (6.01 > 0.00) avgDist = 0.00 count = 12".into()
+                ),
+                GuiderEvent::Debug("DistanceChecker: activated".into()),
+                GuiderEvent::Status("Recovering".into()),
+                GuiderEvent::Debug("Throw from guider_multistar.cpp:1020->CheckDistance error".into()),
+            ]
+        );
     }
 
     #[test]
@@ -2785,10 +2882,16 @@ mod tests {
     fn a_lock_shifted_off_the_frame_turns_the_shift_off() {
         let mut b = guiding_at(Point::new(170.0, 100.0));
         // Multi-star on while guiding: guiding restarts on a fresh pick.
+        b.ev.clear();
         b.call(|g, cx, ev| {
             g.set_multi_star_mode(true, cx, ev);
         });
         assert!(b.debug("MultiStar mode enabled, AutoFind forced"));
+        // The pick's lock, then the tracker's line, once.
+        let lines = debug_lines(&b);
+        let lock = lines.iter().position(|l| l.starts_with("setting lock position")).unwrap();
+        assert_eq!(lines[lock + 1], "MultiStar: stabilizing after lock position change");
+        assert_eq!(lines.iter().filter(|l| l.starts_with("MultiStar: stabilizing")).count(), 1);
         assert_eq!(b.guider.state(), GuiderState::Calibrated);
         b.frame();
         assert_eq!(b.guider.state(), GuiderState::Guiding);

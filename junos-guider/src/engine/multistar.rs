@@ -5,20 +5,24 @@
 //! subframe box and the valid lock area, and their profile settings.
 //!
 //! Everything PHD2 reads from `pFrame`, `pMount` or the guider comes in as
-//! arguments ([`GuidingView`], [`FindParams`], the lock position, a
-//! camera-to-mount closure); time is UTC milliseconds (`wxGetUTCTimeMillis`)
+//! arguments ([`GuidingView`], [`FindParams`], the lock position, the
+//! mount's calibration); time is UTC milliseconds (`wxGetUTCTimeMillis`)
 //! from the caller. The quirks that change what clients see are kept, each
-//! marked where it happens.
+//! marked where it happens. The debug-log lines are collected in PHD2's
+//! order and handed over by [`MultiStar::take_log`]; `Star::Find`'s own
+//! lines are not among them (star.rs writes none).
 //!
 //! Ported from PHD2 src/guider_multistar.h, src/guider_multistar.cpp, src/guider.cpp (star settings) — BSD-3-Clause, see THIRD_PARTY.md
 
 use std::collections::VecDeque;
 
+use super::algo::ParamLookup;
+use super::calibration::{Calibration, camera_to_mount_logged};
 use super::image::UsImage;
 use super::log::cfmt::fmt_f;
-use super::star::{AutoFindParams, FindMode, FindResult, GuideStar, Star};
+use super::star::{AutoFindParams, FindMode, FindResult, GuideStar, Star, auto_sel_downsample};
 use super::stats::DescriptiveStats;
-use super::traits::{Point, Rect};
+use super::traits::{Point, Rect, phd_round};
 
 pub const MIN_SEARCH_REGION: i32 = 7;
 pub const DEFAULT_SEARCH_REGION: i32 = 15;
@@ -48,12 +52,13 @@ pub mod keys {
     pub const STAR_MIN_HFD: &str = "/guider/StarMinHFD";
     pub const STAR_MAX_HFD: &str = "/guider/StarMaxHFD";
     pub const STAR_MIN_SNR: &str = "/guider/StarMinSNR";
+    pub const AUTO_SEL_DOWNSAMPLE: &str = "/guider/AutoSelDownsample";
 }
 
 // ------------------------------------------------------------------ settings
 
 /// The star-tracking settings: `GuiderMultiStar::LoadProfileSettings` and
-/// the star part of `Guider::LoadProfileSettings` (guider.cpp:225-238).
+/// the star part of `Guider::LoadProfileSettings` (guider.cpp:225-241).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MultiStarConfig {
     /// `/guider/onestar/SearchRegion`, half-width of the search box in px.
@@ -66,10 +71,13 @@ pub struct MultiStarConfig {
     pub tolerate_jumps_threshold: f64,
     /// `m_multiStarMode`. Change it through [`MultiStar::set_multi_star_mode`].
     pub multi_star: bool,
+    /// Every `find` of the tracker and AutoSelect bound the HFD by these.
     pub min_star_hfd: f64,
     pub max_star_hfd: f64,
     /// AutoSelect's minimum SNR (tracking itself uses `find`'s fixed 3).
     pub min_star_snr: f64,
+    /// AutoSelect's downsampling: 0 is "Auto", else the factor.
+    pub auto_sel_downsample: u32,
 }
 
 impl Default for MultiStarConfig {
@@ -84,6 +92,7 @@ impl Default for MultiStarConfig {
             min_star_hfd: DEFAULT_MIN_STAR_HFD,
             max_star_hfd: DEFAULT_MAX_STAR_HFD,
             min_star_snr: DEFAULT_MIN_STAR_SNR,
+            auto_sel_downsample: 0,
         }
     }
 }
@@ -91,7 +100,14 @@ impl Default for MultiStarConfig {
 impl MultiStarConfig {
     /// Read the profile through `get` (`None` = absent; a boolean is any
     /// non-zero value) with PHD2's defaults and load-time validation.
-    pub fn from_profile(get: impl Fn(&str) -> Option<f64>) -> Self {
+    ///
+    /// PHD2 applies the multi-star flag through `SetMultiStarMode` on every
+    /// load, at startup and on each `set_profile` (gear_dialog.cpp:1909).
+    /// So the loader keeps its [`MultiStar`], takes the other fields from
+    /// here and passes `multi_star` to [`MultiStar::set_multi_star_mode`],
+    /// whose side effects (see there) are due on every load, unchanged
+    /// value included.
+    pub fn from_profile(get: ParamLookup) -> Self {
         let flag = |k: &str, d: bool| get(k).map_or(d, |v| v != 0.0);
         let mut c = MultiStarConfig::default();
 
@@ -111,6 +127,8 @@ impl MultiStarConfig {
         c.min_star_hfd = if min_hfd < MIN_STAR_HFD_FLOOR { MIN_STAR_HFD_FLOOR } else { min_hfd };
         c.max_star_hfd = get(keys::STAR_MAX_HFD).unwrap_or(DEFAULT_MAX_STAR_HFD);
         c.min_star_snr = get(keys::STAR_MIN_SNR).unwrap_or(DEFAULT_MIN_STAR_SNR);
+        // guider.cpp:240: `wxMax(0, GetInt(...))` into an unsigned int
+        c.auto_sel_downsample = get(keys::AUTO_SEL_DOWNSAMPLE).map_or(0, |v| (v as i32).max(0) as u32);
         c
     }
 
@@ -130,7 +148,7 @@ impl MultiStarConfig {
 
     /// The effective values, which PHD2's setters write back to the profile
     /// on load. Booleans are 0 / 1.
-    pub fn profile_values(&self) -> [(&'static str, f64); 9] {
+    pub fn profile_values(&self) -> [(&'static str, f64); 10] {
         let b = |v: bool| if v { 1.0 } else { 0.0 };
         [
             (keys::SEARCH_REGION, self.search_region as f64),
@@ -142,6 +160,7 @@ impl MultiStarConfig {
             (keys::STAR_MIN_HFD, self.min_star_hfd),
             (keys::STAR_MAX_HFD, self.max_star_hfd),
             (keys::STAR_MIN_SNR, self.min_star_snr),
+            (keys::AUTO_SEL_DOWNSAMPLE, self.auto_sel_downsample as f64),
         ]
     }
 
@@ -152,19 +171,24 @@ impl MultiStarConfig {
     }
 }
 
-/// What every `Star::Find` of the tracker passes besides the position and
-/// the search region.
+/// What the frame and the camera add to the settings for each `Star::Find`
+/// (the HFD bounds come from [`MultiStarConfig`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FindParams {
-    /// `MyFrame::GetStarFindMode()`.
+    /// `MyFrame::GetStarFindMode()`. AutoSelect always finds centroids.
     pub mode: FindMode,
-    /// `/guider/StarMinHFD`.
-    pub min_hfd: f64,
-    /// `/guider/StarMaxHFD`.
-    pub max_hfd: f64,
+    /// `/camera/SaturationByADU` (true by default).
+    pub saturation_by_adu: bool,
+    /// `/camera/SaturationADU`, 0 while unset.
+    pub saturation_adu: u16,
+}
+
+impl FindParams {
     /// `GuideCamera::GetSaturationADU()`: the level when saturation is by
-    /// ADU, else 0 (an `unsigned short` in PHD2, like `Star::Find`'s).
-    pub max_adu: u16,
+    /// ADU, else 0 (the flat-top test).
+    pub fn max_adu(&self) -> u16 {
+        if self.saturation_by_adu { self.saturation_adu } else { 0 }
+    }
 }
 
 /// The guider and frame state the tracker reads (PHD2 asks `pFrame`,
@@ -360,8 +384,9 @@ impl DistanceChecker {
 
     /// `Activate`, on a lost star or a mass change: wait with a tolerance of
     /// 2× the smoothed error, whatever the configured one.
-    pub fn activate(&mut self, now_ms: i64) {
+    pub fn activate(&mut self, now_ms: i64, log: &mut Vec<String>) {
         if self.state == DistanceState::Guiding {
+            log.push("DistanceChecker: activated".into());
             self.state = DistanceState::Waiting;
             self.expires = now_ms + Self::WAIT_INTERVAL_MS;
             self.force_tolerance = 2.0;
@@ -370,22 +395,42 @@ impl DistanceChecker {
 
     /// `_CheckDistance`: any offset is "small" unless guiding, unpaused,
     /// not settling and with ten error samples to compare against.
-    fn small_offset(distance: f64, view: &GuidingView, tolerance: f64) -> bool {
+    fn small_offset(distance: f64, view: &GuidingView, tolerance: f64, log: &mut Vec<String>) -> bool {
         if !view.guiding || view.paused || view.settling || view.error_frame_count < Self::MIN_FRAMES_FOR_STATS {
             return true;
         }
-        distance <= tolerance * view.error_smoothed
+        let threshold = tolerance * view.error_smoothed;
+        // PHD2 tests `distance > threshold`, so a NaN is small
+        if distance > threshold {
+            log.push(format!(
+                "DistanceChecker: reject for large offset ({} > {}) avgDist = {} count = {}",
+                fmt_f(distance, 2),
+                fmt_f(threshold, 2),
+                fmt_f(view.error_smoothed, 2),
+                view.error_frame_count
+            ));
+            return false;
+        }
+        true
     }
 
     /// `CheckDistance`: false rejects the frame.
-    pub fn check_distance(&mut self, distance: f64, view: &GuidingView, tolerance: f64, now_ms: i64) -> bool {
+    pub fn check_distance(
+        &mut self,
+        distance: f64,
+        view: &GuidingView,
+        tolerance: f64,
+        now_ms: i64,
+        log: &mut Vec<String>,
+    ) -> bool {
         let tolerance = if self.force_tolerance != 0.0 { self.force_tolerance } else { tolerance };
-        let small = Self::small_offset(distance, view, tolerance);
+        let small = Self::small_offset(distance, view, tolerance, log);
 
         if self.state == DistanceState::Guiding {
             if small {
                 return true;
             }
+            log.push("DistanceChecker: activated".into());
             self.state = DistanceState::Waiting;
             self.expires = now_ms + Self::WAIT_INTERVAL_MS;
             return false;
@@ -393,6 +438,7 @@ impl DistanceChecker {
 
         if self.state == DistanceState::Waiting {
             if small {
+                log.push("DistanceChecker: deactivated".into());
                 self.state = DistanceState::Guiding;
                 self.force_tolerance = 0.0;
                 return true;
@@ -401,6 +447,7 @@ impl DistanceChecker {
                 return false;
             }
             // timed out: fall through to recovering
+            log.push("DistanceChecker: begin recovering".into());
             self.state = DistanceState::Recovering;
         }
 
@@ -408,6 +455,7 @@ impl DistanceChecker {
         // leaves the forced 2.0 tolerance in place until the next Waiting
         // ends with a small offset.
         if small {
+            log.push("DistanceChecker: deactivated".into());
             self.state = DistanceState::Guiding;
         }
         true
@@ -437,12 +485,15 @@ pub struct PositionLost {
     /// which PHD2 returns before (and logs as `LogImageStarDeselected`).
     pub reset_auto_exposure: bool,
     /// A mass-change rejection's limits (low, median, high, spike), for the
-    /// `Mass: %.f vs %.f` status and the debug log.
+    /// `Mass: %.f vs %.f` status (with the median).
     pub mass_limits: Option<[f64; 4]>,
+    /// The star was found but jumped too far: PHD2 shows "Recovering" in
+    /// the status bar (the guider's status then replaces it).
+    pub jump_rejected: bool,
 }
 
 /// [`MultiStar::update_current_position`] when the star was accepted.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PositionUpdate {
     /// The new primary star.
     pub primary: Star,
@@ -460,6 +511,10 @@ pub struct PositionUpdate {
     pub current_distance: Option<(f64, f64)>,
     /// `AdjustAutoExposure(snr)` is due with this (the primary's SNR).
     pub auto_exposure_snr: f64,
+    /// `StarStatus` (guider_multistar.cpp:422), the frame's status text:
+    /// the guider shows it and ends its "UpdateGuideState exits: " debug
+    /// line with it.
+    pub status: String,
 }
 
 /// What [`MultiStar::auto_select`] found.
@@ -501,6 +556,36 @@ fn valid_secondary(pt: Point, w: i32, h: i32) -> bool {
     pt.x >= 5.0 && pt.x + 5.0 < w as f64 && pt.y >= 5.0 && pt.y + 5.0 < h as f64
 }
 
+/// PHD2 runs `Find` on a star it keeps, and an `Error` (bad search bounds)
+/// throws before `PeakVal` is set, so the kept star's peak stays
+/// (star.cpp:164); [`Star::find`] returns a fresh star instead.
+fn find_into(kept: &mut Star, found: Star) -> bool {
+    let peak_val = kept.peak_val;
+    *kept = found;
+    if found.result == FindResult::Error {
+        kept.peak_val = peak_val;
+    }
+    kept.was_found()
+}
+
+/// `StarStatus` (guider_multistar.cpp:422). Quirk kept: the exposure is in
+/// ms, so the `Exp=%d ms` branch only shows for 0 or less.
+fn star_status(star: &Star, view: &GuidingView) -> String {
+    let mut status = format!("m={} SNR={}", fmt_f(star.mass, 0), fmt_f(star.snr, 1));
+    if star.result == FindResult::Saturated {
+        status += " Saturated";
+    }
+    if view.auto_exposure {
+        let exp = view.exposure_ms;
+        if exp >= 1 {
+            status += &format!(" Exp={} s", fmt_f(exp as f64 / 1000.0, 1));
+        } else {
+            status += &format!(" Exp={exp} ms");
+        }
+    }
+    status
+}
+
 /// `GuiderMultiStar`'s own state: the primary star, the secondary list and
 /// the checks run on each frame.
 #[derive(Clone, Debug)]
@@ -516,8 +601,8 @@ pub struct MultiStar {
     stabilizing: bool,
     lock_position_moved: bool,
     stars_used: u32,
-    max_stars: u32,
-    stability_sigma_x: f64,
+    /// Debug-log lines since the last [`MultiStar::take_log`].
+    log: Vec<String>,
 }
 
 impl MultiStar {
@@ -532,9 +617,20 @@ impl MultiStar {
             stabilizing: false,
             lock_position_moved: false,
             stars_used: 0,
-            max_stars: DEFAULT_MAX_STAR_COUNT,
-            stability_sigma_x: DEFAULT_STABILITY_SIGMAX,
+            log: Vec::new(),
         }
+    }
+
+    /// The debug-log lines written since the last call, without their
+    /// newlines.
+    pub fn take_log(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.log)
+    }
+
+    /// `Star::Find` with the settings' HFD bounds.
+    fn find(&self, img: &UsImage, x: f64, y: f64, fp: &FindParams) -> Star {
+        let c = &self.cfg;
+        Star::find(img, c.search_region, x, y, fp.mode, c.min_star_hfd, c.max_star_hfd, fp.max_adu())
     }
 
     /// `PrimaryStar()` / `CurrentPosition()`.
@@ -557,10 +653,20 @@ impl MultiStar {
     }
 
     /// `SetMultiStarMode`'s own part. True when the mode was just turned on:
-    /// PHD2 then, from SELECTED on, stops guiding, invalidates the star and
-    /// auto-selects again (restarting guiding if that fails) so the
-    /// secondaries are found; it also writes the profile and sends
-    /// `GuideParamChange("MultiStar")`. All of that is the caller's.
+    /// PHD2 then, from SELECTED on, stops guiding, invalidates the star
+    /// (full reset) and auto-selects again so the secondaries are found,
+    /// restarting guiding, if it was calibrating or guiding, when that
+    /// succeeds ("AutoFind forced"); on a failure guiding stays stopped and
+    /// the star invalidated.
+    ///
+    /// The rest is the caller's, on every call: write
+    /// `/guider/multistar/enabled`, the debug line `MultiStar mode
+    /// enabled|disabled` (+ `, AutoFind forced` after a successful forced
+    /// AutoSelect), then `GuideParamChange{Name:"MultiStar", Value:"true"|
+    /// "false"}` — a JSON string, PHD2 goes through its wxString overload —
+    /// and the guide-log line `INFO: Guiding parameter change, MultiStar =
+    /// true|false`, which is forced: written even when not guiding, and it
+    /// keeps the log file (guidinglog.cpp:736-742).
     pub fn set_multi_star_mode(&mut self, on: bool) -> bool {
         let turned_on = on && !self.cfg.multi_star;
         self.cfg.multi_star = on;
@@ -575,7 +681,10 @@ impl MultiStar {
 
     /// `ClearSecondaryStars`: keep the primary's entry only.
     pub fn clear_secondary_stars(&mut self) {
-        self.guide_stars.truncate(1);
+        if self.guide_stars.len() > 1 {
+            self.guide_stars.truncate(1);
+            self.log.push("MultiStar: secondary guide stars cleared".into());
+        }
     }
 
     /// The list part of a star picked by hand (`OnLClick`, after the lock
@@ -596,6 +705,7 @@ impl MultiStar {
         if self.cfg.multi_star {
             self.lock_position_moved = true;
             self.stabilizing = true;
+            self.log.push("MultiStar: stabilizing after lock position change".into());
         }
     }
 
@@ -614,40 +724,55 @@ impl MultiStar {
     /// the frame changes nothing; otherwise the primary becomes the find's
     /// result, found or not, and the mass history starts over.
     pub fn set_current_position(&mut self, img: &UsImage, pos: Point, fp: &FindParams) -> bool {
+        self.log.push(format!("SetCurrentPosition({},{})", fmt_f(pos.x, 2), fmt_f(pos.y, 2)));
         if pos.x <= 0.0 || pos.x >= img.w as f64 || pos.y <= 0.0 || pos.y >= img.h as f64 {
             return false;
         }
         self.mass_checker.reset();
-        self.primary =
-            Star::find(img, self.cfg.search_region, pos.x, pos.y, fp.mode, fp.min_hfd, fp.max_hfd, fp.max_adu);
-        self.primary.was_found()
+        let found = self.find(img, pos.x, pos.y, fp);
+        find_into(&mut self.primary, found)
     }
 
     /// `AutoSelect`'s star part: `GuideStar::AutoFind` with up to 12 stars
     /// in multi-star mode (1 with subframes or in single-star mode), then a
     /// centroid find on its pick. `edge_allowance` comes from
-    /// [`autoselect_edge_allowance`]. On success the caller sets the lock
-    /// position there (then [`MultiStar::lock_position_set`]) and advances
-    /// the state from SELECTING; on failure PHD2 has already replaced the
-    /// list and, when AutoFind succeeded, the primary.
+    /// [`autoselect_edge_allowance`]; `pixel_scale` (″/px, 1.0 unknown)
+    /// resolves the "Auto" downsampling. On success the caller sets the
+    /// lock position there (then [`MultiStar::lock_position_set`]) and
+    /// advances the state from SELECTING; on failure PHD2 has already
+    /// replaced the list and, when AutoFind succeeded, the primary. When
+    /// the caller's lock position fails, it writes the debug line
+    /// `GuiderMultiStar::AutoSelect failed.` itself.
     pub fn auto_select(
         &mut self,
         img: &UsImage,
         roi: Option<Rect>,
         edge_allowance: i32,
         use_subframes: bool,
-        af: &AutoFindParams,
+        pixel_scale: f64,
+        fp: &FindParams,
     ) -> AutoSelectResult {
+        self.log.push("GuiderMultiStar::AutoSelect enter".into());
         let mut out = AutoSelectResult { star: None, saturation_adu_set: None };
         if img.data.is_empty() {
-            return out; // No Current Image
+            return out; // No Current Image, and no "failed." line
         }
 
-        let max_stars = if use_subframes || !self.cfg.multi_star { 1 } else { MAX_LIST_SIZE };
-        let sr = self.cfg.search_region;
-        let found = GuideStar::auto_find(img, edge_allowance, sr, roi, &mut self.guide_stars, max_stars, af);
+        let c = self.cfg;
+        let af = AutoFindParams {
+            downsample: auto_sel_downsample(c.auto_sel_downsample, pixel_scale),
+            min_hfd: c.min_star_hfd,
+            max_hfd: c.max_star_hfd,
+            min_snr: c.min_star_snr,
+            saturation_by_adu: fp.saturation_by_adu,
+            saturation_adu: fp.saturation_adu,
+        };
+        let max_stars = if use_subframes || !c.multi_star { 1 } else { MAX_LIST_SIZE };
+        let found =
+            GuideStar::auto_find(img, edge_allowance, c.search_region, roi, &mut self.guide_stars, max_stars, &af);
         out.saturation_adu_set = found.saturation_adu_set;
         let Some(pos) = found.position else {
+            self.log.push("GuiderMultiStar::AutoSelect failed.".into());
             return out;
         };
 
@@ -655,15 +780,22 @@ impl MultiStar {
 
         // AutoFind may just have set the camera's saturation level, which
         // this find then uses.
-        let max_adu = match found.saturation_adu_set {
-            Some(level) => level,
-            None if af.saturation_by_adu => af.saturation_adu,
-            None => 0,
+        let fp = match found.saturation_adu_set {
+            Some(level) => FindParams { mode: FindMode::Centroid, saturation_by_adu: true, saturation_adu: level },
+            None => FindParams { mode: FindMode::Centroid, ..*fp },
         };
-        self.primary = Star::find(img, sr, pos.x, pos.y, FindMode::Centroid, af.min_hfd, af.max_hfd, max_adu);
-        if !self.primary.was_found() {
+        let star = self.find(img, pos.x, pos.y, &fp);
+        if !find_into(&mut self.primary, star) {
+            self.log.push("GuiderMultiStar::AutoSelect failed.".into());
             return out;
         }
+
+        let mut list = format!("MultiStar: List ({}): ", self.guide_stars.len());
+        for gs in &self.guide_stars {
+            let s = &gs.star;
+            list += &format!("{{{}, {}}}({}), ", fmt_f(s.x, 2), fmt_f(s.y, 2), fmt_f(s.snr, 1));
+        }
+        self.log.push(list);
 
         self.primary_dist_stats.clear_all();
         out.star = Some(self.primary);
@@ -687,19 +819,16 @@ impl MultiStar {
         if !self.primary.was_found() || force_full_frame {
             return Rect::default();
         }
-        // SubframeRect: ROUND() is floor(x + 0.5)
-        let x = (pos.x + 0.5).floor() as i32;
-        let y = (pos.y + 0.5).floor() as i32;
+        // SubframeRect
+        let (x, y) = (phd_round(pos.x), phd_round(pos.y));
         let box_ = Rect::new(x - sr, y - sr, 2 * sr + 1, 2 * sr + 1);
         box_.intersect(&Rect::new(0, 0, frame_size.0, frame_size.1))
     }
 
-    /// `IsValidLockPosition`: far enough inside the frame for `find`'s
-    /// search box. False without an image.
-    pub fn is_valid_lock_position(&self, pt: Point, img: Option<&UsImage>) -> bool {
-        let Some(img) = img else {
-            return false;
-        };
+    /// `IsValidLockPosition`: far enough inside the current frame for
+    /// `find`'s search box (PHD2's current image is never null, an empty
+    /// one is 0 × 0).
+    pub fn is_valid_lock_position(&self, pt: Point, img: &UsImage) -> bool {
         // PHD2's `pt.X + 1 + m_searchRegion`, added left to right
         let sr = self.cfg.search_region as f64;
         pt.x >= 1.0 + sr && pt.x + 1.0 + sr < img.w as f64 && pt.y >= 1.0 + sr && pt.y + 1.0 + sr < img.h as f64
@@ -710,15 +839,11 @@ impl MultiStar {
     /// weighted by SNR relative to the primary, while guiding with more than
     /// one star. The average replaces `camera_ofs` only when it is shorter
     /// than the primary-only offset; true then.
-    pub fn refine_offset(
-        &mut self,
-        img: &UsImage,
-        camera_ofs: &mut Point,
-        view: &GuidingView,
-        fp: &FindParams,
-    ) -> bool {
-        let sr = self.cfg.search_region;
-        let mut find = |x: f64, y: f64| Star::find(img, sr, x, y, fp.mode, fp.min_hfd, fp.max_hfd, fp.max_adu);
+    fn refine_offset(&mut self, img: &UsImage, camera_ofs: &mut Point, view: &GuidingView, fp: &FindParams) -> bool {
+        let c = self.cfg;
+        let mut find = |x: f64, y: f64| {
+            Star::find(img, c.search_region, x, y, fp.mode, c.min_star_hfd, c.max_star_hfd, fp.max_adu())
+        };
         self.refine_with(camera_ofs, view, (img.w, img.h), &mut find)
     }
 
@@ -745,21 +870,22 @@ impl MultiStar {
 
         if self.primary_dist_stats.count() > 5 {
             primary_sigma = self.primary_dist_stats.sigma();
-            if !self.stabilizing && primary_distance > self.stability_sigma_x * primary_sigma {
-                // large primary error, entering stabilization period
+            if !self.stabilizing && primary_distance > DEFAULT_STABILITY_SIGMAX * primary_sigma {
                 self.stabilizing = true;
+                self.log.push("MultiStar: large primary error, entering stabilization period".into());
             } else if self.stabilizing && primary_distance <= 2.0 * primary_sigma {
                 self.stabilizing = false;
+                self.log.push("MultiStar: exiting stabilization period".into());
                 if self.lock_position_moved {
                     // re-find the secondaries around the moved primary; the
                     // reference points then reflect the current positions
                     self.lock_position_moved = false;
+                    self.log.push("MultiStar: updating star positions after lock position change".into());
                     let primary = self.primary.position();
                     for gs in self.guide_stars.iter_mut().skip(1) {
                         let expected = primary + gs.offset_from_primary;
                         let at = if valid_secondary(expected, w, h) { expected } else { gs.star.position() };
-                        gs.star = find(at.x, at.y);
-                        if gs.star.was_found() {
+                        if find_into(&mut gs.star, find(at.x, at.y)) {
                             gs.reference_point = gs.star.position();
                             gs.was_lost = false;
                         } else {
@@ -779,9 +905,16 @@ impl MultiStar {
             return false;
         }
 
+        // AppendStarUse: `[#index dX,dY,weight,flag] `, the index being the
+        // star's place in the list at that moment
+        let star_use = |i: usize, dx: f64, dy: f64, wt: f64, flag: &str| {
+            format!("[#{i} {},{},{},{flag}] ", fmt_f(dx, 2), fmt_f(dy, 2), fmt_f(wt, 2))
+        };
+        let mut secondary_info = String::from("MultiStar: ");
         let primary_pos = self.primary.position();
         let primary_snr = self.primary.snr;
         let mut averaged = false;
+        let mut valid_stars = 0;
         // Quirk kept: a star dropped for its zero count leaves `erasures`
         // set (that branch skips the reset at the bottom), so the next star
         // that reaches the bottom is not stepped past and is measured twice
@@ -789,15 +922,14 @@ impl MultiStar {
         let mut erasures = false;
         let mut i = 1;
         while i < self.guide_stars.len() {
-            if self.stars_used >= self.max_stars || self.guide_stars.len() == 1 {
+            if self.stars_used >= DEFAULT_MAX_STAR_COUNT || self.guide_stars.len() == 1 {
                 break;
             }
             let gs = &mut self.guide_stars[i];
             // a lost star is looked for at its offset from the primary,
             // others where they were last found
             let at = if gs.was_lost { primary_pos + gs.offset_from_primary } else { gs.star.position() };
-            gs.star = find(at.x, at.y);
-            if gs.star.was_found() {
+            if find_into(&mut gs.star, find(at.x, at.y)) {
                 let dx = gs.star.x - gs.reference_point.x;
                 let dy = gs.star.y - gs.reference_point.y;
                 gs.was_lost = false;
@@ -811,6 +943,7 @@ impl MultiStar {
                         gs.zero_count -= 1;
                     }
                     if gs.zero_count == 5 {
+                        secondary_info += &star_use(i, 0.0, 0.0, 0.0, "DZ");
                         self.guide_stars.remove(i);
                         erasures = true;
                         continue;
@@ -823,6 +956,9 @@ impl MultiStar {
                             // reset the reference point to wherever it is now
                             gs.reference_point = gs.star.position();
                             gs.miss_count = 0;
+                            secondary_info += &star_use(i, dx, dy, 0.0, "R");
+                        } else {
+                            secondary_info += &star_use(i, dx, dy, 0.0, &format!("M{}", gs.miss_count));
                         }
                         i += 1;
                         continue;
@@ -835,12 +971,17 @@ impl MultiStar {
                     sum_y += wt * dy;
                     sum_weights += wt;
                     averaged = true;
+                    valid_stars += 1;
+                    secondary_info += &star_use(i, dx, dy, wt, "U");
                 } else {
                     // exactly zero on both axes, probably a hot pixel
+                    secondary_info += &star_use(i, 0.0, 0.0, 0.0, "DZ");
                     self.guide_stars.remove(i);
                     erasures = true;
                 }
             } else {
+                // not found in its search region
+                secondary_info += &star_use(i, 0.0, 0.0, 0.0, "L");
                 gs.was_lost = true;
             }
             if !erasures {
@@ -849,6 +990,7 @@ impl MultiStar {
                 erasures = false;
             }
         }
+        self.log.push(secondary_info);
 
         if !averaged {
             return false;
@@ -856,18 +998,26 @@ impl MultiStar {
         sum_x /= sum_weights;
         sum_y /= sum_weights;
         // apply the average only if it is smaller than the single-star delta
-        if sum_x.hypot(sum_y) < primary_distance {
+        let refined = sum_x.hypot(sum_y) < primary_distance;
+        if refined {
             *ofs = Point::new(sum_x, sum_y);
-            return true;
         }
-        false
+        self.log.push(format!(
+            "{}, {valid_stars} included, MultiStar: {{{}, {}}}, one-star: {{{}, {}}}",
+            if refined { "refined" } else { "single-star" },
+            fmt_f(sum_x, 2),
+            fmt_f(sum_y, 2),
+            fmt_f(orig.x, 2),
+            fmt_f(orig.y, 2)
+        ));
+        refined
     }
 
     /// `UpdateCurrentPosition` (guider_multistar.cpp:925): find the primary
     /// near its last position, check its mass and the size of its move, then
-    /// take it and compute the offsets from `lock`. `to_mount` is the
-    /// primary mount's camera-to-mount transform, `None` when uncalibrated.
-    /// `now_ms` is UTC milliseconds.
+    /// take it and compute the offsets from `lock`. `cal` is the primary
+    /// mount's calibration, `None` when it is not calibrated. `now_ms` is
+    /// UTC milliseconds.
     pub fn update_current_position(
         &mut self,
         img: &UsImage,
@@ -875,39 +1025,51 @@ impl MultiStar {
         lock: Option<Point>,
         view: &GuidingView,
         now_ms: i64,
-        to_mount: Option<&dyn Fn(Point) -> Point>,
+        cal: Option<&Calibration>,
     ) -> Result<PositionUpdate, PositionLost> {
         let lost = |star_error, s: &Star, status, mass_limits| PositionLost {
             info: FrameErrorInfo { star_error, star_mass: s.mass, star_snr: s.snr, star_hfd: s.hfd, status },
             reset_auto_exposure: true,
             mass_limits,
+            jump_rejected: false,
         };
 
         // An invalidated star away from (0, 0) is still searched for.
         if !self.primary.is_valid() && self.primary.x == 0.0 && self.primary.y == 0.0 {
+            self.log.push("UpdateCurrentPosition: no star selected".into());
             let mut l = lost(FindResult::Error, &Star::new(), "No star selected", None);
             l.reset_auto_exposure = false;
             return Err(l);
         }
 
-        let sr = self.cfg.search_region;
-        let new_star = Star::find(img, sr, self.primary.x, self.primary.y, fp.mode, fp.min_hfd, fp.max_hfd, fp.max_adu);
-        if !new_star.was_found() {
+        let mut new_star = self.primary;
+        let found = self.find(img, self.primary.x, self.primary.y, fp);
+        if !find_into(&mut new_star, found) {
             self.primary.set_error(new_star.result);
-            self.distance_checker.activate(now_ms);
+            self.distance_checker.activate(now_ms, &mut self.log);
             return Err(lost(new_star.result, &Star::new(), new_star.status_str(), None));
         }
 
         // is it the same star? compare the mass
         if self.cfg.mass_change_threshold_enabled {
             self.mass_checker.set_exposure(view.exposure_ms, view.auto_exposure);
-            if let Some(limits) = self.mass_checker.check_mass(new_star.mass, self.cfg.mass_change_threshold) {
+            let threshold = self.cfg.mass_change_threshold;
+            if let Some(limits) = self.mass_checker.check_mass(new_star.mass, threshold) {
                 self.primary.set_error(FindResult::MassChange);
                 // the status is the primary's: "No star selected" when it
                 // was invalidated
                 let l = lost(FindResult::MassChange, &new_star, self.primary.status_str(), Some(limits));
+                self.log.push(format!(
+                    "UpdateCurrentPosition: star mass new={} exp={} thresh={}% limits=({}, {}, {})",
+                    fmt_f(new_star.mass, 1),
+                    fmt_f(limits[1], 1),
+                    fmt_f(threshold * 100.0, 0),
+                    fmt_f(limits[0], 1),
+                    fmt_f(limits[2], 1),
+                    fmt_f(limits[3], 1)
+                ));
                 self.mass_checker.append_data(new_star.mass, now_ms);
-                self.distance_checker.activate(now_ms);
+                self.distance_checker.activate(now_ms, &mut self.log);
                 return Err(l);
             }
         }
@@ -917,9 +1079,12 @@ impl MultiStar {
             Some(l) => new_star.position().distance(&l),
             None => 0.0,
         };
-        if !self.distance_checker.check_distance(distance, view, self.cfg.jump_tolerance(), now_ms) {
+        let tolerance = self.cfg.jump_tolerance();
+        if !self.distance_checker.check_distance(distance, view, tolerance, now_ms, &mut self.log) {
             self.primary.set_error(FindResult::Error);
-            return Err(lost(FindResult::Error, &new_star, self.primary.status_str(), None));
+            let mut l = lost(FindResult::Error, &new_star, self.primary.status_str(), None);
+            l.jump_rejected = true;
+            return Err(l);
         }
 
         self.primary = new_star;
@@ -932,6 +1097,7 @@ impl MultiStar {
             raw_distance: distance,
             current_distance: None,
             auto_exposure_snr: new_star.snr,
+            status: star_status(&new_star, view),
         };
         if let Some(l) = lock {
             let mut ofs = new_star.position() - l;
@@ -943,7 +1109,7 @@ impl MultiStar {
             } else {
                 self.stars_used = 1;
             }
-            let mount = to_mount.map(|f| f(ofs));
+            let mount = cal.and_then(|c| camera_to_mount_logged(Some(ofs), c, &mut self.log));
             out.camera_ofs = Some(ofs);
             out.mount_ofs = mount;
             out.current_distance = Some((reported, mount.map_or(0.0, |m| m.x.abs())));
@@ -972,7 +1138,6 @@ impl MultiStar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::calibration::{Calibration, camera_to_mount};
     use std::f64::consts::PI;
 
     // ----------------------------------------------------- synthetic frames
@@ -1015,7 +1180,7 @@ mod tests {
         img
     }
 
-    const FP: FindParams = FindParams { mode: FindMode::Centroid, min_hfd: 1.5, max_hfd: 20.0, max_adu: 0 };
+    const FP: FindParams = FindParams { mode: FindMode::Centroid, saturation_by_adu: false, saturation_adu: 0 };
 
     fn guiding_view() -> GuidingView {
         GuidingView {
@@ -1041,17 +1206,21 @@ mod tests {
     #[test]
     fn config_defaults_and_load_rules() {
         let d = MultiStarConfig::default();
-        assert_eq!(d, MultiStarConfig::from_profile(|_| None));
+        assert_eq!(d, MultiStarConfig::from_profile(&|_| None));
         assert_eq!(d.search_region, 15);
         assert!(d.mass_change_threshold_enabled); // 0.5 != 1.0
         assert_eq!(d.mass_change_threshold, 0.5);
         assert!(!d.tolerate_jumps_enabled && d.tolerate_jumps_threshold == 4.0);
         assert!(!d.multi_star);
         assert_eq!((d.min_star_hfd, d.max_star_hfd, d.min_star_snr), (1.5, 20.0, 6.0));
+        assert_eq!(d.auto_sel_downsample, 0);
 
         let profile = |entries: &'static [(&'static str, f64)]| {
-            MultiStarConfig::from_profile(move |k| entries.iter().find(|e| e.0 == k).map(|e| e.1))
+            MultiStarConfig::from_profile(&move |k| entries.iter().find(|e| e.0 == k).map(|e| e.1))
         };
+        // a negative downsample is 0 (Auto)
+        assert_eq!(profile(&[(keys::AUTO_SEL_DOWNSAMPLE, -2.0)]).auto_sel_downsample, 0);
+        assert_eq!(profile(&[(keys::AUTO_SEL_DOWNSAMPLE, 3.0)]).auto_sel_downsample, 3);
         // a threshold of 1.0 disables the check by default
         assert!(!profile(&[(keys::MASS_CHANGE_THRESHOLD, 1.0)]).mass_change_threshold_enabled);
         // a negative one becomes the default, but the enabled default was
@@ -1072,6 +1241,7 @@ mod tests {
         assert!(c.set_mass_change_threshold(-0.1) && c.mass_change_threshold == 0.5);
         assert_eq!(c.profile_values()[0], (keys::SEARCH_REGION, 20.0));
         assert_eq!(c.profile_values()[2], (keys::MASS_CHANGE_THRESHOLD_ENABLED, 1.0));
+        assert_eq!(c.profile_values()[9], (keys::AUTO_SEL_DOWNSAMPLE, 0.0));
     }
 
     #[test]
@@ -1129,31 +1299,39 @@ mod tests {
     #[test]
     fn distance_checker_waits_on_a_jump_then_recovers() {
         let mut dc = DistanceChecker::new();
+        let mut log = Vec::new();
         let view = guiding_view(); // smoothed error 1 px, 20 frames
-        assert!(dc.check_distance(2.0, &view, 4.0, 0));
+        assert!(dc.check_distance(2.0, &view, 4.0, 0, &mut log));
         // a 10 px jump while guiding: rejected for 5 s
-        assert!(!dc.check_distance(10.0, &view, 4.0, 1000));
+        assert!(!dc.check_distance(10.0, &view, 4.0, 1000, &mut log));
         assert_eq!(dc.state(), DistanceState::Waiting);
-        assert!(!dc.check_distance(10.0, &view, 4.0, 5999));
+        assert!(!dc.check_distance(10.0, &view, 4.0, 5999, &mut log));
         // then accepted again, still far
-        assert!(dc.check_distance(10.0, &view, 4.0, 6000));
+        assert!(dc.check_distance(10.0, &view, 4.0, 6000, &mut log));
         assert_eq!(dc.state(), DistanceState::Recovering);
-        assert!(dc.check_distance(1.0, &view, 4.0, 7000));
+        assert!(dc.check_distance(1.0, &view, 4.0, 7000, &mut log));
         assert_eq!(dc.state(), DistanceState::Guiding);
         // with jumps tolerated (9e99) nothing is a jump
-        assert!(dc.check_distance(1e6, &view, 9e99, 8000));
+        assert!(dc.check_distance(1e6, &view, 9e99, 8000, &mut log));
+        // PHD2 tests `distance > threshold`: a NaN passes
+        assert!(dc.check_distance(f64::NAN, &view, 4.0, 9000, &mut log));
+        let reject = "DistanceChecker: reject for large offset (10.00 > 4.00) avgDist = 1.00 count = 20";
+        let begin = "DistanceChecker: begin recovering";
+        let (on, off) = ("DistanceChecker: activated", "DistanceChecker: deactivated");
+        assert_eq!(log, [reject, on, reject, reject, begin, off]);
     }
 
     #[test]
     fn distance_checker_matches_phd2() {
         let mut dc = DistanceChecker::new();
+        let mut log = Vec::new();
         for &(op, dist, guiding, paused, settling, cnt, tol, t, ok, state) in DIST {
             let view = GuidingView { guiding, paused, settling, error_frame_count: cnt, ..guiding_view() };
             let r = if op == 'A' {
-                dc.activate(t);
+                dc.activate(t, &mut log);
                 true
             } else {
-                dc.check_distance(dist, &view, tol, t)
+                dc.check_distance(dist, &view, tol, t, &mut log)
             };
             assert_eq!((r, dc_code(dc.state())), (ok, state), "t = {t}");
         }
@@ -1176,9 +1354,9 @@ mod tests {
         }
         let img = UsImage::new(128, 96);
         for &(x, y, ok) in LOCKS {
-            assert_eq!(ms.is_valid_lock_position(Point::new(x, y), Some(&img)), ok, "({x}, {y})");
+            assert_eq!(ms.is_valid_lock_position(Point::new(x, y), &img), ok, "({x}, {y})");
         }
-        assert!(!ms.is_valid_lock_position(Point::new(50.0, 50.0), None));
+        assert!(!ms.is_valid_lock_position(Point::new(50.0, 50.0), &UsImage::default()));
     }
 
     // -------------------------------------------------------- RefineOffset
@@ -1259,7 +1437,7 @@ mod tests {
         (80.0, 30.0),
         (40.0, 75.0),
         (80.0, 75.0),
-        (110.0, 50.0),
+        (120.0, 50.0),
     ];
 
     /// The field's drift: a jump at 12, then (from 20) a move to the new
@@ -1284,7 +1462,8 @@ mod tests {
 
     /// Star 0 is the primary; 2 never moves in y (zero count), 4 wanders
     /// off from frame 6 (misses), 5 never moves (a hot pixel), 6 is lost on
-    /// frames 9–11.
+    /// frames 9–11, 9 sits so near the right edge that the re-find after
+    /// the lock move looks where it last was.
     fn truth(f: i32) -> Vec<Ts> {
         let (fx, fy) = drift(f);
         (0..10)
@@ -1327,6 +1506,7 @@ mod tests {
         used: u32,
         req: &'static [(i32, i32)],
         stars: Option<&'static [(f64, f64, f64, f64, u32, u32, bool)]>,
+        log: &'static [&'static str],
     }
 
     #[test]
@@ -1398,6 +1578,7 @@ mod tests {
                     .collect();
                 assert_eq!(got, stars, "frame {f}");
             }
+            assert_eq!(ms.take_log(), g.log, "frame {f}");
         }
     }
 
@@ -1476,6 +1657,52 @@ mod tests {
         used: u32,
         list: usize,
         dc: u8,
+        /// `errorInfo->status`: `StarStatus` when found, else the drop's.
+        status: &'static str,
+        /// What UpdateCurrentPosition shows itself (`pFrame->StatusMsg`).
+        msg: &'static str,
+        log: &'static [&'static str],
+    }
+
+    /// One `update_current_position` against its PHD2 row.
+    fn check_frame(ms: &mut MultiStar, r: Result<PositionUpdate, PositionLost>, g: &Frame) {
+        let f = g.f;
+        let p = ms.primary();
+        assert_eq!((p.x, p.y, p.mass, p.snr, p.hfd, p.result.error_code(), p.valid), g.primary, "frame {f}");
+        let pair = |p: Option<Point>| p.map(|p| (p.x, p.y));
+        match r {
+            Ok(up) => {
+                assert!(!g.err && g.info.is_none() && !g.reset && g.msg.is_empty());
+                assert_eq!(up.primary, *p);
+                assert_eq!((pair(up.camera_ofs), pair(up.mount_ofs)), (g.cam, g.mount), "frame {f}");
+                assert_eq!((up.current_distance, up.auto_exposure_snr), (g.ucd, g.adjust), "frame {f}");
+                assert_eq!(up.status, g.status, "frame {f}");
+            }
+            Err(l) => {
+                assert!(g.err && g.cam.is_none() && g.ucd.is_none() && g.adjust == -1.0);
+                let i = l.info;
+                let info = (i.star_error.error_code(), i.star_mass, i.star_snr, i.star_hfd, i.status);
+                assert_eq!((Some(info), l.reset_auto_exposure), (g.info, g.reset), "frame {f}");
+                let msg = match l.mass_limits {
+                    Some(m) => format!("Mass: {} vs {}", fmt_f(i.star_mass, 0), fmt_f(m[1], 0)),
+                    None if l.jump_rejected => "Recovering".into(),
+                    None => String::new(),
+                };
+                assert_eq!((i.status, msg.as_str()), (g.status, g.msg), "frame {f}");
+            }
+        }
+        assert_eq!(
+            (ms.stabilizing, ms.stars_used, ms.guide_stars.len(), dc_code(ms.distance_checker.state())),
+            (g.stab, g.used, g.list, g.dc),
+            "frame {f}"
+        );
+        assert_eq!(ms.take_log(), g.log, "frame {f}");
+    }
+
+    /// The harness's calibration: x angle 0.3, 0.05 rad of orthogonality
+    /// error.
+    fn calibration() -> Calibration {
+        Calibration { x_angle: 0.3, y_angle: 0.3 + PI / 2.0 + 0.05, ..Default::default() }
     }
 
     #[test]
@@ -1489,8 +1716,7 @@ mod tests {
         ];
         let cfg = MultiStarConfig { tolerate_jumps_enabled: true, multi_star: true, ..Default::default() };
         let mut ms = MultiStar::new(cfg);
-        let cal = Calibration { x_angle: 0.3, y_angle: 0.3 + PI / 2.0 + 0.05, ..Default::default() };
-        let to_mount = |p: Point| camera_to_mount(p, &cal);
+        let cal = calibration();
         let mut lock = Point::default();
         let mut golden = FRAMES.iter();
 
@@ -1527,6 +1753,10 @@ mod tests {
                 assert_eq!(ms.primary().position(), Point::new(40.309405180182232, 50.592021395217593));
                 lock = ms.primary().position();
                 ms.lock_position_set();
+                assert_eq!(
+                    ms.take_log(),
+                    ["SetCurrentPosition(40.00,51.00)", "MultiStar: stabilizing after lock position change"]
+                );
                 ms.guide_stars.push(GuideStar::from_star(*ms.primary()));
                 for s in &base[1..] {
                     let found = Star::find(&img, 15, s.x, s.y, FindMode::Centroid, 1.5, 20.0, 0);
@@ -1547,34 +1777,77 @@ mod tests {
                 error_smoothed: 0.6,
                 ..guiding_view()
             };
-            let r =
-                ms.update_current_position(&img, &FP, Some(lock), &view, 1_000_000 + 2000 * f as i64, Some(&to_mount));
+            let r = ms.update_current_position(&img, &FP, Some(lock), &view, 1_000_000 + 2000 * f as i64, Some(&cal));
             let g = golden.next().unwrap();
             assert_eq!(g.f, f);
-            let p = ms.primary();
-            assert_eq!((p.x, p.y, p.mass, p.snr, p.hfd, p.result.error_code(), p.valid), g.primary, "frame {f}");
-            let pair = |p: Option<Point>| p.map(|p| (p.x, p.y));
-            match r {
-                Ok(up) => {
-                    assert!(!g.err && g.info.is_none() && !g.reset);
-                    assert_eq!(up.primary, *p);
-                    assert_eq!((pair(up.camera_ofs), pair(up.mount_ofs)), (g.cam, g.mount), "frame {f}");
-                    assert_eq!((up.current_distance, up.auto_exposure_snr), (g.ucd, g.adjust), "frame {f}");
-                }
-                Err(l) => {
-                    assert!(g.err && g.cam.is_none() && g.ucd.is_none() && g.adjust == -1.0);
-                    let i = l.info;
-                    let info = (i.star_error.error_code(), i.star_mass, i.star_snr, i.star_hfd, i.status);
-                    assert_eq!((Some(info), l.reset_auto_exposure), (g.info, g.reset), "frame {f}");
-                }
-            }
-            assert_eq!(
-                (ms.stabilizing, ms.stars_used, ms.guide_stars.len(), dc_code(ms.distance_checker.state())),
-                (g.stab, g.used, g.list, g.dc),
-                "frame {f}"
-            );
+            check_frame(&mut ms, r, g);
         }
         assert!(golden.next().is_none());
+    }
+
+    /// A lone star under auto exposure, guiding with jumps tolerated: a
+    /// 5 px jump is held off for 5 s then taken (Recovering), an RA-only
+    /// frame ignores a Dec jump, a mass change forces the 2.0 tolerance, a
+    /// lost star activates the checker.
+    #[test]
+    fn update_current_position_jumps_match_phd2() {
+        let cfg = MultiStarConfig { tolerate_jumps_enabled: true, ..Default::default() };
+        let mut ms = MultiStar::new(cfg);
+        let cal = calibration();
+        let mut lock = Point::default();
+        let mut golden = JUMPS.iter();
+        for f in 0..=14 {
+            let (mut dx, mut dy, mut amp) = (0.1 * (0.9 * f as f64).sin(), 0.1 * (0.7 * f as f64).cos(), 3000.0);
+            if (4..=8).contains(&f) {
+                dx += 5.0;
+                dy += 1.0;
+            }
+            match f {
+                10 => dy += 5.0,
+                11 => amp *= 3.0,
+                13 => amp = 0.0,
+                _ => {}
+            }
+            let img = render(100, 80, &[G { x: 50.3 + dx, y: 40.6 + dy, amp, sigma: 1.6 }]);
+            if f == 0 {
+                assert!(ms.set_current_position(&img, Point::new(50.0, 41.0), &FP));
+                lock = ms.primary().position();
+                ms.take_log();
+                continue;
+            }
+            let view = GuidingView {
+                ra_only: f == 10,
+                error_smoothed: 0.6,
+                exposure_ms: 1500,
+                auto_exposure: true,
+                ..guiding_view()
+            };
+            let r = ms.update_current_position(&img, &FP, Some(lock), &view, 2_000_000 + 2000 * f as i64, Some(&cal));
+            let g = golden.next().unwrap();
+            assert_eq!(g.f, f);
+            check_frame(&mut ms, r, g);
+        }
+        assert!(golden.next().is_none());
+    }
+
+    #[test]
+    fn star_status_and_kept_peak() {
+        let star = Star { mass: 1234.5, snr: 12.34, result: FindResult::Saturated, valid: true, ..Star::new() };
+        let view = GuidingView { exposure_ms: 2500, ..Default::default() };
+        assert_eq!(star_status(&star, &view), "m=1234 SNR=12.3 Saturated");
+        let auto = GuidingView { auto_exposure: true, ..view };
+        assert_eq!(star_status(&star, &auto), "m=1234 SNR=12.3 Saturated Exp=2.5 s");
+        // the exposure is in ms: the "ms" branch only shows at 0
+        assert_eq!(star_status(&star, &GuidingView { exposure_ms: 0, ..auto }), "m=1234 SNR=12.3 Saturated Exp=0 ms");
+
+        // a find that fails on its bounds keeps the kept star's peak, any
+        // other result brings its own
+        let mut kept = Star { peak_val: 900, ..star };
+        assert!(!find_into(&mut kept, Star { x: 3.0, ..Star::new() }));
+        assert_eq!((kept.x, kept.peak_val, kept.mass), (3.0, 900, 0.0));
+        let low = Star { result: FindResult::LowSnr, valid: true, ..Star::new() };
+        assert!(!find_into(&mut kept, low));
+        assert_eq!(kept.peak_val, 0);
     }
 
     // ---------------------------------------------------- star selection
@@ -1593,6 +1866,7 @@ mod tests {
         assert!(ms.primary().is_valid() && !ms.is_locked());
         assert!(ms.set_current_position(&img, Point::new(51.0, 40.0), &FP));
         assert!(ms.is_locked());
+        assert_eq!(ms.take_log()[..2], ["SetCurrentPosition(0.00,40.00)", "SetCurrentPosition(100.00,40.00)"]);
     }
 
     #[test]
@@ -1606,36 +1880,61 @@ mod tests {
                 G { x: 30.4, y: 90.8, amp: 2000.0, sigma: 1.6 },
             ],
         );
-        let af = AutoFindParams {
-            downsample: 1,
-            min_hfd: 1.5,
-            max_hfd: 20.0,
-            min_snr: 6.0,
-            saturation_by_adu: true,
-            saturation_adu: 0,
-        };
+        let fp = FindParams { mode: FindMode::Peak, saturation_by_adu: true, saturation_adu: 0 };
         let mut ms = MultiStar::new(MultiStarConfig { multi_star: true, ..Default::default() });
         ms.primary_dist_stats.add_value(1.0);
-        let r = ms.auto_select(&img, None, 0, false, &af);
+        let r = ms.auto_select(&img, None, 0, false, 1.0, &fp);
         let s = r.star.unwrap();
         assert!((s.x - 50.3).abs() < 0.05 && (s.y - 40.6).abs() < 0.05);
         assert_eq!(*ms.primary(), s);
         assert_eq!(r.saturation_adu_set, Some(65535));
         assert_eq!(ms.guide_stars().len(), 3);
         assert_eq!(ms.primary_dist_stats.count(), 0);
+        assert_eq!(
+            ms.take_log(),
+            [
+                "GuiderMultiStar::AutoSelect enter",
+                "MultiStar: List (3): {50.30, 40.60}(212.9), {110.70, 80.19}(146.7), {30.42, 90.82}(118.2), "
+            ]
+        );
 
         // subframes or single-star mode: the primary alone
-        assert_eq!(ms.auto_select(&img, None, 0, true, &af).star, Some(s));
+        assert_eq!(ms.auto_select(&img, None, 0, true, 1.0, &fp).star, Some(s));
         assert_eq!(ms.guide_stars().len(), 1);
         ms.set_multi_star_mode(false);
-        ms.auto_select(&img, None, 0, false, &af);
+        ms.auto_select(&img, None, 0, false, 1.0, &fp);
         assert_eq!(ms.guide_stars().len(), 1);
 
         // the edge allowance keeps the largest uncalibrated distance
         assert_eq!(autoselect_edge_allowance(None, None), 0);
         assert_eq!(autoselect_edge_allowance(Some(25), Some(40)), 40);
-        assert!(ms.auto_select(&img, None, 45, false, &af).star.is_none());
-        assert!(ms.auto_select(&UsImage::default(), None, 0, false, &af).star.is_none());
+        ms.take_log();
+        assert!(ms.auto_select(&img, None, 45, false, 1.0, &fp).star.is_none());
+        assert_eq!(ms.take_log(), ["GuiderMultiStar::AutoSelect enter", "GuiderMultiStar::AutoSelect failed."]);
+        assert!(ms.auto_select(&UsImage::default(), None, 0, false, 1.0, &fp).star.is_none());
+        assert_eq!(ms.take_log(), ["GuiderMultiStar::AutoSelect enter"]);
+    }
+
+    /// The final centroid find's saturation level: the camera's when
+    /// saturation is by ADU (a level AutoFind keeps), 0 (the flat-top test)
+    /// when it is not.
+    #[test]
+    fn auto_select_saturation_level() {
+        // a lone star peaking near 7000 ADU over a 1000 ADU sky
+        let img = render(160, 120, &[G { x: 70.3, y: 60.6, amp: 6000.0, sigma: 1.6 }]);
+        let mut ms = MultiStar::new(MultiStarConfig::default());
+        // a preset 5000: AutoFind keeps it and, the star being over it,
+        // takes it on its last pass; the find calls it saturated
+        let preset = FindParams { mode: FindMode::Centroid, saturation_by_adu: true, saturation_adu: 5000 };
+        let r = ms.auto_select(&img, None, 0, false, 1.0, &preset);
+        assert_eq!(r.saturation_adu_set, None);
+        assert_eq!(r.star.unwrap().result, FindResult::Saturated);
+        // the same level unused: the find runs the flat-top test, which a
+        // Gaussian peak passes
+        let off = FindParams { saturation_by_adu: false, ..preset };
+        let r = ms.auto_select(&img, None, 0, false, 1.0, &off);
+        assert_eq!(r.saturation_adu_set, None);
+        assert_eq!(r.star.unwrap().result, FindResult::Ok);
     }
 
     #[test]
@@ -1661,6 +1960,12 @@ mod tests {
         assert_eq!(ms.guide_stars()[0].reference_point, Point::new(30.0, 40.0));
         ms.keep_primary_only();
         assert_eq!(ms.guide_stars().len(), 1);
+        // only an actual clear and a multi-star lock move are logged
+        ms.clear_secondary_stars();
+        assert_eq!(
+            ms.take_log(),
+            ["MultiStar: stabilizing after lock position change", "MultiStar: secondary guide stars cleared"]
+        );
     }
 
     // ------------------------------------------------- goldens from PHD2
@@ -1669,7 +1974,8 @@ mod tests {
     // GetBoundingBox, IsValidLockPosition, SetCurrentPosition,
     // UpdateCurrentPosition and RefineOffset compiled verbatim with
     // star.cpp's Find and guiding_stats.cpp, wx stubbed, on the frames and
-    // the scripted finder above.
+    // the scripted finder above. The logs are their debug lines, plus
+    // mount.cpp's CameraToMount lines, without Star::Find's.
 
     #[rustfmt::skip]
     const MASS: &[(i64, i32, bool, f64, Option<[f64; 4]>)] = &[
@@ -1773,57 +2079,114 @@ mod tests {
         // secondary 2 found=1 (100.11496060491679, 75.408806715459747) snr 88.783482697502421
         // secondary 3 found=1 (20.397074292351501, 20.811296696306965) snr 74.387646882557689
         // secondary 4 found=1 (64.209636740321315, 80.288736222010868) snr 98.79011558138852
-        Frame { f: 1, err: false, info: None, primary: (40.583329130655414, 50.543549573221618, 48077.63013698638, 147.74650161628145, 3.3045023353112399, 0, true), cam: Some((0.27392395047318274, -0.048471821995974551)), mount: Some((0.24736514227896469, -0.11473482031655224)), ucd: Some((0.27817952507408611, 0.24736514227896469)), adjust: 147.74650161628145, reset: false, stab: true, used: 1, list: 5, dc: 0 },
-        Frame { f: 2, err: false, info: None, primary: (40.644129545484333, 50.399832291453549, 48073.452054794463, 147.21599176926148, 3.4535146534784551, 0, true), cam: Some((0.33472436530210103, -0.19218910376404352)), mount: Some((0.26297863631009821, -0.26902654318911484)), ucd: Some((0.38597545560892943, 0.26297863631009821)), adjust: 147.21599176926148, reset: false, stab: true, used: 1, list: 5, dc: 0 },
-        Frame { f: 3, err: false, info: None, primary: (40.456599808566637, 50.225725922818782, 48022.71917808213, 147.35443069948099, 3.6683375204259177, 0, true), cam: Some((0.14719462838440478, -0.36629547239881077)), mount: Some((0.032372685796495944, -0.39132476706687636)), ucd: Some((0.39476402030211794, 0.032372685796495944)), adjust: 147.35443069948099, reset: false, stab: true, used: 1, list: 5, dc: 0 },
-        Frame { f: 4, err: false, info: None, primary: (40.149596880434586, 50.074536283760636, 47949.250000000044, 147.42966916916416, 3.876388760401523, 0, true), cam: Some((-0.15980829974764532, -0.5174851114569563)), mount: Some((-0.30559800709597401, -0.46186054646166141)), ucd: Some((0.54159905211129367, 0.30559800709597401)), adjust: 147.42966916916416, reset: false, stab: true, used: 1, list: 5, dc: 0 },
-        Frame { f: 5, err: false, info: None, primary: (39.965553929796542, 50.00362558964563, 47876.010273972657, 147.49559514513234, 3.9948378671706455, 0, true), cam: Some((-0.34385125038568987, -0.58839580557196314)), mount: Some((-0.50237649638620641, -0.48503384416107853)), ucd: Some((0.68150077505934048, 0.50237649638620641)), adjust: 147.49559514513234, reset: false, stab: true, used: 1, list: 5, dc: 0 },
-        Frame { f: 6, err: false, info: None, primary: (40.036794517532257, 50.029940932528426, 47913.63013698635, 147.46420854025968, 3.9532296499310515, 0, true), cam: Some((-0.27261066264997424, -0.56208046268916689)), mount: Some((-0.42654104784843527, -0.47716178502579765)), ucd: Some((0.62470074429868094, 0.42654104784843527)), adjust: 147.46420854025968, reset: false, stab: true, used: 1, list: 5, dc: 0 },
-        Frame { f: 7, err: false, info: None, primary: (40.311737252926441, 50.145108533431504, 47981.869863013751, 147.39029460098257, 3.7636781817077796, 0, true), cam: Some((0.0023320727442097677, -0.44691286178608891)), mount: Some((-0.12984386708679685, -0.43359638723698118)), ucd: Some((0.44691894633492113, 0.12984386708679685)), adjust: 147.39029460098257, reset: false, stab: true, used: 1, list: 5, dc: 0 },
-        Frame { f: 8, err: false, info: None, primary: (40.583266939086826, 50.31781831012772, 48043.065068493088, 147.27056361940336, 3.4716808870966815, 0, true), cam: Some((0.27386175890459441, -0.2742030850898729)), mount: Some((0.18059757888474232, -0.33343325865636297)), ucd: Some((0.38754044287418865, 0.18059757888474232)), adjust: 147.27056361940336, reset: false, stab: true, used: 1, list: 5, dc: 0 },
-        Frame { f: 9, err: false, info: None, primary: (40.646214142118652, 50.486102314210108, 48041.037671232814, 147.26121287620083, 3.4339375135048669, 0, true), cam: Some((0.33680896193641985, -0.10591908100748526)), mount: Some((0.29046466249366798, -0.18595418397980468)), ucd: Some((0.35307099648959972, 0.29046466249366798)), adjust: 147.26121287620083, reset: false, stab: true, used: 1, list: 5, dc: 0 },
-        Frame { f: 10, err: false, info: None, primary: (40.44879642081947, 50.584334746778609, 48195.006849315156, 147.46475929047398, 3.3199528907396649, 0, true), cam: Some((0.13939124063723796, -0.0076866484389839229)), mount: Some((0.13089397851001983, -0.041933633972906871)), ucd: Some((0.1396030176271735, 0.13089397851001983)), adjust: 147.46475929047398, reset: false, stab: false, used: 1, list: 5, dc: 0 },
-        Frame { f: 11, err: false, info: None, primary: (40.1449160230149, 50.581795375324447, 48144.510273972672, 147.4558695620585, 3.666704480053157, 0, true), cam: Some((-0.16448915716733126, -0.010226019893146088)), mount: Some((-0.16016448941961375, 0.030787151038507824)), ucd: Some((0.16480671803198443, 0.16016448941961375)), adjust: 147.4558695620585, reset: false, stab: false, used: 5, list: 4, dc: 0 },
-        Frame { f: 12, err: true, info: Some((7, 144517.61643835602, 263.20197176516785, 3.6331288622332973, "Star lost - mass changed")), primary: (40.1449160230149, 50.581795375324447, 48144.510273972672, 147.4558695620585, 3.666704480053157, 7, true), cam: None, mount: None, ucd: None, adjust: -1.0, reset: true, stab: false, used: 5, list: 4, dc: 1 },
-        Frame { f: 13, err: false, info: None, primary: (41.455767422586128, 49.792499678484162, 47932.191780821973, 147.48416780345471, 3.7019943798894865, 0, true), cam: Some((-1.8536377575961041, 1.2004782832665697)), mount: Some((-1.4160821970891371, 1.6217556409038012)), ucd: Some((2.2084204864519266, 1.4160821970891371)), adjust: 147.48416780345471, reset: false, stab: true, used: 1, list: 4, dc: 0 },
-        Frame { f: 14, err: false, info: None, primary: (42.187462857032585, 49.276516353269066, 47916.250000000058, 147.15016153399532, 3.6708714390330228, 0, true), cam: Some((-1.1219423231496464, 0.68449495805147365)), mount: Some((-0.86955034853719271, 0.94078864025681963)), ucd: Some((1.3142632628481685, 0.86955034853719271)), adjust: 147.15016153399532, reset: false, stab: true, used: 1, list: 4, dc: 0 },
-        Frame { f: 15, err: false, info: None, primary: (42.683264176645025, 49.000390267242011, 47956.250000000029, 147.16705538801094, 3.9154715565556004, 0, true), cam: Some((-0.62614100353720659, 0.40836887202441829)), mount: Some((-0.47749409456210451, 0.55058343607112858)), ucd: Some((0.74754109716394579, 0.47749409456210451)), adjust: 147.16705538801094, reset: false, stab: true, used: 1, list: 4, dc: 0 },
-        Frame { f: 16, err: false, info: None, primary: (42.958583677410104, 48.884121972431203, 47903.818493150713, 147.27431552703001, 3.9321815182282109, 0, true), cam: Some((-0.35082150277212776, 0.29210057721360982)), mount: Some((-0.24883095982403119, 0.36981450642856184)), ucd: Some((0.45650681705295276, 0.24883095982403119)), adjust: 147.27431552703001, reset: false, stab: true, used: 1, list: 4, dc: 0 },
-        Frame { f: 17, err: false, info: None, primary: (43.058766856934085, 48.812297540727798, 47898.818493150713, 147.26590344216862, 3.9074120619326695, 0, true), cam: Some((-0.25063832324814683, 0.22027614551020491)), mount: Some((-0.17434788372847437, 0.27543720710388547)), ucd: Some((0.33367821229663092, 0.17434788372847437)), adjust: 147.26590344216862, reset: false, stab: true, used: 1, list: 4, dc: 0 },
-        Frame { f: 18, err: false, info: None, primary: (43.107401045585242, 48.725989987810713, 47858.102739726048, 147.29547169127395, 3.826475675237905, 0, true), cam: Some((-0.20200413459699007, 0.13396859259312066)), mount: Some((-0.15339149456549708, 0.17978045616764618)), ucd: Some((0.24239070567094859, 0.15339149456549708)), adjust: 147.29547169127395, reset: false, stab: false, used: 1, list: 4, dc: 0 },
-        Frame { f: 19, err: false, info: None, primary: (43.19063141723823, 48.636750626524986, 47853.102739726048, 147.28705902108851, 3.6549620165090517, 0, true), cam: Some((0.014706926395224511, -0.046285529610287791)), mount: Some((0.00037175415238068919, -0.048485176403507094)), ucd: Some((0.048565872125386357, 0.00037175415238068919)), adjust: 147.28705902108851, reset: false, stab: false, used: 4, list: 4, dc: 0 },
-        Frame { f: 20, err: false, info: None, primary: (43.277253865250557, 48.589759743162617, 47848.62328767126, 147.26826550628525, 3.5443648235348082, 0, true), cam: Some((-0.032151314931674335, -0.0022616520549760821)), mount: Some((-0.031383688210280009, 0.0057630198396815633)), ucd: Some((0.032230763594018101, 0.031383688210280009)), adjust: 147.26826550628525, reset: false, stab: false, used: 4, list: 4, dc: 0 },
-        Frame { f: 21, err: false, info: None, primary: (43.299083028628225, 48.603365501965662, 47843.62328767126, 147.2598515282063, 3.5021894972519316, 0, true), cam: Some((-0.010322151554007064, 0.011344106748069294)), mount: Some((-0.0065087152552497978, 0.013545187103902458)), ucd: Some((0.015337391258472926, 0.0065087152552497978)), adjust: 147.2598515282063, reset: false, stab: false, used: 4, list: 4, dc: 0 },
-        Frame { f: 22, err: false, info: None, primary: (43.256265839963262, 48.644660593893406, 47845.863013698552, 147.26907956240959, 3.6141584603374479, 0, true), cam: Some((-0.053139340218969267, 0.052639198675812793)), mount: Some((-0.035210003848077723, 0.06414965662823563)), ucd: Some((0.074797558223106825, 0.035210003848077723)), adjust: 147.26907956240959, reset: false, stab: false, used: 4, list: 4, dc: 0 },
-        Frame { f: 23, err: false, info: None, primary: (43.231974670330942, 48.65852472829269, 47846.863013698552, 147.27076231249563, 3.6436196434750854, 0, true), cam: Some((0.059360455806203881, -0.023009677132058703)), mount: Some((0.049909384901517827, -0.036980373782411022)), ucd: Some((0.063664031880190167, 0.049909384901517827)), adjust: 147.27076231249563, reset: false, stab: false, used: 4, list: 4, dc: 0 },
-        Frame { f: 24, err: false, info: None, primary: (43.272616123968639, 48.623355138601482, 47844.62328767126, 147.2615343611572, 3.5616966687006064, 0, true), cam: Some((-0.03678905621359263, 0.031333743383889612)), mount: Some((-0.025886173481057706, 0.039461411347824403)), ucd: Some((0.048324301666287164, 0.025886173481057706)), adjust: 147.2615343611572, reset: false, stab: false, used: 4, list: 4, dc: 0 },
+        Frame { f: 1, err: false, info: None, primary: (40.583329130655414, 50.543549573221618, 48077.63013698638, 147.74650161628145, 3.3045023353112399, 0, true), cam: Some((0.27392395047318274, -0.048471821995974551)), mount: Some((0.24736514227896469, -0.11473482031655224)), ucd: Some((0.27817952507408611, 0.24736514227896469)), adjust: 147.74650161628145, reset: false, stab: true, used: 1, list: 5, dc: 0,
+            status: "m=48078 SNR=147.7", msg: "", log: &["CameraToMount -- cameraTheta (-0.18) - m_xAngle (0.30) = xAngle (-0.48 = -0.48)", "CameraToMount -- cameraTheta (-0.18) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-0.43 = -0.43)", "CameraToMount -- cameraX=0.27 cameraY=-0.05 hyp=0.28 cameraTheta=-0.18 mountX=0.25 mountY=-0.11, mountTheta=-0.43", ] },
+        Frame { f: 2, err: false, info: None, primary: (40.644129545484333, 50.399832291453549, 48073.452054794463, 147.21599176926148, 3.4535146534784551, 0, true), cam: Some((0.33472436530210103, -0.19218910376404352)), mount: Some((0.26297863631009821, -0.26902654318911484)), ucd: Some((0.38597545560892943, 0.26297863631009821)), adjust: 147.21599176926148, reset: false, stab: true, used: 1, list: 5, dc: 0,
+            status: "m=48073 SNR=147.2", msg: "", log: &["CameraToMount -- cameraTheta (-0.52) - m_xAngle (0.30) = xAngle (-0.82 = -0.82)", "CameraToMount -- cameraTheta (-0.52) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-0.77 = -0.77)", "CameraToMount -- cameraX=0.33 cameraY=-0.19 hyp=0.39 cameraTheta=-0.52 mountX=0.26 mountY=-0.27, mountTheta=-0.80", ] },
+        Frame { f: 3, err: false, info: None, primary: (40.456599808566637, 50.225725922818782, 48022.71917808213, 147.35443069948099, 3.6683375204259177, 0, true), cam: Some((0.14719462838440478, -0.36629547239881077)), mount: Some((0.032372685796495944, -0.39132476706687636)), ucd: Some((0.39476402030211794, 0.032372685796495944)), adjust: 147.35443069948099, reset: false, stab: true, used: 1, list: 5, dc: 0,
+            status: "m=48023 SNR=147.4", msg: "", log: &["CameraToMount -- cameraTheta (-1.19) - m_xAngle (0.30) = xAngle (-1.49 = -1.49)", "CameraToMount -- cameraTheta (-1.19) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-1.44 = -1.44)", "CameraToMount -- cameraX=0.15 cameraY=-0.37 hyp=0.39 cameraTheta=-1.19 mountX=0.03 mountY=-0.39, mountTheta=-1.49", ] },
+        Frame { f: 4, err: false, info: None, primary: (40.149596880434586, 50.074536283760636, 47949.250000000044, 147.42966916916416, 3.876388760401523, 0, true), cam: Some((-0.15980829974764532, -0.5174851114569563)), mount: Some((-0.30559800709597401, -0.46186054646166141)), ucd: Some((0.54159905211129367, 0.30559800709597401)), adjust: 147.42966916916416, reset: false, stab: true, used: 1, list: 5, dc: 0,
+            status: "m=47949 SNR=147.4", msg: "", log: &["CameraToMount -- cameraTheta (-1.87) - m_xAngle (0.30) = xAngle (-2.17 = -2.17)", "CameraToMount -- cameraTheta (-1.87) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-2.12 = -2.12)", "CameraToMount -- cameraX=-0.16 cameraY=-0.52 hyp=0.54 cameraTheta=-1.87 mountX=-0.31 mountY=-0.46, mountTheta=-2.16", ] },
+        Frame { f: 5, err: false, info: None, primary: (39.965553929796542, 50.00362558964563, 47876.010273972657, 147.49559514513234, 3.9948378671706455, 0, true), cam: Some((-0.34385125038568987, -0.58839580557196314)), mount: Some((-0.50237649638620641, -0.48503384416107853)), ucd: Some((0.68150077505934048, 0.50237649638620641)), adjust: 147.49559514513234, reset: false, stab: true, used: 1, list: 5, dc: 0,
+            status: "m=47876 SNR=147.5", msg: "", log: &["CameraToMount -- cameraTheta (-2.10) - m_xAngle (0.30) = xAngle (-2.40 = -2.40)", "CameraToMount -- cameraTheta (-2.10) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-2.35 = -2.35)", "CameraToMount -- cameraX=-0.34 cameraY=-0.59 hyp=0.68 cameraTheta=-2.10 mountX=-0.50 mountY=-0.49, mountTheta=-2.37", ] },
+        Frame { f: 6, err: false, info: None, primary: (40.036794517532257, 50.029940932528426, 47913.63013698635, 147.46420854025968, 3.9532296499310515, 0, true), cam: Some((-0.27261066264997424, -0.56208046268916689)), mount: Some((-0.42654104784843527, -0.47716178502579765)), ucd: Some((0.62470074429868094, 0.42654104784843527)), adjust: 147.46420854025968, reset: false, stab: true, used: 1, list: 5, dc: 0,
+            status: "m=47914 SNR=147.5", msg: "", log: &["CameraToMount -- cameraTheta (-2.02) - m_xAngle (0.30) = xAngle (-2.32 = -2.32)", "CameraToMount -- cameraTheta (-2.02) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-2.27 = -2.27)", "CameraToMount -- cameraX=-0.27 cameraY=-0.56 hyp=0.62 cameraTheta=-2.02 mountX=-0.43 mountY=-0.48, mountTheta=-2.30", ] },
+        Frame { f: 7, err: false, info: None, primary: (40.311737252926441, 50.145108533431504, 47981.869863013751, 147.39029460098257, 3.7636781817077796, 0, true), cam: Some((0.0023320727442097677, -0.44691286178608891)), mount: Some((-0.12984386708679685, -0.43359638723698118)), ucd: Some((0.44691894633492113, 0.12984386708679685)), adjust: 147.39029460098257, reset: false, stab: true, used: 1, list: 5, dc: 0,
+            status: "m=47982 SNR=147.4", msg: "", log: &["CameraToMount -- cameraTheta (-1.57) - m_xAngle (0.30) = xAngle (-1.87 = -1.87)", "CameraToMount -- cameraTheta (-1.57) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-1.82 = -1.82)", "CameraToMount -- cameraX=0.00 cameraY=-0.45 hyp=0.45 cameraTheta=-1.57 mountX=-0.13 mountY=-0.43, mountTheta=-1.86", ] },
+        Frame { f: 8, err: false, info: None, primary: (40.583266939086826, 50.31781831012772, 48043.065068493088, 147.27056361940336, 3.4716808870966815, 0, true), cam: Some((0.27386175890459441, -0.2742030850898729)), mount: Some((0.18059757888474232, -0.33343325865636297)), ucd: Some((0.38754044287418865, 0.18059757888474232)), adjust: 147.27056361940336, reset: false, stab: true, used: 1, list: 5, dc: 0,
+            status: "m=48043 SNR=147.3", msg: "", log: &["CameraToMount -- cameraTheta (-0.79) - m_xAngle (0.30) = xAngle (-1.09 = -1.09)", "CameraToMount -- cameraTheta (-0.79) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-1.04 = -1.04)", "CameraToMount -- cameraX=0.27 cameraY=-0.27 hyp=0.39 cameraTheta=-0.79 mountX=0.18 mountY=-0.33, mountTheta=-1.07", ] },
+        Frame { f: 9, err: false, info: None, primary: (40.646214142118652, 50.486102314210108, 48041.037671232814, 147.26121287620083, 3.4339375135048669, 0, true), cam: Some((0.33680896193641985, -0.10591908100748526)), mount: Some((0.29046466249366798, -0.18595418397980468)), ucd: Some((0.35307099648959972, 0.29046466249366798)), adjust: 147.26121287620083, reset: false, stab: true, used: 1, list: 5, dc: 0,
+            status: "m=48041 SNR=147.3", msg: "", log: &["CameraToMount -- cameraTheta (-0.30) - m_xAngle (0.30) = xAngle (-0.60 = -0.60)", "CameraToMount -- cameraTheta (-0.30) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-0.55 = -0.55)", "CameraToMount -- cameraX=0.34 cameraY=-0.11 hyp=0.35 cameraTheta=-0.30 mountX=0.29 mountY=-0.19, mountTheta=-0.57", ] },
+        Frame { f: 10, err: false, info: None, primary: (40.44879642081947, 50.584334746778609, 48195.006849315156, 147.46475929047398, 3.3199528907396649, 0, true), cam: Some((0.13939124063723796, -0.0076866484389839229)), mount: Some((0.13089397851001983, -0.041933633972906871)), ucd: Some((0.1396030176271735, 0.13089397851001983)), adjust: 147.46475929047398, reset: false, stab: false, used: 1, list: 5, dc: 0,
+            status: "m=48195 SNR=147.5", msg: "", log: &["MultiStar: exiting stabilization period", "MultiStar: updating star positions after lock position change", "CameraToMount -- cameraTheta (-0.06) - m_xAngle (0.30) = xAngle (-0.36 = -0.36)", "CameraToMount -- cameraTheta (-0.06) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-0.31 = -0.31)", "CameraToMount -- cameraX=0.14 cameraY=-0.01 hyp=0.14 cameraTheta=-0.06 mountX=0.13 mountY=-0.04, mountTheta=-0.31", ] },
+        Frame { f: 11, err: false, info: None, primary: (40.1449160230149, 50.581795375324447, 48144.510273972672, 147.4558695620585, 3.666704480053157, 0, true), cam: Some((-0.16448915716733126, -0.010226019893146088)), mount: Some((-0.16016448941961375, 0.030787151038507824)), ucd: Some((0.16480671803198443, 0.16016448941961375)), adjust: 147.4558695620585, reset: false, stab: false, used: 5, list: 4, dc: 0,
+            status: "m=48145 SNR=147.5", msg: "", log: &["MultiStar: [#1 -0.31,-0.01,0.80,U] [#2 -0.30,-0.00,0.60,U] [#3 -0.28,-0.01,0.50,U] [#4 0.00,0.00,0.00,DZ] ", "single-star, 3 included, MultiStar: {-0.25, -0.01}, one-star: {-0.16, -0.01}", "CameraToMount -- cameraTheta (-3.08) - m_xAngle (0.30) = xAngle (-3.38 = 2.90)", "CameraToMount -- cameraTheta (-3.08) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-3.33 = 2.95)", "CameraToMount -- cameraX=-0.16 cameraY=-0.01 hyp=0.16 cameraTheta=-3.08 mountX=-0.16 mountY=0.03, mountTheta=2.95", ] },
+        Frame { f: 12, err: true, info: Some((7, 144517.61643835602, 263.20197176516785, 3.6331288622332973, "Star lost - mass changed")), primary: (40.1449160230149, 50.581795375324447, 48144.510273972672, 147.4558695620585, 3.666704480053157, 7, true), cam: None, mount: None, ucd: None, adjust: -1.0, reset: true, stab: false, used: 5, list: 4, dc: 1,
+            status: "Star lost - mass changed", msg: "Mass: 144518 vs 48041", log: &["UpdateCurrentPosition: star mass new=144517.6 exp=48041.0 thresh=50% limits=(23995.6, 72061.6, 96082.1)", "DistanceChecker: activated", ] },
+        Frame { f: 13, err: false, info: None, primary: (41.455767422586128, 49.792499678484162, 47932.191780821973, 147.48416780345471, 3.7019943798894865, 0, true), cam: Some((-1.8536377575961041, 1.2004782832665697)), mount: Some((-1.4160821970891371, 1.6217556409038012)), ucd: Some((2.2084204864519266, 1.4160821970891371)), adjust: 147.48416780345471, reset: false, stab: true, used: 1, list: 4, dc: 0,
+            status: "m=47932 SNR=147.5", msg: "", log: &["MultiStar: stabilizing after lock position change", "DistanceChecker: deactivated", "CameraToMount -- cameraTheta (2.57) - m_xAngle (0.30) = xAngle (2.27 = 2.27)", "CameraToMount -- cameraTheta (2.57) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (2.32 = 2.32)", "CameraToMount -- cameraX=-1.85 cameraY=1.20 hyp=2.21 cameraTheta=2.57 mountX=-1.42 mountY=1.62, mountTheta=2.29", ] },
+        Frame { f: 14, err: false, info: None, primary: (42.187462857032585, 49.276516353269066, 47916.250000000058, 147.15016153399532, 3.6708714390330228, 0, true), cam: Some((-1.1219423231496464, 0.68449495805147365)), mount: Some((-0.86955034853719271, 0.94078864025681963)), ucd: Some((1.3142632628481685, 0.86955034853719271)), adjust: 147.15016153399532, reset: false, stab: true, used: 1, list: 4, dc: 0,
+            status: "m=47916 SNR=147.2", msg: "", log: &["CameraToMount -- cameraTheta (2.59) - m_xAngle (0.30) = xAngle (2.29 = 2.29)", "CameraToMount -- cameraTheta (2.59) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (2.34 = 2.34)", "CameraToMount -- cameraX=-1.12 cameraY=0.68 hyp=1.31 cameraTheta=2.59 mountX=-0.87 mountY=0.94, mountTheta=2.32", ] },
+        Frame { f: 15, err: false, info: None, primary: (42.683264176645025, 49.000390267242011, 47956.250000000029, 147.16705538801094, 3.9154715565556004, 0, true), cam: Some((-0.62614100353720659, 0.40836887202441829)), mount: Some((-0.47749409456210451, 0.55058343607112858)), ucd: Some((0.74754109716394579, 0.47749409456210451)), adjust: 147.16705538801094, reset: false, stab: true, used: 1, list: 4, dc: 0,
+            status: "m=47956 SNR=147.2", msg: "", log: &["CameraToMount -- cameraTheta (2.56) - m_xAngle (0.30) = xAngle (2.26 = 2.26)", "CameraToMount -- cameraTheta (2.56) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (2.31 = 2.31)", "CameraToMount -- cameraX=-0.63 cameraY=0.41 hyp=0.75 cameraTheta=2.56 mountX=-0.48 mountY=0.55, mountTheta=2.29", ] },
+        Frame { f: 16, err: false, info: None, primary: (42.958583677410104, 48.884121972431203, 47903.818493150713, 147.27431552703001, 3.9321815182282109, 0, true), cam: Some((-0.35082150277212776, 0.29210057721360982)), mount: Some((-0.24883095982403119, 0.36981450642856184)), ucd: Some((0.45650681705295276, 0.24883095982403119)), adjust: 147.27431552703001, reset: false, stab: true, used: 1, list: 4, dc: 0,
+            status: "m=47904 SNR=147.3", msg: "", log: &["CameraToMount -- cameraTheta (2.45) - m_xAngle (0.30) = xAngle (2.15 = 2.15)", "CameraToMount -- cameraTheta (2.45) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (2.20 = 2.20)", "CameraToMount -- cameraX=-0.35 cameraY=0.29 hyp=0.46 cameraTheta=2.45 mountX=-0.25 mountY=0.37, mountTheta=2.16", ] },
+        Frame { f: 17, err: false, info: None, primary: (43.058766856934085, 48.812297540727798, 47898.818493150713, 147.26590344216862, 3.9074120619326695, 0, true), cam: Some((-0.25063832324814683, 0.22027614551020491)), mount: Some((-0.17434788372847437, 0.27543720710388547)), ucd: Some((0.33367821229663092, 0.17434788372847437)), adjust: 147.26590344216862, reset: false, stab: true, used: 1, list: 4, dc: 0,
+            status: "m=47899 SNR=147.3", msg: "", log: &["CameraToMount -- cameraTheta (2.42) - m_xAngle (0.30) = xAngle (2.12 = 2.12)", "CameraToMount -- cameraTheta (2.42) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (2.17 = 2.17)", "CameraToMount -- cameraX=-0.25 cameraY=0.22 hyp=0.33 cameraTheta=2.42 mountX=-0.17 mountY=0.28, mountTheta=2.14", ] },
+        Frame { f: 18, err: false, info: None, primary: (43.107401045585242, 48.725989987810713, 47858.102739726048, 147.29547169127395, 3.826475675237905, 0, true), cam: Some((-0.20200413459699007, 0.13396859259312066)), mount: Some((-0.15339149456549708, 0.17978045616764618)), ucd: Some((0.24239070567094859, 0.15339149456549708)), adjust: 147.29547169127395, reset: false, stab: false, used: 1, list: 4, dc: 0,
+            status: "m=47858 SNR=147.3", msg: "", log: &["MultiStar: exiting stabilization period", "MultiStar: updating star positions after lock position change", "CameraToMount -- cameraTheta (2.56) - m_xAngle (0.30) = xAngle (2.26 = 2.26)", "CameraToMount -- cameraTheta (2.56) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (2.31 = 2.31)", "CameraToMount -- cameraX=-0.20 cameraY=0.13 hyp=0.24 cameraTheta=2.56 mountX=-0.15 mountY=0.18, mountTheta=2.28", ] },
+        Frame { f: 19, err: false, info: None, primary: (43.19063141723823, 48.636750626524986, 47853.102739726048, 147.28705902108851, 3.6549620165090517, 0, true), cam: Some((0.014706926395224511, -0.046285529610287791)), mount: Some((0.00037175415238068919, -0.048485176403507094)), ucd: Some((0.048565872125386357, 0.00037175415238068919)), adjust: 147.28705902108851, reset: false, stab: false, used: 4, list: 4, dc: 0,
+            status: "m=47853 SNR=147.3", msg: "", log: &["MultiStar: [#1 0.08,-0.09,0.80,U] [#2 0.07,-0.09,0.60,U] [#3 0.10,-0.10,0.50,U] ", "refined, 3 included, MultiStar: {0.01, -0.05}, one-star: {-0.12, 0.04}", "CameraToMount -- cameraTheta (-1.26) - m_xAngle (0.30) = xAngle (-1.56 = -1.56)", "CameraToMount -- cameraTheta (-1.26) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-1.51 = -1.51)", "CameraToMount -- cameraX=0.01 cameraY=-0.05 hyp=0.05 cameraTheta=-1.26 mountX=0.00 mountY=-0.05, mountTheta=-1.56", ] },
+        Frame { f: 20, err: false, info: None, primary: (43.277253865250557, 48.589759743162617, 47848.62328767126, 147.26826550628525, 3.5443648235348082, 0, true), cam: Some((-0.032151314931674335, -0.0022616520549760821)), mount: Some((-0.031383688210280009, 0.0057630198396815633)), ucd: Some((0.032230763594018101, 0.031383688210280009)), adjust: 147.26826550628525, reset: false, stab: false, used: 4, list: 4, dc: 0,
+            status: "m=47849 SNR=147.3", msg: "", log: &["MultiStar: [#1 0.18,-0.15,0.80,U] [#2 0.17,-0.13,0.60,U] [#3 0.19,-0.15,0.50,U] ", "single-star, 3 included, MultiStar: {0.11, -0.09}, one-star: {-0.03, -0.00}", "CameraToMount -- cameraTheta (-3.07) - m_xAngle (0.30) = xAngle (-3.37 = 2.91)", "CameraToMount -- cameraTheta (-3.07) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-3.32 = 2.96)", "CameraToMount -- cameraX=-0.03 cameraY=-0.00 hyp=0.03 cameraTheta=-3.07 mountX=-0.03 mountY=0.01, mountTheta=2.96", ] },
+        Frame { f: 21, err: false, info: None, primary: (43.299083028628225, 48.603365501965662, 47843.62328767126, 147.2598515282063, 3.5021894972519316, 0, true), cam: Some((-0.010322151554007064, 0.011344106748069294)), mount: Some((-0.0065087152552497978, 0.013545187103902458)), ucd: Some((0.015337391258472926, 0.0065087152552497978)), adjust: 147.2598515282063, reset: false, stab: false, used: 4, list: 4, dc: 0,
+            status: "m=47844 SNR=147.3", msg: "", log: &["MultiStar: [#1 0.20,-0.13,0.80,U] [#2 0.20,-0.11,0.60,U] [#3 0.21,-0.14,0.50,U] ", "single-star, 3 included, MultiStar: {0.13, -0.08}, one-star: {-0.01, 0.01}", "CameraToMount -- cameraTheta (2.31) - m_xAngle (0.30) = xAngle (2.01 = 2.01)", "CameraToMount -- cameraTheta (2.31) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (2.06 = 2.06)", "CameraToMount -- cameraX=-0.01 cameraY=0.01 hyp=0.02 cameraTheta=2.31 mountX=-0.01 mountY=0.01, mountTheta=2.02", ] },
+        Frame { f: 22, err: false, info: None, primary: (43.256265839963262, 48.644660593893406, 47845.863013698552, 147.26907956240959, 3.6141584603374479, 0, true), cam: Some((-0.053139340218969267, 0.052639198675812793)), mount: Some((-0.035210003848077723, 0.06414965662823563)), ucd: Some((0.074797558223106825, 0.035210003848077723)), adjust: 147.26907956240959, reset: false, stab: false, used: 4, list: 4, dc: 0,
+            status: "m=47846 SNR=147.3", msg: "", log: &["MultiStar: [#1 0.15,-0.08,0.80,U] [#2 0.15,-0.08,0.60,U] [#3 0.17,-0.10,0.50,U] ", "single-star, 3 included, MultiStar: {0.09, -0.04}, one-star: {-0.05, 0.05}", "CameraToMount -- cameraTheta (2.36) - m_xAngle (0.30) = xAngle (2.06 = 2.06)", "CameraToMount -- cameraTheta (2.36) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (2.11 = 2.11)", "CameraToMount -- cameraX=-0.05 cameraY=0.05 hyp=0.07 cameraTheta=2.36 mountX=-0.04 mountY=0.06, mountTheta=2.07", ] },
+        Frame { f: 23, err: false, info: None, primary: (43.231974670330942, 48.65852472829269, 47846.863013698552, 147.27076231249563, 3.6436196434750854, 0, true), cam: Some((0.059360455806203881, -0.023009677132058703)), mount: Some((0.049909384901517827, -0.036980373782411022)), ucd: Some((0.063664031880190167, 0.049909384901517827)), adjust: 147.27076231249563, reset: false, stab: false, used: 4, list: 4, dc: 0,
+            status: "m=47847 SNR=147.3", msg: "", log: &["MultiStar: [#1 0.13,-0.07,0.80,U] [#2 0.12,-0.06,0.60,U] [#3 0.15,-0.09,0.50,U] ", "refined, 3 included, MultiStar: {0.06, -0.02}, one-star: {-0.08, 0.07}", "CameraToMount -- cameraTheta (-0.37) - m_xAngle (0.30) = xAngle (-0.67 = -0.67)", "CameraToMount -- cameraTheta (-0.37) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-0.62 = -0.62)", "CameraToMount -- cameraX=0.06 cameraY=-0.02 hyp=0.06 cameraTheta=-0.37 mountX=0.05 mountY=-0.04, mountTheta=-0.64", ] },
+        Frame { f: 24, err: false, info: None, primary: (43.272616123968639, 48.623355138601482, 47844.62328767126, 147.2615343611572, 3.5616966687006064, 0, true), cam: Some((-0.03678905621359263, 0.031333743383889612)), mount: Some((-0.025886173481057706, 0.039461411347824403)), ucd: Some((0.048324301666287164, 0.025886173481057706)), adjust: 147.2615343611572, reset: false, stab: false, used: 4, list: 4, dc: 0,
+            status: "m=47845 SNR=147.3", msg: "", log: &["MultiStar: [#1 0.17,-0.11,0.80,U] [#2 0.17,-0.10,0.60,U] [#3 0.19,-0.12,0.50,U] ", "single-star, 3 included, MultiStar: {0.10, -0.06}, one-star: {-0.04, 0.03}", "CameraToMount -- cameraTheta (2.44) - m_xAngle (0.30) = xAngle (2.14 = 2.14)", "CameraToMount -- cameraTheta (2.44) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (2.19 = 2.19)", "CameraToMount -- cameraX=-0.04 cameraY=0.03 hyp=0.05 cameraTheta=2.44 mountX=-0.03 mountY=0.04, mountTheta=2.15", ] },
+    ];
+
+    #[rustfmt::skip]
+    const JUMPS: &[Frame] = &[
+        // SetCurrentPosition at (50.304331554631482, 40.701173071587021)
+        Frame { f: 1, err: false, info: None, primary: (50.38727701460224, 40.676448198605833, 47758.671232876775, 147.17216904152608, 3.4953571460997348, 0, true), cam: Some((0.082945459970758861, -0.024724872981188639)), mount: Some((0.071934124944297032, -0.044477271755644858)), ucd: Some((0.086552115362344972, 0.071934124944297032)), adjust: 147.17216904152608, reset: false, stab: false, used: 1, list: 0, dc: 0,
+            status: "m=47759 SNR=147.2 Exp=1.5 s", msg: "", log: &["CameraToMount -- cameraTheta (-0.29) - m_xAngle (0.30) = xAngle (-0.59 = -0.59)", "CameraToMount -- cameraTheta (-0.29) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-0.54 = -0.54)", "CameraToMount -- cameraX=0.08 cameraY=-0.02 hyp=0.09 cameraTheta=-0.29 mountX=0.07 mountY=-0.04, mountTheta=-0.55", ] },
+        Frame { f: 2, err: false, info: None, primary: (50.404734842725581, 40.620212888337832, 47750.93150684928, 147.15671588128373, 3.4195507242180758, 0, true), cam: Some((0.10040328809409971, -0.080960183249189299)), mount: Some((0.071993554659343623, -0.10328349821076233)), ucd: Some((0.12897818238698006, 0.071993554659343623)), adjust: 147.15671588128373, reset: false, stab: false, used: 1, list: 0, dc: 0,
+            status: "m=47751 SNR=147.2 Exp=1.5 s", msg: "", log: &["CameraToMount -- cameraTheta (-0.68) - m_xAngle (0.30) = xAngle (-0.98 = -0.98)", "CameraToMount -- cameraTheta (-0.68) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-0.93 = -0.93)", "CameraToMount -- cameraX=0.10 cameraY=-0.08 hyp=0.13 cameraTheta=-0.68 mountX=0.07 mountY=-0.10, mountTheta=-0.96", ] },
+        Frame { f: 3, err: false, info: None, primary: (50.350111644744651, 40.555082680573697, 47703.599315068452, 147.17407747530828, 3.4141733714568154, 0, true), cam: Some((0.045780090113169081, -0.14609039101332399)), mount: Some((0.00056272801707538133, -0.15287497009440165)), ucd: Some((0.15309545714094777, 0.00056272801707538133)), adjust: 147.17407747530828, reset: false, stab: false, used: 1, list: 0, dc: 0,
+            status: "m=47704 SNR=147.2 Exp=1.5 s", msg: "", log: &["CameraToMount -- cameraTheta (-1.27) - m_xAngle (0.30) = xAngle (-1.57 = -1.57)", "CameraToMount -- cameraTheta (-1.27) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-1.52 = -1.52)", "CameraToMount -- cameraX=0.05 cameraY=-0.15 hyp=0.15 cameraTheta=-1.27 mountX=0.00 mountY=-0.15, mountTheta=-1.57", ] },
+        Frame { f: 4, err: true, info: Some((8, 47768.999999999935, 146.81995094408197, 3.6179243995436097, "No star found")), primary: (50.350111644744651, 40.555082680573697, 47703.599315068452, 147.17407747530828, 3.4141733714568154, 8, true), cam: None, mount: None, ucd: None, adjust: -1.0, reset: true, stab: false, used: 1, list: 0, dc: 1,
+            status: "No star found", msg: "Recovering", log: &["DistanceChecker: reject for large offset (5.02 > 2.40) avgDist = 0.60 count = 20", "DistanceChecker: activated", ] },
+        Frame { f: 5, err: true, info: Some((8, 47737.06849315072, 146.86275024507219, 3.7230753822901748, "No star found")), primary: (50.350111644744651, 40.555082680573697, 47703.599315068452, 147.17407747530828, 3.4141733714568154, 8, true), cam: None, mount: None, ucd: None, adjust: -1.0, reset: true, stab: false, used: 1, list: 0, dc: 1,
+            status: "No star found", msg: "Recovering", log: &["DistanceChecker: reject for large offset (4.97 > 2.40) avgDist = 0.60 count = 20", ] },
+        Frame { f: 6, err: true, info: Some((8, 47811.431506849352, 146.79206833205311, 3.655498601910629, "No star found")), primary: (50.350111644744651, 40.555082680573697, 47703.599315068452, 147.17407747530828, 3.4141733714568154, 8, true), cam: None, mount: None, ucd: None, adjust: -1.0, reset: true, stab: false, used: 1, list: 0, dc: 1,
+            status: "No star found", msg: "Recovering", log: &["DistanceChecker: reject for large offset (5.00 > 2.40) avgDist = 0.60 count = 20", ] },
+        Frame { f: 7, err: false, info: None, primary: (55.305092225526728, 41.625791913950039, 47849.869863013628, 146.7537142661007, 3.5371145260349812, 0, true), cam: Some((5.0007606708952466, 0.92461884236301728)), mount: Some((5.050652693668563, -0.34133330755054403)), ucd: Some((5.0855213391770766, 5.050652693668563)), adjust: 146.7537142661007, reset: false, stab: false, used: 1, list: 0, dc: 2,
+            status: "m=47850 SNR=146.8 Exp=1.5 s", msg: "", log: &["DistanceChecker: reject for large offset (5.09 > 2.40) avgDist = 0.60 count = 20", "DistanceChecker: begin recovering", "CameraToMount -- cameraTheta (0.18) - m_xAngle (0.30) = xAngle (-0.12 = -0.12)", "CameraToMount -- cameraTheta (0.18) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-0.07 = -0.07)", "CameraToMount -- cameraX=5.00 cameraY=0.92 hyp=5.09 cameraTheta=0.18 mountX=5.05 mountY=-0.34, mountTheta=-0.07", ] },
+        Frame { f: 8, err: false, info: None, primary: (55.38596317448939, 41.6823267580207, 47849.869863013635, 146.75514225607085, 3.5052884535528901, 0, true), cam: Some((5.0816316198579088, 0.98115368643367873)), mount: Some((5.1446188509261361, -0.30656378783303884)), ucd: Some((5.1754847576185661, 5.1446188509261361)), adjust: 146.75514225607085, reset: false, stab: false, used: 1, list: 0, dc: 2,
+            status: "m=47850 SNR=146.8 Exp=1.5 s", msg: "", log: &["DistanceChecker: reject for large offset (5.18 > 2.40) avgDist = 0.60 count = 20", "CameraToMount -- cameraTheta (0.19) - m_xAngle (0.30) = xAngle (-0.11 = -0.11)", "CameraToMount -- cameraTheta (0.19) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-0.06 = -0.06)", "CameraToMount -- cameraX=5.08 cameraY=0.98 hyp=5.18 cameraTheta=0.19 mountX=5.14 mountY=-0.31, mountTheta=-0.06", ] },
+        Frame { f: 9, err: false, info: None, primary: (50.404748784045644, 40.698898433566796, 47752.671232876775, 147.16206462563269, 3.4924798117539386, 0, true), cam: Some((0.10041722941416253, -0.0022746380202249838)), mount: Some((0.095260041898429945, -0.027047545167124841)), ucd: Some((0.1004429885125866, 0.095260041898429945)), adjust: 147.16206462563269, reset: false, stab: false, used: 1, list: 0, dc: 0,
+            status: "m=47753 SNR=147.2 Exp=1.5 s", msg: "", log: &["DistanceChecker: deactivated", "CameraToMount -- cameraTheta (-0.02) - m_xAngle (0.30) = xAngle (-0.32 = -0.32)", "CameraToMount -- cameraTheta (-0.02) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-0.27 = -0.27)", "CameraToMount -- cameraX=0.10 cameraY=-0.00 hyp=0.10 cameraTheta=-0.02 mountX=0.10 mountY=-0.03, mountTheta=-0.28", ] },
+        Frame { f: 10, err: false, info: None, primary: (50.335330160896333, 45.671125907799656, 47840.726027397315, 146.73070463649398, 3.5901511784944495, 0, true), cam: Some((0.030998606264851958, 4.9699528362126344)), mount: Some((1.4983355889315189, 4.8077798604011743)), ucd: Some((0.030998606264851958, 1.4983355889315189)), adjust: 146.73070463649398, reset: false, stab: false, used: 1, list: 0, dc: 0,
+            status: "m=47841 SNR=146.7 Exp=1.5 s", msg: "", log: &["CameraToMount -- cameraTheta (1.56) - m_xAngle (0.30) = xAngle (1.26 = 1.26)", "CameraToMount -- cameraTheta (1.56) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (1.31 = 1.31)", "CameraToMount -- cameraX=0.03 cameraY=4.97 hyp=4.97 cameraTheta=1.56 mountX=1.50 mountY=4.81, mountTheta=1.27", ] },
+        Frame { f: 11, err: true, info: Some((7, 144187.31506849328, 263.10208487006201, 3.5950648155149816, "Star lost - mass changed")), primary: (50.335330160896333, 45.671125907799656, 47840.726027397315, 146.73070463649398, 3.5901511784944495, 7, true), cam: None, mount: None, ucd: None, adjust: -1.0, reset: true, stab: false, used: 1, list: 0, dc: 1,
+            status: "Star lost - mass changed", msg: "Mass: 144187 vs 47759", log: &["UpdateCurrentPosition: star mass new=144187.3 exp=47758.7 thresh=50% limits=(23879.3, 71638.0, 95517.3)", "DistanceChecker: activated", ] },
+        Frame { f: 12, err: false, info: None, primary: (50.210844433953177, 40.553269028601981, 47760.249999999956, 147.07383535463367, 3.6837921739210633, 0, true), cam: Some((-0.093487120678304336, -0.14790404298504001)), mount: Some((-0.13302029099625973, -0.12017698067431257)), ucd: Some((0.17497270548299926, 0.13302029099625973)), adjust: 147.07383535463367, reset: false, stab: false, used: 1, list: 0, dc: 0,
+            status: "m=47760 SNR=147.1 Exp=1.5 s", msg: "", log: &["DistanceChecker: deactivated", "CameraToMount -- cameraTheta (-2.13) - m_xAngle (0.30) = xAngle (-2.43 = -2.43)", "CameraToMount -- cameraTheta (-2.13) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-2.38 = -2.38)", "CameraToMount -- cameraX=-0.09 cameraY=-0.15 hyp=0.17 cameraTheta=-2.13 mountX=-0.13 mountY=-0.12, mountTheta=-2.41", ] },
+        Frame { f: 13, err: true, info: Some((3, 0.0, 0.0, 0.0, "Star lost - low mass")), primary: (50.210844433953177, 40.553269028601981, 47760.249999999956, 147.07383535463367, 3.6837921739210633, 3, true), cam: None, mount: None, ucd: None, adjust: -1.0, reset: true, stab: false, used: 1, list: 0, dc: 1,
+            status: "Star lost - low mass", msg: "", log: &["DistanceChecker: activated", ] },
+        Frame { f: 14, err: false, info: None, primary: (50.310295297389715, 40.510398952776569, 47761.000000000065, 147.08060261240317, 3.5079370929586307, 0, true), cam: Some((0.0059637427582330815, -0.19077411881045236)), mount: Some((-0.050680225947801194, -0.18631886702671205)), ucd: Some((0.19086731159523093, 0.050680225947801194)), adjust: 147.08060261240317, reset: false, stab: false, used: 1, list: 0, dc: 0,
+            status: "m=47761 SNR=147.1 Exp=1.5 s", msg: "", log: &["DistanceChecker: deactivated", "CameraToMount -- cameraTheta (-1.54) - m_xAngle (0.30) = xAngle (-1.84 = -1.84)", "CameraToMount -- cameraTheta (-1.54) - (m_xAngle (0.30) + m_yAngleError (-0.05)) = yAngle (-1.79 = -1.79)", "CameraToMount -- cameraX=0.01 cameraY=-0.19 hyp=0.19 cameraTheta=-1.54 mountX=-0.05 mountY=-0.19, mountTheta=-1.84", ] },
     ];
 
     #[rustfmt::skip]
     const SCRIPTED: &[Refine] = &[
-        Refine { f: 0, refined: false, ofs: (0.0, 0.25), stab: true, moved: false, used: 1, req: &[], stars: None },
-        Refine { f: 1, refined: false, ofs: (0.19326530617130544, 0.21939564047259097), stab: true, moved: false, used: 1, req: &[], stars: None },
-        Refine { f: 2, refined: false, ofs: (0.29563491899654082, 0.13507557646703816), stab: true, moved: false, used: 1, req: &[], stars: None },
-        Refine { f: 3, refined: false, ofs: (0.2589628099946637, 0.017684300416924259), stab: true, moved: false, used: 1, req: &[], stars: None },
-        Refine { f: 4, refined: false, ofs: (0.10049644504677246, -0.10403670913678553), stab: true, moved: false, used: 1, req: &[], stars: None },
-        Refine { f: 5, refined: false, ofs: (-0.10523496830688828, -0.20028590388672995), stab: true, moved: false, used: 1, req: &[], stars: None },
-        Refine { f: 6, refined: false, ofs: (-0.26147273172407637, -0.24749812415011263), stab: true, moved: false, used: 1, req: &[], stars: None },
-        Refine { f: 7, refined: false, ofs: (-0.29473578378730281, -0.23411417182269645), stab: true, moved: false, used: 1, req: &[], stars: None },
-        Refine { f: 8, refined: false, ofs: (-0.18937999136169736, -0.16341090521590473), stab: true, moved: false, used: 1, req: &[], stars: None },
-        Refine { f: 9, refined: false, ofs: (0.0050441701453038945, -0.052698949857692412), stab: false, moved: false, used: 9, req: &[(20, 20), (100, 20), (20, 80), (100, 80), (40, 30), (80, 30), (40, 75), (80, 75), (110, 50), ], stars: Some(&[(20.005044170145304, 19.947301050142304, 20.0, 20.0, 0, 0, false), (100.00504417014531, 20.0, 100.0, 20.0, 0, 1, false), (20.005044170145304, 79.9473010501423, 20.0, 80.0, 0, 0, false), (101.50504417014531, 81.4473010501423, 100.0, 80.0, 1, 0, false), (80.0, 30.0, 80.0, 30.0, 0, 0, true), (40.145044170145304, 74.877301050142307, 40.0, 75.0, 0, 0, false), (80.165044170145308, 74.867301050142302, 80.0, 75.0, 0, 0, false), (110.18504417014532, 49.857301050142304, 110.0, 50.0, 0, 0, false), ]) },
-        Refine { f: 10, refined: true, ofs: (0.19709597961563791, 0.056964947080729654), stab: false, moved: false, used: 8, req: &[(20, 19), (100, 20), (20, 79), (101, 81), (80, 30), (40, 74), (80, 74), (110, 49), ], stars: None },
-        Refine { f: 11, refined: false, ofs: (0.29645047016310144, 0.177167443572813), stab: false, moved: false, used: 8, req: &[(20, 20), (100, 20), (20, 80), (101, 81), (80, 30), (40, 75), (80, 74), (110, 49), ], stars: None },
-        Refine { f: 12, refined: false, ofs: (2.7563796724264833, -1.2599574283374082), stab: false, moved: false, used: 9, req: &[(20, 20), (100, 20), (20, 80), (101, 81), (82, 28), (40, 75), (80, 75), (110, 50), ], stars: None },
-        Refine { f: 13, refined: false, ofs: (0.095729508704806676, 0.24414690643200743), stab: false, moved: false, used: 9, req: &[(22, 18), (102, 20), (22, 78), (20, 80), (104, 80), (82, 28), (42, 73), (82, 73), ], stars: Some(&[(20.095729508704807, 20.244146906432007, 20.0, 20.0, 1, 0, false), (20.095729508704807, 80.244146906432007, 20.0, 80.0, 0, 0, false), (101.59572950870481, 81.744146906432007, 100.0, 80.0, 5, 0, false), (80.095729508704807, 30.244146906432007, 80.0, 30.0, 0, 0, false), (40.235729508704807, 75.174146906432014, 40.0, 75.0, 2, 0, false), (80.255729508704803, 75.164146906432009, 80.0, 75.0, 2, 0, false), (112.9363796724265, 48.650042571662588, 110.0, 50.0, 3, 0, false), ]) },
-        Refine { f: 14, refined: true, ofs: (-0.027674235229480537, 0.14734081181277661), stab: false, moved: false, used: 8, req: &[(20, 20), (20, 80), (101, 81), (80, 30), (40, 75), (80, 75), (112, 48), ], stars: None },
-        Refine { f: 15, refined: true, ofs: (-0.18163922444540301, 0.04552407768570689), stab: false, moved: false, used: 8, req: &[(19, 20), (19, 80), (101, 81), (79, 30), (40, 75), (80, 75), (110, 50), ], stars: None },
-        Refine { f: 16, refined: true, ofs: (-0.2114838151992986, -0.077509760225203048), stab: false, moved: false, used: 8, req: &[(19, 20), (19, 80), (101, 81), (79, 30), (39, 75), (79, 75), (109, 49), ], stars: None },
-        Refine { f: 17, refined: true, ofs: (-0.1031716301250082, -0.19163772744425422), stab: false, moved: false, used: 8, req: &[(19, 19), (19, 79), (101, 81), (79, 29), (39, 74), (79, 74), (109, 49), ], stars: None },
-        Refine { f: 18, refined: false, ofs: (0.010086914166343774, -0.22778256547116627), stab: false, moved: false, used: 8, req: &[(19, 19), (19, 79), (101, 81), (79, 29), (39, 74), (79, 74), (109, 49), ], stars: None },
-        Refine { f: 19, refined: false, ofs: (0.20087092865897915, -0.24929303904909261), stab: false, moved: false, used: 8, req: &[(20, 19), (20, 79), (101, 81), (80, 29), (40, 74), (80, 74), (110, 49), ], stars: Some(&[(20.200870928658979, 19.750706960950904, 20.0, 20.0, 0, 0, false), (20.200870928658979, 79.750706960950907, 20.0, 80.0, 0, 0, false), (101.70087092865899, 81.250706960950907, 101.70087092865899, 81.250706960950907, 0, 0, false), (80.200870928658986, 29.750706960950904, 80.0, 30.0, 0, 0, false), (40.34087092865898, 74.680706960950914, 40.0, 75.0, 0, 0, false), (80.360870928658983, 74.670706960950909, 80.0, 75.0, 0, 0, false), (110.38087092865899, 49.660706960950904, 110.0, 50.0, 0, 0, false), ]) },
-        Refine { f: 20, refined: false, ofs: (-1.9009392644305123, 1.4160928470923579), stab: true, moved: true, used: 1, req: &[], stars: None },
-        Refine { f: 21, refined: false, ofs: (-0.91542531688570961, 0.70244630720040391), stab: false, moved: false, used: 1, req: &[(23, 17), (23, 77), (103, 77), (83, 27), (43, 72), (83, 72), (113, 47), ], stars: Some(&[(23.084574683114294, 17.7024463072004, 23.084574683114294, 17.7024463072004, 0, 0, false), (23.084574683114294, 77.702446307200404, 23.084574683114294, 77.702446307200404, 0, 0, false), (104.5845746831143, 79.202446307200404, 104.5845746831143, 79.202446307200404, 0, 0, false), (83.084574683114297, 27.7024463072004, 83.084574683114297, 27.7024463072004, 0, 0, false), (43.224574683114291, 72.632446307200411, 43.224574683114291, 72.632446307200411, 0, 0, false), (83.244574683114294, 72.622446307200406, 83.244574683114294, 72.622446307200406, 0, 0, false), (113.2645746831143, 47.6124463072004, 113.2645746831143, 47.6124463072004, 0, 0, false), ]) },
-        Refine { f: 22, refined: true, ofs: (0.29996878999885407, -0.2151492298856085), stab: false, moved: false, used: 8, req: &[(23, 17), (23, 77), (104, 79), (83, 27), (43, 72), (83, 72), (113, 47), ], stars: None },
-        Refine { f: 23, refined: false, ofs: (-0.28820714171840223, 0.23583047587530359), stab: false, moved: false, used: 8, req: &[(23, 17), (23, 77), (105, 78), (83, 27), (43, 72), (83, 72), (113, 47), ], stars: Some(&[(23.711792858281598, 17.2358304758753, 23.084574683114294, 17.7024463072004, 0, 0, false), (23.711792858281598, 77.235830475875304, 23.084574683114294, 77.702446307200404, 0, 0, false), (105.2117928582816, 78.735830475875304, 104.5845746831143, 79.202446307200404, 0, 0, false), (83.711792858281598, 27.2358304758753, 83.084574683114297, 27.7024463072004, 0, 0, false), (43.851792858281598, 72.16583047587531, 43.224574683114291, 72.632446307200411, 0, 0, false), (83.871792858281594, 72.155830475875305, 83.244574683114294, 72.622446307200406, 0, 0, false), (113.8917928582816, 47.1458304758753, 113.2645746831143, 47.6124463072004, 0, 0, false), ]) },
+        Refine { f: 0, refined: false, ofs: (0.0, 0.25), stab: true, moved: false, used: 1, req: &[], stars: None, log: &[] },
+        Refine { f: 1, refined: false, ofs: (0.19326530617130544, 0.21939564047259097), stab: true, moved: false, used: 1, req: &[], stars: None, log: &[] },
+        Refine { f: 2, refined: false, ofs: (0.29563491899654082, 0.13507557646703816), stab: true, moved: false, used: 1, req: &[], stars: None, log: &[] },
+        Refine { f: 3, refined: false, ofs: (0.2589628099946637, 0.017684300416924259), stab: true, moved: false, used: 1, req: &[], stars: None, log: &[] },
+        Refine { f: 4, refined: false, ofs: (0.10049644504677246, -0.10403670913678553), stab: true, moved: false, used: 1, req: &[], stars: None, log: &[] },
+        Refine { f: 5, refined: false, ofs: (-0.10523496830688828, -0.20028590388672995), stab: true, moved: false, used: 1, req: &[], stars: None, log: &[] },
+        Refine { f: 6, refined: false, ofs: (-0.26147273172407637, -0.24749812415011263), stab: true, moved: false, used: 1, req: &[], stars: None, log: &[] },
+        Refine { f: 7, refined: false, ofs: (-0.29473578378730281, -0.23411417182269645), stab: true, moved: false, used: 1, req: &[], stars: None, log: &[] },
+        Refine { f: 8, refined: false, ofs: (-0.18937999136169736, -0.16341090521590473), stab: true, moved: false, used: 1, req: &[], stars: None, log: &[] },
+        Refine { f: 9, refined: false, ofs: (0.0050441701453038945, -0.052698949857692412), stab: false, moved: false, used: 9, req: &[(20, 20), (100, 20), (20, 80), (100, 80), (40, 30), (80, 30), (40, 75), (80, 75), (120, 50), ], stars: Some(&[(20.005044170145304, 19.947301050142304, 20.0, 20.0, 0, 0, false), (100.00504417014531, 20.0, 100.0, 20.0, 0, 1, false), (20.005044170145304, 79.9473010501423, 20.0, 80.0, 0, 0, false), (101.50504417014531, 81.4473010501423, 100.0, 80.0, 1, 0, false), (80.0, 30.0, 80.0, 30.0, 0, 0, true), (40.145044170145304, 74.877301050142307, 40.0, 75.0, 0, 0, false), (80.165044170145308, 74.867301050142302, 80.0, 75.0, 0, 0, false), (120.18504417014532, 49.857301050142304, 120.0, 50.0, 0, 0, false), ]), log: &["MultiStar: exiting stabilization period", "MultiStar: [#1 0.01,-0.05,0.40,U] [#2 0.01,0.00,0.48,U] [#3 0.01,-0.05,0.56,U] [#4 1.51,1.45,0.00,M1] [#5 0.00,0.00,0.00,DZ] [#5 0.00,0.00,0.00,L] [#6 0.15,-0.12,0.88,U] [#7 0.17,-0.13,0.96,U] [#8 0.19,-0.14,1.04,U] ", "single-star, 6 included, MultiStar: {0.09, -0.09}, one-star: {0.01, -0.05}", ] },
+        Refine { f: 10, refined: true, ofs: (0.19709597961563791, 0.056964947080729654), stab: false, moved: false, used: 8, req: &[(20, 19), (100, 20), (20, 79), (101, 81), (80, 30), (40, 74), (80, 74), (120, 49), ], stars: None, log: &["MultiStar: [#1 0.20,0.07,0.40,U] [#2 0.20,0.00,0.48,U] [#3 0.20,0.07,0.56,U] [#4 1.70,1.57,0.00,M2] [#5 0.00,0.00,0.00,L] [#6 0.34,0.00,0.00,M1] [#7 0.36,-0.01,0.00,M1] [#8 0.38,-0.02,0.00,M1] ", "refined, 3 included, MultiStar: {0.20, 0.06}, one-star: {0.20, 0.07}", ] },
+        Refine { f: 11, refined: false, ofs: (0.29645047016310144, 0.177167443572813), stab: false, moved: false, used: 8, req: &[(20, 20), (100, 20), (20, 80), (101, 81), (80, 30), (40, 75), (80, 74), (120, 49), ], stars: None, log: &["MultiStar: [#1 0.30,0.18,0.00,M1] [#2 0.30,0.00,0.00,M1] [#3 0.30,0.18,0.00,M1] [#4 1.80,1.68,0.00,M3] [#5 0.00,0.00,0.00,L] [#6 0.44,0.11,0.00,M2] [#7 0.46,0.10,0.00,M2] [#8 0.48,0.09,0.00,M2] ", ] },
+        Refine { f: 12, refined: false, ofs: (2.7563796724264833, -1.2599574283374082), stab: false, moved: false, used: 9, req: &[(20, 20), (100, 20), (20, 80), (101, 81), (82, 28), (40, 75), (80, 75), (120, 50), ], stars: None, log: &["MultiStar: [#1 2.76,-1.26,0.00,M2] [#2 2.76,0.00,0.00,M2] [#3 2.76,-1.26,0.00,M2] [#4 4.26,0.24,0.00,M4] [#5 2.76,-1.26,0.00,M1] [#6 2.90,-1.33,0.00,M3] [#7 2.92,-1.34,0.00,M3] [#8 2.94,-1.35,0.00,M3] ", ] },
+        Refine { f: 13, refined: false, ofs: (0.095729508704806676, 0.24414690643200743), stab: false, moved: false, used: 9, req: &[(22, 18), (102, 20), (22, 78), (20, 80), (104, 80), (82, 28), (42, 73), (82, 73), ], stars: Some(&[(20.095729508704807, 20.244146906432007, 20.0, 20.0, 1, 0, false), (20.095729508704807, 80.244146906432007, 20.0, 80.0, 0, 0, false), (101.59572950870481, 81.744146906432007, 100.0, 80.0, 5, 0, false), (80.095729508704807, 30.244146906432007, 80.0, 30.0, 0, 0, false), (40.235729508704807, 75.174146906432014, 40.0, 75.0, 2, 0, false), (80.255729508704803, 75.164146906432009, 80.0, 75.0, 2, 0, false), (122.9363796724265, 48.650042571662588, 120.0, 50.0, 3, 0, false), ]), log: &["MultiStar: [#1 0.10,0.24,0.40,U] [#2 0.00,0.00,0.00,DZ] [#2 0.10,0.24,0.56,U] [#2 0.10,0.24,0.56,U] [#3 1.60,1.74,0.00,M5] [#4 0.10,0.24,0.80,U] [#5 0.24,0.17,0.88,U] [#6 0.26,0.16,0.96,U] ", "single-star, 6 included, MultiStar: {0.15, 0.22}, one-star: {0.10, 0.24}", ] },
+        Refine { f: 14, refined: true, ofs: (-0.027674235229480537, 0.14734081181277661), stab: false, moved: false, used: 8, req: &[(20, 20), (20, 80), (101, 81), (80, 30), (40, 75), (80, 75), (122, 48), ], stars: None, log: &["MultiStar: [#1 -0.11,0.19,0.40,U] [#2 -0.11,0.19,0.56,U] [#3 1.39,1.69,0.00,M6] [#4 -0.11,0.19,0.80,U] [#5 0.03,0.12,0.88,U] [#6 0.05,0.11,0.96,U] [#7 0.07,0.10,1.04,U] ", "refined, 6 included, MultiStar: {-0.03, 0.15}, one-star: {-0.11, 0.19}", ] },
+        Refine { f: 15, refined: true, ofs: (-0.18163922444540301, 0.04552407768570689), stab: false, moved: false, used: 8, req: &[(19, 20), (19, 80), (101, 81), (79, 30), (40, 75), (80, 75), (120, 50), ], stars: None, log: &["MultiStar: [#1 -0.26,0.09,0.40,U] [#2 -0.26,0.09,0.56,U] [#3 1.24,1.59,0.00,M7] [#4 -0.26,0.09,0.80,U] [#5 -0.12,0.02,0.88,U] [#6 -0.10,0.01,0.96,U] [#7 -0.08,-0.00,1.04,U] ", "refined, 6 included, MultiStar: {-0.18, 0.05}, one-star: {-0.26, 0.09}", ] },
+        Refine { f: 16, refined: true, ofs: (-0.2114838151992986, -0.077509760225203048), stab: false, moved: false, used: 8, req: &[(19, 20), (19, 80), (101, 81), (79, 30), (39, 75), (79, 75), (119, 49), ], stars: None, log: &["MultiStar: [#1 -0.29,-0.04,0.40,U] [#2 -0.29,-0.04,0.56,U] [#3 1.21,1.46,0.00,M8] [#4 -0.29,-0.04,0.80,U] [#5 -0.15,-0.11,0.88,U] [#6 -0.13,-0.12,0.96,U] [#7 -0.11,-0.13,1.04,U] ", "refined, 6 included, MultiStar: {-0.21, -0.08}, one-star: {-0.29, -0.04}", ] },
+        Refine { f: 17, refined: true, ofs: (-0.1031716301250082, -0.19163772744425422), stab: false, moved: false, used: 8, req: &[(19, 19), (19, 79), (101, 81), (79, 29), (39, 74), (79, 74), (119, 49), ], stars: None, log: &["MultiStar: [#1 -0.19,-0.15,0.40,U] [#2 -0.19,-0.15,0.56,U] [#3 1.31,1.35,0.00,M9] [#4 -0.19,-0.15,0.80,U] [#5 -0.05,-0.22,0.88,U] [#6 -0.03,-0.23,0.96,U] [#7 -0.01,-0.24,1.04,U] ", "refined, 6 included, MultiStar: {-0.10, -0.19}, one-star: {-0.19, -0.15}", ] },
+        Refine { f: 18, refined: false, ofs: (0.010086914166343774, -0.22778256547116627), stab: false, moved: false, used: 8, req: &[(19, 19), (19, 79), (101, 81), (79, 29), (39, 74), (79, 74), (119, 49), ], stars: None, log: &["MultiStar: [#1 0.01,-0.23,0.40,U] [#2 0.01,-0.23,0.56,U] [#3 1.51,1.27,0.00,M10] [#4 0.01,-0.23,0.80,U] [#5 0.15,-0.30,0.88,U] [#6 0.17,-0.31,0.96,U] [#7 0.19,-0.32,1.04,U] ", "single-star, 6 included, MultiStar: {0.09, -0.27}, one-star: {0.01, -0.23}", ] },
+        Refine { f: 19, refined: false, ofs: (0.20087092865897915, -0.24929303904909261), stab: false, moved: false, used: 8, req: &[(20, 19), (20, 79), (101, 81), (80, 29), (40, 74), (80, 74), (120, 49), ], stars: Some(&[(20.200870928658979, 19.750706960950904, 20.0, 20.0, 0, 0, false), (20.200870928658979, 79.750706960950907, 20.0, 80.0, 0, 0, false), (101.70087092865899, 81.250706960950907, 101.70087092865899, 81.250706960950907, 0, 0, false), (80.200870928658986, 29.750706960950904, 80.0, 30.0, 0, 0, false), (40.34087092865898, 74.680706960950914, 40.0, 75.0, 0, 0, false), (80.360870928658983, 74.670706960950909, 80.0, 75.0, 0, 0, false), (120.38087092865899, 49.660706960950904, 120.0, 50.0, 0, 0, false), ]), log: &["MultiStar: [#1 0.20,-0.25,0.40,U] [#2 0.20,-0.25,0.56,U] [#3 1.70,1.25,0.00,R] [#4 0.20,-0.25,0.80,U] [#5 0.34,-0.32,0.88,U] [#6 0.36,-0.33,0.96,U] [#7 0.38,-0.34,1.04,U] ", "single-star, 6 included, MultiStar: {0.28, -0.29}, one-star: {0.20, -0.25}", ] },
+        Refine { f: 20, refined: false, ofs: (-1.9009392644305123, 1.4160928470923579), stab: true, moved: true, used: 1, req: &[], stars: None, log: &["MultiStar: stabilizing after lock position change", ] },
+        Refine { f: 21, refined: false, ofs: (-0.91542531688570961, 0.70244630720040391), stab: false, moved: false, used: 1, req: &[(23, 17), (23, 77), (103, 77), (83, 27), (43, 72), (83, 72), (120, 49), ], stars: Some(&[(23.084574683114294, 17.7024463072004, 23.084574683114294, 17.7024463072004, 0, 0, false), (23.084574683114294, 77.702446307200404, 23.084574683114294, 77.702446307200404, 0, 0, false), (104.5845746831143, 79.202446307200404, 104.5845746831143, 79.202446307200404, 0, 0, false), (83.084574683114297, 27.7024463072004, 83.084574683114297, 27.7024463072004, 0, 0, false), (43.224574683114291, 72.632446307200411, 43.224574683114291, 72.632446307200411, 0, 0, false), (83.244574683114294, 72.622446307200406, 83.244574683114294, 72.622446307200406, 0, 0, false), (123.2645746831143, 47.6124463072004, 123.2645746831143, 47.6124463072004, 0, 0, false), ]), log: &["MultiStar: exiting stabilization period", "MultiStar: updating star positions after lock position change", ] },
+        Refine { f: 22, refined: true, ofs: (0.29996878999885407, -0.2151492298856085), stab: false, moved: false, used: 8, req: &[(23, 17), (23, 77), (104, 79), (83, 27), (43, 72), (83, 72), (123, 47), ], stars: None, log: &["MultiStar: [#1 0.45,-0.33,0.40,U] [#2 0.45,-0.33,0.56,U] [#3 0.45,-0.33,0.64,U] [#4 0.45,-0.33,0.80,U] [#5 0.45,-0.33,0.88,U] [#6 0.45,-0.33,0.96,U] [#7 0.45,-0.33,1.04,U] ", "refined, 7 included, MultiStar: {0.30, -0.22}, one-star: {-0.47, 0.38}", ] },
+        Refine { f: 23, refined: false, ofs: (-0.28820714171840223, 0.23583047587530359), stab: false, moved: false, used: 8, req: &[(23, 17), (23, 77), (105, 78), (83, 27), (43, 72), (83, 72), (123, 47), ], stars: Some(&[(23.711792858281598, 17.2358304758753, 23.084574683114294, 17.7024463072004, 0, 0, false), (23.711792858281598, 77.235830475875304, 23.084574683114294, 77.702446307200404, 0, 0, false), (105.2117928582816, 78.735830475875304, 104.5845746831143, 79.202446307200404, 0, 0, false), (83.711792858281598, 27.2358304758753, 83.084574683114297, 27.7024463072004, 0, 0, false), (43.851792858281598, 72.16583047587531, 43.224574683114291, 72.632446307200411, 0, 0, false), (83.871792858281594, 72.155830475875305, 83.244574683114294, 72.622446307200406, 0, 0, false), (123.8917928582816, 47.1458304758753, 123.2645746831143, 47.6124463072004, 0, 0, false), ]), log: &["MultiStar: [#1 0.63,-0.47,0.40,U] [#2 0.63,-0.47,0.56,U] [#3 0.63,-0.47,0.64,U] [#4 0.63,-0.47,0.80,U] [#5 0.63,-0.47,0.88,U] [#6 0.63,-0.47,0.96,U] [#7 0.63,-0.47,1.04,U] ", "single-star, 7 included, MultiStar: {0.48, -0.35}, one-star: {-0.29, 0.24}", ] },
     ];
 }
