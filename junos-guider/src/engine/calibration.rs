@@ -4,9 +4,9 @@
 //! guide start (scope and AO), the post-calibration sanity checks, and the
 //! calibration-step calculator.
 //!
-//! Everything here is pure: the persisted form lives in the profile store
-//! (the key names are in [`keys`]), the debug-log and alert wording comes
-//! back as strings for the caller to write or show.
+//! Everything here is pure: the profile store is reached through
+//! [`ProfileAccess`] (the key names are in [`keys`]), the debug-log and
+//! alert wording comes back as strings for the caller to write or show.
 //!
 //! Ported from PHD2 `src/mount.h`, `src/mount.cpp`, `src/scope.cpp`, `src/stepguider.cpp`, `src/calstep_dialog.cpp`, `src/image_math.h` — BSD-3-Clause, see THIRD_PARTY.md
 
@@ -106,7 +106,7 @@ pub mod keys {
 }
 
 /// PHD2's `Calibration` (`mount.h:76`). Rates in px/ms, angles in radians.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Calibration {
     pub x_rate: f64,
     /// [`CALIBRATION_RATE_UNCALIBRATED`] when Dec was not calibrated.
@@ -128,6 +128,28 @@ pub struct Calibration {
     pub is_valid: bool,
     /// The stored `timestamp` string, as PHD2 wrote it.
     pub timestamp: String,
+}
+
+/// What [`get_last_calibration`] reads from a profile holding only a
+/// timestamp, but not valid: an invalid calibration has nothing else set in
+/// PHD2.
+impl Default for Calibration {
+    fn default() -> Self {
+        Calibration {
+            x_rate: 1.0,
+            y_rate: 1.0,
+            x_angle: 0.0,
+            y_angle: 0.0,
+            declination: 0.0,
+            rotator_angle: ROTATOR_POSITION_UNKNOWN,
+            binning: 1,
+            pier_side: PierSide::Unknown,
+            ra_guide_parity: Parity::Unknown,
+            dec_guide_parity: Parity::Unknown,
+            is_valid: false,
+            timestamp: String::new(),
+        }
+    }
 }
 
 impl Calibration {
@@ -227,7 +249,7 @@ impl CalibrationIssue {
 
 /// PHD2's `CalibrationDetails` (`mount.h:105`): what the calibration review
 /// and the sanity check look at. Guide speeds in deg/s, `-1.0` when unknown.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CalibrationDetails {
     pub focal_length: i32,
     /// Arcsec per pixel.
@@ -252,6 +274,226 @@ impl CalibrationDetails {
     pub fn is_valid(&self) -> bool {
         self.ra_step_count > 0
     }
+}
+
+/// What [`load_calibration_details`] reads from an empty profile.
+impl Default for CalibrationDetails {
+    fn default() -> Self {
+        CalibrationDetails {
+            focal_length: 0,
+            image_scale: 1.0,
+            ra_guide_speed: -1.0,
+            dec_guide_speed: -1.0,
+            ortho_error: 0.0,
+            orig_binning: 1.0,
+            ra_steps: Vec::new(),
+            dec_steps: Vec::new(),
+            ra_step_count: 0,
+            dec_step_count: 0,
+            last_issue: CalibrationIssue::None,
+            orig_timestamp: "Unknown".to_string(),
+            orig_pier_side: PierSide::Unknown,
+        }
+    }
+}
+
+/// The profile reads and writes the calibration's load and store go
+/// through: PHD2's `pConfig->Profile` getters (the default comes back when
+/// the key is absent) and setters, on full key paths. The profile store
+/// implements it.
+pub trait ProfileAccess {
+    /// `HasEntry`.
+    fn has(&self, key: &str) -> bool;
+    fn get_f64(&self, key: &str, default: f64) -> f64;
+    fn get_i32(&self, key: &str, default: i32) -> i32;
+    fn get_str(&self, key: &str, default: &str) -> String;
+    fn set_f64(&mut self, key: &str, value: f64);
+    fn set_i32(&mut self, key: &str, value: i32);
+    fn set_str(&mut self, key: &str, value: &str);
+}
+
+/// `pier_side` (`mount.cpp:1648`): a stored side back; anything but East
+/// (0) and West (1) is Unknown.
+fn pier_side_from(v: i32) -> PierSide {
+    match v {
+        0 => PierSide::East,
+        1 => PierSide::West,
+        _ => PierSide::Unknown,
+    }
+}
+
+/// `guide_parity` (`mount.cpp:1653`): Even (1), Odd (-1), anything else
+/// Unknown.
+fn parity_from(v: i32) -> Parity {
+    match v {
+        1 => Parity::Even,
+        -1 => Parity::Odd,
+        _ => Parity::Unknown,
+    }
+}
+
+/// The calibration keys a load reads, defaults as in both PHD2 loaders but
+/// for `yAngle`'s.
+fn read_calibration(p: &impl ProfileAccess, prefix: &str, y_angle_default: f64) -> Calibration {
+    let k = |key: &str| format!("{prefix}{key}");
+    Calibration {
+        x_rate: p.get_f64(&k(keys::X_RATE), 1.0),
+        y_rate: p.get_f64(&k(keys::Y_RATE), 1.0),
+        // `(unsigned short) GetInt`: wraps like the C cast.
+        binning: p.get_i32(&k(keys::BINNING), 1) as u16,
+        x_angle: p.get_f64(&k(keys::X_ANGLE), 0.0),
+        y_angle: p.get_f64(&k(keys::Y_ANGLE), y_angle_default),
+        declination: p.get_f64(&k(keys::DECLINATION), 0.0),
+        pier_side: pier_side_from(p.get_i32(&k(keys::PIER_SIDE), PierSide::Unknown as i32)),
+        ra_guide_parity: parity_from(p.get_i32(&k(keys::RA_GUIDE_PARITY), Parity::Unknown as i32)),
+        dec_guide_parity: parity_from(p.get_i32(&k(keys::DEC_GUIDE_PARITY), Parity::Unknown as i32)),
+        rotator_angle: p.get_f64(&k(keys::ROTATOR_ANGLE), ROTATOR_POSITION_UNKNOWN),
+        is_valid: true,
+        timestamp: String::new(),
+    }
+}
+
+/// `Mount::GetLastCalibration` (`mount.cpp:1759`): the stored calibration,
+/// as the sanity check, the backlash tool and the calibration review read
+/// it. Not valid (and otherwise the default) without a non-empty stored
+/// timestamp.
+pub fn get_last_calibration(p: &impl ProfileAccess, mount_class: MountClass) -> Calibration {
+    let prefix = keys::prefix(mount_class.class_name());
+    let timestamp = p.get_str(&format!("{prefix}{}", keys::TIMESTAMP), "");
+    if timestamp.is_empty() {
+        return Calibration::default();
+    }
+    Calibration { timestamp, ..read_calibration(p, &prefix, 0.0) }
+}
+
+/// `load_calibration` (`myframe.cpp:2312`), what `MyFrame::LoadCalibration`
+/// runs to restore the calibration when the gear connects. Not quite
+/// [`get_last_calibration`]: it needs only the timestamp key to exist (an
+/// empty one loads), `yAngle` defaults to π/2, and the timestamp is not
+/// read. The caller passes the result to [`MountCalibration::set`], which in
+/// PHD2 stores it again, so a restore restamps the timestamp.
+pub fn load_calibration(p: &impl ProfileAccess, mount_class: MountClass) -> Option<Calibration> {
+    let prefix = keys::prefix(mount_class.class_name());
+    if !p.has(&format!("{prefix}{}", keys::TIMESTAMP)) {
+        return None;
+    }
+    Some(read_calibration(p, &prefix, PI / 2.0))
+}
+
+/// `SetCalibration`'s profile write (`mount.cpp:1580-1592`): `cal` under
+/// the mount's prefix with `timestamp`, PHD2's `wxDateTime::Now().Format()`
+/// at the time of the set.
+pub fn store_calibration(p: &mut impl ProfileAccess, mount_class: MountClass, cal: &Calibration, timestamp: &str) {
+    let prefix = keys::prefix(mount_class.class_name());
+    let k = |key: &str| format!("{prefix}{key}");
+    p.set_str(&k(keys::TIMESTAMP), timestamp);
+    p.set_f64(&k(keys::X_ANGLE), cal.x_angle);
+    p.set_f64(&k(keys::Y_ANGLE), cal.y_angle);
+    p.set_f64(&k(keys::X_RATE), cal.x_rate);
+    p.set_f64(&k(keys::Y_RATE), cal.y_rate);
+    p.set_i32(&k(keys::BINNING), cal.binning as i32);
+    p.set_f64(&k(keys::DECLINATION), cal.declination);
+    p.set_i32(&k(keys::PIER_SIDE), cal.pier_side as i32);
+    p.set_i32(&k(keys::RA_GUIDE_PARITY), cal.ra_guide_parity as i32);
+    p.set_i32(&k(keys::DEC_GUIDE_PARITY), cal.dec_guide_parity as i32);
+    p.set_f64(&k(keys::ROTATOR_ANGLE), cal.rotator_angle);
+}
+
+/// `Mount::LoadCalibrationDetails` (`mount.cpp:1781`), with PHD2's
+/// defaults ([`CalibrationDetails::default`]). PHD2 then drops guide speeds
+/// that a pointing source finds bogus (`ValidGuideRates`, once per session)
+/// and writes the -1s back: that is the caller's, which owns the pointing
+/// source.
+pub fn load_calibration_details(p: &impl ProfileAccess, mount_class: MountClass) -> CalibrationDetails {
+    let prefix = keys::prefix(mount_class.class_name());
+    let k = |key: &str| format!("{prefix}{key}");
+    let (ra_steps, dec_steps) = parse_steps(&p.get_str(&k(keys::RA_STEPS), ""), &p.get_str(&k(keys::DEC_STEPS), ""));
+    CalibrationDetails {
+        focal_length: p.get_i32(&k(keys::FOCAL_LENGTH), 0),
+        image_scale: p.get_f64(&k(keys::IMAGE_SCALE), 1.0),
+        ra_guide_speed: p.get_f64(&k(keys::RA_GUIDE_RATE), -1.0),
+        dec_guide_speed: p.get_f64(&k(keys::DEC_GUIDE_RATE), -1.0),
+        ortho_error: p.get_f64(&k(keys::ORTHO_ERROR), 0.0),
+        ra_step_count: p.get_i32(&k(keys::RA_STEP_COUNT), 0),
+        dec_step_count: p.get_i32(&k(keys::DEC_STEP_COUNT), 0),
+        orig_binning: p.get_f64(&k(keys::ORIG_BINNING), 1.0),
+        last_issue: CalibrationIssue::from_i32(p.get_i32(&k(keys::LAST_ISSUE), 0)),
+        orig_timestamp: p.get_str(&k(keys::ORIG_TIMESTAMP), "Unknown"),
+        orig_pier_side: pier_side_from(p.get_i32(&k(keys::ORIG_PIERSIDE), PierSide::Unknown as i32)),
+        ra_steps,
+        dec_steps,
+    }
+}
+
+/// `Mount::SaveCalibrationDetails` (`mount.cpp:1596`). When a pointing
+/// source finds the guide speeds bogus, PHD2 writes -1 for both and logs
+/// "Bogus guide speeds over-written in SaveCalibrationDetails": the caller
+/// passes the details with the speeds already replaced.
+pub fn save_calibration_details(p: &mut impl ProfileAccess, mount_class: MountClass, d: &CalibrationDetails) {
+    let prefix = keys::prefix(mount_class.class_name());
+    let k = |key: &str| format!("{prefix}{key}");
+    p.set_i32(&k(keys::FOCAL_LENGTH), d.focal_length);
+    p.set_f64(&k(keys::IMAGE_SCALE), d.image_scale);
+    p.set_f64(&k(keys::RA_GUIDE_RATE), d.ra_guide_speed);
+    p.set_f64(&k(keys::DEC_GUIDE_RATE), d.dec_guide_speed);
+    p.set_f64(&k(keys::ORTHO_ERROR), d.ortho_error);
+    p.set_f64(&k(keys::ORIG_BINNING), d.orig_binning);
+    p.set_str(&k(keys::ORIG_TIMESTAMP), &d.orig_timestamp);
+    p.set_i32(&k(keys::ORIG_PIERSIDE), d.orig_pier_side as i32);
+    p.set_str(&k(keys::RA_STEPS), &format_steps(&d.ra_steps));
+    p.set_str(&k(keys::DEC_STEPS), &format_steps(&d.dec_steps));
+    p.set_i32(&k(keys::RA_STEP_COUNT), d.ra_step_count);
+    p.set_i32(&k(keys::DEC_STEP_COUNT), d.dec_step_count);
+    p.set_i32(&k(keys::LAST_ISSUE), d.last_issue as i32);
+}
+
+/// The `ra_steps` / `dec_steps` string (`mount.cpp:1622`): `{x y}` pairs at
+/// `%0.1f`, joined by `, `, so the steps reload rounded to 0.1 px.
+pub fn format_steps(steps: &[Point]) -> String {
+    steps.iter().map(|p| format!("{{{} {}}}", fmt_f(p.x, 1), fmt_f(p.y, 1))).collect::<Vec<_>>().join(", ")
+}
+
+/// The step strings back to points (`mount.cpp:1811-1848`): each string
+/// split on `}` and `,` (empty pieces skipped), each piece left-trimmed, its
+/// first character dropped, x read up to the first blank and y after it.
+/// Quirk kept: one error flag serves both strings, so a bad RA pair ends
+/// the RA list there and leaves the Dec list empty.
+pub fn parse_steps(ra: &str, dec: &str) -> (Vec<Point>, Vec<Point>) {
+    let mut err = false;
+    let ra = parse_step_list(ra, &mut err);
+    let dec = parse_step_list(dec, &mut err);
+    (ra, dec)
+}
+
+fn parse_step_list(s: &str, err: &mut bool) -> Vec<Point> {
+    let mut out = Vec::new();
+    for piece in s.split(['}', ',']).filter(|t| !t.is_empty()) {
+        if *err {
+            break;
+        }
+        let tk: Vec<char> = piece.trim_start().chars().collect();
+        // `Mid(1, blank - 1)` then `Mid(blank + 1)`; without a blank `find`
+        // gives -1, so x is the rest after the first character and y the
+        // whole piece, which then fails.
+        let blank = tk.iter().position(|&c| c == ' ');
+        let (x, y): (String, String) = match blank {
+            Some(b) => (tk.iter().skip(1).take(b.saturating_sub(1)).collect(), tk[b + 1..].iter().collect()),
+            None => (tk.iter().skip(1).collect(), tk.iter().collect()),
+        };
+        match (to_double(&x), to_double(&y)) {
+            (Some(x), Some(y)) => out.push(Point::new(x, y)),
+            _ => *err = true,
+        }
+    }
+    out
+}
+
+/// `wxString::ToDouble` on what `%0.1f` writes: `strtod` (leading blanks
+/// skipped) that must use the whole, non-empty string. Its `ERANGE` refusal
+/// cannot come from a `%0.1f` number.
+fn to_double(s: &str) -> Option<f64> {
+    let t = s.trim_start_matches([' ', '\t', '\n', '\u{b}', '\u{c}', '\r']);
+    if t.is_empty() { None } else { t.parse().ok() }
 }
 
 /// `orthoError` (`scope.cpp:1107`, also `scope.cpp:891`): how far the angle
@@ -339,8 +581,9 @@ impl MountCalibration {
     /// `x_rate` to the stored rate, so a set while guiding drops the Dec
     /// compensation. Returns its two debug-log lines. PHD2 stores the
     /// calibration with a fresh timestamp in the same call: that is the
-    /// caller's. PHD2's `GUIDE_PARITY_UNCHANGED` (keep the old parity) has no
-    /// [`Parity`] counterpart; nothing here passes it.
+    /// caller's ([`store_calibration`]). PHD2's `GUIDE_PARITY_UNCHANGED`
+    /// (keep the old parity) has no [`Parity`] counterpart; nothing here
+    /// passes it.
     pub fn set(&mut self, cal: &Calibration, mount_class: MountClass) -> Vec<String> {
         let class = mount_class.class_name();
         let first = format!(
@@ -423,8 +666,8 @@ pub struct FlipResult {
 /// answers error 1 "could not flip calibration" and emits no event.
 ///
 /// A flip ends with `SetCalibration` ([`MountCalibration::set`]), so:
-/// - the caller stores `state.cal` with a fresh timestamp, which fires
-///   `ConfigurationChange`;
+/// - the caller stores `state.cal` with a fresh timestamp
+///   ([`store_calibration`]), which fires `ConfigurationChange`;
 /// - `state.x_rate` is back to the stored rate, so a flip while guiding
 ///   drops the Dec compensation;
 /// - only the flip RPC and menu (`FlipCalibrationData`,
@@ -567,9 +810,9 @@ pub struct Adjustment {
     pub steps: Vec<AdjustStep>,
     /// The calibration as the last `SetCalibration` (binning rescale, flip,
     /// rotator turn) left it, for the caller to store with a fresh
-    /// timestamp; `None` when nothing was stored. Not always the final
-    /// `state.cal`: the rotator-unknown branch changes the angle in memory
-    /// only.
+    /// timestamp ([`store_calibration`]); `None` when nothing was stored.
+    /// Not always the final `state.cal`: the rotator-unknown branch changes
+    /// the angle in memory only.
     pub stored: Option<Calibration>,
     /// The calibration was flipped to the other side of the pier.
     pub flipped: bool,
@@ -593,7 +836,8 @@ fn set_in_adjustment(state: &mut MountCalibration, cal: &Calibration, class: Mou
 /// for the declination (`cal.x_rate / cos(cal_dec) · cos(dec)` with `dec`
 /// clamped to ±89°, only when the calibration was done within
 /// [`DEC_COMP_LIMIT`] of the equator and `use_dec_comp` is on). `details`
-/// are the stored calibration details, read for the guide speeds only.
+/// are the stored calibration details ([`load_calibration_details`]), read
+/// for the guide speeds only.
 pub fn adjust_for_scope_pointing(
     state: &mut MountCalibration,
     details: &CalibrationDetails,
@@ -899,13 +1143,55 @@ pub fn sanity_check_calibration(
     res
 }
 
+/// `Scope::DEFAULT_MOUNT_GUIDE_SPEED` (`scope.cpp:69`): the guide speed, ×
+/// sidereal, assumed without a usable mount.
+pub const DEFAULT_MOUNT_GUIDE_SPEED: f64 = 0.5;
+
 /// `CalstepDialog::DEFAULT_STEPS` (`calstep_dialog.h:76`).
 pub const CALSTEP_DEFAULT_STEPS: i32 = 12;
 /// `CalstepDialog::DEFAULT_DISTANCE`, px.
 pub const CALSTEP_DEFAULT_DISTANCE: i32 = 25;
 /// `MIN_STEPS` (`calstep_dialog.cpp:45`): the pulse is capped so Dec, at
-/// `cos(dec)` of the RA travel per pulse, still gets this many steps.
+/// `cos(dec)` of the RA travel per pulse, still gets this many steps. Also
+/// the low end of the steps input.
 pub const CALSTEP_MIN_STEPS: f64 = 6.0;
+/// The calculator's other input ranges (`calstep_dialog.cpp:40-49`), which
+/// its spin controls enforce: pixel size µm, guide speed × sidereal, steps,
+/// declination degrees, distance px.
+pub const CALSTEP_MIN_PIXELSIZE: f64 = 0.1;
+pub const CALSTEP_MAX_PIXELSIZE: f64 = 25.0;
+pub const CALSTEP_MIN_GUIDESPEED: f64 = 0.10;
+pub const CALSTEP_MAX_GUIDESPEED: f64 = 2.0;
+pub const CALSTEP_MAX_STEPS: f64 = 60.0;
+pub const CALSTEP_MIN_DECLINATION: f64 = -60.0;
+pub const CALSTEP_MAX_DECLINATION: f64 = 60.0;
+pub const CALSTEP_MIN_DISTANCE: i32 = 10;
+pub const CALSTEP_MAX_DISTANCE: i32 = 200;
+
+/// `SiderealRateFromGuideSpeed` (`advanced_dialog.cpp:552`): a guide speed
+/// in deg/s, as mounts report it, as a multiple of sidereal, counting 0.9973
+/// sidereal seconds per second. Every PHD2 conversion uses this factor (the
+/// step-size estimate, `CheckCalibrationDuration`, the calculator), so a
+/// plain 15″/s is 0.27 % off and can move a 50 ms bucket.
+pub fn sidereal_rate_from_guide_speed(deg_per_s: f64) -> f64 {
+    deg_per_s * 3600.0 / (15.0 * 0.9973)
+}
+
+/// The guide speed the calculator opens with (`CalstepDialog::CalstepDialog`,
+/// `calstep_dialog.cpp:75-85`): when the pointing source reports its `(RA,
+/// Dec)` rates in deg/s, the faster one (RA on a tie) in × sidereal, at
+/// least [`CALSTEP_MIN_GUIDESPEED`]; else `saved` (`/CalStepCalc/GuideSpeed`,
+/// default [`DEFAULT_MOUNT_GUIDE_SPEED`]), which PHD2 reads through a
+/// `float`.
+pub fn calstep_guide_speed(saved: f64, mount_rates: Option<(f64, f64)>) -> f64 {
+    match mount_rates {
+        Some((ra, dec)) => {
+            let speed = sidereal_rate_from_guide_speed(if ra >= dec { ra } else { dec });
+            if speed < CALSTEP_MIN_GUIDESPEED { CALSTEP_MIN_GUIDESPEED } else { speed }
+        }
+        None => saved as f32 as f64,
+    }
+}
 
 /// `MyFrame::GetPixelScale` (`myframe.h:731`): arcsec per (binned) pixel.
 pub fn pixel_scale(pixel_um: f64, focal_mm: i32, binning: u16) -> f64 {
@@ -918,15 +1204,16 @@ pub fn calibration_distance(focal_mm: i32, pixel_um: f64, binning: u16) -> i32 {
     let scale = pixel_scale(pixel_um, focal_mm, binning);
     let nominal_distance_arcsecs = 20.0;
     let min_distance_px = CALSTEP_DEFAULT_DISTANCE as f64;
+    // std::max(a, b) is `a < b ? b : a`: with a NaN b it keeps 25, as f64::max.
     min_distance_px.max(nominal_distance_arcsecs / scale).ceil() as i32
 }
 
 /// `CalstepDialog::GetCalibrationStepSize` (`calstep_dialog.cpp:230`): the
 /// pulse, ms, that covers `distance` px in `desired_steps` steps at this
-/// declination. `guide_speed` is a fraction of sidereal (15″/s); the pulse
-/// grows by `1/cos(dec)` but never past the length that gives
-/// [`CALSTEP_MIN_STEPS`] at the equator, and rounds up to 50 ms. Returns
-/// `(image_scale, step_ms)`.
+/// declination. `guide_speed` is a multiple of sidereal (15″/s, see
+/// [`sidereal_rate_from_guide_speed`]); the pulse grows by `1/cos(dec)` but
+/// never past the length that gives [`CALSTEP_MIN_STEPS`] at the equator,
+/// and rounds up to 50 ms. Returns `(image_scale, step_ms)`.
 pub fn calibration_step_size(
     focal_mm: i32,
     pixel_um: f64,
@@ -946,13 +1233,28 @@ pub fn calibration_step_size(
     (image_scale, step)
 }
 
-/// The calibration-step calculator as the dialog runs it: the recommended
-/// distance for this scale, then the pulse for it. Returns
-/// `(distance_px, pulse_ms)`.
-pub fn calstep(pixel_um: f64, binning: u16, focal_mm: i32, guide_speed: f64, dec_deg: f64, steps: i32) -> (i32, i32) {
-    let distance = calibration_distance(focal_mm, pixel_um, binning);
-    let (_, pulse) = calibration_step_size(focal_mm, pixel_um, binning, guide_speed, steps, dec_deg, distance);
-    (distance, pulse)
+/// `CalstepDialog::DoRecalc` (`calstep_dialog.cpp:263`), the calculator on
+/// each input change: its two checks (their status text is the error), then
+/// [`calibration_step_size`] at `|declination|`. Returns `(image_scale,
+/// step_ms)`, shown as `%.2f` and `%3d`. The Reset button first sets the
+/// distance to [`calibration_distance`] and the steps to
+/// [`CALSTEP_DEFAULT_STEPS`].
+pub fn calstep_recalc(
+    focal_mm: i32,
+    pixel_um: f64,
+    binning: u16,
+    guide_speed: f64,
+    steps: i32,
+    declination_deg: f64,
+    distance: i32,
+) -> Result<(f64, i32), &'static str> {
+    if focal_mm < 50 {
+        Err("Please enter a focal length of at least 50")
+    } else if pixel_um <= 0.0 {
+        Err("Please enter a pixel size greater than zero.")
+    } else {
+        Ok(calibration_step_size(focal_mm, pixel_um, binning, guide_speed, steps, declination_deg.abs(), distance))
+    }
 }
 
 #[cfg(test)]
@@ -1527,18 +1829,160 @@ mod tests {
     #[test]
     fn calstep_3_75um_400mm_half_sidereal() {
         // scale 1.9337″/px, 20″ = 10.3 px < 25 px → 25 px; 6.4458 s of travel;
-        // 537 ms per step at dec 0 → 550.
+        // 537 ms per step at dec 0 → 550. Steps from PHD2's C++.
         assert!(near(pixel_scale(3.75, 400, 1), 1.933734375, 1e-12));
-        assert_eq!(calstep(3.75, 1, 400, 0.5, 0.0, CALSTEP_DEFAULT_STEPS), (25, 550));
+        assert_eq!(calibration_distance(400, 3.75, 1), 25);
+        assert_eq!(calstep_recalc(400, 3.75, 1, 0.5, CALSTEP_DEFAULT_STEPS, 0.0, 25), Ok((1.933734375, 550)));
         // dec 45: 759.6 → 800. dec 60: the Dec term 1074.2968749999998 sits
-        // just under the 6-step cap 1074.296875 and wins → 1100.
-        assert_eq!(calstep(3.75, 1, 400, 0.5, 45.0, CALSTEP_DEFAULT_STEPS), (25, 800));
-        assert_eq!(calstep(3.75, 1, 400, 0.5, 60.0, CALSTEP_DEFAULT_STEPS), (25, 1100));
+        // just under the 6-step cap 1074.296875 and wins → 1100. The
+        // calculator takes |dec|.
+        assert_eq!(calstep_recalc(400, 3.75, 1, 0.5, CALSTEP_DEFAULT_STEPS, 45.0, 25), Ok((1.933734375, 800)));
+        assert_eq!(calstep_recalc(400, 3.75, 1, 0.5, CALSTEP_DEFAULT_STEPS, 60.0, 25), Ok((1.933734375, 1100)));
+        assert_eq!(calstep_recalc(400, 3.75, 1, 0.5, CALSTEP_DEFAULT_STEPS, -60.0, 25), Ok((1.933734375, 1100)));
         // Long focal length: 20″ wins the distance (0.2475″/px → 81 px).
-        assert_eq!(calstep(2.4, 1, 2000, 0.5, 0.0, CALSTEP_DEFAULT_STEPS), (81, 250));
-        let (scale, step) = calibration_step_size(400, 3.75, 1, 0.5, 12, 0.0, 25);
-        assert!(near(scale, 1.933734375, 1e-12));
-        assert_eq!(step, 550);
+        assert_eq!(calibration_distance(2000, 2.4, 1), 81);
+        assert_eq!(calstep_recalc(2000, 2.4, 1, 0.5, CALSTEP_DEFAULT_STEPS, 0.0, 81), Ok((0.24751799999999996, 250)));
+        // The calculator's two checks.
+        assert_eq!(calstep_recalc(49, 3.75, 1, 0.5, 12, 0.0, 25), Err("Please enter a focal length of at least 50"));
+        assert_eq!(calstep_recalc(400, 0.0, 1, 0.5, 12, 0.0, 25), Err("Please enter a pixel size greater than zero."));
+    }
+
+    #[test]
+    fn guide_speed_conversion_and_calculator_default() {
+        // From PHD2's C++: 0.9973 sidereal seconds per second.
+        assert_eq!(sidereal_rate_from_guide_speed(0.5 * 15.0 / 3600.0), 0.50135365486814398);
+        assert_eq!(sidereal_rate_from_guide_speed(0.004), 0.96259901734683651);
+        // The faster axis, at least 0.1; else the saved speed through a float.
+        assert_eq!(calstep_guide_speed(0.5, Some((0.004, 0.002))), 0.96259901734683651);
+        assert_eq!(calstep_guide_speed(0.5, Some((0.002, 0.004))), 0.96259901734683651);
+        assert_eq!(calstep_guide_speed(0.5, Some((0.0001, 0.0))), CALSTEP_MIN_GUIDESPEED);
+        assert_eq!(calstep_guide_speed(0.3, None), 0.30000001192092896);
+        assert_eq!(calstep_guide_speed(DEFAULT_MOUNT_GUIDE_SPEED, None), 0.5);
+    }
+
+    /// A profile in memory, typed like PHD2's.
+    #[derive(Default)]
+    struct Mem(std::collections::HashMap<String, V>);
+
+    #[derive(Clone, Debug, PartialEq)]
+    enum V {
+        F(f64),
+        I(i32),
+        S(String),
+    }
+
+    impl ProfileAccess for Mem {
+        fn has(&self, key: &str) -> bool {
+            self.0.contains_key(key)
+        }
+        fn get_f64(&self, key: &str, default: f64) -> f64 {
+            if let Some(V::F(v)) = self.0.get(key) { *v } else { default }
+        }
+        fn get_i32(&self, key: &str, default: i32) -> i32 {
+            if let Some(V::I(v)) = self.0.get(key) { *v } else { default }
+        }
+        fn get_str(&self, key: &str, default: &str) -> String {
+            if let Some(V::S(v)) = self.0.get(key) { v.clone() } else { default.to_string() }
+        }
+        fn set_f64(&mut self, key: &str, value: f64) {
+            self.0.insert(key.to_string(), V::F(value));
+        }
+        fn set_i32(&mut self, key: &str, value: i32) {
+            self.0.insert(key.to_string(), V::I(value));
+        }
+        fn set_str(&mut self, key: &str, value: &str) {
+            self.0.insert(key.to_string(), V::S(value.to_string()));
+        }
+    }
+
+    #[test]
+    fn calibration_load_and_store_with_phd2_defaults() {
+        let mut p = Mem::default();
+        // An empty profile: nothing valid, nothing to restore.
+        assert_eq!(get_last_calibration(&p, MountClass::Scope), Calibration::default());
+        assert!(!Calibration::default().is_valid);
+        assert_eq!(load_calibration(&p, MountClass::Scope), None);
+
+        // A stored calibration reads back whole, timestamp included.
+        let c = Calibration { pier_side: PierSide::West, dec_guide_parity: Parity::Odd, ..cal(15.0, 270.0) };
+        store_calibration(&mut p, MountClass::Scope, &c, "2026-11-11 21:00:00");
+        assert_eq!(p.0["/scope/calibration/pierSide"], V::I(1));
+        assert_eq!(p.0["/scope/calibration/decGuideParity"], V::I(-1));
+        assert_eq!(p.0["/scope/calibration/rotatorAngle"], V::F(-888.0));
+        let back = get_last_calibration(&p, MountClass::Scope);
+        assert_eq!(back, Calibration { timestamp: "2026-11-11 21:00:00".into(), ..c.clone() });
+        assert_eq!(load_calibration(&p, MountClass::Scope), Some(Calibration { timestamp: String::new(), ..c }));
+        assert_eq!(get_last_calibration(&p, MountClass::StepGuider), Calibration::default());
+
+        // Only a timestamp: the loaders' defaults, yAngle 0 vs π/2.
+        let mut p = Mem::default();
+        p.set_str("/stepguider/calibration/timestamp", "t");
+        let g = get_last_calibration(&p, MountClass::StepGuider);
+        assert!(g.is_valid);
+        assert_eq!((g.x_rate, g.y_rate, g.binning, g.x_angle, g.y_angle, g.declination), (1.0, 1.0, 1, 0.0, 0.0, 0.0));
+        assert_eq!((g.rotator_angle, g.pier_side, g.ra_guide_parity), (ROTATOR_POSITION_UNKNOWN, PierSide::Unknown, Parity::Unknown));
+        assert_eq!(load_calibration(&p, MountClass::StepGuider).unwrap().y_angle, PI / 2.0);
+
+        // An empty timestamp: invalid for GetLastCalibration, still restored.
+        // Out-of-range ints map to Unknown; the binning wraps like the C cast.
+        let mut p = Mem::default();
+        p.set_str("/scope/calibration/timestamp", "");
+        p.set_i32("/scope/calibration/pierSide", 7);
+        p.set_i32("/scope/calibration/raGuideParity", 5);
+        p.set_i32("/scope/calibration/binning", 65537);
+        assert!(!get_last_calibration(&p, MountClass::Scope).is_valid);
+        let r = load_calibration(&p, MountClass::Scope).unwrap();
+        assert_eq!((r.pier_side, r.ra_guide_parity, r.binning), (PierSide::Unknown, Parity::Unknown, 1));
+    }
+
+    #[test]
+    fn details_load_and_store_with_phd2_defaults() {
+        let mut p = Mem::default();
+        let d = load_calibration_details(&p, MountClass::Scope);
+        assert_eq!(d, CalibrationDetails::default());
+        assert_eq!((d.image_scale, d.ra_guide_speed, d.dec_guide_speed, d.orig_binning), (1.0, -1.0, -1.0, 1.0));
+        assert_eq!((d.orig_timestamp.as_str(), d.orig_pier_side, d.is_valid()), ("Unknown", PierSide::Unknown, false));
+
+        let d = CalibrationDetails {
+            ra_steps: vec![Point::new(1.04, -2.25), Point::new(3.0, 4.96)],
+            dec_steps: vec![Point::new(-0.04, 0.05)],
+            last_issue: CalibrationIssue::Rates,
+            orig_timestamp: "2026-11-11 20:55:00".into(),
+            orig_pier_side: PierSide::West,
+            ..details(2, 1)
+        };
+        save_calibration_details(&mut p, MountClass::Scope, &d);
+        assert_eq!(p.0["/scope/calibration/ra_steps"], V::S("{1.0 -2.2}, {3.0 5.0}".into()));
+        assert_eq!(p.0["/scope/calibration/last_issue"], V::I(3));
+        let back = load_calibration_details(&p, MountClass::Scope);
+        // The steps come back at 0.1 px.
+        assert_eq!(back.ra_steps, [Point::new(1.0, -2.2), Point::new(3.0, 5.0)]);
+        assert_eq!(back.dec_steps, [Point::new(-0.0, 0.1)]);
+        assert_eq!(back, CalibrationDetails { ra_steps: back.ra_steps.clone(), dec_steps: back.dec_steps.clone(), ..d });
+    }
+
+    #[test]
+    fn steps_codec_matches_phd2() {
+        // From PHD2's C++ (SaveCalibrationDetails / LoadCalibrationDetails
+        // over wx's tokenizer and ToDouble).
+        let s = format_steps(&[Point::new(1.04, -2.25), Point::new(3.0, 4.96), Point::new(-0.04, 0.05)]);
+        assert_eq!(s, "{1.0 -2.2}, {3.0 5.0}, {-0.0 0.1}");
+        assert_eq!(format_steps(&[]), "");
+        let p = |v: &[(f64, f64)]| v.iter().map(|&(x, y)| Point::new(x, y)).collect::<Vec<_>>();
+        assert_eq!(
+            parse_steps(&s, "{7.0 8.0}, {9.5 -1.5}"),
+            (p(&[(1.0, -2.2), (3.0, 5.0), (-0.0, 0.1)]), p(&[(7.0, 8.0), (9.5, -1.5)]))
+        );
+        // One error flag for both lists: a bad RA pair empties the Dec list.
+        assert_eq!(parse_steps("{1.0 2.0}, {x 4.0}, {5.0 6.0}", "{7.0 8.0}"), (p(&[(1.0, 2.0)]), vec![]));
+        assert_eq!(parse_steps("{1.0 2.0}, {3.0 4.0}", "{7.0 8.0}, {9.0}, {1.0 1.0}"), (p(&[(1.0, 2.0), (3.0, 4.0)]), p(&[(7.0, 8.0)])));
+        assert_eq!(parse_steps("", "{7.0 8.0}"), (vec![], p(&[(7.0, 8.0)])));
+        assert_eq!(parse_steps("{ 1.0 2.0}", "{1.0 2.0 }"), (vec![], vec![]));
+        assert_eq!(parse_steps("{1.0 2.0}", "{1,5 2.0}"), (p(&[(1.0, 2.0)]), vec![]));
+        // strtod skips leading blanks and reads nan / inf.
+        let (ra, dec) = parse_steps("{1.0  2.0}", "{nan -nan}, {inf 1e3}");
+        assert_eq!(ra, p(&[(1.0, 2.0)]));
+        assert!(dec[0].x.is_nan() && dec[0].y.is_nan() && dec[1] == Point::new(f64::INFINITY, 1000.0));
     }
 
     #[test]
