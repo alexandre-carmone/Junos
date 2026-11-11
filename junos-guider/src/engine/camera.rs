@@ -195,6 +195,11 @@ pub trait GuideCamera: Send {
     /// `ST4PulseGuideScope`: one pulse through the ST-4 port, blocking for
     /// its length.
     fn st4_pulse(&mut self, dir: Dir, ms: u32, cancel: &CancelToken) -> Result<(), String>;
+    /// The device's debug-log lines since the last call, oldest first: the
+    /// engine writes them to the debug log after each capture and pulse.
+    fn take_debug(&mut self) -> Vec<String> {
+        Vec::new()
+    }
     /// One exposure of `dur_ms` ms, the raw frame back. `subframe` is the
     /// area to read when subframes are in use; a camera that cannot take it
     /// reads the full frame. `settings` holds what PHD2's camera reads from

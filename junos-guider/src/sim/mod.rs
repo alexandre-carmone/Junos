@@ -1062,6 +1062,11 @@ impl GuideCamera for SimCamera {
         Ok(())
     }
 
+    /// The camera's, the mount's and the AO's lines ([`SimCamera::take_debug`]).
+    fn take_debug(&mut self) -> Vec<String> {
+        SimCamera::take_debug(self)
+    }
+
     /// The frame kind is the engine's business: the simulator reads the
     /// shutter from `settings`.
     fn capture(
