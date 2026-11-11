@@ -26,9 +26,10 @@ pub struct Config {
     #[arg(long, env = "GUIDER_SERVER_PORT")]
     pub server_port: Option<u16>,
 
-    /// Address of the local WebSocket the junos-server relay dials.
-    #[arg(long, env = "GUIDER_WS_ADDR", default_value = "127.0.0.1:4410")]
-    pub ws_addr: String,
+    /// Address of the local WebSocket the junos-server relay dials
+    /// (default: 127.0.0.1, port 4410 + instance - 1).
+    #[arg(long, env = "GUIDER_WS_ADDR")]
+    pub ws_addr: Option<String>,
 
     /// Where profiles, darks and defect maps live (default: XDG config/data dirs).
     #[arg(long, env = "GUIDER_DATA_DIR")]
@@ -69,6 +70,12 @@ impl Config {
     /// (event_server.cpp:2588), so instance 0 listens on 4399 as PHD2's does.
     pub fn event_server_port(&self) -> u16 {
         self.server_port.unwrap_or((4399 + self.instance) as u16)
+    }
+
+    /// The relay's socket: `--ws-addr`, or `127.0.0.1:(4410 + instance -
+    /// 1)`, so that two instances do not collide.
+    pub fn ws_addr(&self) -> String {
+        self.ws_addr.clone().unwrap_or_else(|| format!("127.0.0.1:{}", 4409 + self.instance))
     }
 
     /// PHD2's default file folder (`GetDefaultFileDir`, where `save_image`
@@ -119,5 +126,9 @@ mod tests {
         assert_eq!(port(&["--instance", "3", "--server-port", "0"]), 0);
         assert_eq!(port(&["--server-port", "4500"]), 4500);
         assert!(Config::try_parse_from(["junos-guider", "--instance", "61137"]).is_err());
+        let ws = |args: &[&str]| Config::parse_from([&["junos-guider"][..], args].concat()).ws_addr();
+        assert_eq!(ws(&[]), "127.0.0.1:4410");
+        assert_eq!(ws(&["--instance", "2"]), "127.0.0.1:4411");
+        assert_eq!(ws(&["--instance", "2", "--ws-addr", "0.0.0.0:5000"]), "0.0.0.0:5000");
     }
 }

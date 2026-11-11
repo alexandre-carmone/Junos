@@ -4,7 +4,11 @@
 //! The [`Engine`] runs on one `std::thread` (PHD2's worker thread and main
 //! thread in one): it takes the queued jobs first, then steps while it has
 //! work ([`Engine::has_work`]), and otherwise waits for a job at most until
-//! the next 1 s tick. Every command comes with a reply channel and is
+//! the next 1 s tick (every tick a long exposure held up is caught up on
+//! at once, so the Guiding Assistant counts real seconds). It closes the
+//! guide log when it ends. A panic on it is logged and published in the
+//! snapshot ([`Snapshot::engine_error`], [`Daemon::failed`]), and the
+//! process exits rather than serve a dead engine. Every command comes with a reply channel and is
 //! answered after the snapshot was published and its events went out on
 //! the broadcast (in that order: PHD2 updates its state before it
 //! notifies), so a client that drains the events before writing the reply
@@ -38,6 +42,7 @@
 pub mod files;
 mod gear;
 
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
@@ -234,6 +239,16 @@ impl Daemon {
     pub fn subscribe_with_snapshot(&self) -> (broadcast::Receiver<Arc<EngineEvent>>, Arc<Snapshot>) {
         let _publishing = lock(&self.0.publishing);
         (self.0.events.subscribe(), self.snapshot())
+    }
+
+    /// Resolves with the panic's text once the engine thread died of one.
+    pub async fn failed(&self) -> String {
+        let mut rx = self.snapshots();
+        match rx.wait_for(|s| s.engine_error.is_some()).await {
+            Ok(s) => s.engine_error.clone().unwrap_or_default(),
+            // The sender lives as long as the daemon.
+            Err(_) => std::future::pending().await,
+        }
     }
 
     /// The event server's port once it listens (`port`), or why it does
@@ -480,8 +495,27 @@ impl Outputs {
     }
 }
 
-/// The engine thread.
+/// The engine thread: [`serve`], then the profile written and the guide
+/// log closed, even after a panic (as far as they go).
 fn run(mut engine: Engine, jobs: mpsc::Receiver<Job>, out: Outputs, daemon: std::sync::Weak<Inner>) {
+    let served = panic::catch_unwind(AssertUnwindSafe(|| serve(&mut engine, &jobs, &out, &daemon)));
+    let closed = panic::catch_unwind(AssertUnwindSafe(|| {
+        persist(&mut engine);
+        engine.close_logs();
+    }));
+    if let Err(p) = served.and(closed) {
+        let msg = p
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| p.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".into());
+        tracing::error!("the guider engine stopped: {msg}");
+        out.snapshot.send_modify(|s| Arc::make_mut(s).engine_error = Some(msg));
+    }
+}
+
+/// The engine thread's loop, until [`Job::Exit`].
+fn serve(engine: &mut Engine, jobs: &mpsc::Receiver<Job>, out: &Outputs, daemon: &std::sync::Weak<Inner>) {
     let publish = |engine: &mut Engine, evs: Vec<EngineEvent>| out.publish(engine, evs);
     let mut rig = Rig::default();
     let mut last_tick = Instant::now();
@@ -491,37 +525,40 @@ fn run(mut engine: Engine, jobs: mpsc::Receiver<Job>, out: Outputs, daemon: std:
             Ok(Job::Command(cmd, reply)) => {
                 let r = engine.handle(cmd);
                 let evs = engine.take_events();
-                publish(&mut engine, evs);
+                publish(engine, evs);
                 let _ = reply.send(r);
             }
             Ok(Job::Run(task)) => {
-                let reply = task(&mut engine, &mut rig);
+                let reply = task(engine, &mut rig);
                 engine.finish();
                 let evs = engine.take_events();
-                publish(&mut engine, evs);
+                publish(engine, evs);
                 reply();
             }
             Ok(Job::Exit) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if engine.has_work() {
                     let evs = engine.step();
-                    publish(&mut engine, evs);
+                    publish(engine, evs);
                 }
             }
         }
-        if last_tick.elapsed() >= TICK {
-            last_tick = Instant::now();
-            let _ = engine.handle(Command::Tick);
+        // PHD2's 1 s timer: as many ticks as seconds went by.
+        let ticks = last_tick.elapsed().as_secs() as u32;
+        if ticks > 0 {
+            last_tick += TICK * ticks;
+            for _ in 0..ticks {
+                let _ = engine.handle(Command::Tick);
+            }
             if let Some(d) = daemon.upgrade() {
-                rig.poll(&mut engine, &Daemon(d));
+                rig.poll(engine, &Daemon(d));
             }
             engine.finish();
-            persist(&mut engine);
+            persist(engine);
             let evs = engine.take_events();
-            publish(&mut engine, evs);
+            publish(engine, evs);
         }
     }
-    persist(&mut engine);
 }
 
 /// The profile written when it changed, as PHD2's config is at its

@@ -17,6 +17,11 @@ fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
     let cfg = Config::parse();
+    // Before anything else, --reset included.
+    if cfg.sim && !cfg!(feature = "sim") {
+        tracing::error!("--sim needs junos-guider built with the `sim` feature");
+        exit(1);
+    }
     let dir = cfg.config_dir();
     // PHD2 refuses a second process of the same instance before anything
     // else (phd.cpp:508-517): one would lose the other's settings.
@@ -58,10 +63,6 @@ fn main() {
     }
     // PHD2's event server drops the changes made before it starts.
     store.take_change();
-    if cfg.sim && !cfg!(feature = "sim") {
-        tracing::error!("--sim needs junos-guider built with the `sim` feature");
-        exit(1);
-    }
     // `Logger::GetLogDir`: --log-dir stands for the `/frame/LogDir` setting.
     let setting = match &cfg.log_dir {
         Some(dir) => dir.clone(),
@@ -83,7 +84,7 @@ fn main() {
     };
     tracing::info!(
         port = cfg.event_server_port(),
-        ws = %cfg.ws_addr,
+        ws = %cfg.ws_addr(),
         profile = %store.current_profile(),
         logs = %opts.engine.log_dir,
         "junos-guider starting"
@@ -99,9 +100,10 @@ fn main() {
         let daemon = Daemon::start(opts, store, Box::new(DiskFiles));
         // Guiding goes on without the relay's socket (Ekos and NINA use the
         // event server): a bind failure is only logged.
-        match junos_guider::ws::spawn(daemon.clone(), &cfg.ws_addr).await {
+        let ws_addr = cfg.ws_addr();
+        match junos_guider::ws::spawn(daemon.clone(), &ws_addr).await {
             Ok(addr) => tracing::info!(%addr, "relay socket listening"),
-            Err(e) => tracing::error!(addr = %cfg.ws_addr, "cannot listen for the relay: {e}"),
+            Err(e) => tracing::error!(addr = %ws_addr, "cannot listen for the relay: {e}"),
         }
         let server = server_mode.then(|| {
             let port = cfg.event_server_port();
@@ -120,6 +122,9 @@ fn main() {
         tokio::select! {
             _ = wait_for_signal() => {}
             _ = exit => tracing::info!("shutdown asked by a client"),
+            // The engine thread panicked (logged, its logs closed): exit
+            // with an error, so that a service is restarted.
+            _ = daemon.failed() => std::process::exit(1),
         }
         tracing::info!("junos-guider stopping");
         daemon.shutdown().await;

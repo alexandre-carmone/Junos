@@ -273,6 +273,8 @@ pub struct Snapshot {
     /// it retries; the daemon's, the engine leaves them empty.
     pub port: Option<u16>,
     pub port_error: Option<String>,
+    /// The engine thread panicked: why. The daemon's; the process exits.
+    pub engine_error: Option<String>,
     /// The camera takes a gain.
     pub has_gain_control: bool,
     /// The exposures of the dark library's frames, ms.

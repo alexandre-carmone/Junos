@@ -517,6 +517,8 @@ fn state_json(d: &Daemon, s: &Snapshot, part: &ProfilePart, track: &Track) -> Va
         // The event server's, once it listens; why it does not meanwhile.
         "port": s.port,
         "port_error": s.port_error,
+        // The engine thread panicked: the guider is about to exit.
+        "engine_error": s.engine_error,
         "profile": {"id": s.profile_id, "name": s.profile_name},
         "app_state": s.app_state.map(|a| a.as_str()),
         "guider_state": s.guider_state.map(|g| g.name()),

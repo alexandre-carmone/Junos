@@ -1664,6 +1664,7 @@ impl Engine {
             connecting: self.connecting,
             port: None,
             port_error: None,
+            engine_error: None,
             has_gain_control: self.camera.as_ref().is_some_and(|c| c.has_gain_control()),
             dark_exposures: self.darks.darks.keys().copied().collect(),
             guide_stars: self.guider.multistar().guide_stars().to_vec(),

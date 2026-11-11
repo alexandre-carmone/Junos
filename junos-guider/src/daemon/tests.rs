@@ -180,8 +180,33 @@ async fn connects_loops_guides_and_stops_on_the_simulator() {
     assert_eq!(store.profile().get_i32("/ExposureDurationMs", 0), 200);
     let logs: Vec<String> =
         fs::read_dir(path.join("logs")).unwrap().flatten().map(|e| e.file_name().into_string().unwrap()).collect();
-    assert!(logs.iter().any(|n| n.starts_with("PHD2_GuideLog_")), "{logs:?}");
     assert!(logs.iter().any(|n| n.starts_with("PHD2_DebugLog_")), "{logs:?}");
+    // `OnClose` closed the guide log: its summary and closing line.
+    let guide = logs.iter().find(|n| n.starts_with("PHD2_GuideLog_")).expect("a guide log");
+    let guide = fs::read_to_string(path.join("logs").join(guide)).unwrap();
+    assert!(guide.contains("Log Summary: calcnt:"), "{guide}");
+    assert!(guide.trim_end().lines().last().is_some_and(|l| l.starts_with("Log closed at ")), "{guide}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_engine_panic_is_published_not_hidden() {
+    let path = dir("panic");
+    let d = start(&path, |_| {});
+    assert_eq!(d.with_engine(|_| -> () { panic!("boom") }).await, None);
+    let msg = tokio::time::timeout(Duration::from_secs(5), d.failed()).await.unwrap();
+    assert_eq!(msg, "boom");
+    assert_eq!(d.snapshot().engine_error.as_deref(), Some("boom"));
+    let internal = Err(CmdError::new(crate::server::rpc::INTERNAL_ERROR, "internal error"));
+    assert_eq!(d.command(Command::Loop).await, internal);
+    d.close();
+    // The guide log was closed all the same.
+    let guide = fs::read_dir(path.join("logs"))
+        .unwrap()
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().starts_with("PHD2_GuideLog_"))
+        .map(|e| fs::read_to_string(e.path()).unwrap())
+        .unwrap();
+    assert!(guide.trim_end().lines().last().is_some_and(|l| l.starts_with("Log closed at ")), "{guide}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

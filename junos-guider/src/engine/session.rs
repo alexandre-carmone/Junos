@@ -155,6 +155,16 @@ impl Engine {
         );
     }
 
+    /// `MyFrame::OnClose`'s `CloseGuideLog`: the guide log's summary and
+    /// closing line written, or the log deleted when nothing was logged.
+    pub fn close_logs(&mut self) {
+        let now = self.wall();
+        if let Some(name) = self.glog.close(now) {
+            let path = join(&self.cfg.log_dir, &name);
+            self.files.remove(&path);
+        }
+    }
+
     /// A debug-log line (also the daemon's devices' lines).
     pub fn debug(&mut self, line: &str) {
         let now = self.clock.wall();
