@@ -58,10 +58,7 @@ Frame,Time,mount,dx,dy,RARawDistance,DECRawDistance,RAGuideDistance,DECGuideDist
 INFO: Manual guide (AO) Up 1 step
 INFO: Manual guide (AO) Left 3 steps
 Guiding Ends at 2026-11-12 21:05:00
-
-Log disabled at 2026-11-12 21:10:00
 INFO: Guiding parameter change, Dec guide mode = North
-PHD2 version 2.6.14 [Linux], Log version 2.5. Log enabled at 2026-11-12 20:00:00
 
 Log Summary: calcnt:3 gcnt:2 gdur:5401 gacnt:1
 Log closed at 2026-11-12 21:30:00

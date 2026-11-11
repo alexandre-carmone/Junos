@@ -25,6 +25,11 @@
 //! calibration lines hand back what they wrote, without its newline
 //! (`None` when nothing was written), for the relay's `guider_log`.
 //!
+//! There is no off switch: PHD2 2.6.14 enables the guide log at start-up
+//! whatever `/LoggingMode` says (`OpenLogs(false)`, `phd.cpp:430`) — the
+//! key is written, never read — and nothing turns it off again. The daemon
+//! does the same; only a failed open leaves it off.
+//!
 //! Ported from PHD2 src/guidinglog.cpp, src/guidinglog.h and the settings summaries of src/myframe.cpp, src/camera.cpp, src/mount.cpp, src/scope.cpp, src/stepguider.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
 use std::io::{self, Write};
@@ -582,8 +587,9 @@ impl<W: Write> GuideLog<W> {
     /// something meaningful gets logged. Then the `Log enabled at` line,
     /// with the stamp's time rather than now (quirk kept), and the guiding
     /// header when the guider is guiding (`guiding`). The caller saves
-    /// `/LoggingMode` = [`is_enabled`](Self::is_enabled). A failed open
-    /// leaves logging off; the error comes back.
+    /// `/LoggingMode` = [`is_enabled`](Self::is_enabled), as PHD2 does
+    /// (nothing reads it). A failed open leaves logging off; the error
+    /// comes back.
     pub fn enable(
         &mut self,
         stamp: &LogFileStamp,
@@ -618,18 +624,6 @@ impl<W: Write> GuideLog<W> {
         Ok(())
     }
 
-    /// `DisableLogging`: the `Log disabled at` line. The file stays open, so
-    /// [`enable`](Self::enable) continues it and
-    /// a forced [`guiding_param`](Self::guiding_param) still writes.
-    /// The caller saves `/LoggingMode`.
-    pub fn disable(&mut self, now: DateTime<Local>) {
-        if !self.enabled {
-            return;
-        }
-        self.put(&format!("\nLog disabled at {}\n", now.format(TIME_FORMAT)));
-        self.enabled = false;
-    }
-
     /// `CloseGuideLog`: a kept file gets the summary and the `Log closed
     /// at` line, then the sink is dropped. Returns the file's name when it
     /// must be deleted (nothing meaningful was logged in it).
@@ -654,21 +648,28 @@ impl<W: Write> GuideLog<W> {
         (!self.keep_file && !self.file_name.is_empty()).then(|| self.file_name.clone())
     }
 
-    /// `ChangeDirLog` (`guidinglog.cpp:341`): [`close`](Self::close) (the
-    /// name that comes back is the old folder's), then, if logging was on,
-    /// [`enable`](Self::enable) through `open` in the new folder — or the
-    /// old one, when the caller could not make the new one the log folder.
+    /// `ChangeDirLog` (`guidinglog.cpp:341`): [`close`](Self::close), the
+    /// name it returns deleted through `remove` (a file of the old folder),
+    /// then, if logging was on, [`enable`](Self::enable) through `open` in
+    /// the new folder — or the old one, when the caller could not make the
+    /// new one the log folder (see the debug log's module doc for PHD2's
+    /// `SetLogDir`). The delete comes first, as in PHD2: when the folder
+    /// stays the same, an empty file is deleted and the same name opened
+    /// afresh. The log rollover reopens the guide log the same way, the
+    /// folder unchanged.
     pub fn change_dir_log(
         &mut self,
         now: DateTime<Local>,
         stamp: &LogFileStamp,
         guiding: Option<&GuideLogHeader>,
+        remove: impl FnOnce(&str),
         open: impl FnOnce(&str) -> io::Result<(W, Vec<u8>)>,
-    ) -> (Option<String>, io::Result<()>) {
+    ) -> io::Result<()> {
         let enabled = self.enabled;
-        let removed = self.close(now);
-        let res = if enabled { self.enable(stamp, guiding, open) } else { Ok(()) };
-        (removed, res)
+        if let Some(name) = self.close(now) {
+            remove(&name);
+        }
+        if enabled { self.enable(stamp, guiding, open) } else { Ok(()) }
     }
 
     /// `StartCalibration` (`guidinglog.cpp:418`): the calibration header,
@@ -1398,10 +1399,9 @@ mod tests {
         log.manual_guide(true, Dir::UP, 1);
         log.manual_guide(true, Dir::LEFT, 3);
         log.guiding_stopped(t(2026, 11, 12, 21, 5, 0, 0), 3600.5);
-        log.disable(t(2026, 11, 12, 21, 10, 0, 0));
-        log.guiding_param("Dec guide mode", &Value::from("North"), true); // the forced form ignores the switch
+        // Not guiding any more: the forced form writes all the same.
+        log.guiding_param("Dec guide mode", &Value::from("North"), true);
         log.guiding_param("Exposure", &Value::from("1500 ms"), false); // dropped
-        log.enable(&stamp, None, |_| unreachable!("the file is still open")).unwrap();
         assert_eq!(log.close(t(2026, 11, 12, 21, 30, 0, 0)), None);
         golden("ppec", &dir.text("PHD2_GuideLog_2026-11-12_200000.txt"), include_str!("../testdata/guide_log_ppec.txt"));
     }
@@ -1425,6 +1425,33 @@ mod tests {
         log.enable(&stamp, None, |n| dir.open(n)).unwrap();
         log.guiding_started(t(2026, 11, 14, 10, 0, 0, 0), &header());
         assert_eq!(log.close(t(2026, 11, 14, 11, 0, 0, 0)), None);
+    }
+
+    #[test]
+    fn a_folder_change_to_the_same_folder_starts_the_file_afresh() {
+        // The harness's ChangeDirLog to `dir/` (the same folder once
+        // SetLogDir strips the separator), then to a folder it cannot make:
+        // each time the empty file goes before its name is opened again.
+        let dir = std::cell::RefCell::new(Folder::default());
+        let mut log: GuideLog<Buf> = GuideLog::new();
+        log.summary = Summary { valid: true, cal_cnt: 3, guide_cnt: 2, guide_dur: 5400.9, ga_cnt: 1 };
+        let stamp = LogFileStamp { instance: 1, time: t(2026, 11, 14, 10, 0, 0, 0) };
+        log.enable(&stamp, None, |n| dir.borrow_mut().open(n)).unwrap();
+        for _ in 0..2 {
+            let remove = |n: &str| assert!(dir.borrow_mut().0.remove(n).is_some());
+            log.change_dir_log(t(2026, 11, 14, 10, 5, 0, 0), &stamp, None, remove, |n| dir.borrow_mut().open(n))
+                .unwrap();
+        }
+        log.guiding_param("MultiStar", &Value::from("true"), true);
+        assert_eq!(log.close(t(2026, 11, 14, 10, 10, 0, 0)), None);
+        assert_eq!(
+            dir.borrow().text("PHD2_GuideLog_2026-11-14_100000.txt"),
+            "PHD2 version 2.6.14 [Linux], Log version 2.5. Log enabled at 2026-11-14 10:00:00\n\
+             INFO: Guiding parameter change, MultiStar = true\n\
+             \n\
+             Log Summary: calcnt:3 gcnt:2 gdur:5401 gacnt:1\n\
+             Log closed at 2026-11-14 10:10:00\n"
+        );
     }
 
     #[test]

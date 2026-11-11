@@ -10,8 +10,27 @@
 //! ([`LogFileStamp`], PHD2's `m_logFileTime`). At start-up it is the newest
 //! debug log's when that one belongs to the current imaging day, so a
 //! restart in the night appends to the night's files ([`log_file_time`]);
-//! the first frame of a new imaging day rolls both logs over
+//! the first guide start of a new imaging day rolls both logs over
 //! ([`LogFileStamp::rollover`]). An imaging day runs from 09:00 to 09:00.
+//!
+//! Start-up enables the debug log ([`DebugLog::init`]`(true, false, …)`,
+//! `phd.cpp:406-409`) and nothing turns it off: PHD2 never calls
+//! `Debug.Enable`, so the writer has no off switch.
+//!
+//! The log folder is the caller's, PHD2's `Logger::GetLogDir` and
+//! `SetLogDir` (`logger.cpp:70-133`), and each log keeps its own. At
+//! start-up it is `/frame/LogDir`; when that is empty, or missing and
+//! cannot be made (`mkdir -p`), the default `~/Documents/PHD2` (made with
+//! `mkdir -p`; `~/Documents` itself if that fails). A change (`SetLogDir`)
+//! strips one trailing separator, takes `""` for the default folder, makes
+//! any other with `mkdir -p` and keeps the old folder when that fails; on
+//! success it saves the folder under `/frame/logdir`. Start-up finds it
+//! under `/frame/LogDir` only because wxConfig keys ignore case, so the
+//! profile store must save it as `/frame/LogDir` (or compare keys without
+//! case). A settings change moves the guide log first, then the debug log
+//! (`myframe.cpp:3364-3367`), and only when the text differs from the
+//! guide log's folder — raw strings, so `dir/` for `dir` counts as a change
+//! that leaves the folder as it was.
 //!
 //! Nothing here touches the disk: the writer appends to a `Write` sink the
 //! caller opens, and the clean-up gets a folder listing and a remover.
@@ -58,13 +77,19 @@ impl LogFileStamp {
         format!("PHD2_{kind}_{qualifier}{}", self.time.format("%Y-%m-%d_%H%M%S.txt"))
     }
 
-    /// `PhdApp::CheckLogRollover` (`phd.cpp:729`), run on every frame: when
-    /// `now` falls in a new imaging day it becomes the stamp and this returns
-    /// true. The caller then reopens both logs as `OpenLogs(true)` does
+    /// `PhdApp::CheckLogRollover` (`phd.cpp:729`), run on every guide start
+    /// ([`ControlEvent::CheckLogRollover`](crate::engine::control::ControlEvent::CheckLogRollover);
+    /// `MyFrame::StartGuiding` is its only caller), even when the start then
+    /// fails its checks — never per frame, so a session that runs past 09:00
+    /// keeps its files until the next guide start. When `now` falls in a
+    /// new imaging day it becomes the stamp and this returns true. The
+    /// caller then reopens both logs as `OpenLogs(true)` does
     /// (`phd.cpp:405`): [`DebugLog::init`] with the debug log's current
     /// state and `force_open`, [`execution_banner`]`(true)` and the library
-    /// lines, then [`GuideLog::close`](super::guide_log::GuideLog::close)
-    /// and, if it was on, [`GuideLog::enable`](super::guide_log::GuideLog::enable).
+    /// lines, then the guide log's
+    /// [`change_dir_log`](super::guide_log::GuideLog::change_dir_log) with
+    /// the folder unchanged: close, delete the name `close` returns, then
+    /// enable again if it was on.
     pub fn rollover(&mut self, now: DateTime<Local>) -> bool {
         if is_same_imaging_day(&self.time, &now) {
             return false;
@@ -173,12 +198,6 @@ impl<W: Write> DebugLog<W> {
         self.enabled
     }
 
-    /// `DebugLog::Enable`: turns writing on or off, file untouched; returns
-    /// the previous state.
-    pub fn enable(&mut self, enable: bool) -> bool {
-        std::mem::replace(&mut self.enabled, enable)
-    }
-
     /// `InitDebugLog` (`debuglog.cpp:98`): closes the file when logging was
     /// on, then, when `enable` and either no file was ever opened or
     /// `force_open`, opens `stamp`'s through `open` (append mode). Quirk
@@ -234,10 +253,10 @@ impl<W: Write> DebugLog<W> {
     }
 
     /// `DebugLog::ChangeDirLog` (`debuglog.cpp:126`), after the caller tried
-    /// to make `new_dir` the log folder (`dir_ok`, PHD2's `SetLogDir`): two
-    /// records in the old file — "Changed log dir" even on failure, as in
-    /// PHD2 — then the file reopened through `open`, in the new folder or
-    /// the old one.
+    /// to make `new_dir` the log folder (`dir_ok`, PHD2's `SetLogDir`, see
+    /// the module doc): two records in the old file — "Changed log dir"
+    /// even on failure, as in PHD2 — then the file reopened through `open`,
+    /// in the new folder or the old one.
     pub fn change_dir_log(
         &mut self,
         now: DateTime<Local>,
@@ -344,9 +363,6 @@ pub(super) mod tests {
         log.write(t(2026, 11, 13, 1, 4, 12, 0), 4242, "after two minutes\n");
         log.write(t(2026, 11, 13, 1, 4, 11, 900), 4242, "clock stepped back\n");
         log.write(t(2026, 11, 13, 4, 6, 0, 7), 4242, "hours later\n");
-        assert!(log.enable(false));
-        log.write(t(2026, 11, 13, 4, 6, 0, 500), 4242, "dropped\n");
-        log.enable(true);
         log.write(t(2026, 11, 13, 4, 6, 1, 7), 4242, "no newline");
         log.write(t(2026, 11, 13, 4, 6, 1, 7), 4242, " glued\n");
         assert_eq!(
