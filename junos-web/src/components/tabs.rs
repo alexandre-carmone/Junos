@@ -58,6 +58,11 @@ pub fn TabContent(
     let capture_snapshot = compat::derive_capture(&store);
     let polar_snapshot = compat::derive_polar_align(&store);
     let guide_snapshot = compat::derive_guide(&store);
+    let guider = compat::derive_guider(&store);
+    let capture_status = {
+        let cs = store.capture_status;
+        Memo::new(move |_| cs.with(|c| c.status.clone()))
+    };
     let scheduler_snapshot = compat::derive_scheduler(&store);
     let focal_length_mm = {
         let ts = store.telescope_settings;
@@ -156,7 +161,7 @@ pub fn TabContent(
         </Show>
         <Show when=guide_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
-                <GuideTab guide=guide_snapshot send=Arc::clone(&send_guide) />
+                <GuideTab guide=guide_snapshot guider=guider capture_status=capture_status send=Arc::clone(&send_guide) />
             </div>
         </Show>
         <Show when=scheduler_visible>

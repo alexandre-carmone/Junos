@@ -941,6 +941,499 @@ pub struct GuideStatusData {
     pub log:       String,
 }
 
+// ── junos-guider (native Guide tab) ──────────────────────────────────────
+// The daemon's `guider_*` messages, relayed by junos-server
+// (`junos-guider/src/ws.rs`). Field names are the wire's; times are PHD2's
+// `Timestamp` (UTC seconds) turned into ms, never the phone's clock.
+
+/// `guider_state`: the daemon's whole state, sent again on every change and
+/// every 5 s while it captures. `None` in the store means no daemon.
+#[allow(dead_code)] // wire shape — the native Guide tab reads it piece by piece
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderStatusData {
+    pub attached: bool,
+    pub version: String,
+    /// The PHD2 event server's port, once it listens.
+    pub port: Option<u16>,
+    pub port_error: Option<String>,
+    pub profile: GuiderProfileRef,
+    /// PHD2's `Stopped|Paused|Looping|Selected|Calibrating|Guiding|LostLock`.
+    pub app_state: Option<String>,
+    pub guider_state: Option<String>,
+    pub capture_active: bool,
+    /// `none | guiding | full`.
+    pub paused: String,
+    pub connecting: bool,
+    pub settling: Option<GuiderSettling>,
+    pub dithering: bool,
+    pub calibrated: GuiderCalibrated,
+    pub lock: Option<[f64; 2]>,
+    pub star: Option<GuiderPoint>,
+    pub frame: GuiderFrameInfo,
+    /// −1 is auto exposure.
+    pub exposure_ms: i64,
+    pub exposure_options: Vec<i64>,
+    pub auto_exposure: GuiderAutoExposure,
+    /// ″/px; `None` while the focal length is unknown.
+    pub pixel_scale: Option<f64>,
+    pub search_region: f64,
+    pub use_subframes: bool,
+    pub multistar: bool,
+    pub guide_output_enabled: Option<bool>,
+    pub dec_guide_mode: Option<String>,
+    pub dither: GuiderDither,
+    pub lock_shift: GuiderLockShift,
+    pub equipment: GuiderEquipment,
+    pub indi: GuiderIndi,
+    pub dark: GuiderDark,
+    pub defect_map: bool,
+    pub ga_running: bool,
+    pub pa_running: bool,
+    #[serde(rename = "Timestamp")]
+    pub timestamp: f64,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderProfileRef {
+    pub id: i64,
+    pub name: String,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderSettling {
+    pub distance: f64,
+    pub time: f64,
+    pub settle_time: f64,
+    pub locked: bool,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderCalibrated {
+    pub mount: bool,
+    pub ao: bool,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// The last frame's size (`None` before one) and the subframe in use,
+/// `[x, y, w, h]` in frame pixels.
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderFrameInfo {
+    pub w: Option<i64>,
+    pub h: Option<i64>,
+    pub bin: i64,
+    pub subframe: Option<[f64; 4]>,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderAutoExposure {
+    pub min: i64,
+    pub max: i64,
+    pub snr: f64,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderDither {
+    /// `random | spiral`.
+    pub mode: String,
+    pub ra_only: bool,
+    pub scale: f64,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderLockShift {
+    pub enabled: bool,
+    pub rate: [f64; 2],
+    /// `arcsec/hr | pixels/hr`.
+    pub units: String,
+    /// `RA/Dec | X/Y`.
+    pub axes: String,
+    pub limit_reached: bool,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderEquipment {
+    pub camera: Option<GuiderCamera>,
+    pub mount: Option<GuiderDevice>,
+    pub aux_mount: Option<GuiderDevice>,
+    pub ao: Option<GuiderDevice>,
+    pub rotator: Option<GuiderDevice>,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderDevice {
+    pub name: String,
+    pub connected: bool,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderCamera {
+    pub name: String,
+    pub connected: bool,
+    pub gain_supported: bool,
+    pub frame: [i64; 2],
+    pub binning: i64,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderIndi {
+    pub host: String,
+    pub port: i64,
+    pub connected: bool,
+}
+
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderDark {
+    pub loaded: bool,
+    pub exp_ms: Option<i64>,
+}
+
+impl GuiderStatusData {
+    /// `None` for `{attached: false}`, the relay's word that the daemon is
+    /// gone. A payload that does not parse still counts as attached.
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        if v["attached"].as_bool() == Some(false) {
+            return None;
+        }
+        Some(serde_json::from_value(v.clone()).unwrap_or(Self { attached: true, ..Self::default() }))
+    }
+}
+
+/// One PHD2 `GuideStep` event (offsets in pixels, durations in ms).
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderStep {
+    /// PHD2's `Timestamp`, in ms once parsed.
+    #[serde(rename = "Timestamp")]
+    pub t_ms: f64,
+    #[serde(rename = "Frame")]
+    pub frame: i64,
+    /// Seconds since guiding started.
+    #[serde(rename = "Time")]
+    pub time: f64,
+    #[serde(rename = "Mount")]
+    pub mount: String,
+    pub dx: f64,
+    pub dy: f64,
+    #[serde(rename = "RADistanceRaw")]
+    pub ra_raw: f64,
+    #[serde(rename = "DECDistanceRaw")]
+    pub dec_raw: f64,
+    #[serde(rename = "RADistanceGuide")]
+    pub ra_guide: f64,
+    #[serde(rename = "DECDistanceGuide")]
+    pub dec_guide: f64,
+    #[serde(rename = "RADuration")]
+    pub ra_dur: f64,
+    /// `East | West` (an AO's `Left | Right`); empty without a pulse.
+    #[serde(rename = "RADirection")]
+    pub ra_dir: String,
+    #[serde(rename = "DECDuration")]
+    pub dec_dur: f64,
+    /// `North | South` (an AO's `Up | Down`); empty without a pulse.
+    #[serde(rename = "DECDirection")]
+    pub dec_dir: String,
+    #[serde(rename = "StarMass")]
+    pub mass: f64,
+    #[serde(rename = "SNR")]
+    pub snr: f64,
+    #[serde(rename = "HFD")]
+    pub hfd: f64,
+    #[serde(rename = "AvgDist")]
+    pub avg_dist: f64,
+    #[serde(rename = "ErrorCode")]
+    pub err: i64,
+    #[serde(rename = "RALimited")]
+    pub ra_limited: bool,
+    #[serde(rename = "DecLimited")]
+    pub dec_limited: bool,
+}
+
+impl GuiderStep {
+    pub fn from_event(v: &serde_json::Value) -> Option<Self> {
+        let mut s: Self = serde_json::from_value(v.clone()).ok()?;
+        s.t_ms *= 1000.0;
+        Some(s)
+    }
+}
+
+/// One PHD2 `Calibrating` event: a calibration step.
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderCalStep {
+    /// PHD2's `Timestamp`, in ms once parsed.
+    #[serde(rename = "Timestamp")]
+    pub t_ms: f64,
+    #[serde(rename = "Mount")]
+    pub mount: String,
+    pub dir: String,
+    pub dist: f64,
+    pub dx: f64,
+    pub dy: f64,
+    pub pos: [f64; 2],
+    pub step: i64,
+    #[serde(rename = "State")]
+    pub state: String,
+}
+
+impl GuiderCalStep {
+    pub fn from_event(v: &serde_json::Value) -> Option<Self> {
+        let mut s: Self = serde_json::from_value(v.clone()).ok()?;
+        s.t_ms *= 1000.0;
+        Some(s)
+    }
+}
+
+/// A guiding event the drift plot marks along its time axis.
+#[allow(dead_code)] // matched by the drift plot once native mode lands
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuiderMarkerKind {
+    Dither,
+    SettleBegin,
+    /// `SettleDone` with `Status` 0.
+    Settled,
+    /// `SettleDone` with an error (`text`).
+    SettleFailed,
+    StarLost,
+    CalibrationStart,
+    CalibrationDone,
+    /// `text` is PHD2's `Reason`.
+    CalibrationFailed,
+    GuidingStart,
+    GuidingStop,
+    Paused,
+    Resumed,
+    LockShiftLimit,
+}
+
+#[allow(dead_code)] // read by the drift plot once native mode lands
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuiderMarker {
+    pub t_ms: f64,
+    pub kind: GuiderMarkerKind,
+    pub text: String,
+}
+
+impl GuiderMarker {
+    /// The marker a PHD2 event stands for, if any.
+    pub fn from_event(v: &serde_json::Value) -> Option<Self> {
+        use GuiderMarkerKind as K;
+        let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
+        let (kind, text) = match v["Event"].as_str()? {
+            "GuidingDithered" => (K::Dither, format!("{:.2}, {:.2}", v["dx"].as_f64()?, v["dy"].as_f64()?)),
+            "SettleBegin" => (K::SettleBegin, String::new()),
+            "SettleDone" if v["Status"].as_i64() == Some(0) => (K::Settled, String::new()),
+            "SettleDone" => (K::SettleFailed, s("Error")),
+            "StarLost" => (K::StarLost, s("Status")),
+            "StartCalibration" => (K::CalibrationStart, s("Mount")),
+            "CalibrationComplete" => (K::CalibrationDone, s("Mount")),
+            "CalibrationFailed" => (K::CalibrationFailed, s("Reason")),
+            "StartGuiding" => (K::GuidingStart, String::new()),
+            "GuidingStopped" => (K::GuidingStop, String::new()),
+            "Paused" => (K::Paused, String::new()),
+            "Resumed" => (K::Resumed, String::new()),
+            "LockPositionShiftLimitReached" => (K::LockShiftLimit, String::new()),
+            _ => return None,
+        };
+        Some(Self { t_ms: v["Timestamp"].as_f64()? * 1000.0, kind, text })
+    }
+}
+
+/// `guider_alert {Type, Msg}`, stamped with the time it arrived (for the
+/// toast's age only: alerts are never replayed).
+#[allow(dead_code)] // read by the alerts toast once native mode lands
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuiderAlert {
+    pub t_ms: f64,
+    /// `info | question | warning | error`.
+    pub kind: String,
+    pub msg: String,
+}
+
+/// The primary star in a `+J` frame, as the daemon measured it.
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderStar {
+    pub x: f64,
+    pub y: f64,
+    pub mass: f64,
+    pub snr: f64,
+    pub hfd: f64,
+    pub fwhm: Option<f64>,
+    pub peak: f64,
+    pub err: i64,
+    pub saturated: bool,
+}
+
+/// One star of a multi-star guide list.
+#[allow(dead_code)] // wire shape
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuiderFrameStar {
+    pub x: f64,
+    pub y: f64,
+    pub snr: f64,
+    pub hfd: f64,
+    pub mass: f64,
+    pub primary: bool,
+    pub lost: bool,
+}
+
+/// PHD2's `get_star_image` crop around the star: raw 16-bit pixels, row by
+/// row, decoded once from the base64 little-endian wire form.
+#[allow(dead_code)] // read by the star profile card once native mode lands
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuiderStarImage {
+    pub w: usize,
+    pub h: usize,
+    /// The star in crop pixels.
+    pub pos: (f64, f64),
+    pub pixels: Vec<u16>,
+}
+
+/// A `+J` guide frame and its overlay. The overlay positions are in the
+/// shipped JPEG's pixels (the relay scales them for a lite re-encode);
+/// `w`, `h` and `subframe` are the frame's, as `set_lock_position` wants.
+#[allow(dead_code)] // read by the native frame once native mode lands
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuiderFrame {
+    pub url: String,
+    pub w: u32,
+    pub h: u32,
+    pub frame: i64,
+    pub exposure_ms: f64,
+    pub binning: i64,
+    pub subframe: Option<[f64; 4]>,
+    /// `/guider/ScaleImage`: fit the frame to the view.
+    pub scale_image: bool,
+    pub lock: Option<(f64, f64)>,
+    pub star: Option<GuiderStar>,
+    pub stars: Vec<GuiderFrameStar>,
+    /// Half-size of the search box.
+    pub search_region: f64,
+    /// Lock-shift rate in pixels per hour, while lock shift is on.
+    pub lock_shift: Option<(f64, f64)>,
+    pub star_image: Option<GuiderStarImage>,
+}
+
+impl GuiderFrame {
+    /// From a `new_preview_image` whose uuid starts with `+J`.
+    pub fn from_preview(payload: &serde_json::Value, url: String) -> Self {
+        let meta = &payload["metadata"];
+        let g = &payload["guider"];
+        let (w, h) = meta["resolution"]
+            .as_str()
+            .and_then(|r| {
+                let (w, h) = r.split_once('x')?;
+                Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+            })
+            .unwrap_or((0, 0));
+        let pair = |v: &serde_json::Value| Some((v[0].as_f64()?, v[1].as_f64()?));
+        let star_image = (|| {
+            let si = &g["star_image"];
+            let bytes = base64_decode(si["pixels"].as_str()?)?;
+            Some(GuiderStarImage {
+                w: si["width"].as_u64()? as usize,
+                h: si["height"].as_u64()? as usize,
+                pos: pair(&si["star_pos"])?,
+                pixels: bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect(),
+            })
+        })();
+        Self {
+            url,
+            w,
+            h,
+            frame: meta["frame"].as_i64().unwrap_or(0),
+            exposure_ms: meta["exposure_ms"].as_f64().unwrap_or(0.0),
+            binning: meta["binning"].as_i64().unwrap_or(1),
+            subframe: serde_json::from_value(meta["subframe"].clone()).ok().flatten(),
+            scale_image: meta["scale_image"].as_bool().unwrap_or(true),
+            lock: pair(&g["lock"]),
+            star: serde_json::from_value(g["star"].clone()).ok().flatten(),
+            stars: serde_json::from_value(g["stars"].clone()).unwrap_or_default(),
+            search_region: g["search_region"].as_f64().unwrap_or(0.0),
+            lock_shift: pair(&g["lock_shift_px_h"]),
+            star_image,
+        }
+    }
+}
+
+/// Standard `=`-padded base64 (PHD2's `B64Encode`) to bytes.
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for &c in s.as_bytes().iter().filter(|c| !c.is_ascii_whitespace() && **c != b'=') {
+        acc = (acc << 6) | u32::from(val(c)?);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// A `guider_rpc` call that failed: PHD2's `{code, message}`, or one of
+/// the browser's own codes below.
+#[allow(dead_code)] // read by the native Guide tab's commands once they land
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuiderRpcError {
+    pub code: i64,
+    pub message: String,
+}
+
+impl GuiderRpcError {
+    /// No `guider_rpc_result` within the timeout.
+    pub const TIMEOUT: i64 = -1;
+    /// The socket dropped, or the daemon left, before the reply.
+    pub const LOST: i64 = -2;
+}
+
+/// What a `guider_rpc` call came back with.
+pub type GuiderReply = Result<serde_json::Value, GuiderRpcError>;
+
 /// One entry in the plate-solve process timeline — a status transition
 /// stamped with the wall-clock time it was received. Mirrors the
 /// `GuideStateSample` pattern.

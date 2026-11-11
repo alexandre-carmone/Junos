@@ -47,7 +47,7 @@ use leptos::prelude::*;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
-use crate::compat::GuideSnapshot;
+use crate::compat::{GuideSnapshot, GuiderSignals};
 use crate::components::form::{sheet, CARD, CARD_TITLE, FOOTER};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{t, Lang};
@@ -125,8 +125,14 @@ fn export_guide_log(log: &str) {
 #[component]
 pub fn GuideTab(
     #[prop(into)] guide: Signal<GuideSnapshot>,
+    /// junos-guider's state (the native mode, when `state` is `Some`).
+    guider: GuiderSignals,
+    /// Ekos Capture's status, for the coexistence guards.
+    #[prop(into)] capture_status: Signal<String>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
+    // The native mode reads these as its parts land.
+    let _ = (guider, capture_status);
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
 

@@ -7,7 +7,8 @@ use leptos::prelude::*;
 
 use crate::ws::{
     AbInsResult, AbInsStatus, AlignFrame, DeviceStore, FocusStars, FrameStats, GuideDriftSample, GuideStateSample,
-    HfrSample, PolarVectorData,
+    GuiderAlert, GuiderCalStep, GuiderFrame, GuiderMarker, GuiderPending, GuiderStatusData, GuiderStep, HfrSample,
+    PolarVectorData,
 };
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -424,6 +425,53 @@ pub fn derive_guide(store: &DeviceStore) -> Signal<GuideSnapshot> {
             },
         }
     })
+}
+
+/// junos-guider's store signals for the native Guide tab. A bundle of the
+/// store's own signals, not a derived snapshot: the tab subscribes to each
+/// piece, so a settings echo does not redraw the drift plot.
+#[allow(dead_code)] // read by the native Guide tab as its parts land
+#[derive(Clone, Copy)]
+pub struct GuiderSignals {
+    /// `None`: no daemon, the tab stays on Ekos.
+    pub state: RwSignal<Option<GuiderStatusData>>,
+    pub steps: RwSignal<Vec<GuiderStep>>,
+    pub markers: RwSignal<Vec<GuiderMarker>>,
+    pub states: RwSignal<Vec<GuideStateSample>>,
+    pub cal_steps: RwSignal<Vec<GuiderCalStep>>,
+    pub calibration: RwSignal<serde_json::Value>,
+    pub settings: RwSignal<serde_json::Value>,
+    pub profiles: RwSignal<serde_json::Value>,
+    pub devices: RwSignal<serde_json::Value>,
+    pub darks: RwSignal<serde_json::Value>,
+    pub ga: RwSignal<serde_json::Value>,
+    pub pa: RwSignal<serde_json::Value>,
+    pub alerts: RwSignal<Vec<GuiderAlert>>,
+    pub log: RwSignal<Vec<String>>,
+    pub frame: RwSignal<Option<GuiderFrame>>,
+    /// For `ws_helpers::guider_rpc`.
+    pub pending: GuiderPending,
+}
+
+pub fn derive_guider(store: &DeviceStore) -> GuiderSignals {
+    GuiderSignals {
+        state: store.guider_state,
+        steps: store.guider_steps,
+        markers: store.guider_markers,
+        states: store.guider_states,
+        cal_steps: store.guider_cal_steps,
+        calibration: store.guider_calibration,
+        settings: store.guider_settings,
+        profiles: store.guider_profiles,
+        devices: store.guider_devices,
+        darks: store.guider_darks,
+        ga: store.guider_ga,
+        pa: store.guider_pa,
+        alerts: store.guider_alerts,
+        log: store.guider_log,
+        frame: store.guider_frame,
+        pending: store.guider_pending,
+    }
 }
 
 /// The two "a device is busy" guards behind `ServiceBusyCtx` (`main.rs`), read

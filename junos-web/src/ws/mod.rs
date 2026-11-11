@@ -36,7 +36,7 @@ use gloo_net::websocket::{futures::WebSocket, Message};
 use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
-pub use store::DeviceStore;
+pub use store::{DeviceStore, GuiderPending};
 pub use types::*;
 
 use retry::{spawn_filter_offsets_loop, spawn_mount_coord_loop, spawn_refresh_loop, spawn_retry_property, spawn_retry_property_with};
@@ -544,6 +544,9 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
 
             store_for_ws.connected.set(false);
             store_for_ws.online.set(false);
+            // The guider's state goes with the socket (the relay replays it
+            // on reconnect), and so do the replies its calls were waiting for.
+            store_for_ws.guider_detach();
             TimeoutFuture::new(BACKOFF_MIN_MS).await;
         }
     });

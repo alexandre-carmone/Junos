@@ -1,6 +1,8 @@
 //! `DeviceStore` — Leptos signal bag plus the `apply_ekos_event` dispatch
 //! that decodes Ekos Live wire messages into store updates.
 
+use std::collections::HashMap;
+
 use leptos::prelude::*;
 
 use super::types::*;
@@ -134,6 +136,51 @@ pub struct DeviceStore {
     /// Last reply to a file load/save the browser asked for (Files › Planning,
     /// Save schedule). Set on every reply, so the same answer twice still fires.
     pub file_reply: RwSignal<Option<FileReply>>,
+
+    // ── junos-guider (`guider_*`, the native Guide tab) ──────────────────
+    // One signal per piece, so a guide step does not clone the settings and
+    // a settings echo does not redraw the drift plot.
+    /// The daemon's state; `None` when there is none (`attached:false`, or
+    /// the /ws socket dropped), which keeps the Guide tab on Ekos.
+    pub guider_state: RwSignal<Option<GuiderStatusData>>,
+    /// `GuideStep` events of the last 300 s before the newest (at most 2000).
+    pub guider_steps: RwSignal<Vec<GuiderStep>>,
+    pub guider_markers: RwSignal<Vec<GuiderMarker>>,
+    /// App-state changes, for the drift plot's ribbon.
+    pub guider_states: RwSignal<Vec<GuideStateSample>>,
+    /// The current (or last) calibration's steps.
+    pub guider_cal_steps: RwSignal<Vec<GuiderCalStep>>,
+    // The sheets' snapshots, read by key like `guide_settings`.
+    pub guider_calibration: RwSignal<serde_json::Value>,
+    pub guider_settings: RwSignal<serde_json::Value>,
+    pub guider_profiles: RwSignal<serde_json::Value>,
+    pub guider_devices: RwSignal<serde_json::Value>,
+    pub guider_darks: RwSignal<serde_json::Value>,
+    pub guider_ga: RwSignal<serde_json::Value>,
+    pub guider_pa: RwSignal<serde_json::Value>,
+    /// Newest first, at most 50.
+    pub guider_alerts: RwSignal<Vec<GuiderAlert>>,
+    /// The guide log's INFO and calibration lines, newest first, at most 200.
+    pub guider_log: RwSignal<Vec<String>>,
+    /// The latest `+J` preview.
+    pub guider_frame: RwSignal<Option<GuiderFrame>>,
+    /// `guider_rpc` calls waiting for their `guider_rpc_result`
+    /// (`ws_helpers::guider_rpc`).
+    pub guider_pending: GuiderPending,
+}
+
+/// The `guider_rpc` calls in flight, by id, each with the signal its reply
+/// goes to.
+pub type GuiderPending = StoredValue<HashMap<String, RwSignal<Option<GuiderReply>>>>;
+
+/// How far back the guider's series reach, before their newest sample.
+const GUIDER_WINDOW_MS: f64 = 300_000.0;
+
+/// Keep the samples of the window before `newest_ms`, at most `cap` of them.
+/// The window hangs on the daemon's timestamps, never the phone's clock.
+fn prune_window<T>(v: &mut Vec<T>, newest_ms: f64, t_ms: impl Fn(&T) -> f64, cap: usize) {
+    let old = v.iter().take_while(|x| t_ms(x) < newest_ms - GUIDER_WINDOW_MS).count();
+    v.drain(..old.max(v.len().saturating_sub(cap)));
 }
 
 impl DeviceStore {
@@ -244,6 +291,133 @@ impl DeviceStore {
             indi_messages: RwSignal::new(std::collections::HashMap::new()),
             active_dialog: RwSignal::new(None),
             file_reply: RwSignal::new(None),
+            guider_state: RwSignal::new(None),
+            guider_steps: RwSignal::new(Vec::new()),
+            guider_markers: RwSignal::new(Vec::new()),
+            guider_states: RwSignal::new(Vec::new()),
+            guider_cal_steps: RwSignal::new(Vec::new()),
+            guider_calibration: RwSignal::new(serde_json::Value::Null),
+            guider_settings: RwSignal::new(serde_json::Value::Null),
+            guider_profiles: RwSignal::new(serde_json::Value::Null),
+            guider_devices: RwSignal::new(serde_json::Value::Null),
+            guider_darks: RwSignal::new(serde_json::Value::Null),
+            guider_ga: RwSignal::new(serde_json::Value::Null),
+            guider_pa: RwSignal::new(serde_json::Value::Null),
+            guider_alerts: RwSignal::new(Vec::new()),
+            guider_log: RwSignal::new(Vec::new()),
+            guider_frame: RwSignal::new(None),
+            guider_pending: StoredValue::new(HashMap::new()),
+        }
+    }
+
+    /// Forget the daemon: no state, every `guider_*` series and snapshot
+    /// emptied, every pending `guider_rpc` failed. On the relay's
+    /// `guider_state {attached:false}` and when the /ws socket drops
+    /// (`ws/mod.rs`), the replies of both being lost.
+    pub(super) fn guider_detach(&self) {
+        self.guider_state.set(None);
+        self.guider_steps.set(Vec::new());
+        self.guider_markers.set(Vec::new());
+        self.guider_states.set(Vec::new());
+        self.guider_cal_steps.set(Vec::new());
+        for s in [
+            self.guider_calibration,
+            self.guider_settings,
+            self.guider_profiles,
+            self.guider_devices,
+            self.guider_darks,
+            self.guider_ga,
+            self.guider_pa,
+        ] {
+            s.set(serde_json::Value::Null);
+        }
+        self.guider_alerts.set(Vec::new());
+        self.guider_log.set(Vec::new());
+        self.guider_frame.set(None);
+        let pending = self.guider_pending.try_update_value(std::mem::take).unwrap_or_default();
+        for reply in pending.into_values() {
+            reply.set(Some(Err(GuiderRpcError {
+                code: GuiderRpcError::LOST,
+                message: "connection to the guider lost".into(),
+            })));
+        }
+    }
+
+    /// `guider_history {events, states}`: the daemon's last 300 s, which
+    /// replaces the series (it is replayed by the relay and re-sent on
+    /// `get_history`, so it may repeat what the browser already holds).
+    fn guider_history(&self, payload: &serde_json::Value) {
+        let (mut steps, mut markers, mut cal) = (Vec::new(), Vec::new(), Vec::new());
+        for ev in payload["events"].as_array().into_iter().flatten() {
+            match ev["Event"].as_str().unwrap_or_default() {
+                "GuideStep" => steps.extend(GuiderStep::from_event(ev)),
+                "Calibrating" => cal.extend(GuiderCalStep::from_event(ev)),
+                "StartCalibration" => cal.clear(),
+                _ => {}
+            }
+            markers.extend(GuiderMarker::from_event(ev));
+        }
+        let mut states: Vec<GuideStateSample> = payload["states"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| {
+                Some(GuideStateSample {
+                    t_ms: s["Timestamp"].as_f64()? * 1000.0,
+                    status: s["app_state"].as_str()?.to_string(),
+                })
+            })
+            .collect();
+        let newest = [steps.last().map(|s: &GuiderStep| s.t_ms), markers.last().map(|m: &GuiderMarker| m.t_ms)]
+            .into_iter()
+            .flatten()
+            .chain(states.last().map(|s| s.t_ms))
+            .fold(f64::NEG_INFINITY, f64::max);
+        prune_window(&mut steps, newest, |s| s.t_ms, 2000);
+        prune_window(&mut markers, newest, |m| m.t_ms, 200);
+        prune_window(&mut states, newest, |s| s.t_ms, 256);
+        self.guider_steps.set(steps);
+        self.guider_markers.set(markers);
+        self.guider_states.set(states);
+        self.guider_cal_steps.set(cal);
+    }
+
+    /// A PHD2 event (`guider_event`): a guide step, a calibration step or a
+    /// marker for the drift plot; the rest is the state's business.
+    fn guider_event(&self, ev: &serde_json::Value) {
+        match ev["Event"].as_str().unwrap_or_default() {
+            "GuideStep" => {
+                if let Some(step) = GuiderStep::from_event(ev) {
+                    let t = step.t_ms;
+                    self.guider_steps.update(|v| {
+                        v.push(step);
+                        prune_window(v, t, |s| s.t_ms, 2000);
+                    });
+                    // Markers age with the steps; touch them only when one
+                    // falls out, so their readers don't rerun every frame.
+                    if self.guider_markers.with_untracked(|v| v.first().is_some_and(|m| m.t_ms < t - GUIDER_WINDOW_MS)) {
+                        self.guider_markers.update(|v| prune_window(v, t, |m| m.t_ms, 200));
+                    }
+                }
+            }
+            "Calibrating" => {
+                if let Some(step) = GuiderCalStep::from_event(ev) {
+                    self.guider_cal_steps.update(|v| {
+                        v.push(step);
+                        let over = v.len().saturating_sub(200);
+                        v.drain(..over);
+                    });
+                }
+            }
+            "StartCalibration" => self.guider_cal_steps.set(Vec::new()),
+            _ => {}
+        }
+        if let Some(m) = GuiderMarker::from_event(ev) {
+            let t = m.t_ms;
+            self.guider_markers.update(|v| {
+                v.push(m);
+                prune_window(v, t, |m| m.t_ms, 200);
+            });
         }
     }
 
@@ -1248,6 +1422,65 @@ impl DeviceStore {
                 self.guide_settings.set(payload.clone());
             }
 
+            // junos-guider, through the relay (`junos-server/src/guider.rs`).
+            // `attached:false` is the relay's: the daemon is gone.
+            "guider_state" => match GuiderStatusData::from_json(payload) {
+                None => self.guider_detach(),
+                Some(state) => {
+                    if let Some(app) = state.app_state.clone() {
+                        let t_ms = state.timestamp * 1000.0;
+                        if self.guider_states.with_untracked(|v| v.last().map(|s| &s.status) != Some(&app)) {
+                            self.guider_states.update(|v| {
+                                v.push(GuideStateSample { t_ms, status: app });
+                                prune_window(v, t_ms, |s| s.t_ms, 256);
+                            });
+                        }
+                    }
+                    self.guider_state.set(Some(state));
+                }
+            },
+            "guider_event" => self.guider_event(payload),
+            "guider_history" => self.guider_history(payload),
+            "guider_calibration" => self.guider_calibration.set(payload.clone()),
+            "guider_settings" => self.guider_settings.set(payload.clone()),
+            "guider_profiles" => self.guider_profiles.set(payload.clone()),
+            "guider_devices" => self.guider_devices.set(payload.clone()),
+            "guider_darks" => self.guider_darks.set(payload.clone()),
+            "guider_ga" => self.guider_ga.set(payload.clone()),
+            "guider_pa" => self.guider_pa.set(payload.clone()),
+            "guider_alert" => {
+                let alert = GuiderAlert {
+                    t_ms: web_sys::js_sys::Date::now(),
+                    kind: payload["Type"].as_str().unwrap_or("info").to_string(),
+                    msg: payload["Msg"].as_str().unwrap_or_default().to_string(),
+                };
+                self.guider_alerts.update(|v| {
+                    v.insert(0, alert);
+                    v.truncate(50);
+                });
+            }
+            "guider_log" => {
+                if let Some(line) = payload["line"].as_str() {
+                    self.guider_log.update(|v| {
+                        v.insert(0, line.to_string());
+                        v.truncate(200);
+                    });
+                }
+            }
+            // Every browser gets every reply; only this one's ids are pending.
+            "guider_rpc_result" => {
+                let id = payload["id"].as_str().unwrap_or_default();
+                if let Some(reply) = self.guider_pending.try_update_value(|m| m.remove(id)).flatten() {
+                    reply.set(Some(match payload.get("error") {
+                        Some(e) => Err(GuiderRpcError {
+                            code: e["code"].as_i64().unwrap_or(0),
+                            message: e["message"].as_str().unwrap_or_default().to_string(),
+                        }),
+                        None => Ok(payload["result"].clone()),
+                    }));
+                }
+            }
+
             // Reply to option_get — array of {name, value}, merged into the
             // `options` map so each tab finds what it asked for.
             "option_get" => {
@@ -1373,6 +1606,9 @@ impl DeviceStore {
                         self.align_preview_url.set(Some(url));
                     } else if uuid.starts_with("+G") {
                         self.guide_preview_url.set(Some(url));
+                    } else if uuid.starts_with("+J") {
+                        // junos-guider's frame and overlay, from the relay.
+                        self.guider_frame.set(Some(GuiderFrame::from_preview(payload, url)));
                     } else if uuid.starts_with("+S") {
                         // The live stack, from the relay (never KStars).
                         self.stack_preview_url.set(Some(url));

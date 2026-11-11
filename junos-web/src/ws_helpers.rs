@@ -15,12 +15,13 @@
 //!     `elements` array shaped by the caller.
 //!
 //! Plus `extract_indi_number` for reading a named element out of a
-//! `device_property_get`/`set` payload's `numbers` array, and `file_command`
-//! for the KStars file loads/saves whose answer the caller waits for.
+//! `device_property_get`/`set` payload's `numbers` array, `file_command`
+//! for the KStars file loads/saves whose answer the caller waits for, and
+//! `guider_rpc` for a junos-guider method call and its reply.
 
 use leptos::prelude::*;
 
-use crate::ws::{FileReply, SendCmd};
+use crate::ws::{FileReply, GuiderPending, GuiderReply, GuiderRpcError, SendCmd};
 use serde_json::{json, Map, Value};
 
 pub fn send_cmd(send: &SendCmd, ty: &str, payload: Value) {
@@ -48,6 +49,47 @@ pub async fn file_command(
         }
     }
     None
+}
+
+/// How long a `guider_rpc` waits for its `guider_rpc_result`.
+const GUIDER_RPC_TIMEOUT_MS: u32 = 10_000;
+
+/// Call a junos-guider method (PHD2's, or one of the UI's extras) through the
+/// relay: `guider_rpc {method, params, id}`. The returned signal turns
+/// `Some` once with the `guider_rpc_result` (`DeviceStore::guider_pending`),
+/// a timeout after 10 s, or [`GuiderRpcError::LOST`] when the socket or the
+/// daemon goes first. Ids are unique to this page, since the relay hands
+/// every browser every reply.
+// First caller: the history request on connect (`ws/mod.rs`, next commit).
+#[allow(dead_code)]
+pub fn guider_rpc(
+    send: &SendCmd,
+    pending: GuiderPending,
+    method: &str,
+    params: Value,
+) -> RwSignal<Option<GuiderReply>> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    static PAGE: OnceLock<u32> = OnceLock::new();
+    static SEQ: AtomicU64 = AtomicU64::new(1);
+    let page = PAGE.get_or_init(|| (js_sys::Math::random() * f64::from(u32::MAX)) as u32);
+    let id = format!("{page:08x}-{}", SEQ.fetch_add(1, Ordering::Relaxed));
+
+    let reply = RwSignal::new(None);
+    pending.update_value(|m| {
+        m.insert(id.clone(), reply);
+    });
+    send_cmd(send, "guider_rpc", json!({ "method": method, "params": params, "id": id }));
+    wasm_bindgen_futures::spawn_local(async move {
+        gloo_timers::future::TimeoutFuture::new(GUIDER_RPC_TIMEOUT_MS).await;
+        if let Some(r) = pending.try_update_value(|m| m.remove(&id)).flatten() {
+            r.set(Some(Err(GuiderRpcError {
+                code: GuiderRpcError::TIMEOUT,
+                message: "no reply from the guider".into(),
+            })));
+        }
+    });
+    reply
 }
 
 /// `option_set {options:[{name, value}]}` — message.cpp:1654. No reply.
