@@ -1,0 +1,2155 @@
+//! The guider: PHD2's `Guider` state machine, without its window. Each frame
+//! it finds the star again (through [`MultiStar`]), keeps the error averages,
+//! walks UNINITIALIZED → SELECTING → SELECTED → CALIBRATING_PRIMARY →
+//! CALIBRATING_SECONDARY → CALIBRATED → GUIDING, and hands back the moves
+//! PHD2 schedules (`SchedulePrimaryMove`, `ScheduleAxisMove`) for the engine
+//! to make before the next exposure. It owns the lock position and the pause
+//! state (PHD2's `Guider::m_paused`, which `MyFrame::SetPaused` wraps with
+//! the events and the exposure restart).
+//!
+//! The mounts come in through [`GuiderMount`] — the primary (`pMount`: the
+//! AO when there is one, else the scope) and the secondary (`pSecondaryMount`:
+//! the scope behind an AO) — and everything else PHD2 reads from `pFrame`,
+//! `pCamera` and the pointing source through a [`GuiderCx`]. What PHD2 tells
+//! the outside (events, guide-log lines, alerts, status and debug lines, the
+//! mounts' own) comes back as [`GuiderEvent`]s, in PHD2's order.
+//!
+//! Ported from PHD2 src/guider.h, src/guider.cpp, src/guider_multistar.cpp (AutoSelect, SetMultiStarMode, SetLockPosition, the UpdateCurrentPosition logging) — BSD-3-Clause, see THIRD_PARTY.md
+
+use std::cell::RefCell;
+use std::sync::Arc;
+
+use serde_json::Value;
+
+use super::algo::AlgoCtx;
+use super::calibration::{Adjustment, ProfileAccess, ScopePointing};
+use super::image::UsImage;
+use super::log::cfmt::fmt_f;
+use super::mount::{AlertKind, GuiderOffset, Mount, MountEvent, PointingSource, stopwatch_seconds};
+use super::multistar::{
+    BoxState, FindParams, FrameErrorInfo, GuidingView, MAX_SEARCH_REGION, MIN_SEARCH_REGION, MultiStar,
+    MultiStarConfig, PositionLost, PositionUpdate, autoselect_edge_allowance, keys,
+};
+use super::scope::{CalibrationEnv, CalibrationNext, Scope};
+use super::star::{AutoFindParams, FindResult, Star};
+use super::traits::{Dir, MoveOpts, Point, Rect};
+
+/// Profile keys the guider itself reads (the star settings are
+/// [`multistar::keys`](super::multistar::keys)).
+pub const FAST_RECENTER_KEY: &str = "/guider/FastRecenter";
+pub const AUTO_SEL_DOWNSAMPLE_KEY: &str = "/guider/AutoSelDownsample";
+
+/// `CurrentError` past this long without a star (`THRESHOLD_SECONDS`).
+const STAR_LOST_SECONDS: i64 = 20;
+/// What `CurrentError` reports then (`LARGE_DISTANCE`).
+const LARGE_DISTANCE: f64 = 100.0;
+
+/// PHD2's `GUIDER_STATE`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GuiderState {
+    Uninitialized = 0,
+    Selecting,
+    Selected,
+    CalibratingPrimary,
+    CalibratingSecondary,
+    Calibrated,
+    Guiding,
+    /// The pseudo-state stopping asks for, mapped to a real one by
+    /// `SetState`; never the current state.
+    Stop,
+}
+
+impl GuiderState {
+    /// `StateStr`, the debug log's name.
+    pub fn name(self) -> &'static str {
+        match self {
+            GuiderState::Uninitialized => "UNINITIALIZED",
+            GuiderState::Selecting => "SELECTING",
+            GuiderState::Selected => "SELECTED",
+            GuiderState::CalibratingPrimary => "CALIBRATING_PRIMARY",
+            GuiderState::CalibratingSecondary => "CALIBRATING_SECONDARY",
+            GuiderState::Calibrated => "CALIBRATED",
+            GuiderState::Guiding => "GUIDING",
+            GuiderState::Stop => "STOP",
+        }
+    }
+}
+
+/// PHD2's `PauseType`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PauseType {
+    /// Not paused.
+    #[default]
+    None = 0,
+    /// No guide corrections, exposures still looping.
+    Guiding = 1,
+    /// No corrections and no exposures.
+    Full = 2,
+}
+
+/// PHD2's `EXPOSED_STATE`, what `get_app_state` and the `AppState` event
+/// report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppState {
+    Stopped = 0,
+    Selected = 1,
+    Calibrating = 2,
+    Guiding = 3,
+    LostLock = 4,
+    Paused = 100,
+    Looping = 101,
+}
+
+impl AppState {
+    /// The wire string (`state_name`, event_server.cpp:60).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AppState::Stopped => "Stopped",
+            AppState::Selected => "Selected",
+            AppState::Calibrating => "Calibrating",
+            AppState::Guiding => "Guiding",
+            AppState::LostLock => "LostLock",
+            AppState::Paused => "Paused",
+            AppState::Looping => "Looping",
+        }
+    }
+}
+
+/// Which mount: PHD2's `pMount` or `pSecondaryMount`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MountRole {
+    Primary,
+    Secondary,
+}
+
+/// A move the guider schedules; the engine makes it before the next
+/// exposure, then calls [`Guider::move_complete`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ScheduledMove {
+    /// `SchedulePrimaryMove(pMount, ofs, opts)`: `move_offset` on the
+    /// primary mount.
+    Offset { ofs: GuiderOffset, opts: MoveOpts },
+    /// `ScheduleAxisMove(mount, dir, amount, MOVEOPTS_CALIBRATION_MOVE)`: a
+    /// calibration step, `move_axis` on that mount (ms on a scope, steps on
+    /// an AO).
+    Calibration { role: MountRole, dir: Dir, amount: i32 },
+}
+
+/// What the polar tools are due after a frame. PHD2 calls them from inside
+/// `UpdateGuideState`; nothing in the guider follows them, so the engine
+/// runs them right after it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaTools {
+    #[default]
+    None,
+    /// SELECTED with the star found: `StaticPaTool::UpdateState` then
+    /// `PolarDriftTool::UpdateState`. A failure goes to
+    /// [`Guider::pa_tool_failed`].
+    UpdateState,
+    /// SELECTED and the star lost: `StaticPaTool::NotifyStarLost`.
+    StarLost,
+}
+
+/// What a call did besides its events: what PHD2 does there outside the
+/// guider, left to the caller.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GuideUpdate {
+    /// The moves to make, in order.
+    pub moves: Vec<ScheduledMove>,
+    /// The star tracker's verdict, `None` when no position was looked for.
+    /// It carries what PHD2 does inside `UpdateCurrentPosition` outside the
+    /// guider: `AdjustAutoExposure(snr)` or `ResetAutoExposure()`, and the
+    /// image logger's distance or error.
+    pub position: Option<Result<PositionUpdate, PositionLost>>,
+    pub pa_tools: PaTools,
+    /// AutoFind set the camera's saturation level
+    /// (`SetSaturationByADU(true, level)`), even when no star was found:
+    /// the caller saves it to `/camera/SaturationADU`.
+    pub saturation_adu: Option<u16>,
+}
+
+/// PHD2's `FrameDroppedInfo`: a frame whose star was not accepted, for the
+/// `StarLost` event, the guide log's DROP row and the graphs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrameDroppedInfo {
+    /// `pImage->FrameNum`.
+    pub frame_number: u32,
+    /// `TimeSinceGuidingStarted`, s, cut to whole ms.
+    pub time: f64,
+    /// `CurrentGuideError`.
+    pub avg_dist: f64,
+    pub star: FrameErrorInfo,
+}
+
+/// What the guider tells the outside, in PHD2's order.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GuiderEvent {
+    /// What one of the mounts said while the guider drove it.
+    Mount(MountRole, MountEvent),
+    /// `AdjustCalibrationForScopePointing` ran on that mount when guiding
+    /// started: its steps (debug lines, alerts, the status line, an
+    /// image-scale change) and the new pixel size are the caller's; what it
+    /// set is already stored.
+    PointingAdjusted(MountRole, Adjustment),
+    /// The `LoopingExposures` event: the star when found, else the drop.
+    LoopingExposures { frame: u32, star: Option<Star>, dropped: Option<FrameErrorInfo> },
+    /// `StarSelected`.
+    StarSelected(Point),
+    /// `StarLost`.
+    StarLost(FrameDroppedInfo),
+    /// A frame dropped while guiding: the guide log's DROP row, the Guiding
+    /// Assistant's and the graph's notice.
+    FrameDropped(FrameDroppedInfo),
+    /// The guide log's `INFO: STAR LOST during calibration` line.
+    CalibrationFrameDropped(FrameDroppedInfo),
+    /// `LockPositionSet`.
+    LockPositionSet(Point),
+    /// `LockPositionLost`.
+    LockPositionLost,
+    /// A mount began calibrating: the guide log's calibration header and the
+    /// `StartCalibration` event.
+    StartCalibration(MountRole),
+    /// The `CalibrationFailed` event of a calibration stopped by hand. Only
+    /// the event: PHD2 writes nothing to the guide log here.
+    CalibrationFailed { role: MountRole, reason: &'static str },
+    /// The rest of `MyFrame::NotifyGuidingStarted`, after its "Guiding"
+    /// status and the mounts' notices: the guiding clock and frame counter
+    /// restarted, the guide log's guiding header, the `StartGuiding` event.
+    GuidingStarted,
+    /// `MyFrame::NotifyGuidingStopped` after the mounts' notices: the
+    /// `GuidingStopped` event, the guide log's end line, the controller
+    /// aborted ("Guiding stopped").
+    GuidingStopped,
+    /// `NotifyGuidingParam`: the `GuideParamChange` event and the guide
+    /// log's parameter-change line, written even when not guiding if
+    /// `force_log`.
+    ParamChange { name: &'static str, value: Value, force_log: bool },
+    /// `MyFrame::SetAutoLoadCalibration`: the frame's flag, saved to
+    /// `/AutoLoadCalibration` when it changes.
+    SetAutoLoadCalibration(bool),
+    /// `pFrame->Alert`.
+    Alert { msg: String, kind: AlertKind },
+    /// `pFrame->StatusMsg`.
+    Status(String),
+    /// A guide-log `INFO:` line, without the prefix; the log writes it only
+    /// between the start of a calibration or of guiding and its end.
+    Info(String),
+    /// A debug-log line.
+    Debug(String),
+}
+
+fn debug(ev: &mut Vec<GuiderEvent>, line: impl Into<String>) {
+    ev.push(GuiderEvent::Debug(line.into()));
+}
+
+/// `ERROR_INFO` inside `Debug.Write`: the macro writes the line, and the
+/// `Write` around it writes it again.
+fn debug_twice(ev: &mut Vec<GuiderEvent>, line: &str) {
+    debug(ev, line);
+    debug(ev, line);
+}
+
+fn wrap(ev: &mut Vec<GuiderEvent>, role: MountRole, mev: Vec<MountEvent>) {
+    ev.extend(mev.into_iter().map(|e| GuiderEvent::Mount(role, e)));
+}
+
+/// `UpdateImageDisplay`'s debug line. PHD2's gamma is the display stretch's.
+fn image_display_line(img: &UsImage, gamma: f64) -> String {
+    format!(
+        "UpdateImageDisplay: Size=({},{}) min={}, max={}, med={}, FiltMin={}, FiltMax={}, Gamma={}",
+        img.w,
+        img.h,
+        img.min_adu,
+        img.max_adu,
+        img.median_adu,
+        img.filt_min,
+        img.filt_max,
+        fmt_f(gamma, 3)
+    )
+}
+
+/// The virtual `Mount` interface the guider drives: the [`Mount`] half, and
+/// what the scope and the AO each do their own way.
+pub trait GuiderMount {
+    fn mount(&self) -> &Mount;
+    fn mount_mut(&mut self) -> &mut Mount;
+    /// `IsCalibrated`: the scope also wants its Dec leg.
+    fn is_calibrated(&self) -> bool;
+    /// `CalibrationTotDistance`: the room a calibration needs around the
+    /// star, px.
+    fn calibration_tot_distance(&self) -> i32;
+    /// `BeginCalibration` from the star at `location` (`None`: no star);
+    /// true when it began.
+    fn begin_calibration(
+        &mut self,
+        location: Option<Point>,
+        env: &CalibrationEnv,
+        pointing: Option<&dyn PointingSource>,
+        profile: &mut dyn ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) -> bool;
+    /// `UpdateCalibrationState` with the star at `cur`.
+    fn update_calibration_state(
+        &mut self,
+        cur: Point,
+        env: &CalibrationEnv,
+        pointing: Option<&dyn PointingSource>,
+        profile: &mut dyn ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) -> CalibrationNext;
+    /// `AdjustCalibrationForScopePointing`, when guiding starts. What it set
+    /// is stored with `timestamp`.
+    fn adjust_calibration_for_scope_pointing(
+        &mut self,
+        pointing: &ScopePointing,
+        timestamp: &str,
+        profile: &mut dyn ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) -> Adjustment;
+    /// `NotifyGuidingStopped`: the scope also resets its backlash
+    /// compensation.
+    fn notify_guiding_stopped(&mut self, ctx: &AlgoCtx, profile: &mut dyn ProfileAccess, events: &mut Vec<MountEvent>);
+    /// `NotifyGuidingDithered`: the mount's, which the AO overrides.
+    fn notify_guiding_dithered(
+        &mut self,
+        dx: f64,
+        dy: f64,
+        mount_coords: bool,
+        ctx: &AlgoCtx,
+        events: &mut Vec<MountEvent>,
+    ) {
+        self.mount_mut().notify_guiding_dithered(dx, dy, mount_coords, ctx, events);
+    }
+}
+
+/// A `dyn ProfileAccess` handed to the scope's generic methods.
+struct DynProfile<'p>(&'p mut dyn ProfileAccess);
+
+impl ProfileAccess for DynProfile<'_> {
+    fn has(&self, key: &str) -> bool {
+        self.0.has(key)
+    }
+    fn get_f64(&self, key: &str, default: f64) -> f64 {
+        self.0.get_f64(key, default)
+    }
+    fn get_i32(&self, key: &str, default: i32) -> i32 {
+        self.0.get_i32(key, default)
+    }
+    fn get_str(&self, key: &str, default: &str) -> String {
+        self.0.get_str(key, default)
+    }
+    fn set_f64(&mut self, key: &str, value: f64) {
+        self.0.set_f64(key, value)
+    }
+    fn set_i32(&mut self, key: &str, value: i32) {
+        self.0.set_i32(key, value)
+    }
+    fn set_str(&mut self, key: &str, value: &str) {
+        self.0.set_str(key, value)
+    }
+}
+
+impl GuiderMount for Scope {
+    fn mount(&self) -> &Mount {
+        &self.mount
+    }
+
+    fn mount_mut(&mut self) -> &mut Mount {
+        &mut self.mount
+    }
+
+    fn is_calibrated(&self) -> bool {
+        Scope::is_calibrated(self)
+    }
+
+    fn calibration_tot_distance(&self) -> i32 {
+        self.calibration_distance()
+    }
+
+    fn begin_calibration(
+        &mut self,
+        location: Option<Point>,
+        env: &CalibrationEnv,
+        pointing: Option<&dyn PointingSource>,
+        profile: &mut dyn ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) -> bool {
+        Scope::begin_calibration(self, location, env, pointing, &mut DynProfile(profile), events)
+    }
+
+    fn update_calibration_state(
+        &mut self,
+        cur: Point,
+        env: &CalibrationEnv,
+        pointing: Option<&dyn PointingSource>,
+        profile: &mut dyn ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) -> CalibrationNext {
+        Scope::update_calibration_state(self, cur, env, pointing, &mut DynProfile(profile), events)
+    }
+
+    fn adjust_calibration_for_scope_pointing(
+        &mut self,
+        pointing: &ScopePointing,
+        timestamp: &str,
+        profile: &mut dyn ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) -> Adjustment {
+        Scope::adjust_calibration_for_scope_pointing(self, pointing, timestamp, &mut DynProfile(profile), events)
+    }
+
+    fn notify_guiding_stopped(&mut self, ctx: &AlgoCtx, profile: &mut dyn ProfileAccess, events: &mut Vec<MountEvent>) {
+        Scope::notify_guiding_stopped(self, ctx, &mut DynProfile(profile), events)
+    }
+}
+
+/// What the guider reads from the rest of PHD2 on a call: the mounts, the
+/// profile, the pointing source, and the frame's and the camera's settings.
+pub struct GuiderCx<'a> {
+    /// `pMount`: the AO when there is one, else the scope; `None` without a
+    /// mount.
+    pub primary: Option<&'a mut dyn GuiderMount>,
+    /// `pSecondaryMount`: the scope behind an AO.
+    pub secondary: Option<&'a mut dyn GuiderMount>,
+    pub profile: &'a mut dyn ProfileAccess,
+    /// `pPointingSource`.
+    pub pointing: Option<&'a dyn PointingSource>,
+    /// What a calibration reads (binning, optics, rotator, the guider's fast
+    /// recenter and search region, the time stamp it stores).
+    pub cal_env: &'a CalibrationEnv,
+    /// Where the scope points, for the adjustment when guiding starts.
+    pub scope_pointing: &'a ScopePointing,
+    /// For the algorithms' notifications.
+    pub algo: &'a AlgoCtx,
+    /// What each `Star::Find` passes.
+    pub find: FindParams,
+    /// What `AutoSelect` passes to `AutoFind`.
+    pub autofind: AutoFindParams,
+    /// `pCamera->UseSubframes`.
+    pub use_subframes: bool,
+    /// `MyFrame::GuidingRAOnly`: the scope's Dec guide mode is Off.
+    pub ra_only: bool,
+    /// `PhdController::IsSettling`.
+    pub settling: bool,
+    /// `MyFrame::GetExposureInfo`: the exposure, ms, and auto exposure.
+    pub exposure_ms: i32,
+    pub auto_exposure: bool,
+    /// `TimeSinceGuidingStarted`, s, as the clock reads it.
+    pub guide_time: f64,
+    /// UTC milliseconds (`wxGetUTCTimeMillis`); `CurrentError` reads whole
+    /// seconds of it (`wxDateTime::GetTimeNow`).
+    pub now_ms: i64,
+    /// `IsBusy` on either mount: a move scheduled (not manual) and not yet
+    /// completed. The engine keeps the count.
+    pub busy: bool,
+    /// `pFrame->Stretch_gamma`, for the `UpdateImageDisplay` debug line.
+    pub gamma: f64,
+}
+
+impl<'a> GuiderCx<'a> {
+    /// A mount by role, next to the profile.
+    fn split(&mut self, role: MountRole) -> (Option<&mut (dyn GuiderMount + 'a)>, &mut (dyn ProfileAccess + 'a)) {
+        let m = match role {
+            MountRole::Primary => self.primary.as_deref_mut(),
+            MountRole::Secondary => self.secondary.as_deref_mut(),
+        };
+        (m, &mut *self.profile)
+    }
+}
+
+/// `IsLoopingState`: looping, not calibrating or guiding.
+fn is_looping_state(state: GuiderState) -> bool {
+    matches!(state, GuiderState::Uninitialized | GuiderState::Selecting | GuiderState::Selected)
+}
+
+/// `StarStatus` (guider_multistar.cpp:420): the status line of a star found.
+fn star_status(star: &Star, exposure_ms: i32, auto_exposure: bool) -> String {
+    let mut s = format!("m={} SNR={}", fmt_f(star.mass, 0), fmt_f(star.snr, 1));
+    if star.result == FindResult::Saturated {
+        s += " Saturated";
+    }
+    if auto_exposure {
+        // Quirk kept: any exposure of 1 ms or more is shown in seconds.
+        if exposure_ms >= 1 {
+            s += &format!(" Exp={} s", fmt_f(exposure_ms as f64 / 1000.0, 1));
+        } else {
+            s += &format!(" Exp={exposure_ms} ms");
+        }
+    }
+    s
+}
+
+/// What a calibration frame came to for one mount.
+enum CalStep {
+    Done,
+    Pending,
+    Failed,
+}
+
+/// The lock position: PHD2's `PHD_Point`, whose coordinates outlive an
+/// invalidation.
+#[derive(Clone, Copy, Debug, Default)]
+struct Lock {
+    x: f64,
+    y: f64,
+    valid: bool,
+}
+
+impl Lock {
+    fn point(&self) -> Point {
+        Point::new(self.x, self.y)
+    }
+}
+
+/// PHD2's `Guider` with `GuiderMultiStar`'s star handling.
+pub struct Guider {
+    state: GuiderState,
+    paused: PauseType,
+    lock: Lock,
+    /// `m_starFoundTimestamp`, whole seconds; `None` before the first star.
+    star_found_at: Option<i64>,
+    avg_distance: f64,
+    avg_distance_ra: f64,
+    avg_distance_long: f64,
+    avg_distance_long_ra: f64,
+    avg_distance_cnt: u32,
+    avg_distance_need_reset: bool,
+    lock_pos_is_sticky: bool,
+    ignore_lost_star_looping: bool,
+    fast_recenter_enabled: bool,
+    force_full_frame: bool,
+    auto_sel_downsample: u32,
+    /// `m_pCurrentImage`: the last frame, an empty one at first.
+    current_image: Arc<UsImage>,
+    multistar: MultiStar,
+}
+
+impl Guider {
+    /// `Guider::Guider` and `GuiderMultiStar::GuiderMultiStar`, which leave
+    /// it SELECTING (they set UNINITIALIZED, which moves on at once), then
+    /// the profile settings as [`Guider::load_profile_settings`] reads them.
+    /// `sticky_lock` is the global `/StickyLockPosition`.
+    pub fn new(profile: &mut dyn ProfileAccess, sticky_lock: bool, ev: &mut Vec<GuiderEvent>) -> Guider {
+        debug(ev, "guider state => UNINITIALIZED");
+        debug(ev, "Changing from state UNINITIALIZED to UNINITIALIZED");
+        debug(ev, "guider state => SELECTING");
+        let mut g = Guider {
+            state: GuiderState::Selecting,
+            paused: PauseType::None,
+            lock: Lock::default(),
+            star_found_at: None,
+            avg_distance: 0.0,
+            avg_distance_ra: 0.0,
+            avg_distance_long: 0.0,
+            avg_distance_long_ra: 0.0,
+            avg_distance_cnt: 0,
+            avg_distance_need_reset: false,
+            lock_pos_is_sticky: sticky_lock,
+            ignore_lost_star_looping: false,
+            fast_recenter_enabled: true,
+            force_full_frame: false,
+            auto_sel_downsample: 0,
+            current_image: Arc::new(UsImage::default()),
+            multistar: MultiStar::new(MultiStarConfig::default()),
+        };
+        // No image yet, so no display to clear (the gamma is unused), and
+        // SELECTING, so the multi-star mode never re-selects here.
+        let on = g.load_settings(profile, 0.0, ev);
+        g.multistar.set_multi_star_mode(on);
+        announce_multi_star(on, false, profile, ev);
+        g
+    }
+
+    /// `Guider::LoadProfileSettings` and `GuiderMultiStar::LoadProfileSettings`
+    /// (a profile switch): the settings, their effective values written
+    /// back, the display cleared (when not calibrating or guiding), then the
+    /// multi-star mode set as [`Guider::set_multi_star_mode`] does. Its
+    /// re-selection finds no image after the clear, so it never sets a
+    /// saturation level or runs a frame. The display scaling and the
+    /// bookmarks are the UI's.
+    pub fn load_profile_settings(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        let on = self.load_settings(cx.profile, cx.gamma, ev);
+        self.set_multi_star_mode(on, cx, ev);
+    }
+
+    /// The settings part of `LoadProfileSettings`; the multi-star flag read.
+    fn load_settings(&mut self, profile: &mut dyn ProfileAccess, gamma: f64, ev: &mut Vec<GuiderEvent>) -> bool {
+        let fast = profile.get_i32(FAST_RECENTER_KEY, 1) != 0;
+        self.enable_fast_recenter(fast, profile);
+
+        let (cfg, raw_threshold, raw_region) = {
+            let p = &*profile;
+            let get = |k: &str| p.has(k).then(|| p.get_f64(k, 0.0));
+            (MultiStarConfig::from_profile(get), get(keys::MASS_CHANGE_THRESHOLD), get(keys::SEARCH_REGION))
+        };
+        debug(ev, format!("Setting StarMinHFD = {}", fmt_f(cfg.min_star_hfd, 2)));
+        debug(ev, format!("Setting MaxHFD = {}", fmt_f(cfg.max_star_hfd, 1)));
+        debug(ev, format!("Setting StarMinSNR = {}", fmt_f(cfg.min_star_snr, 1)));
+        // `wxMax(0, GetInt(..))` into an unsigned.
+        self.auto_sel_downsample = profile.get_i32(AUTO_SEL_DOWNSAMPLE_KEY, 0).max(0) as u32;
+        debug(ev, format!("Setting AutoSelDownsample = {}", self.auto_sel_downsample));
+        profile.set_i32(AUTO_SEL_DOWNSAMPLE_KEY, self.auto_sel_downsample as i32);
+        if !self.current_image.data.is_empty() {
+            self.display_image(Arc::new(UsImage::default()), gamma, ev);
+        }
+
+        // The setters' refusals, which MultiStarConfig already applied.
+        if raw_threshold.is_some_and(|v| v < 0.0) {
+            debug(ev, "Error thrown from guider_multistar.cpp:304->massChangeThreshold < 0");
+        }
+        match raw_region.map(|v| v as i32) {
+            Some(v) if v < MIN_SEARCH_REGION => {
+                debug(ev, "Error thrown from guider_multistar.cpp:342->searchRegion < MIN_SEARCH_REGION");
+            }
+            Some(v) if v > MAX_SEARCH_REGION => {
+                debug(ev, "Error thrown from guider_multistar.cpp:347->searchRegion > MAX_SEARCH_REGION");
+            }
+            _ => {}
+        }
+        for (key, value) in cfg.profile_values() {
+            match key {
+                keys::SEARCH_REGION
+                | keys::MASS_CHANGE_THRESHOLD_ENABLED
+                | keys::TOLERATE_JUMPS_ENABLED
+                | keys::MULTISTAR_ENABLED => profile.set_i32(key, value as i32),
+                _ => profile.set_f64(key, value),
+            }
+        }
+        self.multistar.cfg = MultiStarConfig { multi_star: self.multistar.cfg.multi_star, ..cfg };
+        cfg.multi_star
+    }
+
+    // ---------------------------------------------------------------- state
+
+    /// `GetState`.
+    pub fn state(&self) -> GuiderState {
+        self.state
+    }
+
+    /// `IsGuiding`.
+    pub fn is_guiding(&self) -> bool {
+        self.state == GuiderState::Guiding
+    }
+
+    /// `IsCalibrating`.
+    pub fn is_calibrating(&self) -> bool {
+        self.state >= GuiderState::CalibratingPrimary && self.state < GuiderState::Calibrated
+    }
+
+    /// `IsCalibratingOrGuiding`.
+    pub fn is_calibrating_or_guiding(&self) -> bool {
+        self.state >= GuiderState::CalibratingPrimary && self.state <= GuiderState::Guiding
+    }
+
+    /// `GetPauseType`.
+    pub fn pause_type(&self) -> PauseType {
+        self.paused
+    }
+
+    /// `IsPaused`.
+    pub fn is_paused(&self) -> bool {
+        self.paused != PauseType::None
+    }
+
+    /// `Guider::SetPaused`: the previous pause. Leaving a full pause resets
+    /// the error averages on the next star. The `Paused` / `Resumed` events,
+    /// the guide-log lines and the algorithms' notice are `MyFrame`'s.
+    pub fn set_paused(&mut self, pause: PauseType, ev: &mut Vec<GuiderEvent>) -> PauseType {
+        debug(ev, format!("Guider::SetPaused({})", pause as i32));
+        let prev = self.paused;
+        self.paused = pause;
+        if prev == PauseType::Full && pause != prev {
+            debug(ev, "Guider::SetPaused: resetting avg dist filter");
+            self.avg_distance_need_reset = true;
+        }
+        prev
+    }
+
+    /// `GetExposedState`: the app state clients see; the pause wins over the
+    /// capture state. PHD2 writes `case statement mapped state <state> to
+    /// <app state>` (the enums' integers) to the debug log when capture is
+    /// active; that is the caller's, as this is read off the engine thread.
+    pub fn app_state(&self, capture_active: bool) -> AppState {
+        if self.is_paused() {
+            return AppState::Paused;
+        }
+        if !capture_active {
+            return AppState::Stopped;
+        }
+        match self.state {
+            GuiderState::Uninitialized | GuiderState::Stop => AppState::Stopped,
+            // "Looping" only with no star selected.
+            GuiderState::Selecting if self.multistar.primary().is_valid() => AppState::Selected,
+            GuiderState::Selecting => AppState::Looping,
+            GuiderState::Selected | GuiderState::Calibrated => AppState::Selected,
+            GuiderState::CalibratingPrimary | GuiderState::CalibratingSecondary => AppState::Calibrating,
+            GuiderState::Guiding if self.multistar.is_locked() => AppState::Guiding,
+            GuiderState::Guiding => AppState::LostLock,
+        }
+    }
+
+    /// `SetState` (guider.cpp:935). `Stop` maps to where looping can start
+    /// again: UNINITIALIZED after a calibration (the mount moved), SELECTED
+    /// after guiding. A jump of more than one state up is refused.
+    /// UNINITIALIZED drops the lock and the star and moves on to SELECTING;
+    /// CALIBRATING_PRIMARY begins the primary's calibration unless it is
+    /// calibrated, then the secondary's, and ends at CALIBRATED when there
+    /// is no secondary to calibrate (the AO short-cut); GUIDING drops the
+    /// fast recenter, adjusts both calibrations to the scope's pointing and
+    /// locks on the star, unless a sticky lock is kept. When a step lands
+    /// below the state asked for, the lower state is set the same way.
+    fn set_state(&mut self, new: GuiderState, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        use GuiderState::*;
+        debug(ev, format!("Changing from state {} to {}", self.state.name(), new.name()));
+        let mut new = if new == Stop {
+            match self.state {
+                Uninitialized | Selecting | Selected | Stop => self.state,
+                CalibratingPrimary | CalibratingSecondary => Uninitialized,
+                Calibrated | Guiding => Selected,
+            }
+        } else {
+            new
+        };
+        if new as i32 > self.state as i32 + 1 {
+            debug(ev, format!("Cannot transition from {} to newState={}", self.state.name(), new.name()));
+            debug(ev, "Error thrown from guider.cpp:972->Illegal state transition");
+            return;
+        }
+
+        let requested = new;
+        match requested {
+            Uninitialized => {
+                self.invalidate_lock_position(ev);
+                self.multistar.invalidate_current_position(false);
+                new = Selecting;
+            }
+            CalibratingPrimary | CalibratingSecondary => {
+                let mut secondary_due = requested == CalibratingSecondary;
+                if requested == CalibratingPrimary {
+                    if cx.primary.as_deref().is_some_and(|m| m.is_calibrated()) {
+                        secondary_due = true;
+                    } else if !self.begin_mount_calibration(MountRole::Primary, cx, ev) {
+                        new = Uninitialized;
+                    }
+                }
+                if secondary_due {
+                    match cx.secondary.as_deref().map(|m| (m.mount().is_connected(), m.is_calibrated())) {
+                        None | Some((false, _)) => new = Calibrated,
+                        Some((true, false)) => {
+                            if !self.begin_mount_calibration(MountRole::Secondary, cx, ev) {
+                                new = Uninitialized;
+                            }
+                        }
+                        Some((true, true)) => {}
+                    }
+                }
+            }
+            Guiding => {
+                let (sp, ts) = (cx.scope_pointing, &cx.cal_env.timestamp);
+                for role in [MountRole::Primary, MountRole::Secondary] {
+                    if let (Some(m), profile) = cx.split(role) {
+                        let mut mev = Vec::new();
+                        let adj = m.adjust_calibration_for_scope_pointing(sp, ts, profile, &mut mev);
+                        wrap(ev, role, mev);
+                        ev.push(GuiderEvent::PointingAdjusted(role, adj));
+                    }
+                }
+                if self.lock.valid && self.lock_pos_is_sticky {
+                    debug(ev, "keeping sticky lock position");
+                } else {
+                    match self.current_position() {
+                        Some(p) => {
+                            self.set_lock_position(p, cx, ev);
+                        }
+                        None => debug(ev, "Error thrown from guider.cpp:780->Point is not valid"),
+                    }
+                }
+            }
+            Selecting | Selected | Calibrated | Stop => {}
+        }
+
+        if new >= requested {
+            self.state = new;
+            debug(ev, format!("guider state => {}", self.state.name()));
+        } else {
+            debug(ev, format!("SetState recurses newState {}", new.name()));
+            self.set_state(new, cx, ev);
+        }
+    }
+
+    /// `ResetErrorCount` then `BeginCalibration` on a mount, from the star;
+    /// the guide-log header and `StartCalibration` when it began. Without a
+    /// primary mount (PHD2 would dereference null; its controller never asks)
+    /// the calibration fails.
+    fn begin_mount_calibration(&mut self, role: MountRole, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) -> bool {
+        let location = self.current_position();
+        let (env, pointing) = (cx.cal_env, cx.pointing);
+        let began = match cx.split(role) {
+            (Some(m), profile) => {
+                m.mount_mut().reset_error_count();
+                let mut mev = Vec::new();
+                let began = m.begin_calibration(location, env, pointing, profile, &mut mev);
+                wrap(ev, role, mev);
+                began
+            }
+            (None, _) => false,
+        };
+        if began {
+            ev.push(GuiderEvent::StartCalibration(role));
+        } else {
+            debug_twice(
+                ev,
+                match role {
+                    MountRole::Primary => "Error thrown from guider.cpp:993->pMount->BeginCalibration failed",
+                    MountRole::Secondary => {
+                        "Error thrown from guider.cpp:1014->pSecondaryMount->BeginCalibration failed"
+                    }
+                },
+            );
+        }
+        began
+    }
+
+    /// One calibration frame on a mount not yet calibrated:
+    /// `UpdateCalibrationState`, its move scheduled.
+    fn calibration_step(
+        &mut self,
+        role: MountRole,
+        out: &mut GuideUpdate,
+        cx: &mut GuiderCx,
+        ev: &mut Vec<GuiderEvent>,
+    ) -> CalStep {
+        let cur = self.multistar.primary().position();
+        let (env, pointing) = (cx.cal_env, cx.pointing);
+        let (Some(m), profile) = cx.split(role) else {
+            return CalStep::Done;
+        };
+        if m.is_calibrated() {
+            return CalStep::Done;
+        }
+        let mut mev = Vec::new();
+        let next = m.update_calibration_state(cur, env, pointing, profile, &mut mev);
+        let calibrated = m.is_calibrated();
+        wrap(ev, role, mev);
+        match next {
+            CalibrationNext::Failed => return CalStep::Failed,
+            CalibrationNext::Move(dir, amount) => {
+                schedule(out, ScheduledMove::Calibration { role, dir, amount }, cx, ev);
+            }
+            CalibrationNext::NoMove => {}
+        }
+        if calibrated { CalStep::Done } else { CalStep::Pending }
+    }
+
+    /// `StartGuiding`: ask for CALIBRATING_PRIMARY; the frames move it on to
+    /// GUIDING (from SELECTED only, the jump rule refuses it otherwise).
+    pub fn start_guiding(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        self.set_state(GuiderState::CalibratingPrimary, cx, ev);
+    }
+
+    /// `StopGuiding`: a calibration in progress (or just done) is reported
+    /// failed, "Calibration manually stopped"; guiding stopped is announced
+    /// at once unless a move is still out ([`GuiderCx::busy`]), then by
+    /// [`Guider::move_complete`], so the last `GuideStep` comes first. Then
+    /// the `Stop` state.
+    pub fn stop_guiding(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        use GuiderState::*;
+        match self.state {
+            CalibratingPrimary | CalibratingSecondary | Calibrated | Guiding => {
+                if self.state != Guiding {
+                    let role =
+                        if self.state == CalibratingSecondary { MountRole::Secondary } else { MountRole::Primary };
+                    ev.push(GuiderEvent::CalibrationFailed { role, reason: "Calibration manually stopped" });
+                }
+                if !cx.busy {
+                    self.notify_guiding_stopped(cx, ev);
+                }
+            }
+            Uninitialized | Selecting | Selected | Stop => {}
+        }
+        self.set_state(Stop, cx, ev);
+    }
+
+    /// The guider's part of `OnMoveComplete` for a move that was not manual,
+    /// called once the engine has counted it done (and after the mount's
+    /// step was logged): out of calibration and guiding with no move left,
+    /// the `GuidingStopped` that [`Guider::stop_guiding`] held back.
+    /// Quirk kept: PHD2 sends it after any such late move, held back or not.
+    pub fn move_complete(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        if !self.is_calibrating_or_guiding() && !cx.busy {
+            self.notify_guiding_stopped(cx, ev);
+        }
+    }
+
+    /// `Reset`: back to looping without a star; a full reset also forgets
+    /// where the star was, so the next frame does not look for it.
+    pub fn reset(&mut self, full_reset: bool, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        self.set_state(GuiderState::Uninitialized, cx, ev);
+        if full_reset {
+            self.multistar.invalidate_current_position(true);
+        }
+    }
+
+    /// A polar tool's `UpdateState` failed on a SELECTED frame
+    /// ([`PaTools::UpdateState`]): back to looping, with its message
+    /// ("Static PA rotation failed" or "Polar Drift PA drift failed"). PHD2
+    /// does this inside `UpdateGuideState`, so its `UpdateGuideState exits`
+    /// debug line reads the message; here that line was written with the
+    /// star's status before.
+    pub fn pa_tool_failed(&mut self, msg: &'static str, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        self.set_state(GuiderState::Uninitialized, cx, ev);
+        let line = if msg.starts_with("Static") { 1413 } else { 1419 };
+        debug(ev, format!("Error thrown from guider.cpp:{line}->{msg}"));
+        ev.push(GuiderEvent::Status(msg.into()));
+    }
+
+    /// `MyFrame::NotifyGuidingStarted`: the "Guiding" status, both mounts'
+    /// algorithms, then the rest of the frame's part.
+    fn notify_guiding_started(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        ev.push(GuiderEvent::Status("Guiding".into()));
+        let algo = cx.algo;
+        for role in [MountRole::Primary, MountRole::Secondary] {
+            if let (Some(m), _) = cx.split(role) {
+                let mut mev = Vec::new();
+                m.mount_mut().notify_guiding_started(algo, &mut mev);
+                wrap(ev, role, mev);
+            }
+        }
+        ev.push(GuiderEvent::GuidingStarted);
+    }
+
+    /// `MyFrame::NotifyGuidingStopped`: both mounts, then the frame's part.
+    fn notify_guiding_stopped(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        let algo = cx.algo;
+        for role in [MountRole::Primary, MountRole::Secondary] {
+            if let (Some(m), profile) = cx.split(role) {
+                let mut mev = Vec::new();
+                m.notify_guiding_stopped(algo, profile, &mut mev);
+                wrap(ev, role, mev);
+            }
+        }
+        ev.push(GuiderEvent::GuidingStopped);
+    }
+
+    // ------------------------------------------------------------- settings
+
+    /// `SetLockPosIsSticky`: keep the lock position when guiding starts.
+    pub fn set_lock_pos_is_sticky(&mut self, sticky: bool) {
+        self.lock_pos_is_sticky = sticky;
+    }
+
+    pub fn lock_pos_is_sticky(&self) -> bool {
+        self.lock_pos_is_sticky
+    }
+
+    /// `SetIgnoreLostStarLooping`: losing the star while SELECTED keeps the
+    /// selection (the drift tool's choice).
+    pub fn set_ignore_lost_star_looping(&mut self, ignore: bool, ev: &mut Vec<GuiderEvent>) {
+        if self.ignore_lost_star_looping != ignore {
+            debug(ev, format!("setting ignore lost star looping = {ignore}"));
+            self.ignore_lost_star_looping = ignore;
+        }
+    }
+
+    /// `IsFastRecenterEnabled`.
+    pub fn is_fast_recenter_enabled(&self) -> bool {
+        self.fast_recenter_enabled
+    }
+
+    /// `EnableFastRecenter`, saved to `/guider/FastRecenter`.
+    pub fn enable_fast_recenter(&mut self, enable: bool, profile: &mut dyn ProfileAccess) {
+        self.fast_recenter_enabled = enable;
+        profile.set_i32(FAST_RECENTER_KEY, enable as i32);
+    }
+
+    /// `GetAutoSelDownsample`, 0 for Auto.
+    pub fn auto_sel_downsample(&self) -> u32 {
+        self.auto_sel_downsample
+    }
+
+    /// `ForceFullFrame`: no subframe until a star is found again.
+    pub fn force_full_frame(&mut self, ev: &mut Vec<GuiderEvent>) {
+        if !self.force_full_frame {
+            debug(ev, "setting force full frames = true");
+            self.force_full_frame = true;
+        }
+    }
+
+    /// `GetMaxMovePixels`: the search region.
+    pub fn max_move_pixels(&self) -> i32 {
+        self.multistar.cfg.search_region
+    }
+
+    /// The star tracker.
+    pub fn multistar(&self) -> &MultiStar {
+        &self.multistar
+    }
+
+    pub fn multistar_mut(&mut self) -> &mut MultiStar {
+        &mut self.multistar
+    }
+
+    /// `GuiderMultiStar::SetMultiStarMode`. Turning it on from SELECTED on
+    /// stops guiding and auto-selects again so the secondaries are found,
+    /// restarting a calibration or guiding that was running when that
+    /// succeeds. Saved, logged and announced (`MultiStar`, a string,
+    /// logged even when not guiding). The re-selection's update is returned.
+    pub fn set_multi_star_mode(&mut self, on: bool, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) -> GuideUpdate {
+        let mut forced = false;
+        let mut out = GuideUpdate::default();
+        if self.multistar.set_multi_star_mode(on) && self.state >= GuiderState::Selected {
+            let active = self.is_calibrating_or_guiding();
+            self.stop_guiding(cx, ev);
+            self.multistar.invalidate_current_position(true);
+            let (star, upd) = self.auto_select(None, cx, ev);
+            out = upd;
+            if star.is_some() {
+                if active {
+                    self.start_guiding(cx, ev);
+                }
+                forced = true;
+            }
+        }
+        announce_multi_star(on, forced, cx.profile, ev);
+        out
+    }
+
+    // ------------------------------------------------------- star and lock
+
+    /// `CurrentPosition`: the star, `None` when invalid.
+    pub fn current_position(&self) -> Option<Point> {
+        let star = self.multistar.primary();
+        star.is_valid().then(|| star.position())
+    }
+
+    /// `PrimaryStar`.
+    pub fn primary_star(&self) -> &Star {
+        self.multistar.primary()
+    }
+
+    /// `LockPosition`, `None` when invalid.
+    pub fn lock_position(&self) -> Option<Point> {
+        self.lock.valid.then(|| self.lock.point())
+    }
+
+    /// `CurrentImage`.
+    pub fn current_image(&self) -> &Arc<UsImage> {
+        &self.current_image
+    }
+
+    /// `DisplayImage`: a frame shown while not calibrating or guiding (a
+    /// single exposure) becomes the current image. The image logger's save
+    /// of the previous one is the caller's.
+    pub fn display_image(&mut self, img: Arc<UsImage>, gamma: f64, ev: &mut Vec<GuiderEvent>) {
+        if self.is_calibrating_or_guiding() {
+            return;
+        }
+        self.current_image = img;
+        debug(ev, image_display_line(&self.current_image, gamma));
+    }
+
+    /// `IsValidLockPosition`: far enough inside the current frame.
+    pub fn is_valid_lock_position(&self, pt: Point) -> bool {
+        self.multistar.is_valid_lock_position(pt, Some(&self.current_image))
+    }
+
+    /// `GetBoundingBox` on a camera of `full_size`: the subframe to ask for,
+    /// empty for the full frame.
+    pub fn bounding_box(&self, full_size: (i32, i32)) -> Rect {
+        let state = match self.state {
+            GuiderState::Selected | GuiderState::CalibratingPrimary | GuiderState::CalibratingSecondary => {
+                BoxState::Tracking
+            }
+            GuiderState::Guiding => BoxState::Guiding(self.lock.point()),
+            _ => BoxState::Other,
+        };
+        self.multistar.bounding_box(state, self.force_full_frame, full_size)
+    }
+
+    /// `InvalidateLockPosition`: `LockPositionLost` when there was one.
+    fn invalidate_lock_position(&mut self, ev: &mut Vec<GuiderEvent>) {
+        if self.lock.valid {
+            ev.push(GuiderEvent::LockPositionLost);
+        }
+        self.lock.valid = false;
+    }
+
+    /// `GuiderMultiStar::SetLockPosition` (`Guider::SetLockPosition` and the
+    /// multi-star stabilisation): true when set. A position off the current
+    /// frame is refused. A new position is announced (`LockPositionSet`);
+    /// while guiding the primary's algorithms are told it moved, as a
+    /// dither, and the guide log notes it.
+    pub fn set_lock_position(&mut self, pos: Point, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) -> bool {
+        debug(ev, format!("setting lock position to ({}, {})", fmt_f(pos.x, 2), fmt_f(pos.y, 2)));
+        // Written as PHD2's tests, so a NaN gets through as it does there.
+        if pos.x < 0.0 || pos.x >= self.current_image.w as f64 {
+            debug(ev, "Error thrown from guider.cpp:789->invalid x value");
+            return false;
+        }
+        if pos.y < 0.0 || pos.y >= self.current_image.h as f64 {
+            debug(ev, "Error thrown from guider.cpp:794->invalid y value");
+            return false;
+        }
+        if !self.lock.valid || pos.x != self.lock.x || pos.y != self.lock.y {
+            ev.push(GuiderEvent::LockPositionSet(pos));
+            if self.state == GuiderState::Guiding {
+                let algo = cx.algo;
+                if let Some(m) = cx.primary.as_deref_mut() {
+                    let mut mev = Vec::new();
+                    m.notify_guiding_dithered(pos.x - self.lock.x, pos.y - self.lock.y, false, algo, &mut mev);
+                    wrap(ev, MountRole::Primary, mev);
+                }
+                // Quirk kept: the guide log reads the lock before it moves,
+                // so its "new lock pos" is the old one.
+                ev.push(GuiderEvent::Info(format!(
+                    "SET LOCK POSITION, new lock pos = {}, {}",
+                    fmt_f(self.lock.x, 3),
+                    fmt_f(self.lock.y, 3)
+                )));
+            }
+        }
+        self.lock = Lock { x: pos.x, y: pos.y, valid: true };
+        if self.multistar.cfg.multi_star {
+            debug(ev, "MultiStar: stabilizing after lock position change");
+        }
+        self.multistar.lock_position_set();
+        true
+    }
+
+    /// `SetLockPosToStarAtPosition`: find the star near `hint` on the
+    /// current frame (`SetCurrentPosition`) and lock on it. True when a star
+    /// was found (PHD2 returns the error).
+    pub fn set_lock_pos_to_star_at_position(
+        &mut self,
+        hint: Point,
+        cx: &mut GuiderCx,
+        ev: &mut Vec<GuiderEvent>,
+    ) -> bool {
+        debug(ev, format!("SetCurrentPosition({},{})", fmt_f(hint.x, 2), fmt_f(hint.y, 2)));
+        let (w, h) = (self.current_image.w as f64, self.current_image.h as f64);
+        if hint.x <= 0.0 || hint.x >= w {
+            debug(ev, "Error thrown from guider_multistar.cpp:380->invalid x value");
+            return false;
+        }
+        if hint.y <= 0.0 || hint.y >= h {
+            debug(ev, "Error thrown from guider_multistar.cpp:385->invalid y value");
+            return false;
+        }
+        let found = self.multistar.set_current_position(&self.current_image, hint, &cx.find);
+        if found && let Some(p) = self.current_position() {
+            self.set_lock_position(p, cx, ev);
+        }
+        found
+    }
+
+    /// `GuiderMultiStar::AutoSelect`: pick the best star on the current
+    /// frame (`roi` limits the search), lock on it and, from SELECTING,
+    /// run the frame again at once so the state is SELECTED — Ekos starts
+    /// guiding right after. The star is returned only when all of that
+    /// worked; the update holds that frame's and AutoFind's saturation level.
+    pub fn auto_select(
+        &mut self,
+        roi: Option<Rect>,
+        cx: &mut GuiderCx,
+        ev: &mut Vec<GuiderEvent>,
+    ) -> (Option<Star>, GuideUpdate) {
+        debug(ev, "GuiderMultiStar::AutoSelect enter");
+        if self.current_image.data.is_empty() {
+            debug(ev, "Error thrown from guider_multistar.cpp:457->No Current Image");
+            return (None, GuideUpdate::default());
+        }
+        // Leave room for the calibration of a mount that needs one.
+        let room = |m: Option<&dyn GuiderMount>| {
+            m.filter(|m| m.mount().is_connected() && !m.is_calibrated()).map(|m| m.calibration_tot_distance())
+        };
+        let edge = autoselect_edge_allowance(room(cx.primary.as_deref()), room(cx.secondary.as_deref()));
+        let img = self.current_image.clone();
+        let before = *self.multistar.primary();
+        let res = self.multistar.auto_select(&img, roi, edge, cx.use_subframes, &cx.autofind);
+        let mut out = GuideUpdate::default();
+        let mut selected = None;
+        match res.star {
+            None => {
+                // The result does not say which step failed: a failed find
+                // replaced the primary, a failed AutoFind left it.
+                let line =
+                    if *self.multistar.primary() == before { "474->Unable to AutoFind" } else { "482->Unable to find" };
+                debug(ev, format!("Error thrown from guider_multistar.cpp:{line}"));
+            }
+            Some(star) => {
+                let list = self.multistar.guide_stars();
+                let mut line = format!("MultiStar: List ({}): ", list.len());
+                for gs in list {
+                    let (x, y, snr) = (fmt_f(gs.star.x, 2), fmt_f(gs.star.y, 2), fmt_f(gs.star.snr, 1));
+                    line += &format!("{{{x}, {y}}}({snr}), ");
+                }
+                debug(ev, line);
+                if !self.set_lock_position(star.position(), cx, ev) {
+                    debug(ev, "Error thrown from guider_multistar.cpp:497->Unable to set Lock Position");
+                } else {
+                    if self.state == GuiderState::Selecting {
+                        debug(ev, format!("AutoSelect: state = {}, call UpdateGuideState", self.state as i32));
+                        out = self.update_guide_state(None, false, cx, ev);
+                    }
+                    debug(ev, image_display_line(&self.current_image, cx.gamma));
+                    ev.push(GuiderEvent::Status(format!(
+                        "Auto-selected star at ({}, {})",
+                        fmt_f(star.x, 1),
+                        fmt_f(star.y, 1)
+                    )));
+                    selected = Some(star);
+                }
+            }
+        }
+        if selected.is_none() {
+            debug(ev, "GuiderMultiStar::AutoSelect failed.");
+        }
+        out.saturation_adu = res.saturation_adu_set;
+        (selected, out)
+    }
+
+    // ------------------------------------------------------- error averages
+
+    /// `UpdateCurrentDistance`: the star was found at `distance` px from the
+    /// lock (`distance_ra` along RA). While guiding, an EMA with α 0.3 and a
+    /// smoother one — the mean of the first samples (the count starts at 1,
+    /// so of the first nine), then α 0.045; otherwise both restart from this
+    /// sample, as they do after a full pause or a fast recenter.
+    fn update_current_distance(&mut self, distance: f64, distance_ra: f64, now_ms: i64) {
+        self.star_found_at = Some(now_ms.div_euclid(1000));
+        if self.is_guiding() {
+            self.avg_distance += 0.3 * (distance - self.avg_distance);
+            self.avg_distance_ra += 0.3 * (distance_ra - self.avg_distance_ra);
+            self.avg_distance_cnt += 1;
+            if self.avg_distance_cnt < 10 {
+                let n = self.avg_distance_cnt as f64;
+                self.avg_distance_long += (distance - self.avg_distance_long) / n;
+                self.avg_distance_long_ra += (distance_ra - self.avg_distance_long_ra) / n;
+            } else {
+                self.avg_distance_long += 0.045 * (distance - self.avg_distance_long);
+                self.avg_distance_long_ra += 0.045 * (distance_ra - self.avg_distance_long_ra);
+            }
+        } else {
+            self.restart_averages(distance, distance_ra);
+        }
+        if self.avg_distance_need_reset {
+            self.restart_averages(distance, distance_ra);
+            self.avg_distance_need_reset = false;
+        }
+    }
+
+    fn restart_averages(&mut self, distance: f64, distance_ra: f64) {
+        self.avg_distance = distance;
+        self.avg_distance_long = distance;
+        self.avg_distance_ra = distance_ra;
+        self.avg_distance_long_ra = distance_ra;
+        self.avg_distance_cnt = 1;
+    }
+
+    /// `::CurrentError`: 100 px when no star was found in the last 20 s.
+    fn error_or_lost(&self, avg: f64, now_ms: i64) -> f64 {
+        match self.star_found_at {
+            Some(t) if now_ms.div_euclid(1000) - t <= STAR_LOST_SECONDS => avg,
+            _ => LARGE_DISTANCE,
+        }
+    }
+
+    /// `CurrentError`: the fast average, RA only or total.
+    pub fn current_error(&self, ra_only: bool, now_ms: i64) -> f64 {
+        self.error_or_lost(if ra_only { self.avg_distance_ra } else { self.avg_distance }, now_ms)
+    }
+
+    /// `CurrentErrorSmoothed`: the slow average.
+    pub fn current_error_smoothed(&self, ra_only: bool, now_ms: i64) -> f64 {
+        self.error_or_lost(if ra_only { self.avg_distance_long_ra } else { self.avg_distance_long }, now_ms)
+    }
+
+    /// `CurrentErrorFrameCount`.
+    pub fn current_error_frame_count(&self) -> u32 {
+        self.avg_distance_cnt
+    }
+
+    // ---------------------------------------------------------------- frame
+
+    /// `GuiderMultiStar::UpdateCurrentPosition` around the tracker: what it
+    /// reads from the guider and the primary mount (with the transform's
+    /// debug lines), its own status and debug lines, and the error averages.
+    fn update_current_position(
+        &mut self,
+        cx: &GuiderCx,
+        ev: &mut Vec<GuiderEvent>,
+    ) -> Result<PositionUpdate, PositionLost> {
+        let primary = cx.primary.as_deref();
+        let view = GuidingView {
+            guiding: self.is_guiding(),
+            paused: self.is_paused(),
+            settling: cx.settling,
+            ra_only: cx.ra_only,
+            guiding_enabled: primary.is_some_and(|m| m.mount().guiding_enabled()),
+            error_frame_count: self.avg_distance_cnt,
+            error_smoothed: self.current_error_smoothed(cx.ra_only, cx.now_ms),
+            exposure_ms: cx.exposure_ms,
+            auto_exposure: cx.auto_exposure,
+        };
+        let lock = self.lock_position();
+        let log = RefCell::new(Vec::new());
+        let log_ref = &log;
+        let to_mount = primary
+            .filter(|m| m.is_calibrated())
+            .map(|m| move |p: Point| m.mount().camera_to_mount(p, true, &mut log_ref.borrow_mut()));
+        let res = self.multistar.update_current_position(
+            &self.current_image,
+            &cx.find,
+            lock,
+            &view,
+            cx.now_ms,
+            to_mount.as_ref().map(|f| f as &dyn Fn(Point) -> Point),
+        );
+        match &res {
+            Ok(u) => {
+                wrap(ev, MountRole::Primary, log.into_inner());
+                if let Some((d, d_ra)) = u.current_distance {
+                    self.update_current_distance(d, d_ra, cx.now_ms);
+                }
+            }
+            Err(lost) => self.log_position_lost(lost, ev),
+        }
+        res
+    }
+
+    /// What `UpdateCurrentPosition` says when the star is not accepted.
+    /// The tracker does not say why; the loss tells: no star selected skips
+    /// the auto-exposure reset, a mass change carries its limits, and a star
+    /// found but refused for its jump keeps its mass (a found star has at
+    /// least 10), where a star not found reports 0.
+    fn log_position_lost(&self, lost: &PositionLost, ev: &mut Vec<GuiderEvent>) {
+        let info = &lost.info;
+        if !lost.reset_auto_exposure {
+            debug(ev, "UpdateCurrentPosition: no star selected");
+        } else if let Some([low, median, high, spike]) = lost.mass_limits {
+            ev.push(GuiderEvent::Status(format!("Mass: {} vs {}", fmt_f(info.star_mass, 0), fmt_f(median, 0))));
+            debug(
+                ev,
+                format!(
+                    "UpdateCurrentPosition: star mass new={} exp={} thresh={}% limits=({}, {}, {})",
+                    fmt_f(info.star_mass, 1),
+                    fmt_f(median, 1),
+                    fmt_f(self.multistar.cfg.mass_change_threshold * 100.0, 0),
+                    fmt_f(low, 1),
+                    fmt_f(high, 1),
+                    fmt_f(spike, 1)
+                ),
+            );
+            debug(ev, "Throw from guider_multistar.cpp:989->massChangeThreshold error");
+        } else if info.star_error == FindResult::Error && info.star_mass > 0.0 {
+            ev.push(GuiderEvent::Status("Recovering".into()));
+            debug(ev, "Throw from guider_multistar.cpp:1020->CheckDistance error");
+        } else {
+            debug(ev, "Error thrown from guider_multistar.cpp:958->UpdateCurrentPosition():newStar not found");
+        }
+    }
+
+    /// `UpdateGuideState` (guider.cpp:1265): one frame. `img` becomes the
+    /// current image (`None` runs the state machine on the current one, as
+    /// AutoSelect does); `stopping` stops guiding instead (looping ended).
+    ///
+    /// The star is looked for first. Lost, the frame is reported per state —
+    /// looping goes on (SELECTED drops the star unless told to ignore it),
+    /// a calibration blunders on, guiding logs a DROP and lets the
+    /// algorithms deduce a move. Found, a paused guider only deduces;
+    /// otherwise SELECTING locks on it, a calibrating mount takes its step,
+    /// CALIBRATED starts guiding, and GUIDING schedules the guide step.
+    pub fn update_guide_state(
+        &mut self,
+        img: Option<Arc<UsImage>>,
+        stopping: bool,
+        cx: &mut GuiderCx,
+        ev: &mut Vec<GuiderEvent>,
+    ) -> GuideUpdate {
+        use GuiderState::*;
+        debug(ev, format!("UpdateGuideState(): m_state={}", self.state as i32));
+        if let Some(img) = img {
+            self.current_image = img;
+        }
+        let mut out = GuideUpdate::default();
+        let mut status: String;
+
+        let failed = 'frame: {
+            if stopping {
+                self.stop_guiding(cx, ev);
+                status = "Stopped Guiding".into();
+                debug(ev, "Throw from guider.cpp:1295->Stopped Guiding");
+                break 'frame true;
+            }
+
+            let frame = self.current_image.frame_num;
+            let u = match self.update_current_position(cx, ev) {
+                Ok(u) => u,
+                Err(lost) => {
+                    let info = FrameDroppedInfo {
+                        frame_number: frame,
+                        time: stopwatch_seconds(cx.guide_time),
+                        avg_dist: self.current_error(cx.ra_only, cx.now_ms),
+                        star: lost.info,
+                    };
+                    let looping = GuiderEvent::LoopingExposures { frame, star: None, dropped: Some(lost.info) };
+                    match self.state {
+                        Uninitialized | Selecting => ev.push(looping),
+                        Selected => {
+                            ev.push(looping);
+                            if !self.ignore_lost_star_looping {
+                                self.set_state(Uninitialized, cx, ev);
+                                ev.push(GuiderEvent::StarLost(info));
+                            }
+                            out.pa_tools = PaTools::StarLost;
+                        }
+                        CalibratingPrimary | CalibratingSecondary => {
+                            ev.push(GuiderEvent::CalibrationFrameDropped(info));
+                            debug(ev, "Star lost during calibration... blundering on");
+                            ev.push(GuiderEvent::StarLost(info));
+                            ev.push(GuiderEvent::Status("star lost".into()));
+                        }
+                        Guiding => {
+                            ev.push(GuiderEvent::FrameDropped(info));
+                            ev.push(GuiderEvent::StarLost(info));
+                            // Let the algorithms dead-reckon.
+                            schedule(&mut out, deduced_move(), cx, ev);
+                        }
+                        Calibrated | Stop => {}
+                    }
+                    status = lost.info.status.into();
+                    debug(ev, "Throw from guider.cpp:1371->unable to update current position");
+                    out.position = Some(Err(lost));
+                    break 'frame true;
+                }
+            };
+
+            status = star_status(&u.primary, cx.exposure_ms, cx.auto_exposure);
+            if is_looping_state(self.state) {
+                ev.push(GuiderEvent::LoopingExposures { frame, star: Some(*self.multistar.primary()), dropped: None });
+            }
+            // A star again, so subframes again.
+            if self.force_full_frame {
+                debug(ev, "setting force full frames = false");
+                self.force_full_frame = false;
+            }
+            let ofs = GuiderOffset { camera_ofs: u.camera_ofs.unwrap_or_default(), mount_ofs: u.mount_ofs };
+            out.position = Some(Ok(u));
+
+            if self.is_paused() {
+                if self.state == Guiding {
+                    schedule(&mut out, deduced_move(), cx, ev);
+                }
+                status = format!("Paused{}", if self.paused == PauseType::Full { "/full" } else { "/looping" });
+                debug(ev, "Throw from guider.cpp:1396->Skipping frame - guider is paused");
+                break 'frame true;
+            }
+
+            match self.state {
+                Selecting => {
+                    let pos = self.multistar.primary().position();
+                    self.set_lock_position(pos, cx, ev);
+                    debug(ev, "CurrentPosition() valid, moving to STATE_SELECTED");
+                    ev.push(GuiderEvent::StarSelected(pos));
+                    self.set_state(Selected, cx, ev);
+                }
+                Selected => out.pa_tools = PaTools::UpdateState,
+                CalibratingPrimary | CalibratingSecondary | Calibrated => {
+                    let mut stage = self.state;
+                    if stage == CalibratingPrimary {
+                        match self.calibration_step(MountRole::Primary, &mut out, cx, ev) {
+                            CalStep::Failed => {
+                                self.set_state(Uninitialized, cx, ev);
+                                let ao = cx.primary.as_deref().is_some_and(|m| m.mount().is_step_guider());
+                                status = if ao { "AO calibration failed" } else { "calibration failed" }.into();
+                                debug(ev, "Error thrown from guider.cpp:1429->Calibration failed");
+                                break 'frame true;
+                            }
+                            CalStep::Pending => break 'frame false,
+                            CalStep::Done => {}
+                        }
+                        self.set_state(CalibratingSecondary, cx, ev);
+                        // A secondary still to calibrate takes the next
+                        // frame, so this one is not shown with the lock in
+                        // the wrong place.
+                        if self.state == CalibratingSecondary {
+                            break 'frame false;
+                        }
+                        stage = CalibratingSecondary;
+                    }
+                    if stage == CalibratingSecondary {
+                        if cx.secondary.as_deref().is_some_and(|m| m.mount().is_connected()) {
+                            match self.calibration_step(MountRole::Secondary, &mut out, cx, ev) {
+                                CalStep::Failed => {
+                                    self.set_state(Uninitialized, cx, ev);
+                                    status = "calibration failed".into();
+                                    debug(ev, "Error thrown from guider.cpp:1462->Calibration failed");
+                                    break 'frame true;
+                                }
+                                CalStep::Pending => break 'frame false,
+                                CalStep::Done => {}
+                            }
+                        }
+                        self.set_state(Calibrated, cx, ev);
+                    }
+                    self.set_state(Guiding, cx, ev);
+                    self.notify_guiding_started(cx, ev);
+                    self.check_calibration_auto_load(cx, ev);
+                }
+                // PHD2's star deflection logger is compiled out.
+                Guiding => schedule(&mut out, ScheduledMove::Offset { ofs, opts: MoveOpts::GUIDE_STEP }, cx, ev),
+                Uninitialized | Stop => {}
+            }
+            false
+        };
+
+        // While calibrating the mount keeps the status line.
+        if failed && self.state != CalibratingPrimary && self.state != CalibratingSecondary {
+            ev.push(GuiderEvent::Status(status.clone()));
+        }
+        debug(ev, image_display_line(&self.current_image, cx.gamma));
+        debug(ev, format!("UpdateGuideState exits: {status}"));
+        out
+    }
+
+    /// `CheckCalibrationAutoLoad`: after a calibration, turn calibration
+    /// auto-restore on for a new profile when the mount reports where it
+    /// points, or offer it once when the profile has it off.
+    fn check_calibration_auto_load(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+        let stored = cx.profile.get_i32("/AutoLoadCalibration", -1);
+        let should = cx.pointing.is_some_and(|p| p.can_report_position());
+        if stored == -1 {
+            ev.push(GuiderEvent::SetAutoLoadCalibration(should));
+        } else if stored == 0 && should && cx.profile.get_i32("/AlreadyAskedCalibAutoload", 0) == 0 {
+            ev.push(GuiderEvent::Alert {
+                msg: "Do you want to automatically restore this calibration whenever the profile is used?".into(),
+                kind: AlertKind::Info,
+            });
+            cx.profile.set_i32("/AlreadyAskedCalibAutoload", 1);
+        }
+    }
+}
+
+/// The dead-reckoning move of a frame without a correction: `ZERO_OFS`
+/// with `MOVEOPTS_DEDUCED_MOVE`.
+fn deduced_move() -> ScheduledMove {
+    ScheduledMove::Offset { ofs: GuiderOffset::default(), opts: MoveOpts::DEDUCED_MOVE }
+}
+
+/// `SchedulePrimaryMove` (its debug line; PHD2 prints the mount's address,
+/// the mount's name stands in) or `ScheduleAxisMove` (none).
+fn schedule(out: &mut GuideUpdate, mv: ScheduledMove, cx: &GuiderCx, ev: &mut Vec<GuiderEvent>) {
+    if let ScheduledMove::Offset { ofs, opts } = mv {
+        let name = cx.primary.as_deref().map_or("", |m| m.mount().name());
+        debug(
+            ev,
+            format!(
+                "SchedulePrimaryMove({name}, x={}, y={}, opts={})",
+                fmt_f(ofs.camera_ofs.x, 2),
+                fmt_f(ofs.camera_ofs.y, 2),
+                opts.0
+            ),
+        );
+    }
+    out.moves.push(mv);
+}
+
+/// The end of `SetMultiStarMode`: saved, logged, announced as a string
+/// parameter logged even when not guiding.
+fn announce_multi_star(on: bool, forced: bool, profile: &mut dyn ProfileAccess, ev: &mut Vec<GuiderEvent>) {
+    profile.set_i32(keys::MULTISTAR_ENABLED, on as i32);
+    let forced = if forced { ", AutoFind forced" } else { "" };
+    debug(ev, format!("MultiStar mode {}{forced}", if on { "enabled" } else { "disabled" }));
+    ev.push(GuiderEvent::ParamChange { name: "MultiStar", value: Value::from(on.to_string()), force_log: true });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::f64::consts::PI;
+
+    use super::*;
+    use crate::engine::calibration::{CALIBRATION_RATE_UNCALIBRATED, Calibration};
+    use crate::engine::mount::{GuideOutput, StepFrame};
+    use crate::engine::scope::ScopeIo;
+    use crate::engine::star::FindMode;
+    use crate::engine::traits::{CancelToken, MoveResult, Parity, PierSide};
+
+    #[derive(Default)]
+    struct Profile {
+        f: HashMap<String, f64>,
+        i: HashMap<String, i32>,
+        s: HashMap<String, String>,
+    }
+
+    impl ProfileAccess for Profile {
+        fn has(&self, key: &str) -> bool {
+            self.f.contains_key(key) || self.i.contains_key(key) || self.s.contains_key(key)
+        }
+        fn get_f64(&self, key: &str, default: f64) -> f64 {
+            self.f.get(key).copied().or(self.i.get(key).map(|&v| v as f64)).unwrap_or(default)
+        }
+        fn get_i32(&self, key: &str, default: i32) -> i32 {
+            self.i.get(key).copied().unwrap_or(default)
+        }
+        fn get_str(&self, key: &str, default: &str) -> String {
+            self.s.get(key).cloned().unwrap_or_else(|| default.to_string())
+        }
+        fn set_f64(&mut self, key: &str, value: f64) {
+            self.f.insert(key.into(), value);
+        }
+        fn set_i32(&mut self, key: &str, value: i32) {
+            self.i.insert(key.into(), value);
+        }
+        fn set_str(&mut self, key: &str, value: &str) {
+            self.s.insert(key.into(), value.into());
+        }
+    }
+
+    /// Records the pulses; the bench then moves the star by them.
+    #[derive(Default)]
+    struct Pulses(Vec<(Dir, u32)>);
+
+    impl GuideOutput for Pulses {
+        fn guide(&mut self, dir: Dir, ms: u32, _cancel: &CancelToken) -> MoveResult {
+            self.0.push((dir, ms));
+            MoveResult::Ok
+        }
+    }
+
+    const W: i32 = 200;
+    const H: i32 = 200;
+    /// px per ms of pulse: West moves the star +x, North +y.
+    const RATE: f64 = 0.01;
+
+    const FP: FindParams = FindParams { mode: FindMode::Centroid, min_hfd: 1.5, max_hfd: 20.0, max_adu: 0 };
+    const AF: AutoFindParams = AutoFindParams {
+        downsample: 1,
+        min_hfd: 1.5,
+        max_hfd: 20.0,
+        min_snr: 6.0,
+        saturation_by_adu: true,
+        saturation_adu: 0,
+    };
+
+    /// Fixed pattern noise in −20..=20 ADU.
+    fn noise(x: i32, y: i32) -> f64 {
+        let mut h = (x as u32).wrapping_mul(73856093) ^ (y as u32).wrapping_mul(19349663);
+        h ^= h >> 13;
+        h = h.wrapping_mul(0x5bd1e995);
+        h ^= h >> 15;
+        ((h % 41) as i32 - 20) as f64
+    }
+
+    /// A 16-bit frame: 1000 ADU, the noise and a Gaussian star (σ 1.6 px).
+    fn render(star: Option<Point>, frame: u32) -> Arc<UsImage> {
+        let mut img = UsImage::new(W, H);
+        img.bits_per_pixel = 16;
+        img.frame_num = frame;
+        for y in 0..H {
+            for x in 0..W {
+                let mut v = 1000.0 + noise(x, y);
+                if let Some(s) = star {
+                    let (dx, dy) = (x as f64 - s.x, y as f64 - s.y);
+                    v += 2000.0 * (-(dx * dx + dy * dy) / (2.0 * 1.6 * 1.6)).exp();
+                }
+                *img.pixel_mut(x, y) = (v + 0.5).floor() as u16;
+            }
+        }
+        Arc::new(img)
+    }
+
+    /// The guider on a scope that moves a star: each frame drifts the star,
+    /// goes through the guider, and the moves are made before the next one.
+    struct Bench {
+        guider: Guider,
+        scope: Scope,
+        profile: Profile,
+        star: Point,
+        visible: bool,
+        drift: Point,
+        env: CalibrationEnv,
+        sp: ScopePointing,
+        algo: AlgoCtx,
+        now_ms: i64,
+        frame: u32,
+        busy: bool,
+        ev: Vec<GuiderEvent>,
+        /// What the scope said while the bench made the moves.
+        mev: Vec<MountEvent>,
+    }
+
+    impl Bench {
+        fn new() -> Bench {
+            let mut profile = Profile::default();
+            let mut ev = Vec::new();
+            let guider = Guider::new(&mut profile, false, &mut ev);
+            let mut scope = Scope::new(&mut profile, false, 0.0, &mut Vec::new());
+            scope.mount.connect();
+            Bench {
+                guider,
+                scope,
+                profile,
+                star: Point::new(100.0, 100.0),
+                visible: true,
+                drift: Point::default(),
+                env: CalibrationEnv {
+                    binning: 1,
+                    focal_length: 400,
+                    pixel_size: 3.8,
+                    image_scale: 2.0,
+                    rotator_angle: None,
+                    fast_recenter: true,
+                    max_move_pixels: 15,
+                    can_pulse_guide: true,
+                    timestamp: "T".into(),
+                },
+                sp: ScopePointing {
+                    declination: None,
+                    pier_side: PierSide::Unknown,
+                    rotator_angle: None,
+                    binning: 1,
+                    guide_rates: None,
+                    camera_pixel_size: 3.8,
+                    profile_pixel_size: 3.8,
+                },
+                algo: AlgoCtx::default(),
+                now_ms: 1_700_000_000_000,
+                frame: 0,
+                busy: false,
+                ev,
+                mev: Vec::new(),
+            }
+        }
+
+        fn call<R>(&mut self, f: impl FnOnce(&mut Guider, &mut GuiderCx, &mut Vec<GuiderEvent>) -> R) -> R {
+            let mut cx = GuiderCx {
+                primary: Some(&mut self.scope),
+                secondary: None,
+                profile: &mut self.profile,
+                pointing: None,
+                cal_env: &self.env,
+                scope_pointing: &self.sp,
+                algo: &self.algo,
+                find: FP,
+                autofind: AF,
+                use_subframes: false,
+                ra_only: false,
+                settling: false,
+                exposure_ms: 1000,
+                auto_exposure: false,
+                guide_time: 12.3456,
+                now_ms: self.now_ms,
+                busy: self.busy,
+                gamma: 0.4,
+            };
+            f(&mut self.guider, &mut cx, &mut self.ev)
+        }
+
+        /// One exposure, two seconds after the last.
+        fn frame(&mut self) -> GuideUpdate {
+            self.frame += 1;
+            self.now_ms += 2000;
+            self.star = self.star + self.drift;
+            let img = render(self.visible.then_some(self.star), self.frame);
+            let upd = self.call(|g, cx, ev| g.update_guide_state(Some(img), false, cx, ev));
+            self.make_moves(&upd.moves);
+            upd
+        }
+
+        fn make_moves(&mut self, moves: &[ScheduledMove]) {
+            for mv in moves {
+                let mut out = Pulses::default();
+                let cancel = CancelToken::new();
+                let mut io = ScopeIo { output: &mut out, pointing: None, cancel: &cancel, now: 0.0 };
+                match *mv {
+                    ScheduledMove::Calibration { dir, amount, .. } => {
+                        self.scope.move_axis(dir, amount, MoveOpts::CALIBRATION_MOVE, &mut io, &mut self.mev);
+                    }
+                    ScheduledMove::Offset { mut ofs, opts } => {
+                        let (algo, profile) = (&self.algo, &mut self.profile);
+                        let mev = &mut self.mev;
+                        self.scope.move_offset(&mut ofs, opts, StepFrame::default, algo, &mut io, profile, mev);
+                    }
+                }
+                for (dir, ms) in out.0 {
+                    let d = RATE * ms as f64;
+                    match dir {
+                        Dir::West => self.star.x += d,
+                        Dir::East => self.star.x -= d,
+                        Dir::North => self.star.y += d,
+                        Dir::South => self.star.y -= d,
+                    }
+                }
+                self.call(|g, cx, ev| g.move_complete(cx, ev));
+            }
+        }
+
+        fn has(&self, e: &GuiderEvent) -> bool {
+            self.ev.contains(e)
+        }
+
+        fn debug(&self, line: &str) -> bool {
+            self.has(&GuiderEvent::Debug(line.into()))
+        }
+
+        /// SELECTING to SELECTED through AutoSelect, on a frame of the star.
+        fn select(&mut self) {
+            self.frame();
+            let (star, _) = self.call(|g, cx, ev| g.auto_select(None, cx, ev));
+            assert!(star.is_some());
+        }
+
+        /// The calibration the bench's sky gives (see the calibration test).
+        fn calibrate_scope(&mut self) {
+            let cal = Calibration {
+                x_rate: RATE,
+                y_rate: RATE,
+                x_angle: PI,
+                y_angle: PI / 2.0,
+                ra_guide_parity: Parity::Even,
+                dec_guide_parity: Parity::Even,
+                is_valid: true,
+                ..Calibration::default()
+            };
+            self.scope.set_calibration(&cal, "T", &mut self.profile, &mut Vec::new());
+            assert!(GuiderMount::is_calibrated(&self.scope));
+        }
+    }
+
+    #[test]
+    fn new_guider_is_selecting_and_writes_its_settings() {
+        let mut profile = Profile::default();
+        profile.set_f64(keys::SEARCH_REGION, 60.0);
+        profile.set_f64(keys::MASS_CHANGE_THRESHOLD, -1.0);
+        let mut ev = Vec::new();
+        let g = Guider::new(&mut profile, false, &mut ev);
+        assert_eq!(g.state(), GuiderState::Selecting);
+        assert_eq!(g.max_move_pixels(), 50);
+        assert!(g.is_fast_recenter_enabled());
+        assert_eq!(profile.get_i32(keys::SEARCH_REGION, 0), 50);
+        assert_eq!(profile.get_f64(keys::MASS_CHANGE_THRESHOLD, 0.0), 0.5);
+        assert_eq!(profile.get_i32(FAST_RECENTER_KEY, -1), 1);
+        let lines: Vec<String> = ev
+            .iter()
+            .filter_map(|e| match e {
+                GuiderEvent::Debug(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "guider state => UNINITIALIZED",
+                "Changing from state UNINITIALIZED to UNINITIALIZED",
+                "guider state => SELECTING",
+                "Setting StarMinHFD = 1.50",
+                "Setting MaxHFD = 20.0",
+                "Setting StarMinSNR = 6.0",
+                "Setting AutoSelDownsample = 0",
+                "Error thrown from guider_multistar.cpp:304->massChangeThreshold < 0",
+                "Error thrown from guider_multistar.cpp:347->searchRegion > MAX_SEARCH_REGION",
+                "MultiStar mode disabled",
+            ]
+        );
+        assert_eq!(
+            ev.last(),
+            Some(&GuiderEvent::ParamChange { name: "MultiStar", value: Value::from("false"), force_log: true })
+        );
+    }
+
+    #[test]
+    fn auto_select_moves_selecting_to_selected() {
+        let mut b = Bench::new();
+        // Looping with no star: nothing to look for.
+        b.frame();
+        assert_eq!(b.guider.state(), GuiderState::Selecting);
+        assert_eq!(b.guider.app_state(true).as_str(), "Looping");
+        assert!(b.debug("UpdateCurrentPosition: no star selected"));
+        assert!(b.debug("UpdateGuideState exits: No star selected"));
+
+        b.ev.clear();
+        let (star, upd) = b.call(|g, cx, ev| g.auto_select(None, cx, ev));
+        let star = star.unwrap();
+        assert!(star.position().distance(&Point::new(100.0, 100.0)) < 0.1);
+        // AutoFind set the saturation level from the 16-bit depth.
+        assert_eq!(upd.saturation_adu, Some(65535));
+        assert!(matches!(upd.position, Some(Ok(_))));
+        assert!(upd.moves.is_empty());
+        assert_eq!(b.guider.state(), GuiderState::Selected);
+        assert_eq!(b.guider.lock_position(), Some(star.position()));
+        assert!(b.has(&GuiderEvent::LockPositionSet(star.position())));
+        assert!(b.has(&GuiderEvent::StarSelected(star.position())));
+        assert!(b.debug("AutoSelect: state = 1, call UpdateGuideState"));
+        assert_eq!(b.guider.app_state(true).as_str(), "Selected");
+        assert_eq!(b.guider.app_state(false).as_str(), "Stopped");
+
+        // The next frames track it; SELECTED hands the frame to the PA tools.
+        let upd = b.frame();
+        assert_eq!(upd.pa_tools, PaTools::UpdateState);
+        assert_eq!(b.guider.state(), GuiderState::Selected);
+    }
+
+    #[test]
+    fn a_star_picked_by_position_is_selected_on_the_next_frame() {
+        let mut b = Bench::new();
+        b.frame();
+        assert!(b.call(|g, cx, ev| g.set_lock_pos_to_star_at_position(Point::new(102.0, 99.0), cx, ev)));
+        assert_eq!(b.guider.state(), GuiderState::Selecting);
+        assert_eq!(b.guider.app_state(true), AppState::Selected);
+        b.frame();
+        assert_eq!(b.guider.state(), GuiderState::Selected);
+        // Off the frame: refused.
+        assert!(!b.call(|g, cx, ev| g.set_lock_pos_to_star_at_position(Point::new(0.0, 50.0), cx, ev)));
+        assert!(b.debug("Error thrown from guider_multistar.cpp:380->invalid x value"));
+    }
+
+    #[test]
+    fn calibration_runs_through_the_scope_then_guiding_starts() {
+        let mut b = Bench::new();
+        b.select();
+        // Not from SELECTING: more than one state up.
+        let mut c = Bench::new();
+        c.call(|g, cx, ev| g.start_guiding(cx, ev));
+        assert_eq!(c.guider.state(), GuiderState::Selecting);
+        assert!(c.debug("Error thrown from guider.cpp:972->Illegal state transition"));
+
+        b.ev.clear();
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        assert_eq!(b.guider.state(), GuiderState::CalibratingPrimary);
+        assert!(b.has(&GuiderEvent::StartCalibration(MountRole::Primary)));
+        assert_eq!(b.guider.app_state(true).as_str(), "Calibrating");
+
+        let mut moves = 0;
+        for _ in 0..80 {
+            let upd = b.frame();
+            moves += upd.moves.iter().filter(|m| matches!(m, ScheduledMove::Calibration { .. })).count();
+            if b.guider.state() == GuiderState::Guiding {
+                break;
+            }
+        }
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+        assert!(moves > 8, "{moves} calibration moves");
+        let c = b.scope.mount.mount_cal();
+        // West moved the star +x: the RA axis points back along −x; North
+        // moved it +y, the Dec axis along it.
+        assert!((c.x_angle.abs() - PI).abs() < 0.05, "{}", c.x_angle);
+        assert!((c.y_angle - PI / 2.0).abs() < 0.05, "{}", c.y_angle);
+        assert!((c.x_rate - RATE).abs() < 0.0005, "{}", c.x_rate);
+        assert!((c.y_rate - RATE).abs() < 0.0005, "{}", c.y_rate);
+        assert!(b.has(&GuiderEvent::Mount(MountRole::Primary, MountEvent::CalibrationComplete)));
+        // Guiding started: the lock where the star is, the status, the
+        // mounts' notice, then the frame's part; auto-restore offered off
+        // with no pointing source.
+        let pos = |e: &GuiderEvent| b.ev.iter().position(|x| x == e).unwrap();
+        let status = pos(&GuiderEvent::Status("Guiding".into()));
+        let notice = MountEvent::Debug("Mount: notify guiding started".into());
+        let notice = pos(&GuiderEvent::Mount(MountRole::Primary, notice));
+        let started = pos(&GuiderEvent::GuidingStarted);
+        assert!(status < notice && notice < started);
+        assert!(b.ev[started + 1..].contains(&GuiderEvent::SetAutoLoadCalibration(false)));
+        assert!(b.ev.iter().any(|e| matches!(e, GuiderEvent::PointingAdjusted(MountRole::Primary, _))));
+        let lock = b.guider.lock_position().unwrap();
+        assert!(lock.distance(&b.star) < 0.2);
+
+        // Guiding against a drift keeps the star near the lock.
+        b.drift = Point::new(0.3, -0.2);
+        for _ in 0..15 {
+            let upd = b.frame();
+            assert!(matches!(upd.moves[..], [ScheduledMove::Offset { opts: MoveOpts::GUIDE_STEP, .. }]));
+        }
+        assert!(b.star.distance(&lock) < 1.5, "{:?} vs {:?}", b.star, lock);
+        assert_eq!(b.guider.app_state(true).as_str(), "Guiding");
+    }
+
+    #[test]
+    fn a_calibrated_mount_skips_to_calibrated() {
+        let mut b = Bench::new();
+        b.calibrate_scope();
+        b.select();
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        // No secondary mount: straight to CALIBRATED, no calibration.
+        assert_eq!(b.guider.state(), GuiderState::Calibrated);
+        assert!(!b.ev.iter().any(|e| matches!(e, GuiderEvent::StartCalibration(_))));
+        assert_eq!(b.guider.app_state(true).as_str(), "Selected");
+        b.frame();
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+    }
+
+    #[test]
+    fn a_star_lost_while_guiding_drops_the_frame_and_deduces_a_move() {
+        let mut b = Bench::new();
+        b.calibrate_scope();
+        b.select();
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        b.frame();
+        b.frame();
+        assert_eq!(b.guider.app_state(true), AppState::Guiding);
+
+        b.ev.clear();
+        b.visible = false;
+        let upd = b.frame();
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+        assert_eq!(b.guider.app_state(true).as_str(), "LostLock");
+        assert_eq!(upd.moves, [deduced_move()]);
+        let dropped = b.ev.iter().find_map(|e| match e {
+            GuiderEvent::FrameDropped(i) => Some(*i),
+            _ => None,
+        });
+        let info = dropped.unwrap();
+        assert_eq!(info.frame_number, b.frame);
+        // TimeSinceGuidingStarted counts whole ms.
+        assert_eq!(info.time, 12.345);
+        assert_eq!(info.star.status, "Star lost - low mass");
+        let i = b.ev.iter().position(|e| *e == GuiderEvent::FrameDropped(info)).unwrap();
+        assert_eq!(b.ev[i + 1], GuiderEvent::StarLost(info));
+        assert!(b.debug("Error thrown from guider_multistar.cpp:958->UpdateCurrentPosition():newStar not found"));
+        assert!(b.debug("SchedulePrimaryMove(, x=0.00, y=0.00, opts=14)"));
+        assert!(b.debug("Throw from guider.cpp:1371->unable to update current position"));
+        assert!(b.has(&GuiderEvent::Status("Star lost - low mass".into())));
+        assert!(!b.ev.iter().any(|e| matches!(e, GuiderEvent::LoopingExposures { .. })));
+
+        // Back again: guide steps again.
+        b.visible = true;
+        let upd = b.frame();
+        assert!(matches!(upd.moves[..], [ScheduledMove::Offset { opts: MoveOpts::GUIDE_STEP, .. }]));
+        assert_eq!(b.guider.app_state(true), AppState::Guiding);
+    }
+
+    #[test]
+    fn a_star_lost_while_selected_drops_the_selection() {
+        let mut b = Bench::new();
+        b.select();
+        b.visible = false;
+        b.ev.clear();
+        let upd = b.frame();
+        assert_eq!(upd.pa_tools, PaTools::StarLost);
+        assert_eq!(b.guider.state(), GuiderState::Selecting);
+        assert!(b.has(&GuiderEvent::LockPositionLost));
+        assert!(b.ev.iter().any(|e| matches!(e, GuiderEvent::StarLost(_))));
+        assert!(b.guider.lock_position().is_none());
+
+        // Told to ignore it, the drift tool keeps it.
+        let mut b = Bench::new();
+        b.select();
+        b.call(|g, _, ev| g.set_ignore_lost_star_looping(true, ev));
+        b.visible = false;
+        b.frame();
+        assert_eq!(b.guider.state(), GuiderState::Selected);
+        assert!(b.guider.lock_position().is_some());
+    }
+
+    #[test]
+    fn stopping_reports_a_manual_calibration_stop_and_waits_for_the_move() {
+        let mut b = Bench::new();
+        b.select();
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        b.frame();
+        b.ev.clear();
+        // A calibration move is still out.
+        b.busy = true;
+        b.call(|g, cx, ev| g.stop_guiding(cx, ev));
+        assert_eq!(
+            b.ev[0],
+            GuiderEvent::CalibrationFailed { role: MountRole::Primary, reason: "Calibration manually stopped" }
+        );
+        assert!(!b.has(&GuiderEvent::GuidingStopped));
+        // Calibrating stops to UNINITIALIZED, which goes on to SELECTING.
+        assert_eq!(b.guider.state(), GuiderState::Selecting);
+        assert!(b.has(&GuiderEvent::LockPositionLost));
+        b.busy = false;
+        b.call(|g, cx, ev| g.move_complete(cx, ev));
+        assert_eq!(b.ev.last(), Some(&GuiderEvent::GuidingStopped));
+
+        // Guiding with nothing out: stopped at once, back to SELECTED.
+        let mut b = Bench::new();
+        b.calibrate_scope();
+        b.select();
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        b.frame();
+        b.ev.clear();
+        let upd = b.call(|g, cx, ev| g.update_guide_state(None, true, cx, ev));
+        assert!(upd.moves.is_empty());
+        assert_eq!(b.guider.state(), GuiderState::Selected);
+        assert!(!b.ev.iter().any(|e| matches!(e, GuiderEvent::CalibrationFailed { .. })));
+        assert!(b.has(&GuiderEvent::GuidingStopped));
+        assert!(b.has(&GuiderEvent::Status("Stopped Guiding".into())));
+        assert_eq!(b.ev.last(), Some(&GuiderEvent::Debug("UpdateGuideState exits: Stopped Guiding".into())));
+    }
+
+    #[test]
+    fn a_paused_guider_only_deduces() {
+        let mut b = Bench::new();
+        b.calibrate_scope();
+        b.select();
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        b.frame();
+        b.call(|g, _, ev| g.set_paused(PauseType::Guiding, ev));
+        b.ev.clear();
+        let upd = b.frame();
+        assert_eq!(upd.moves, [deduced_move()]);
+        assert!(b.has(&GuiderEvent::Status("Paused/looping".into())));
+        assert_eq!(b.guider.app_state(false).as_str(), "Paused");
+        // Leaving a full pause restarts the averages on the next star.
+        b.call(|g, _, ev| g.set_paused(PauseType::Full, ev));
+        assert_eq!(b.call(|g, _, ev| g.set_paused(PauseType::None, ev)), PauseType::Full);
+        assert!(b.guider.avg_distance_need_reset);
+    }
+
+    #[test]
+    fn app_state_per_state() {
+        let mut ev = Vec::new();
+        let mut g = Guider::new(&mut Profile::default(), false, &mut ev);
+        let mut app = |s: GuiderState| {
+            g.state = s;
+            g.app_state(true).as_str()
+        };
+        assert_eq!(app(GuiderState::Uninitialized), "Stopped");
+        assert_eq!(app(GuiderState::Selecting), "Looping");
+        assert_eq!(app(GuiderState::Selected), "Selected");
+        assert_eq!(app(GuiderState::CalibratingPrimary), "Calibrating");
+        assert_eq!(app(GuiderState::CalibratingSecondary), "Calibrating");
+        assert_eq!(app(GuiderState::Calibrated), "Selected");
+        // Guiding with no star found on the last frame.
+        assert_eq!(app(GuiderState::Guiding), "LostLock");
+        g.paused = PauseType::Full;
+        assert_eq!(g.app_state(false).as_str(), "Paused");
+        assert_eq!(AppState::Looping as i32, 101);
+    }
+
+    #[test]
+    fn error_averages_over_ten_guiding_frames() {
+        let mut ev = Vec::new();
+        let mut g = Guider::new(&mut Profile::default(), false, &mut ev);
+        let t0 = 1_700_000_000_000;
+        // Not guiding: every sample restarts them.
+        g.update_current_distance(2.0, 1.0, t0);
+        assert_eq!((g.current_error(false, t0), g.current_error_frame_count()), (2.0, 1));
+        g.state = GuiderState::Guiding;
+        for i in 1..=10 {
+            g.update_current_distance(i as f64, i as f64 / 2.0, t0);
+        }
+        assert_eq!(g.current_error_frame_count(), 11);
+        assert_eq!(g.current_error(false, t0), 7.7890726079000006);
+        assert_eq!(g.current_error(true, t0), 3.8945363039500003);
+        assert_eq!(g.current_error_smoothed(false, t0), 4.687547222222222);
+        assert_eq!(g.current_error_smoothed(true, t0), 2.343773611111111);
+        // 100 px once no star was found for more than 20 whole seconds.
+        assert_eq!(g.current_error(false, t0 + 20_999), 7.7890726079000006);
+        assert_eq!(g.current_error(false, t0 + 21_000), 100.0);
+        // A reset asked for restarts them on the next sample.
+        g.avg_distance_need_reset = true;
+        g.update_current_distance(0.5, 0.25, t0);
+        assert_eq!((g.current_error_smoothed(false, t0), g.current_error_frame_count()), (0.5, 1));
+        let fresh = Guider::new(&mut Profile::default(), false, &mut ev);
+        assert_eq!(fresh.current_error(false, t0), 100.0);
+    }
+
+    #[test]
+    fn a_dec_uncalibrated_scope_is_not_calibrated() {
+        let mut b = Bench::new();
+        let cal = Calibration { y_rate: CALIBRATION_RATE_UNCALIBRATED, is_valid: true, ..Calibration::default() };
+        b.scope.set_calibration(&cal, "T", &mut b.profile, &mut Vec::new());
+        assert!(!GuiderMount::is_calibrated(&b.scope));
+    }
+}

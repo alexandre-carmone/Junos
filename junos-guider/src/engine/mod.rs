@@ -10,6 +10,7 @@ pub mod calibration;
 pub mod camera;
 pub mod darks;
 pub mod fits;
+pub mod guider;
 pub mod image;
 pub mod log;
 pub mod mount;
