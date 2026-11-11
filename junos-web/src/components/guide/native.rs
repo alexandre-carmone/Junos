@@ -29,6 +29,7 @@ use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
 use super::algorithms::algorithms_sheet;
+use super::assistant::assistant_sheet;
 use super::calibration::{calibration_sheet, CalSheet};
 use super::darks::darks_sheet;
 use super::equipment::{equipment_card, equipment_sheet, Equip};
@@ -173,6 +174,7 @@ pub fn NativeGuide(
                 on:click=move |_| open.set(Some(s))>{move || label(tr())}</button>
     };
     let idle = || Signal::stored(false);
+    let busy = move |f: fn(&crate::ws::GuiderStatusData) -> bool| Signal::derive(move || state.with(|s| s.as_ref().is_some_and(f)));
     let darks = guider.darks;
     let equip = Equip {
         state,
@@ -384,6 +386,7 @@ pub fn NativeGuide(
                                 {tool(Sheet::Settings, |tr| tr.guider_settings_title, idle())}
                                 {tool(Sheet::Darks, |tr| tr.guider_darks_title,
                                       Signal::derive(move || darks.with(|d| !d["build"].is_null())))}
+                                {tool(Sheet::Assistant, |tr| tr.guider_ga_title, busy(|s| s.ga_running))}
                             </div>
                         </div>
                     </div>
@@ -431,6 +434,8 @@ pub fn NativeGuide(
                                                   native_settings_sheet(state, guider.settings, rpc.clone(), settle, lang)).into_any()),
                     Sheet::Darks => Some(sheet(move || tr().guider_darks_title, close,
                                                darks_sheet(state, darks, rpc.clone(), lang)).into_any()),
+                    Sheet::Assistant => Some(sheet(move || tr().guider_ga_title, close,
+                                                   assistant_sheet(state, guider.ga, rpc.clone(), lang)).into_any()),
                 }
             }}
         </div>

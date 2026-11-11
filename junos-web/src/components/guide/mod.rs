@@ -58,6 +58,7 @@ use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
 mod algorithms;
+mod assistant;
 mod calibration;
 mod darks;
 mod equipment;
@@ -130,6 +131,7 @@ enum Sheet {
     Calibration,
     Settings,
     Darks,
+    Assistant,
 }
 
 /// Download the accumulated guide log as a text file.

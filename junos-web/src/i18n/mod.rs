@@ -275,6 +275,15 @@ translations! {
     guider_darks_new_library, guider_darks_build, guider_darks_cover_scope, guider_bpm_title,
     guider_bpm_exposure, guider_bpm_count, guider_bpm_build, guider_bpm_aggressiveness, guider_bpm_hot,
     guider_bpm_cold, guider_bpm_save,
+    // Guide tab — junos-guider Guiding Assistant sheet
+    guider_ga_title, guider_ga_status, guider_ga_start_time, guider_ga_exposure, guider_ga_star_mass,
+    guider_ga_elapsed, guider_ga_samples, guider_ga_hf_motion, guider_ga_ra_rms, guider_ga_dec_rms,
+    guider_ga_total_rms, guider_ga_other_motion, guider_ga_ra_peak, guider_ga_dec_peak,
+    guider_ga_ra_peak_peak, guider_ga_ra_drift, guider_ga_ra_max_drift, guider_ga_drift_exposure,
+    guider_ga_dec_drift, guider_ga_backlash, guider_ga_pa_error, guider_ga_recommendations, guider_ga_apply,
+    guider_ga_applied, guider_ga_measure_backlash, guider_ga_wait, guider_ga_wait_blt, guider_ga_seconds_left,
+    guider_ga_wait_cancel, guider_ga_wait_accept, guider_ga_open, guider_ga_start, guider_ga_close,
+    guider_ga_review, guider_ga_no_history,
     // Rig (optical-train) manager — section in the Profiles tab
     rig_section, rig_add_train, rig_offline_hint, rig_no_trains, rig_train_name,
     rig_role_mount, rig_role_camera, rig_role_scope, rig_role_guider,
