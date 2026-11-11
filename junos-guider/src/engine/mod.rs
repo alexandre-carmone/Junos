@@ -1544,6 +1544,7 @@ impl Engine {
             has_gain_control: self.camera.as_ref().is_some_and(|c| c.has_gain_control()),
             dark_exposures: self.darks.darks.keys().copied().collect(),
             dark_exp_ms: self.darks.current_dark().map(|d| d.img_exp_dur),
+            guide_stars: self.guider.multistar().guide_stars().to_vec(),
         }
     }
 }

@@ -517,7 +517,7 @@ fn single_frame(p: &Params, snap: &Snapshot) -> Result<SingleFrame, RpcError> {
 
 /// `get_star_image`: up to 63 × 63 pixels around the star, inside the
 /// subframe or the frame.
-fn star_image(snap: &Snapshot, size: i32) -> Outcome {
+pub fn star_image(snap: &Snapshot, size: i32) -> Outcome {
     let selected = snap.guider_state.is_some_and(|st| st as i32 >= GuiderState::Selected as i32);
     let (Some(img), Some(star), true) = (&snap.image, snap.star_position, selected) else {
         return err(2, "no star selected");
@@ -548,7 +548,7 @@ fn star_image(snap: &Snapshot, size: i32) -> Outcome {
 }
 
 /// `B64Encode`: the standard alphabet, `=` padded.
-fn base64(data: &[u8]) -> String {
+pub fn base64(data: &[u8]) -> String {
     const E: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {

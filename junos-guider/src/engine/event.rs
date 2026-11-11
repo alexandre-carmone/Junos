@@ -21,7 +21,7 @@ use super::image::UsImage;
 use super::mount::{AlertKind, CalibrationStepInfo, GuideStepInfo};
 use super::multistar::FrameErrorInfo;
 use super::scope::DecGuideMode;
-use super::star::Star;
+use super::star::{GuideStar, Star};
 use super::tools::polar_drift::{Phase, PolarDriftResult};
 use super::traits::{Parity, Point, Rect};
 
@@ -260,4 +260,6 @@ pub struct Snapshot {
     /// The exposures of the dark library's frames, ms, and the one in use.
     pub dark_exposures: Vec<i32>,
     pub dark_exp_ms: Option<i32>,
+    /// The multi-star list, the primary first.
+    pub guide_stars: Vec<GuideStar>,
 }

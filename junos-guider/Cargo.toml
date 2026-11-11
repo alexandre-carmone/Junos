@@ -39,6 +39,8 @@ tokio              = { version = "1", features = ["full"] }
 # in), and the stream/sink traits its socket is driven through.
 tokio-tungstenite  = "0.24"
 futures-util       = "0.3"
+# The guide frames' JPEGs for the relay (as junos-server has it).
+image              = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [dev-dependencies]
 # The crate itself with the gear simulator, for the tests under `tests/`
