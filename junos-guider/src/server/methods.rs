@@ -33,8 +33,8 @@ use serde_json::{Map, Value, json};
 
 use super::events::mounts;
 use super::rpc::{
-    Call, INTERNAL_ERROR, METHOD_NOT_FOUND, Params, RpcError, bool_param, float_param, int_param, num_f, num_g,
-    num_point, point_param, rect_param, roi_param, settle_param, string_param,
+    Call, INTERNAL_ERROR, METHOD_NOT_FOUND, Params, RpcError, bool_param, bool_value, float_param, int_param, num_f,
+    num_g, num_point, point_param, rect_param, roi_param, settle_param, string_param,
 };
 use crate::daemon::Daemon;
 use crate::engine::algo::Axis;
@@ -104,9 +104,9 @@ pub async fn run(d: &Daemon, call: &Call) -> Outcome {
             outcome(d.set_profile(id).await)
         }
         "get_connected" => Ok(json!(snap.connected)),
-        "set_connected" => match p.param("connected") {
-            Some(Value::Bool(on)) => outcome(d.set_connected(*on).await),
-            _ => Err(bad("expected connected boolean param")),
+        "set_connected" => match p.param("connected").and_then(bool_value) {
+            Some(on) => outcome(d.set_connected(on).await),
+            None => Err(bad("expected connected boolean param")),
         },
         "get_calibrated" => Ok(json!(snap.calibrated)),
         "get_paused" => Ok(json!(snap.paused != PauseType::None)),

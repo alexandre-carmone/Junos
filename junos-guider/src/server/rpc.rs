@@ -29,14 +29,25 @@
 //! **Parameters** are positional (an array, matched to the method's names in
 //! order, extra values ignored) or named (an object); [`Params`] looks both
 //! up, the getters type them the way PHD2's handlers do: a bool is a JSON
-//! bool or an integer, a float an integer or a float.
+//! bool or an integer ([`bool_value`]: a JSON bool only, `set_connected`'s
+//! rule), a float an integer or a float.
+//!
+//! **Request numbers** are the ones vjson stores: a JSON float is a C
+//! `float`, so `"time":2.9999999` settles 3 s as in PHD2 (vjson sums the
+//! digits in `float`; rounding to the nearest `f32`, as here, gives the same
+//! value but in the last bit of a few, `0.000001` among them). `-0`, a float
+//! to `serde_json`, becomes vjson's integer 0, and `-0.0` with it, which
+//! vjson keeps a float: once parsed the two are the same value, and
+//! `QJsonDocument` writes a double -0 as `-0`. Only the event server's lines
+//! are read this way: the relay's calls keep `serde_json`'s numbers.
 //!
 //! **Numbers** in results and events are PHD2's `printf` spellings (`%g`,
 //! `%.*f`, `[%.2f,%.2f]` points) turned back into JSON numbers ([`num_g`],
 //! [`num_f`], [`num_point`]): the value is the rounded one PHD2 prints, but
 //! `serde_json` writes it its own way — `1.500` as `1.5`, `2.00` as `2.0`,
 //! `1e+06` as `1000000.0` — and a non-finite value becomes `null` where PHD2
-//! writes a bare `nan`/`inf` no JSON parser accepts. `serde_json`'s
+//! writes a bare `nan`/`inf` no JSON parser accepts (Ekos' `QJsonDocument`
+//! drops such a line, and its one RPC in flight never clears). `serde_json`'s
 //! `arbitrary_precision` would keep the spelling but is not needed: clients
 //! (Ekos' `QJsonDocument`, NINA's Newtonsoft) parse numbers, so only the value
 //! matters. Object members inside a result come out in `serde_json`'s sorted
@@ -47,18 +58,29 @@
 //! no client sends: requests are parsed by `serde_json`, which refuses what
 //! vjson lets through — missing commas and colons, trailing commas,
 //! `{"a":}`, leading zeros, a lone `-`, exponents past `f64`, lone UTF-16
-//! surrogates, invalid UTF-8 — with `-32700` where PHD2 would go on. The
-//! `-32700` text keeps PHD2's template, `invalid JSON request: %s on line %d
-//! at "%.12s..."`, with vjson's wording and position for the errors both
-//! parsers see (an unclosed object, a second root, a bad identifier, escape
-//! or control character, a scalar or closing bracket first); the others say
-//! `Unexpected character` where `serde_json` stopped. The line number is
-//! always 1 (a line holds no newline; vjson's count of `\n` escapes cancels
-//! against the decoded ones). vjson keeps a JSON float as a C `float`
-//! (`0.7` → 0.699999988); here it stays a `double`, a difference below every
-//! precision PHD2 prints back. Duplicate keys: the last wins, where PHD2's
-//! `Params` keeps the first. An integer past `u64` is a float to `serde_json`
-//! (vjson wraps any digit string into a 32-bit int).
+//! surrogates, invalid UTF-8, more than 128 nested arrays or objects (a
+//! batch to PHD2, answered `-32600` per item) — with `-32700` where PHD2
+//! would go on. A number that ends the line (`{"a":1`) leaves the object
+//! unclosed here; vjson scans it on past the line's end, which has no NUL
+//! stop there (undefined behaviour). The `-32700` text keeps PHD2's
+//! template, `invalid JSON request: %s on line %d at "%.12s..."`, with
+//! vjson's wording and position for most errors both parsers see (an
+//! unclosed object, a second root, a bad identifier, escape or control
+//! character, a scalar or closing bracket first); the others say
+//! `Unexpected character` where `serde_json` stopped. The line is 1 (a line
+//! holds no newline; vjson's count of `\n` escapes cancels against the
+//! decoded ones), except for a string error after a `\n` escape in the same
+//! string: vjson says line 0 and shows its half-decoded buffer, here the
+//! line's own bytes. A line ending inside an identifier (`{"a":tru`) or a
+//! `\u` escape is "Not all objects/arrays have been properly closed" here,
+//! "Unknown identifier" or "Bad unicode codepoint" to vjson. The excerpt is
+//! cut at 12 bytes (a split character shows as U+FFFD), where PHD2's wide
+//! format most likely cuts at 12 characters. Duplicate keys: the last value
+//! wins whatever its type, where PHD2 keeps the last string `method`
+//! (`{"method":"loop","method":5}` runs `loop` there, `-32600` here), the
+//! last number for each settle key, and the first value in `Params`. An
+//! integer past `u64` is a float to `serde_json` (vjson wraps any digit
+//! string into a 32-bit int).
 //!
 //! Ported from PHD2 src/event_server.cpp (the parse-error wording from
 //! src/json_parser.cpp) — BSD-3-Clause, see THIRD_PARTY.md
@@ -430,7 +452,10 @@ fn parse_json(line: &[u8]) -> Result<Value, String> {
         None => ("empty string", line.len()),
         Some(i) => match line[i] {
             b'{' | b'[' => match serde_json::from_slice(line) {
-                Ok(root) => return Ok(root),
+                Ok(mut root) => {
+                    vjson_numbers(&mut root);
+                    return Ok(root);
+                }
                 Err(e) => vjson_error(line, &e),
             },
             b'}' | b']' => ("Mismatch closing brace/bracket", i),
@@ -440,6 +465,25 @@ fn parse_json(line: &[u8]) -> Result<Value, String> {
     let at = &line[pos..];
     let at = String::from_utf8_lossy(&at[..at.len().min(12)]);
     Err(format!("invalid JSON request: {desc} on line 1 at \"{at}...\""))
+}
+
+/// The numbers as vjson stores them: a float as a C `float`, `-0` as the
+/// integer 0 (see the module doc). A float past `f32` keeps its `f64`
+/// value, where vjson's is infinite: a JSON value cannot hold that.
+fn vjson_numbers(v: &mut Value) {
+    match v {
+        Value::Number(n) if n.is_f64() => {
+            let x = n.as_f64().unwrap_or(0.0);
+            if x == 0.0 && x.is_sign_negative() {
+                *v = Value::from(0);
+            } else if let Some(n) = Number::from_f64(f64::from(x as f32)) {
+                *v = Value::Number(n);
+            }
+        }
+        Value::Array(values) => values.iter_mut().for_each(vjson_numbers),
+        Value::Object(map) => map.values_mut().for_each(vjson_numbers),
+        _ => {}
+    }
 }
 
 /// vjson's description and position for a `serde_json` error.
@@ -542,6 +586,11 @@ pub fn float_param(v: &Value) -> Option<f64> {
     int_value(n).map(f64::from).or_else(|| n.as_f64())
 }
 
+/// `JSON_BOOL`: a JSON bool only (`set_connected`).
+pub fn bool_value(v: &Value) -> Option<bool> {
+    v.as_bool()
+}
+
 /// `bool_param`: a JSON bool, or an integer (non-zero is true).
 pub fn bool_param(v: &Value) -> Option<bool> {
     match v {
@@ -588,6 +637,8 @@ pub fn settle_param(v: Option<&Value>) -> Result<SettleParams, RpcError> {
     };
     let num = |key| settle.get(key).and_then(float_param);
     match (num("pixels"), num("time"), num("timeout")) {
+        // `(int) floor(d)` past `i32` is undefined in PHD2 (INT_MIN on
+        // x86-64); `as` saturates.
         (Some(px), Some(time), Some(timeout)) => Ok(SettleParams {
             tolerance_px: px,
             settle_time_s: time.floor() as i32,
@@ -979,7 +1030,36 @@ mod tests {
     }
 
     #[test]
+    fn request_numbers_are_vjsons() {
+        let params = |line: &str| parse(&Input::Line(line.as_bytes().to_vec())).calls().next().unwrap().params.clone();
+        // vjson's float: 2.9999999 and 0.99999999 are 3 and 1 (the vjson harness).
+        let p = params(r#"{"method":"guide","params":{"settle":{"pixels":0.7,"time":2.9999999,"timeout":0.99999999}},"id":1}"#);
+        let settle = settle_param(p.as_ref().and_then(|p| p.get("settle"))).unwrap();
+        assert_eq!((settle.tolerance_px, settle.settle_time_s, settle.timeout_s), (f64::from(0.7f32), 3, 1));
+        // `-0` is the integer 0: `set_exposure` takes it.
+        let p = params(r#"{"method":"set_exposure","params":{"exposure":-0},"id":2}"#);
+        assert_eq!(p.as_ref().and_then(|p| p.get("exposure")).and_then(int_param), Some(0));
+        // Integers and 0.0 stay; a float past f32 keeps its value.
+        let p = params(r#"{"method":"loop","params":[16777217,1e300,0.0]}"#).unwrap();
+        assert_eq!((p[0].as_i64(), p[1].as_f64(), p[2].is_f64()), (Some(16777217), Some(1e300), true));
+        // Ids echo as PHD2 prints them: `%g` of the float, `%d` of -0.
+        let id = |line: &str| {
+            let r = zero(line).unwrap();
+            r[r.find(",\"id\":").unwrap() + 6..r.len() - 1].to_string()
+        };
+        assert_eq!(id(r#"{"method":"loop","id":-0}"#), "0");
+        assert_eq!(id(r#"{"method":"loop","id":0.1}"#), "0.1");
+        // 1.000005 is 1.00000499999… as a double, 1.00000501 as a float.
+        assert_eq!(id(r#"{"method":"loop","id":1.000005}"#), "1.00001");
+        // The relay's calls keep serde_json's numbers.
+        let c = call(json!({"method": "nudge_lock", "params": {"dx": 0.7, "dy": -0.0}}), true).unwrap();
+        assert_eq!(c.params, Some(json!({"dx": 0.7, "dy": -0.0})));
+    }
+
+    #[test]
     fn typed_getters() {
+        assert_eq!(bool_value(&json!(true)), Some(true));
+        assert_eq!(bool_value(&json!(1)), None);
         assert_eq!(bool_param(&json!(true)), Some(true));
         assert_eq!(bool_param(&json!(0)), Some(false));
         assert_eq!(bool_param(&json!(2)), Some(true));
@@ -1202,7 +1282,7 @@ mod tests {
                     let p = c.params();
                     let s = |k| p.param(k).map(|v| v.to_string()).unwrap_or_default();
                     seen.push(match c.method.name {
-                        "set_connected" => format!("connected={:?}", p.param("connected").and_then(bool_param)),
+                        "set_connected" => format!("connected={:?}", p.param("connected").and_then(bool_value)),
                         "guide" => format!(
                             "guide {:?} recal={:?} roi={:?}",
                             settle_param(p.param("settle")),
