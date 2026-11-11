@@ -797,10 +797,14 @@ impl Scope {
         self.mv.blc.as_ref()
     }
 
-    /// The backlash compensation, for the Guiding Assistant's backlash
-    /// tool, whose clean-up resets it.
-    pub fn backlash_comp_mut(&mut self) -> Option<&mut BacklashComp> {
-        self.mv.blc.as_mut()
+    /// What the Guiding Assistant's backlash tool works with on each step:
+    /// the calibration in memory, which turns the star's position into mount
+    /// axes, and the backlash compensation its clean-up resets. Lent
+    /// together, which `mount.mount_cal()` beside a `&mut self` method could
+    /// not be.
+    pub fn blt_parts(&mut self) -> Option<(&Calibration, &mut BacklashComp)> {
+        let cal = self.mount.mount_cal();
+        self.mv.blc.as_mut().map(|blc| (cal, blc))
     }
 
     /// `BacklashComp::EnableBacklashComp`, with its effects carried out.

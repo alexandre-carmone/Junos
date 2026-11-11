@@ -279,9 +279,10 @@ pub struct StepEnv<'a> {
     pub ao_scope_cal: Option<&'a Calibration>,
 }
 
-/// What the recommendations read from the equipment
-/// (`MakeRecommendations`). Plain values: the engine fills it whenever a
-/// call may end the run.
+/// What the recommendations read from the camera, the guider and pMount
+/// (`MakeRecommendations`). Plain values, read without side effects: the
+/// engine fills it before each call that may end the run. What they read
+/// from `TheScope()` comes from [`GaCx::scope`] when they are made.
 #[derive(Clone, Debug)]
 pub struct RecEnv {
     /// `GetCameraPixelScale`, ″/px (1.0 when unknown).
@@ -295,12 +296,6 @@ pub struct RecEnv {
     /// `pMount->HasHPEncoders()`: the scope's flag, false when pMount is an
     /// AO.
     pub hp_encoders: bool,
-    /// `TheScope()->LoadCalibrationDetails`.
-    pub cal_details: CalibrationDetails,
-    /// `TheScope()`'s backlash compensation pulse, ms.
-    pub blc_pulse: i32,
-    /// `TheScope()->GetDecGuideMode()`.
-    pub dec_guide_mode: DecGuideMode,
     /// pMount's algorithms: the min-moves (−1 without one) and the Dec
     /// algorithm's class name.
     pub ra_min_move: f64,
@@ -315,13 +310,41 @@ pub struct GaCx<'a, P: ProfileAccess + ?Sized> {
     pub rec: &'a RecEnv,
     /// The results are saved there.
     pub profile: &'a mut P,
-    /// `TheScope()`'s backlash compensation, with what the tool reads on
-    /// each step; `None` without a scope.
-    pub blt: Option<(BltEnv<'a>, &'a mut BacklashComp)>,
+    /// `TheScope()`, `None` without one. The backlash test steps through its
+    /// calibration and resets its compensation; the recommendations read
+    /// its calibration details, compensation pulse and Dec guide mode —
+    /// only then, as PHD2 does, since `LoadCalibrationDetails` may log and
+    /// clear bogus guide speeds once per session.
+    pub scope: Option<&'a mut Scope>,
+    /// What else the backlash tool reads on each step: the camera frame
+    /// size (px), `Guider::GetMaxMovePixels` and `wxGetUTCTimeMillis` (ms).
+    pub frame_size: (i32, i32),
+    pub max_move_px: i32,
+    pub now_ms: i64,
     /// The guider's `CurrentPosition`, `None` when it has none.
     pub star: Option<Point>,
     /// `pCamera->UseSubframes`.
     pub use_subframes: bool,
+}
+
+impl<P: ProfileAccess + ?Sized> GaCx<'_, P> {
+    /// The backlash tool's step environment and `TheScope()`'s
+    /// compensation; `None` without a scope.
+    fn blt(&mut self) -> Option<(BltEnv<'_>, &mut BacklashComp)> {
+        let scope = self.scope.as_deref_mut()?;
+        let calibration_duration_ms = scope.calibration_duration();
+        let (cal, blc) = scope.blt_parts()?;
+        let env = BltEnv {
+            cal,
+            frame_width: self.frame_size.0,
+            frame_height: self.frame_size.1,
+            max_move_px: self.max_move_px,
+            calibration_duration_ms,
+            pixel_scale: self.rec.pixel_scale,
+            now_ms: self.now_ms,
+        };
+        Some((env, blc))
+    }
 }
 
 /// What an Apply changes: `TheScope()` and pMount.
@@ -794,15 +817,16 @@ impl GuidingAssistant {
             }
             // The backlash test after the sampling, on the full frame. The
             // box is only ticked with a scope, so the tool is there.
-            if let (Some(tool), Some((env, blc))) = (self.tool.as_mut(), cx.blt.as_mut()) {
+            let (star, use_subframes) = (cx.star, cx.use_subframes);
+            if let (Some(tool), Some((env, blc))) = (self.tool.as_mut(), cx.blt()) {
                 self.measuring_backlash = true;
                 if self.orig_sub_frames == -1 {
-                    self.orig_sub_frames = cx.use_subframes as i32;
+                    self.orig_sub_frames = use_subframes as i32;
                 }
                 ev.push(GaEvent::UseSubframes(false));
                 self.status = format!("Measuring backlash... {}", tool.last_status());
                 self.measuring = false;
-                let step = tool.start_measurement(self.dec_drift_per_min, cx.star, env, blc);
+                let step = tool.start_measurement(self.dec_drift_per_min, star, &env, blc);
                 ev.push(GaEvent::Backlash(step));
                 self.instructions = INSTR_BACKLASH.to_string();
                 return;
@@ -848,14 +872,21 @@ impl GuidingAssistant {
 
     // ------------------------------------------------------------ backlash
 
-    /// A guide frame in the guider's measurement mode (`BacklashStep`): the
-    /// tool's next step, and the wrap-up once it is done.
-    pub fn backlash_step<P: ProfileAccess + ?Sized>(&mut self, cx: &mut GaCx<P>, ev: &mut Vec<GaEvent>) {
+    /// A guide frame in the guider's measurement mode (`BacklashStep`), with
+    /// the star's camera position it carries
+    /// ([`GuiderEvent::BacklashStep`](crate::engine::guider::GuiderEvent::BacklashStep)):
+    /// the tool's next step, and the wrap-up once it is done.
+    pub fn backlash_step<P: ProfileAccess + ?Sized>(
+        &mut self,
+        cam_loc: Point,
+        cx: &mut GaCx<P>,
+        ev: &mut Vec<GaEvent>,
+    ) {
         if !self.measuring_backlash {
             return;
         }
-        let (Some(tool), Some((env, blc))) = (self.tool.as_mut(), cx.blt.as_mut()) else { return };
-        let step = tool.dec_measurement_step(cx.star, env, blc);
+        let (Some(tool), Some((env, blc))) = (self.tool.as_mut(), cx.blt()) else { return };
+        let step = tool.dec_measurement_step(Some(cam_loc), &env, blc);
         ev.push(GaEvent::Backlash(step));
         self.status = format!("Measuring backlash: {}", tool.last_status());
         // PHD2 also guards against re-entering this wrap-up from its event
@@ -900,8 +931,9 @@ impl GuidingAssistant {
         ev: &mut Vec<GaEvent>,
     ) {
         if !completed {
-            if let (Some(tool), Some((env, blc))) = (self.tool.as_mut(), cx.blt.as_mut()) {
-                let step = tool.stop_measurement(cx.star, env, blc);
+            let star = cx.star;
+            if let (Some(tool), Some((env, blc))) = (self.tool.as_mut(), cx.blt()) {
+                let step = tool.stop_measurement(star, &env, blc);
                 ev.push(GaEvent::Backlash(step));
                 self.graph_enabled = tool.is_graphable();
             }
@@ -1069,20 +1101,20 @@ impl GuidingAssistant {
     }
 
     /// `LikelyBacklash`: large Dec backlash, measured or inferred, which
-    /// relaxes the polar alignment advice.
-    fn likely_backlash(&self, rec: &RecEnv) -> bool {
+    /// relaxes the polar alignment advice. `blc_pulse` and `mode` are
+    /// `TheScope()`'s compensation pulse (ms) and Dec guide mode.
+    fn likely_backlash(&self, d: &CalibrationDetails, blc_pulse: i32, mode: DecGuideMode) -> bool {
         let completed = self.tool.as_ref().is_some_and(|t| t.blt_state() == BltState::Completed);
         // Just measured, too big to compensate.
         let mut likely = completed && self.backlash_ms > MAX_BACKLASH_COMP;
         if !likely {
             // A compensation tried once with a pulse that large.
-            likely = rec.blc_pulse > MAX_BACKLASH_COMP;
+            likely = blc_pulse > MAX_BACKLASH_COMP;
         }
         if !likely {
             // Guiding Dec one way gains from a larger alignment error.
-            likely = !matches!(rec.dec_guide_mode, DecGuideMode::Auto | DecGuideMode::None);
+            likely = !matches!(mode, DecGuideMode::Auto | DecGuideMode::None);
         }
-        let d = &rec.cal_details;
         if !likely && d.dec_step_count > 0 {
             // Little or no movement south in the last calibration.
             let steps = &d.dec_steps;
@@ -1120,9 +1152,24 @@ impl GuidingAssistant {
     /// `MakeRecommendations`, then the run saved in the profile.
     fn make_recommendations<P: ProfileAccess + ?Sized>(&mut self, cx: &mut GaCx<P>, ev: &mut Vec<GaEvent>) {
         let rec = cx.rec;
+        let mut mev = Vec::new();
+        let (cal_details, blc_pulse, dec_guide_mode) = match cx.scope.as_deref_mut() {
+            Some(scope) => (
+                scope.load_calibration_details(&mut cx.profile, &mut mev),
+                scope.backlash_comp().map_or(0, BacklashComp::backlash_pulse_width),
+                scope.dec_guide_mode(),
+            ),
+            // Fix: PHD2 dereferences a null `TheScope()` here (an AO without
+            // a mount); nothing to read then.
+            None => (CalibrationDetails::default(), 0, DecGuideMode::None),
+        };
+        ev.extend(mev.into_iter().map(GaEvent::Mount));
+        // Fix: without a scope PHD2 also dereferences its null backlash tool
+        // (here, in LikelyBacklash and for the BLT advice); none is not
+        // completed, not exempted.
         let completed = self.tool.as_ref().is_some_and(|t| t.blt_state() == BltState::Completed);
         let exempted = self.tool.as_ref().is_some_and(BacklashTool::backlash_exempted);
-        let suspect_calibration = rec.cal_details.last_issue != CalibrationIssue::None || exempted;
+        let suspect_calibration = cal_details.last_issue != CalibrationIssue::None || exempted;
 
         (self.ra_minmove_rec, self.dec_minmove_rec) = self.get_min_move_recs(rec, ev);
         // The drift-limiting exposure, now against the RA min-move.
@@ -1188,7 +1235,7 @@ impl GuidingAssistant {
             add(&mut self.recs, ev, RecKind::Bin, "Try binning your guide camera".into(), false);
         }
         if suspect_calibration {
-            let why = if rec.cal_details.last_issue != CalibrationIssue::None {
+            let why = if cal_details.last_issue != CalibrationIssue::None {
                 "(Prior alert)"
             } else {
                 "(Backlash clearing)"
@@ -1204,7 +1251,7 @@ impl GuidingAssistant {
             const OVER_10: &str =
                 "Polar alignment error > 10 arc-min; try using the Drift Align tool to improve alignment.";
             // With large Dec backlash an error under 10′ helps.
-            let msg = if self.likely_backlash(rec) {
+            let msg = if self.likely_backlash(&cal_details, blc_pulse, dec_guide_mode) {
                 if self.alignment_error > 10.0 { OVER_10 } else { "" }
             } else if self.alignment_error < 10.0 {
                 OVER_5
@@ -1530,7 +1577,8 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
-    use crate::engine::backlash::BacklashConfig;
+    use crate::engine::algo::MountClass;
+    use crate::engine::calibration::save_calibration_details;
     use crate::engine::log::cfmt::fmt_gp;
     use crate::engine::traits::Dir;
 
@@ -1619,9 +1667,6 @@ mod tests {
             binning: 1,
             max_binning: 1,
             hp_encoders: false,
-            cal_details: CalibrationDetails::default(),
-            blc_pulse: 0,
-            dec_guide_mode: DecGuideMode::Auto,
             ra_min_move: 0.2,
             dec_min_move: 0.2,
             dec_algo_class: "ResistSwitch",
@@ -1647,7 +1692,27 @@ mod tests {
     }
 
     fn cx<'a>(rec: &'a RecEnv, profile: &'a mut Mem) -> GaCx<'a, Mem> {
-        GaCx { rec, profile, blt: None, star: None, use_subframes: false }
+        GaCx {
+            rec,
+            profile,
+            scope: None,
+            frame_size: (1000, 1000),
+            max_move_px: 50,
+            now_ms: 0,
+            star: None,
+            use_subframes: false,
+        }
+    }
+
+    /// `TheScope()` on `p`: its Dec guide mode, compensation pulse (ms) and
+    /// stored calibration details.
+    fn scope_on(p: &mut Mem, mode: DecGuideMode, blc_pulse: i32, details: &CalibrationDetails) -> Scope {
+        let mut mev = Vec::new();
+        let mut scope = Scope::new(p, false, 0.0, &mut mev);
+        scope.set_dec_guide_mode(mode as i32, p, &mut mev);
+        scope.set_backlash_pulse_width(blc_pulse, 0, 0, p, &mut mev);
+        save_calibration_details(p, MountClass::Scope, details);
+        scope
     }
 
     fn debug_lines(ev: &[GaEvent]) -> Vec<&str> {
@@ -1722,22 +1787,21 @@ mod tests {
             binning: c.binning,
             max_binning: c.max_binning,
             hp_encoders: c.encoders,
-            cal_details: CalibrationDetails {
-                last_issue: c.issue,
-                dec_steps: c.dec_steps.iter().map(|&(x, y)| Point::new(x, y)).collect(),
-                dec_step_count: c.dec_step_count,
-                ..Default::default()
-            },
-            blc_pulse: 0,
-            dec_guide_mode: c.mode,
             ra_min_move: 0.2,
             dec_min_move: 0.2,
             dec_algo_class: c.dec_class,
             star_hfd: c.hfd,
         };
         let mut profile = Mem::default();
+        let details = CalibrationDetails {
+            last_issue: c.issue,
+            dec_steps: c.dec_steps.iter().map(|&(x, y)| Point::new(x, y)).collect(),
+            dec_step_count: c.dec_step_count,
+            ..Default::default()
+        };
+        let mut scope = scope_on(&mut profile, c.mode, 0, &details);
         let mut ev = Vec::new();
-        ga.make_recommendations(&mut cx(&rec, &mut profile), &mut ev);
+        ga.make_recommendations(&mut GaCx { scope: Some(&mut scope), ..cx(&rec, &mut profile) }, &mut ev);
 
         let d = ga.details();
         for (name, v) in [
@@ -1779,7 +1843,8 @@ mod tests {
         out.extend(debug_lines(&ev).iter().map(|s| format!("dbg {s}")));
         out.extend(results(&ev).iter().map(|s| format!("glog {}", s.trim_end_matches('\n'))));
         out.push(format!("completed {}", ev.iter().filter(|e| **e == GaEvent::Completed).count()));
-        for (k, v) in &profile.0 {
+        // The harness' profile holds the runs only.
+        for (k, v) in profile.0.iter().filter(|(k, _)| k.starts_with("/GA/")) {
             let v = match v {
                 V::S(s) => s.clone(),
                 V::I(i) => format!("(int){i}"),
@@ -1995,8 +2060,15 @@ mod tests {
         assert_eq!(blt_recommendation(500, true, 0.0), (enc, 500, true, true));
     }
 
-    /// A short run finished on `rec`, after `tweak`.
-    fn recommend(rec: &RecEnv, tweak: impl FnOnce(&mut GuidingAssistant)) -> (GuidingAssistant, Vec<GaEvent>) {
+    /// A short run finished on `rec` and a scope in Dec guide mode `mode`
+    /// with a `blc_pulse` ms compensation pulse and `details`, after `tweak`.
+    fn recommend_on(
+        rec: &RecEnv,
+        mode: DecGuideMode,
+        blc_pulse: i32,
+        details: &CalibrationDetails,
+        tweak: impl FnOnce(&mut GuidingAssistant),
+    ) -> (GuidingAssistant, Vec<GaEvent>) {
         let mut ev = Vec::new();
         let mut ga = started(false, 1000, &mut ev);
         for t in 0..10 {
@@ -2005,9 +2077,15 @@ mod tests {
         }
         tweak(&mut ga);
         let mut profile = Mem::default();
+        let mut scope = scope_on(&mut profile, mode, blc_pulse, details);
         let mut ev = Vec::new();
-        ga.make_recommendations(&mut cx(rec, &mut profile), &mut ev);
+        ga.make_recommendations(&mut GaCx { scope: Some(&mut scope), ..cx(rec, &mut profile) }, &mut ev);
         (ga, ev)
+    }
+
+    /// The same on a plain scope: Auto, no compensation, no calibration.
+    fn recommend(rec: &RecEnv, tweak: impl FnOnce(&mut GuidingAssistant)) -> (GuidingAssistant, Vec<GaEvent>) {
+        recommend_on(rec, DecGuideMode::Auto, 0, &CalibrationDetails::default(), tweak)
     }
 
     fn kinds(ga: &GuidingAssistant) -> Vec<RecKind> {
@@ -2016,31 +2094,31 @@ mod tests {
 
     #[test]
     fn polar_alignment_thresholds() {
-        let pa = |err: f64, rec: &RecEnv| {
-            let (ga, _) = recommend(rec, |ga| ga.alignment_error = err);
+        let pa = |err: f64, mode: DecGuideMode, blc_pulse: i32| {
+            let (ga, _) = recommend_on(&rec_env(), mode, blc_pulse, &CalibrationDetails::default(), |ga| {
+                ga.alignment_error = err
+            });
             ga.recommendations().iter().find(|r| r.kind == RecKind::Pa).map(|r| r.text.clone())
         };
         const OVER_5: &str = "Polar alignment error > 5 arc-min; that could probably be improved.";
         const OVER_10: &str =
             "Polar alignment error > 10 arc-min; try using the Drift Align tool to improve alignment.";
-        let plain = rec_env();
-        assert_eq!(pa(5.0, &plain), None);
-        assert_eq!(pa(7.0, &plain).as_deref(), Some(OVER_5));
-        assert_eq!(pa(10.0, &plain).as_deref(), Some(OVER_10));
+        let auto = DecGuideMode::Auto;
+        assert_eq!(pa(5.0, auto, 0), None);
+        assert_eq!(pa(7.0, auto, 0).as_deref(), Some(OVER_5));
+        assert_eq!(pa(10.0, auto, 0).as_deref(), Some(OVER_10));
         // A compensation pulse past 3000 ms means large backlash: nothing
         // up to 10′.
-        let blc = RecEnv { blc_pulse: 3500, ..rec_env() };
-        assert_eq!(pa(7.0, &blc), None);
-        assert_eq!(pa(10.0, &blc), None);
-        assert_eq!(pa(10.5, &blc).as_deref(), Some(OVER_10));
-        let south = RecEnv { dec_guide_mode: DecGuideMode::South, ..rec_env() };
-        assert_eq!(pa(9.0, &south), None);
+        assert_eq!(pa(7.0, auto, 3500), None);
+        assert_eq!(pa(10.0, auto, 3500), None);
+        assert_eq!(pa(10.5, auto, 3500).as_deref(), Some(OVER_10));
+        assert_eq!(pa(9.0, DecGuideMode::South, 0), None);
     }
 
     #[test]
     fn calibration_snr_focus_and_min_move_triggers() {
         let cal = CalibrationDetails { last_issue: CalibrationIssue::Rates, ..Default::default() };
-        let (ga, ev) = recommend(&RecEnv { cal_details: cal, ..rec_env() }, |_| {});
+        let (ga, ev) = recommend_on(&rec_env(), DecGuideMode::Auto, 0, &cal, |_| {});
         assert_eq!(ga.recommendations()[1].text, "Consider re-doing your calibration (Prior alert)");
         assert!(results(&ev).contains(&"Recommendation: Consider re-doing your calibration (Prior alert)\n"));
         // An SNR of 20: no star advice; under 10 there is.
@@ -2168,6 +2246,32 @@ mod tests {
     }
 
     #[test]
+    fn the_scope_is_read_when_the_recommendations_are_made() {
+        // Bogus stored guide speeds: `LoadCalibrationDetails`' once-per-
+        // session check clears them, with its two lines, when the
+        // recommendations are made — not at the Stop that opens the
+        // countdown.
+        let mut profile = Mem::default();
+        let details = CalibrationDetails { ra_guide_speed: 0.01, dec_guide_speed: 0.002, ..Default::default() };
+        let mut scope = scope_on(&mut profile, DecGuideMode::Auto, 0, &details);
+        let rec = rec_env();
+        let mut ev = Vec::new();
+        let mut ga = started(false, 1000, &mut ev);
+        ev.clear();
+        ga.stop(&mut GaCx { scope: Some(&mut scope), ..cx(&rec, &mut profile) }, &mut ev);
+        assert!(ev.is_empty() && ga.wait().is_some());
+        ga.end_wait(true, &mut GaCx { scope: Some(&mut scope), ..cx(&rec, &mut profile) }, &mut ev);
+        assert_eq!(
+            ev[..2],
+            [
+                GaEvent::Mount(MountEvent::Debug("Invalid mount guide speeds: RA: 0.0100, Dec: 0.0020".into())),
+                GaEvent::Mount(MountEvent::Debug("Bogus guide speeds cleared in LoadCalibrationDetails".into())),
+            ]
+        );
+        assert_eq!(profile.get_f64("/scope/calibration/ra_guide_rate", 0.0), -1.0);
+    }
+
+    #[test]
     fn a_gap_in_a_long_run_ends_the_windows() {
         // 0–100 s, nothing until 200 s, then to 300 s: the window from
         // 100 s ends at 220 s and rewinds to 100 s again, where PHD2 loops
@@ -2208,7 +2312,13 @@ mod tests {
             is_valid: true,
             ..Default::default()
         };
-        let mut blc = BacklashComp::new(BacklashConfig { pulse: 300, enabled: true, ..Default::default() }, 2500).0;
+        let mut profile = Mem::default();
+        let mut mev = Vec::new();
+        let mut scope = Scope::new(&mut profile, false, 0.0, &mut mev);
+        scope.set_calibration(&cal, "2026-11-11 20:00:00", &mut profile, &mut mev);
+        scope.set_calibration_duration(500, &mut profile, &mut mev);
+        scope.set_backlash_pulse_width(300, 0, 0, &mut profile, &mut mev);
+        scope.enable_backlash_comp(true, &mut profile, &mut mev);
         let mut ev = Vec::new();
         let mut ga = GuidingAssistant::new(Some(&cal), false, false, VarDelayCfg::default(), true, &mut ev);
         assert_eq!(ga.measure_backlash(), (true, true));
@@ -2220,26 +2330,17 @@ mod tests {
             ga.guide_step(&info(0.05 * noise(k), 0.0, t as f64, 20.0, 1000.0), &env, &mut ev);
         }
         let rec = RecEnv { pixel_scale: 2.0, ..rec_env() };
-        let mut profile = Mem::default();
-        let mut benv = BltEnv {
-            cal: &cal,
-            frame_width: 1000,
-            frame_height: 1000,
-            max_move_px: 50,
-            calibration_duration_ms: 500,
-            pixel_scale: 2.0,
-            now_ms: T0 + 131_000,
-        };
+        let mut now_ms = T0 + 131_000;
         let (mut y, mut slack) = (500.0, 0.0_f64);
         let mut all = Vec::new();
-        let mut cx = GaCx {
-            rec: &rec,
-            profile: &mut profile,
-            blt: Some((benv, &mut blc)),
+        let mut stop_cx = GaCx {
+            scope: Some(&mut scope),
+            now_ms,
             star: Some(Point::new(500.0, y)),
             use_subframes: true,
+            ..cx(&rec, &mut profile)
         };
-        ga.stop(&mut cx, &mut all);
+        ga.stop(&mut stop_cx, &mut all);
         assert!(ga.is_measuring_backlash() && !ga.is_measuring());
         assert_eq!(all[0], GaEvent::UseSubframes(false));
         assert_eq!(ga.status(), "Measuring backlash... ");
@@ -2261,15 +2362,9 @@ mod tests {
                     y -= travel - eaten;
                 }
             }
-            benv.now_ms += 1000;
-            let mut cx = GaCx {
-                rec: &rec,
-                profile: &mut profile,
-                blt: Some((benv, &mut blc)),
-                star: Some(Point::new(500.0, y)),
-                use_subframes: false,
-            };
-            ga.backlash_step(&mut cx, &mut all);
+            now_ms += 1000;
+            let mut cx = GaCx { scope: Some(&mut scope), now_ms, ..cx(&rec, &mut profile) };
+            ga.backlash_step(Point::new(500.0, y), &mut cx, &mut all);
         }
         assert!(!ga.is_measuring_backlash());
         let tool = ga.backlash_tool().unwrap();
