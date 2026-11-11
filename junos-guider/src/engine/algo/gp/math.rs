@@ -307,6 +307,44 @@ mod tests {
         (t, y)
     }
 
+    // The goldens marked "PHD2's C++" come from PHD2's own math_tools.cpp
+    // and gaussian_process_guider.cpp (regularize_dataset,
+    // EstimatePeriodLength, UpdateGP's detrend lines), built by g++ 16 -O2
+    // against Eigen 3.4.1 on x86-64 in a throwaway harness. Hashes are
+    // [`fnv`] over the bits.
+
+    /// FNV-1a over the bit patterns: a golden's fingerprint of a vector.
+    fn fnv(v: &[f64]) -> u64 {
+        v.iter().fold(0xcbf2_9ce4_8422_2325, |h, x| (h ^ x.to_bits()).wrapping_mul(0x100_0000_01b3))
+    }
+
+    fn bits(v: &[f64]) -> Vec<u64> {
+        v.iter().map(|x| x.to_bits()).collect()
+    }
+
+    fn assert_rel(a: f64, b: f64, tol: f64) {
+        assert!((a - b).abs() <= tol * b.abs(), "{a} vs {b} (rel {tol})");
+    }
+
+    /// The harness's LCG, the top 53 bits as a unit double: the same bits
+    /// in both languages.
+    fn lcg(seed: u64) -> impl FnMut() -> f64 {
+        let mut s = seed;
+        move || {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (s >> 11) as f64 / 9007199254740992.0
+        }
+    }
+
+    /// A periodic arch, 0 at each period start and 2 mid-period, from
+    /// correctly rounded operations only, so the harness starts from the
+    /// same bits.
+    fn arch(t: f64, period: f64) -> f64 {
+        let x = t / period;
+        let f = x - x.floor();
+        8.0 * f * (1.0 - f)
+    }
+
     #[test]
     fn square_distance_is_the_squared_difference() {
         let d = square_distance(&[1.0, 2.0, 4.0], &[0.0, 3.0]);
@@ -318,9 +356,10 @@ mod tests {
     fn square_distance_clamps_the_cancellation_at_zero() {
         // a² + b² − 2ab for two points 1e-9 apart, far from the pooled mean,
         // comes out at −5.8e-11 before the clamp (checked in Python).
+        // PHD2's C++ gives the same bits.
         let d = square_distance(&[591.562], &[591.562000001, -591.562]);
         assert_eq!(d.data[0], 0.0);
-        assert!((d.data[1] - 1399782.3993760003).abs() < 1e-6);
+        assert_eq!(d.data[1], 1399782.3993760003);
     }
 
     #[test]
@@ -356,8 +395,9 @@ mod tests {
         let (t, y) = worm_series();
         let p = estimate_period_length(&t, &y);
         assert!((p / 230.5 - 1.0).abs() < 0.01, "{p}");
-        // NumPy port of the same steps: 230.46434400040195.
-        assert!((p - 230.46434400040195).abs() < 1e-6, "{p}");
+        // PHD2's C++. The FFT sums in another order than kissfft, so only
+        // to rounding.
+        assert_rel(p, 230.46434400040195, 1e-12);
     }
 
     #[test]
@@ -430,13 +470,48 @@ mod tests {
     #[test]
     fn detrend_is_a_ridge_line_fit() {
         // ge = 3 + 2t: the ridge term (λ = 1e-3) shrinks the fit to
-        // w = [2.99802…, 2.00016…], leaving small residuals (NumPy).
+        // w = [2.99802…, 2.00016…], leaving small residuals. PHD2's C++,
+        // to the bit.
         let t = [0.0, 5.0, 10.0, 15.0];
         let ge = [3.0, 13.0, 23.0, 33.0];
-        assert_close(
-            &detrend(&t, &ge),
-            &[0.00197860514361237, 0.00115920528034863, 0.00033980541708445, -0.00047959444617618],
-            1e-13,
+        let want = [0.0019786051436025964, 0.0011592052803433006, 0.00033980541708444889, -0.00047959444616907376];
+        assert_eq!(bits(&detrend(&t, &ge)), bits(&want));
+    }
+
+    #[test]
+    fn regularize_detrend_and_period_match_phd2() {
+        // UpdateGP's steps on 800 jittered raw points 2 s apart (1600 s,
+        // 320 cells): a 230.5 s arch, a drift, noise and varying variances.
+        let mut next = lcg(0x9E37_79B9_7F4A_7C15);
+        let (mut t, mut ge, mut var) = (Vec::new(), Vec::new(), Vec::new());
+        for i in 0..800 {
+            let jitter = (next() * 64.0).floor();
+            let ti = 2.0 * i as f64 + jitter / 512.0;
+            let noise = (next() - 0.5) * 0.4;
+            t.push(ti);
+            ge.push(arch(ti, 230.5) + 0.002 * ti + noise);
+            var.push(0.1 + 0.4 * next());
+        }
+        assert_eq!(
+            (fnv(&t), fnv(&ge), fnv(&var)),
+            (0xcafc_5f62_e7b5_b1a5, 0x5062_e9f3_c005_d527, 0xe043_3ba1_1233_bd18),
+            "inputs"
         );
+
+        // PHD2's C++, to the bit: the cells and the detrend.
+        let reg = regularize_dataset(&t, &ge, &var, false).unwrap();
+        assert_eq!(reg.timestamps.len(), 320);
+        assert_eq!(
+            (fnv(&reg.timestamps), fnv(&reg.gear_error), fnv(&reg.variances)),
+            (0x377c_94aa_1eda_9c25, 0xb24a_56dd_2b6a_4d24, 0x34d6_0025_54e4_bad6),
+            "cells"
+        );
+        assert_eq!(reg.timestamps[319], 1592.5);
+        let detrended = detrend(&reg.timestamps, &reg.gear_error);
+        assert_eq!(fnv(&detrended), 0x9fb6_14cd_d691_a581, "detrend");
+
+        // The period, to rounding (the FFT sums in another order).
+        let p = estimate_period_length(&reg.timestamps, &detrended);
+        assert_rel(p, 230.80546877307006, 1e-12);
     }
 }

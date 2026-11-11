@@ -139,14 +139,18 @@ mod tests {
         let k2 = PeriodicSquareExponential2 { hyper_parameters: h, extra_parameter: lp };
         let v = k2.evaluate(&[0.0], &[100.0]).data[0];
         assert!((v - (se0 + per + se1)).abs() < 1e-9, "{v}");
-        assert!((v - 398.39209833585466).abs() < 1e-9, "{v}");
         let k = PeriodicSquareExponential { hyper_parameters: [h[0], h[1], h[2], h[3]], extra_parameter: lp };
-        let v = k.evaluate(&[0.0], &[100.0]).data[0];
-        assert!((v - (se0 + per)).abs() < 1e-9, "{v}");
+        let v1 = k.evaluate(&[0.0], &[100.0]).data[0];
+        assert!((v1 - (se0 + per)).abs() < 1e-9, "{v1}");
         // A full period away the periodic term is back to its peak.
         let full = k.evaluate(&[0.0], &[200.0]).data[0];
         let se0_full = 400.0 * (-(200.0f64 * 200.0) / (2.0 * 700.0 * 700.0)).exp();
         assert!((full - (se0_full + 400.0)).abs() < 1e-9, "{full}");
+        // PHD2's covariance_functions.cpp (g++ 16 -O2, Eigen 3.4.1), from a
+        // throwaway harness: to rounding, as exp and sin are libm's.
+        for (got, want) in [(v, 398.39209833585466), (v1, 398.3585520730644), (full, 784.00217651419086)] {
+            assert!((got - want).abs() <= 1e-12 * want, "{got} vs {want}");
+        }
     }
 
     #[test]
@@ -156,9 +160,10 @@ mod tests {
         let x = [0.0, 5.0, 12.5, 40.0];
         let m = k2.evaluate(&x, &x);
         assert_eq!((m.n_rows, m.n_cols), (4, 4));
+        // The square distance is symmetric to the bit, so the kernel is too.
         for r in 0..4 {
             for c in 0..4 {
-                assert!((m.get(r, c) - m.get(c, r)).abs() < 1e-12);
+                assert_eq!(m.get(r, c), m.get(c, r));
             }
         }
     }

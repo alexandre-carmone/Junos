@@ -183,13 +183,48 @@ mod tests {
     use super::*;
     use std::f64::consts::PI;
 
-    /// PHD2's default hyperparameters as `SetGPHyperparameters` passes them:
-    /// noise sd 1, ℓ0 700, sv0 20, ℓP 10 → 4·sin(10π/200), svP 20, ℓ1 25,
-    /// sv1 10, P 200, all as logs.
-    fn defaults() -> [f64; 8] {
-        let p: f64 = 200.0;
+    /// PHD2's default hyperparameters as `SetGPHyperparameters` passes them
+    /// for a period `p`: noise sd 1, ℓ0 700, sv0 20, ℓP 10 → 4·sin(10π/p),
+    /// svP 20, ℓ1 25, sv1 10, P, all as logs.
+    fn hypers(p: f64) -> [f64; 8] {
         let natural = [1.0, 700.0, 20.0, 4.0 * (10.0 * PI / p).sin(), 20.0, 25.0, 10.0, p];
         natural.map(f64::ln)
+    }
+
+    fn defaults() -> [f64; 8] {
+        hypers(200.0)
+    }
+
+    // The goldens marked "PHD2's C++" come from PHD2's own
+    // gaussian_process.cpp, covariance_functions.cpp and math_tools.cpp
+    // (`GP` with the explicit trend and the output projection, as the
+    // guider sets it up), built by g++ 16 -O2 against Eigen 3.4.1 on x86-64
+    // in a throwaway harness. Here (glibc) they match to the bit, except the
+    // five-location prediction: there `Mat::mul` sums H·γ in another order
+    // than Eigen's gemm (two locations, the guider's case, match). The
+    // tolerance also covers another libm's exp and sin in the kernels.
+
+    fn assert_rel(got: &[f64], want: &[f64]) {
+        assert_eq!(got.len(), want.len());
+        for (a, b) in got.iter().zip(want) {
+            assert!((a - b).abs() <= 1e-12 * b.abs(), "{a} vs {b}");
+        }
+    }
+
+    /// The harness's LCG, the top 53 bits as a unit double.
+    fn lcg(seed: u64) -> impl FnMut() -> f64 {
+        let mut s = seed;
+        move || {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (s >> 11) as f64 / 9007199254740992.0
+        }
+    }
+
+    /// The harness's periodic arch: 0 at each period start, 2 mid-period.
+    fn arch(t: f64, period: f64) -> f64 {
+        let x = t / period;
+        let f = x - x.floor();
+        8.0 * f * (1.0 - f)
     }
 
     /// 20 samples, 5 s apart, of a drift plus a 200 s periodic error.
@@ -220,11 +255,49 @@ mod tests {
         let m = gp.predict_projected(&[100.0, 50.0, 0.0]);
         // The next sample, t = 100: 0.5·100 + 3·sin(π) = 50.
         assert!((m[0] - 50.0).abs() < 0.3, "{}", m[0]);
-        // NumPy (np.linalg.solve in place of the LDLT) on the same model.
-        let numpy = [50.26564386119022, 27.550637799149023, 0.12632512093846948];
-        for (a, b) in m.iter().zip(numpy) {
-            assert!((a - b).abs() < 1e-8, "{a} vs {b}");
+        // PHD2's C++.
+        assert_rel(&m, &[50.265643861190213, 27.550637799148983, 0.12632512093835846]);
+    }
+
+    #[test]
+    fn infer_sd_and_predictions_match_phd2() {
+        // 150 cells 5 s apart (a 230 s arch, a drift, noise) with varying
+        // variances, so the LDLT pivots; the 100 most covariant are kept.
+        let mut next = lcg(0x2545_F491_4F6C_DD1D);
+        let t: Vec<f64> = (0..150).map(|i| -2.5 + 5.0 * i as f64).collect();
+        let (mut y, mut v) = (Vec::new(), Vec::new());
+        for &ti in &t {
+            y.push(3.0 * arch(ti, 230.0) + 0.3 * ti + (next() - 0.5) * 0.6);
+            v.push(0.2 + 0.6 * next());
         }
+        let t_last = t[149];
+        let mut gp = Gp::new();
+        gp.set_hyper_parameters(&hypers(230.0));
+        gp.infer_sd(&t, &y, 100, &v, t_last + 3.0);
+
+        // PHD2's C++: the kept points, nearest first, the trend and the
+        // predictions — two locations (the guider's case), one (Eigen's
+        // inner-product path) and five.
+        assert_eq!(gp.data_loc.len(), 100);
+        assert_eq!((gp.data_loc[0], gp.data_loc[1], gp.data_loc[99]), (742.5, 737.5, 412.5));
+        assert_rel(&gp.beta, &[3.652265079467603, 0.30006453315505072]);
+        let m2 = gp.predict_projected(&[t_last + 1.0, t_last + 3.5]);
+        assert_rel(&m2, &[227.24484019509461, 228.12168025308799]);
+        assert_rel(&gp.predict_projected(&[t_last + 2.0]), &[227.59545904272713]);
+        let m5 = gp.predict_projected(&[t_last - 300.0, t_last - 2.0, t_last + 0.5, t_last + 10.0, t_last + 60.0]);
+        let want = [
+            134.62796161825545,
+            226.19444583248358,
+            227.06962701942879,
+            230.38479929152581,
+            246.53488884567878,
+        ];
+        assert_rel(&m5, &want);
+
+        // No prediction point: the last sample is the reference.
+        gp.infer_sd(&t, &y, 100, &v, f64::NAN);
+        let mn = gp.predict_projected(&[t_last + 1.0, t_last + 3.5]);
+        assert_rel(&mn, &[227.18155941900807, 228.05924890764183]);
     }
 
     #[test]
