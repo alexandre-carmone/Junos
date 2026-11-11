@@ -659,3 +659,141 @@ fn connecting_restores_the_calibration_and_loads_the_darks() {
         CmdError::new(1, "cannot connect equipment when capture is active")
     );
 }
+
+#[test]
+fn the_guiding_assistant_measures_then_tests_the_backlash() {
+    let mut r = Rig::guiding(SimParams::new(scale()), false, |_| {});
+    r.ev.clear();
+    // Open while guiding: it starts measuring at once, guide output off.
+    r.cmd(Command::GaOpen).unwrap();
+    let snap = r.e.snapshot();
+    let ga = snap.ga.as_ref().unwrap();
+    assert!(ga.measuring && ga.recommendations.is_empty());
+    assert!(!snap.mount_calibration.guiding_enabled);
+    let change =
+        |e: &EngineEvent| matches!(e, EngineEvent::GuideParamChange { name, .. } if name == "MountGuidingEnabled");
+    assert!(r.ev.iter().any(change));
+
+    // Stop before two minutes: the countdown.
+    for _ in 0..10 {
+        r.step();
+    }
+    r.cmd(Command::GaStop).unwrap();
+    let (left, blt) = r.e.snapshot().ga.unwrap().wait.expect("countdown");
+    assert!(left > 100 && blt, "{left}");
+    r.cmd(Command::Tick).unwrap();
+    assert_eq!(r.e.snapshot().ga.unwrap().wait, Some((left - 1, true)));
+    // Its countdown ends on its own once the samples cover two minutes,
+    // then the backlash test pulses North and South.
+    let start = r.mono();
+    while r.e.snapshot().ga.unwrap().wait.is_some() {
+        r.step();
+        r.cmd(Command::Tick).unwrap();
+        assert!(r.mono() - start < 200.0, "no end of the countdown");
+    }
+    assert!(r.e.snapshot().ga.unwrap().measuring_backlash);
+    let mut n = 0;
+    while r.e.snapshot().ga.unwrap().measuring_backlash {
+        r.step();
+        n += 1;
+        assert!(n < 600, "no end of the backlash test");
+    }
+    let snap = r.e.snapshot();
+    let ga = snap.ga.as_ref().unwrap();
+    assert!(!ga.measuring);
+    assert!(!ga.recommendations.is_empty());
+    // Guiding resumed.
+    assert!(snap.mount_calibration.guiding_enabled);
+    assert_eq!(snap.app_state.unwrap().as_str(), "Guiding");
+    let log = r.guide_log();
+    assert!(log.contains("INFO: GA Result - "), "no GA result");
+    let dbg = r.debug_log();
+    assert!(dbg.contains("BLT: ") && dbg.contains("GuidingAssistant: Disabling guide output"));
+    r.cmd(Command::GaClose).unwrap();
+    assert!(r.e.snapshot().ga.is_none());
+}
+
+#[test]
+fn the_darks_dialog_builds_a_library_and_the_defect_map_darks() {
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    // A frame first, so the camera knows its size.
+    r.cmd(Command::Loop).unwrap();
+    r.step();
+    r.cmd(Command::StopCapture).unwrap();
+    while r.e.has_work() {
+        r.step();
+    }
+    let kind =
+        DarksBuildKind::Library { exposures_ms: vec![500, 1000], count: 2, new_library: true, note: "n".into() };
+    r.cmd(Command::DarksBuild(kind)).unwrap();
+    assert!(r.e.snapshot().darks_build.is_some());
+    let mut frames = 0;
+    while r.e.has_work() {
+        r.step();
+        frames += 1;
+    }
+    // Two exposures, two frames each; the last ends the build.
+    assert_eq!(frames, 4);
+    let snap = r.e.snapshot();
+    assert!(snap.darks_build.is_none());
+    assert!(snap.dark_loaded);
+    assert!(r.files.0.lock().unwrap().contains_key("/darks/PHD2_dark_lib_1.fit"));
+    let complete = "Operation complete: dark library built";
+    let done = |e: &EngineEvent| matches!(e, EngineEvent::Alert { msg, .. } if msg == complete);
+    assert!(r.ev.iter().any(done));
+    let status = "Building master dark at 500 mSec: Taking dark frame 1/2";
+    let first = |e: &EngineEvent| matches!(e, EngineEvent::Status(s) if s == status);
+    assert!(r.ev.iter().any(first));
+
+    let kind = DarksBuildKind::DefectMap { exp_s: 5, count: 5, note: String::new() };
+    r.cmd(Command::DarksBuild(kind)).unwrap();
+    while r.e.has_work() {
+        r.step();
+    }
+    let files = r.files.0.lock().unwrap();
+    assert!(files.contains_key("/darks/PHD2_defect_map_master_1.fit"));
+    assert!(files.keys().any(|k| k.starts_with("/darks/PHD2_defect_map_master_filt")), "{:?}", files.keys());
+    drop(files);
+    // Stopped half-way, the library is loaded back from its file.
+    let kind =
+        DarksBuildKind::Library { exposures_ms: vec![1000], count: 5, new_library: true, note: String::new() };
+    r.cmd(Command::DarksBuild(kind)).unwrap();
+    r.step();
+    r.cmd(Command::DarksStop).unwrap();
+    assert!(!r.e.has_work());
+    assert!(r.e.snapshot().dark_loaded);
+    assert!(r.debug_log().contains("Dark library abort, dark library restored."));
+}
+
+#[test]
+fn the_polar_drift_tool_measures_the_dec_drift() {
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    r.cmd(Command::PolarDriftOpen).unwrap();
+    // Opening it starts looping.
+    assert!(r.e.snapshot().capture_active);
+    r.step();
+    r.cmd(Command::FindStar { roi: None }).unwrap();
+    r.cmd(Command::PolarDriftStart).unwrap();
+    assert!(!r.e.snapshot().mount_calibration.guiding_enabled);
+    for _ in 0..60 {
+        r.step();
+    }
+    let pd = r.e.snapshot().polar_drift.unwrap();
+    assert!(pd.drifting && pd.status[0].starts_with("Time "), "{:?}", pd.status);
+    r.cmd(Command::PolarDriftStop).unwrap();
+    let pd = r.e.snapshot().polar_drift.unwrap();
+    let result = pd.result.expect("result");
+    // PHD2's default 5″/min Dec drift, at Dec 25°: the error that drift
+    // gives, `3.8197 × drift(″/min) / cos(dec)`, is ~21′; the sim's
+    // seeing and PE blur it.
+    assert!(result.pa_error_arcmin > 5.0, "{result:?}");
+    assert!(r.e.snapshot().mount_calibration.guiding_enabled);
+    r.cmd(Command::PolarDriftClose).unwrap();
+    assert!(r.e.snapshot().polar_drift.is_none());
+    // Refused while guiding.
+    let mut g = Rig::guiding(SimParams::new(scale()), false, |_| {});
+    assert_eq!(
+        g.cmd(Command::PolarDriftOpen).unwrap_err(),
+        CmdError::new(1, "Please wait till Calibration is done and stop guiding")
+    );
+}

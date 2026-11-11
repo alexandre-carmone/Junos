@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::assistant::{DialogState, Recommendation};
 use super::camera::CoolerStatus;
 use super::guider::{AlertButton, AppState, FrameDroppedInfo, GuiderState, LockShiftParams, PauseType};
 use super::image::UsImage;
@@ -20,6 +21,7 @@ use super::mount::{AlertKind, CalibrationStepInfo, GuideStepInfo};
 use super::multistar::FrameErrorInfo;
 use super::scope::DecGuideMode;
 use super::star::Star;
+use super::tools::polar_drift::{Phase, PolarDriftResult};
 use super::traits::{Parity, Point, Rect};
 
 /// One event, in PHD2's order. `mount` is the mount's equipment name, the
@@ -136,6 +138,38 @@ pub struct AlgoView {
     pub params: Vec<(String, f64)>,
 }
 
+/// The Guiding Assistant window, while open.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GaView {
+    pub state: DialogState,
+    pub instructions: String,
+    pub status: String,
+    pub measuring: bool,
+    pub measuring_backlash: bool,
+    /// The countdown Stop opened: seconds left, the backlash test to follow.
+    pub wait: Option<(i64, bool)>,
+    pub recommendations: Vec<Recommendation>,
+}
+
+/// A dark build under way: the dialog's status line and gauge (ms taken,
+/// ms in all).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DarksView {
+    pub defect_map: bool,
+    pub status: String,
+    pub progress: (i32, i32),
+}
+
+/// The Polar Drift tool, while open.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PolarDriftView {
+    pub phase: Phase,
+    pub drifting: bool,
+    /// The status bar's three fields.
+    pub status: [String; 3],
+    pub result: Option<PolarDriftResult>,
+}
+
 /// Everything the read-only RPCs and the relay's `guider_state` read,
 /// taken after each frame and each command.
 #[derive(Clone, Debug, Default)]
@@ -205,4 +239,7 @@ pub struct Snapshot {
     pub profile_name: String,
     /// The last frame's number (`m_frameCounter`).
     pub frame: u32,
+    pub ga: Option<GaView>,
+    pub darks_build: Option<DarksView>,
+    pub polar_drift: Option<PolarDriftView>,
 }

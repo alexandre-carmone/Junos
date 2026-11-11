@@ -62,6 +62,7 @@ pub mod stats;
 pub mod stepguider;
 pub mod tools;
 pub mod traits;
+mod windows;
 
 #[cfg(test)]
 mod engine_tests;
@@ -73,6 +74,7 @@ use chrono::{DateTime, Local};
 use serde_json::json;
 
 use self::algo::{AlgoCtx, Axis};
+use self::assistant::GuidingAssistant;
 use self::calibration::{ProfileAccess, ScopePointing};
 use self::camera::{CameraSettings, CaptureKind, GuideCamera, OnCamera, capture_frame};
 use self::control::{Control, ControlCx, ControlEvent, ExposureRequest, GuideOpts, SingleExposure, can_guide};
@@ -87,14 +89,18 @@ use self::multistar::FindParams;
 use self::scope::{CalibrationEnv, DecGuideMode, Scope, ScopeIo};
 use self::star::FindMode;
 use self::stepguider::{AoMount, BumpEnv, StepGuider, StepGuiderDevice};
+use self::tools::polar_drift::PolarDrift;
 use self::traits::{CancelToken, Clock, Dir, MoveOpts, MoveResult, PierSide, Point, Rect};
+use self::windows::{DarksJob, GaCommand};
 use crate::profile::ProfileStore;
 
 pub use self::command::{
-    CmdError, Command, Gear, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator, ScopeGear, ScopeOutput,
-    SingleFrame, Which,
+    CmdError, Command, DarksBuildKind, Gear, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator,
+    ScopeGear, ScopeOutput, SingleFrame, Which,
 };
-pub use self::event::{AlgoView, CalibrationView, DeviceView, EngineEvent, Snapshot};
+pub use self::event::{
+    AlgoView, CalibrationView, DarksView, DeviceView, EngineEvent, GaView, PolarDriftView, Snapshot,
+};
 pub use self::session::{EngineConfig, Files};
 
 /// The thread id the debug log's records carry (PHD2 writes the writing
@@ -194,6 +200,11 @@ pub struct Engine {
     exposure_seen: bool,
     single: Option<SingleState>,
 
+    // The tool windows.
+    ga: Option<GuidingAssistant>,
+    darks_job: Option<DarksJob>,
+    polar_drift: Option<PolarDrift>,
+
     // The logs.
     glog: GuideLog,
     dlog: DebugLog,
@@ -243,6 +254,9 @@ impl Engine {
             cancel: CancelToken::new(),
             exposure_seen: false,
             single: None,
+            ga: None,
+            darks_job: None,
+            polar_drift: None,
             glog: GuideLog::new(),
             dlog: DebugLog::new(now),
             ilog: ImageLogger::new(),
@@ -271,9 +285,10 @@ impl Engine {
     }
 
     /// Whether [`step`](Self::step) has anything to do: an exposure is
-    /// scheduled or moves wait. Otherwise the daemon waits for a command.
+    /// scheduled, moves wait or a dark build runs. Otherwise the daemon
+    /// waits for a command.
     pub fn has_work(&self) -> bool {
-        self.ctrl.exposure_request().is_some() || !self.moves.is_empty()
+        self.ctrl.exposure_request().is_some() || !self.moves.is_empty() || self.darks_job.is_some()
     }
 
     /// The events since the last call, in PHD2's order.
@@ -290,11 +305,13 @@ impl Engine {
     // ----------------------------------------------------------------- frame
 
     /// One worker cycle (see the module doc): the queued moves, then the
-    /// scheduled exposure and everything that follows from it. Returns the
-    /// events.
+    /// scheduled exposure and everything that follows from it — or, while
+    /// the Darks dialog builds, its next dark frame. Returns the events.
     pub fn step(&mut self) -> Vec<EngineEvent> {
         self.run_moves();
-        if let Some(req) = self.ctrl.exposure_request() {
+        if self.darks_job.is_some() {
+            self.darks_step();
+        } else if let Some(req) = self.ctrl.exposure_request() {
             self.expose(req);
         }
         self.finish();
@@ -406,6 +423,7 @@ impl Engine {
         });
         self.queue_moves(&upd.moves);
         self.log_frame_image(&img, &upd.position, stats, active);
+        self.pa_tools(upd.pa_tools);
         self.events.push(EngineEvent::FrameReady(img));
         self.call(|c, cx, ev| c.after_frame(cx, ev));
         self.run_moves();
@@ -1034,7 +1052,10 @@ impl Engine {
                 self.queue_moves(&upd.moves);
                 ok()
             }
-            Command::Tick => ok(),
+            Command::Tick => {
+                self.ga_tick();
+                ok()
+            }
             Command::SelectStar { x, y } => {
                 let set = self.call(|c, cx, ev| {
                     let mut gev = Vec::new();
@@ -1125,6 +1146,25 @@ impl Engine {
                 }
                 ok()
             }
+            Command::GaOpen => self.ga_open(),
+            Command::GaStart => self.ga_start(),
+            Command::GaStop => self.ga_command(GaCommand::Stop),
+            Command::GaEndWait { accept } => self.ga_command(GaCommand::EndWait(accept)),
+            Command::GaSetMeasureBacklash(on) => self.ga_command(GaCommand::MeasureBacklash(on)),
+            Command::GaApply(kind) => self.ga_command(GaCommand::Apply(kind)),
+            Command::GaReview(ts) => self.ga_command(GaCommand::Review(ts)),
+            Command::GaClose => self.ga_command(GaCommand::Close),
+            Command::DarksBuild(kind) => self.darks_build(kind),
+            Command::DarksStop => self.darks_stop(),
+            Command::DarksUse(on) => Ok(json!(self.load_dark_handler(on))),
+            Command::DefectMapUse(on) => {
+                self.load_defect_map_handler(on);
+                Ok(json!(self.darks.defect_map.is_some()))
+            }
+            Command::PolarDriftOpen => self.polar_drift_open(),
+            Command::PolarDriftStart => self.polar_drift_start(),
+            Command::PolarDriftStop => self.polar_drift_stop(false),
+            Command::PolarDriftClose => self.polar_drift_stop(true),
         }
     }
 
@@ -1431,6 +1471,9 @@ impl Engine {
             profile_id: self.store.current_profile_id(),
             profile_name: self.store.current_profile(),
             frame: self.frame_counter,
+            ga: self.ga_view(),
+            darks_build: self.darks_view(),
+            polar_drift: self.polar_drift_view(),
         }
     }
 }

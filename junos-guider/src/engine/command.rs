@@ -13,6 +13,7 @@ use std::fmt;
 use serde_json::Value;
 
 use super::algo::{AlgoKind, Axis};
+use super::assistant::RecKind;
 use super::calibration::Calibration;
 use super::camera::GuideCamera;
 use super::control::{DitherMode, SettleParams};
@@ -156,6 +157,18 @@ pub struct SingleFrame {
     pub save: bool,
 }
 
+/// A dark-library or bad-pixel-map build (the Darks dialog's Start).
+#[derive(Clone, Debug, PartialEq)]
+pub enum DarksBuildKind {
+    /// Master darks of these exposures (ms), `count` frames each; a new
+    /// library forgets the darks held first. `note` is each file's
+    /// `USERNOTE`.
+    Library { exposures_ms: Vec<i32>, count: i32, new_library: bool, note: String },
+    /// The defect map's master dark: `count` frames of `exp_s` seconds,
+    /// saved with its median-filtered copy for the map to be built from.
+    DefectMap { exp_s: i32, count: i32, note: String },
+}
+
 /// Everything that changes the engine. The read-only RPCs answer from the
 /// snapshot, without the engine thread.
 pub enum Command {
@@ -240,6 +253,29 @@ pub enum Command {
     SetImageLogger(ImageLoggerSettings),
     /// `set_manual_pointing`; `None` drops it.
     SetManualPointing(Option<ManualPointing>),
+    /// The Guiding Assistant window: open (it starts measuring at once
+    /// when guiding, as PHD2's), Start, Stop, the countdown's Cancel
+    /// (`accept`: PHD2's Ctrl-click, which keeps the samples), the backlash
+    /// check box, an Apply, a past run, close.
+    GaOpen,
+    GaStart,
+    GaStop,
+    GaEndWait { accept: bool },
+    GaSetMeasureBacklash(bool),
+    GaApply(RecKind),
+    GaReview(String),
+    GaClose,
+    /// The Darks dialog's Start and Stop; the Darks menu's "Use Dark
+    /// Library" and "Use Bad-pixel Map".
+    DarksBuild(DarksBuildKind),
+    DarksStop,
+    DarksUse(bool),
+    DefectMapUse(bool),
+    /// The Polar Drift tool: open (looping starts), Start, Stop, close.
+    PolarDriftOpen,
+    PolarDriftStart,
+    PolarDriftStop,
+    PolarDriftClose,
 }
 
 impl Command {
@@ -281,6 +317,22 @@ impl Command {
             Command::SetAutoExposure { .. } => "set_auto_exposure",
             Command::SetImageLogger(_) => "set_image_logger",
             Command::SetManualPointing(_) => "set_manual_pointing",
+            Command::GaOpen => "ga_open",
+            Command::GaStart => "ga_start",
+            Command::GaStop => "ga_stop",
+            Command::GaEndWait { .. } => "ga_end_wait",
+            Command::GaSetMeasureBacklash(_) => "ga_set_measure_backlash",
+            Command::GaApply(_) => "ga_apply",
+            Command::GaReview(_) => "ga_review",
+            Command::GaClose => "ga_close",
+            Command::DarksBuild(_) => "darks_build",
+            Command::DarksStop => "darks_stop",
+            Command::DarksUse(_) => "darks_use",
+            Command::DefectMapUse(_) => "bpm_use",
+            Command::PolarDriftOpen => "pa_drift_open",
+            Command::PolarDriftStart => "pa_drift_start",
+            Command::PolarDriftStop => "pa_drift_stop",
+            Command::PolarDriftClose => "pa_drift_close",
         }
     }
 }

@@ -291,9 +291,8 @@ impl Engine {
             GuiderEvent::LockPositionSet(p) => self.events.push(EngineEvent::LockPositionSet(p)),
             GuiderEvent::LockPositionLost => self.events.push(EngineEvent::LockPositionLost),
             GuiderEvent::LockShiftLimitReached => self.events.push(EngineEvent::LockPositionShiftLimitReached),
-            // The Guiding Assistant's backlash test: the guider enters its
-            // measurement mode only for it.
-            GuiderEvent::BacklashStep(_) | GuiderEvent::BacklashError => {}
+            GuiderEvent::BacklashStep(p) => self.ga_backlash(Some(p)),
+            GuiderEvent::BacklashError => self.ga_backlash(None),
             GuiderEvent::StartCalibration(role) => {
                 let header = self.header();
                 if let Some(mount) = self.mount_summary(role) {
@@ -313,11 +312,13 @@ impl Engine {
                 let header = self.header();
                 self.glog.guiding_started(now, &header);
                 self.events.push(EngineEvent::StartGuiding);
+                self.ga_app_state(true);
             }
             GuiderEvent::GuidingStopped => {
                 self.events.push(EngineEvent::GuidingStopped);
                 let secs = stopwatch_seconds(self.clock.mono() - self.guiding_started);
                 self.glog.guiding_stopped(now, secs);
+                self.ga_app_state(false);
             }
             GuiderEvent::ParamChange { name, value, force_log } => self.param_change(name, value, force_log),
             GuiderEvent::SetAutoLoadCalibration(on) => self.set_auto_load_calibration(on),
@@ -346,6 +347,7 @@ impl Engine {
         match e {
             MountEvent::GuideStep(step) => {
                 self.glog.guide_step(&step);
+                self.ga_guide_step(&step);
                 let mount = self.mount_name(role);
                 self.events.push(EngineEvent::GuideStep { mount, step });
             }
@@ -457,7 +459,12 @@ impl Engine {
 
     /// `usImage::Save`: the frame as FITS with the cards of the moment.
     pub(super) fn save_fits(&mut self, img: &UsImage, path: &str) -> io::Result<()> {
-        let header = self.save_header();
+        self.save_fits_note(img, path, "")
+    }
+
+    /// `usImage::Save(path, note)`: with a `USERNOTE`.
+    pub(super) fn save_fits_note(&mut self, img: &UsImage, path: &str, note: &str) -> io::Result<()> {
+        let header = SaveHeader { note: note.to_string(), ..self.save_header() };
         let bytes = write_fits(img, &header).map_err(io::Error::other)?;
         self.files.write(path, &bytes)
     }
@@ -658,7 +665,7 @@ impl Engine {
 
     // --------------------------------------------------- darks on the camera
 
-    fn dark_lib_path(&self) -> String {
+    pub(super) fn dark_lib_path(&self) -> String {
         let name = darks::dark_lib_file_name(self.cfg.instance as i32, self.store.current_profile_id());
         join(&self.cfg.darks_dir, &name)
     }
@@ -672,6 +679,11 @@ impl Engine {
     fn dark_lib_geometry(&mut self) -> FileGeometry {
         let path = self.dark_lib_path();
         self.files.read(&path).map_or(FileGeometry::Missing, |b| FileGeometry::from_fits(&b))
+    }
+
+    /// `DarkLibExists(profile, false)`: a dark library file that fits.
+    pub(super) fn dark_lib_file_usable(&mut self, frame_size: (i32, i32)) -> bool {
+        self.dark_lib_geometry().usable(frame_size)
     }
 
     /// The defect map's (`DefectMapExists`): its `.txt` decides presence,
@@ -703,7 +715,7 @@ impl Engine {
     }
 
     /// `SetDarkMenuState` (myframe.cpp:2624).
-    fn set_dark_menu_state(&mut self) {
+    pub(super) fn set_dark_menu_state(&mut self) {
         let size = self.camera.as_ref().map_or((0, 0), |c| c.frame_size());
         let (lib, map) = (self.dark_lib_geometry(), self.defect_map_geometry());
         for a in self.dark_geometry.refresh(size, lib, map) {
@@ -712,7 +724,7 @@ impl Engine {
     }
 
     /// `LoadDarkHandler` (myframe_events.cpp:722).
-    fn load_dark_handler(&mut self, check: bool) -> bool {
+    pub(super) fn load_dark_handler(&mut self, check: bool) -> bool {
         if !self.camera_connected() {
             self.alert("You must connect a camera before loading a dark library".into(), AlertKind::Warning);
             self.dark_geometry.darks_checked = false;
@@ -768,7 +780,7 @@ impl Engine {
     }
 
     /// `LoadDefectMapHandler` (myframe_events.cpp:765).
-    fn load_defect_map_handler(&mut self, check: bool) {
+    pub(super) fn load_defect_map_handler(&mut self, check: bool) {
         if !self.camera_connected() {
             self.alert("You must connect a camera before loading a bad-pixel map".into(), AlertKind::Warning);
             self.dark_geometry.defect_map_checked = false;
