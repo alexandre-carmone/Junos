@@ -28,9 +28,12 @@
 //! an outcome `-32603 internal error` when it is dropped, so Ekos, which
 //! keeps one call in flight and waits for its reply, never stalls.
 //!
-//! A client that does not read is not waited for: its events stay in a
-//! bounded queue (the broadcast's backlog) and the ones it misses are
-//! dropped with a warning, as PHD2's short writes are.
+//! A client that does not read is not waited for, as PHD2 drops a client
+//! whose write fails: a write that takes longer than [`WRITE_TIMEOUT`], or
+//! events it fell behind on (the broadcast's backlog, which carries no
+//! frames), closes it, and it gets a fresh catch-up when it comes back.
+//! The sockets have `SO_KEEPALIVE`, so a peer gone without a FIN is found
+//! out. A handler that panics answers `-32603` and the client is kept.
 //!
 //! Not ported: the legacy binary socket server on 4300 + instance − 1, and
 //! the `evsrv:` request and response lines of the debug log.
@@ -47,6 +50,9 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use std::panic::AssertUnwindSafe;
+
+use futures_util::FutureExt;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -55,7 +61,7 @@ use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{Notify, broadcast, mpsc, oneshot, watch};
 
 use self::events::Origin;
-use self::rpc::{Call, LineReader, Parsed, RpcError};
+use self::rpc::{Call, INTERNAL_ERROR, LineReader, Parsed, RpcError};
 use crate::daemon::Daemon;
 use crate::engine::EngineEvent;
 
@@ -69,6 +75,8 @@ const BACKLOG: u32 = 128;
 /// The first wait before binding again, and the longest.
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(60);
+/// The longest a write may wait for a client that does not read.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Where and as what the server runs.
 #[derive(Clone, Debug)]
@@ -159,10 +167,12 @@ impl EventServer {
     }
 }
 
-/// A listening socket on every interface, `SO_REUSEADDR` as PHD2's.
+/// A listening socket on every interface, `SO_REUSEADDR` as PHD2's;
+/// `SO_KEEPALIVE`, which the accepted sockets inherit.
 fn bind(port: u16) -> io::Result<TcpListener> {
     let socket = TcpSocket::new_v4()?;
     socket.set_reuseaddr(true)?;
+    socket.set_keepalive(true)?;
     socket.bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)))?;
     socket.listen(BACKLOG)
 }
@@ -202,10 +212,15 @@ async fn client(stream: TcpStream, peer: SocketAddr, s: Arc<Shared>) {
     let (events, snap) = s.daemon.subscribe_with_snapshot();
     let catch_up = events::catch_up(&snap, &s.origin, events::now());
     let (tx, rx) = mpsc::channel(REPLY_QUEUE);
-    let writer = tokio::spawn(write_loop(wr, catch_up, events, rx, s.origin.clone()));
-    read_loop(rd, tx, &s).await;
-    // The reader is done; the writer ends once the replies queued are out.
-    let _ = writer.await;
+    let mut writer = tokio::spawn(write_loop(wr, catch_up, events, rx, s.origin.clone()));
+    tokio::select! {
+        // The reader is done; the writer ends once the replies queued are out.
+        _ = read_loop(rd, tx, &s) => {
+            let _ = writer.await;
+        }
+        // The writer gave up on the client: drop it.
+        _ = &mut writer => {}
+    }
     tracing::debug!(%peer, "evsrv: cli disconnect");
 }
 
@@ -214,7 +229,13 @@ async fn send(wr: &mut OwnedWriteHalf, text: &str) -> io::Result<()> {
     let mut line = String::with_capacity(text.len() + 2);
     line.push_str(text);
     line.push_str("\r\n");
-    wr.write_all(line.as_bytes()).await
+    match tokio::time::timeout(WRITE_TIMEOUT, wr.write_all(line.as_bytes())).await {
+        Ok(r) => r,
+        Err(_) => {
+            tracing::warn!("evsrv: a client did not read for {} s; closing it", WRITE_TIMEOUT.as_secs());
+            Err(io::ErrorKind::TimedOut.into())
+        }
+    }
 }
 
 /// The client's writer: the catch-up, then the events and the replies.
@@ -245,7 +266,7 @@ async fn write_loop(
                                 return;
                             }
                         }
-                        Err(TryRecvError::Lagged(n)) => lagged(n),
+                        Err(TryRecvError::Lagged(n)) => return lagged(n),
                         Err(TryRecvError::Empty) => break,
                         Err(TryRecvError::Closed) => events_open = false,
                     }
@@ -263,7 +284,7 @@ async fn write_loop(
                         return;
                     }
                 }
-                Err(RecvError::Lagged(n)) => lagged(n),
+                Err(RecvError::Lagged(n)) => return lagged(n),
                 Err(RecvError::Closed) => events_open = false,
             },
         }
@@ -280,11 +301,11 @@ async fn write_event(wr: &mut OwnedWriteHalf, e: &EngineEvent, origin: &Origin) 
 }
 
 fn lagged(n: u64) {
-    tracing::warn!("evsrv: a client did not read; {n} events dropped");
+    tracing::warn!("evsrv: a client did not read; {n} events dropped, closing it");
 }
 
 /// The client's requests (`handle_cli_input`), one line at a time.
-async fn read_loop(mut rd: OwnedReadHalf, tx: mpsc::Sender<Outgoing>, s: &Shared) {
+async fn read_loop(mut rd: OwnedReadHalf, tx: mpsc::Sender<Outgoing>, s: &Arc<Shared>) {
     let mut lines = LineReader::default();
     let mut buf = vec![0; READ_CHUNK];
     loop {
@@ -296,7 +317,10 @@ async fn read_loop(mut rd: OwnedReadHalf, tx: mpsc::Sender<Outgoing>, s: &Shared
             let mut guard = ReplyGuard::new(rpc::parse(&input), tx.clone());
             let mut shutdown = false;
             for call in guard.calls() {
-                let outcome = methods::run(&s.daemon, &call).await;
+                let outcome = AssertUnwindSafe(methods::run(&s.daemon, &call))
+                    .catch_unwind()
+                    .await
+                    .unwrap_or_else(|_| Err(RpcError::new(INTERNAL_ERROR, "internal error")));
                 shutdown |= call.method.name == "shutdown" && outcome.is_ok();
                 guard.outcomes.push(outcome);
             }
@@ -305,11 +329,17 @@ async fn read_loop(mut rd: OwnedReadHalf, tx: mpsc::Sender<Outgoing>, s: &Shared
                 continue;
             }
             // PHD2 closes after answering: once the reply is out (or the
-            // writer gone, or no reply for a notification).
+            // writer gone, or no reply for a notification). A task of its
+            // own, so that the client dropped meanwhile does not cut it
+            // short; the next request waits for it.
             let (written, out) = oneshot::channel();
             guard.send(Some(written)).await;
-            let _ = out.await;
-            s.shutdown().await;
+            let s = s.clone();
+            let _ = tokio::spawn(async move {
+                let _ = out.await;
+                s.shutdown().await;
+            })
+            .await;
         }
     }
 }

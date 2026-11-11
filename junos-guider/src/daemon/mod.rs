@@ -5,9 +5,12 @@
 //! thread in one): it takes the queued jobs first, then steps while it has
 //! work ([`Engine::has_work`]), and otherwise waits for a job at most until
 //! the next 1 s tick. Every command comes with a reply channel and is
-//! answered after its events went out on the broadcast and the snapshot
-//! was published, so a client that drains the events before writing the
-//! reply keeps PHD2's order. The snapshot ([`Snapshot`], in a `watch`) is
+//! answered after the snapshot was published and its events went out on
+//! the broadcast (in that order: PHD2 updates its state before it
+//! notifies), so a client that drains the events before writing the reply
+//! keeps PHD2's order. The frames do not ride the broadcast, whose backlog
+//! a client that stops reading would fill with them: the latest one is in
+//! a `watch` ([`Daemon::frames`]). The snapshot ([`Snapshot`], in a `watch`) is
 //! published after every job, step and tick: the read-only RPCs and the
 //! relay read it without touching the engine thread, which may be inside
 //! an exposure. Each tick also sends [`Command::Tick`], writes the profile
@@ -40,6 +43,7 @@ use serde_json::json;
 use tokio::sync::{broadcast, oneshot, watch};
 
 use self::gear::{Choices, Rig};
+use crate::engine::image::UsImage;
 use crate::engine::traits::{CancelToken, SystemClock};
 use crate::engine::{CmdError, Command, Engine, EngineConfig, EngineEvent, Files, Reply, Snapshot, StopRequest};
 use crate::indi::client::IndiClient;
@@ -96,6 +100,8 @@ struct Inner {
     jobs: mpsc::Sender<Job>,
     events: broadcast::Sender<Arc<EngineEvent>>,
     snapshot: watch::Receiver<Arc<Snapshot>>,
+    /// The latest frame, published after its snapshot.
+    frames: watch::Receiver<Option<Arc<UsImage>>>,
     /// The engine thread's, shared for the event server's port.
     snapshot_tx: Arc<watch::Sender<Arc<Snapshot>>>,
     /// Held while a job's events and snapshot go out, so that a new
@@ -141,12 +147,14 @@ impl Daemon {
         let (events, _) = broadcast::channel(EVENT_BACKLOG);
         let (snap_tx, snapshot) = watch::channel(Arc::new(engine.snapshot()));
         let snap_tx = Arc::new(snap_tx);
+        let (frame_tx, frames) = watch::channel(None);
         let publishing = Arc::new(Mutex::new(ServerPort::default()));
         let inner = Arc::new(Inner {
             opts,
             jobs,
             events: events.clone(),
             snapshot,
+            frames,
             snapshot_tx: snap_tx.clone(),
             publishing: publishing.clone(),
             stop: engine.stop_request(),
@@ -160,7 +168,7 @@ impl Daemon {
         let weak = Arc::downgrade(&daemon.0);
         let t = thread::Builder::new()
             .name("guider-engine".into())
-            .spawn(move || run(engine, rx, events, snap_tx, publishing, weak))
+            .spawn(move || run(engine, rx, Outputs { events, snapshot: snap_tx, frame: frame_tx, publishing }, weak))
             .expect("spawn the engine thread");
         *lock(&daemon.0.thread) = Some(t);
         daemon
@@ -184,6 +192,11 @@ impl Daemon {
     /// The snapshot, as it changes.
     pub fn snapshots(&self) -> watch::Receiver<Arc<Snapshot>> {
         self.0.snapshot.clone()
+    }
+
+    /// The latest frame, as frames come (`None` before the first).
+    pub fn frames(&self) -> watch::Receiver<Option<Arc<UsImage>>> {
+        self.0.frames.clone()
     }
 
     /// The latest snapshot.
@@ -389,25 +402,35 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The engine thread.
-fn run(
-    mut engine: Engine,
-    jobs: mpsc::Receiver<Job>,
+/// Where the engine thread publishes.
+struct Outputs {
     events: broadcast::Sender<Arc<EngineEvent>>,
     snapshot: Arc<watch::Sender<Arc<Snapshot>>>,
+    frame: watch::Sender<Option<Arc<UsImage>>>,
     publishing: Arc<Mutex<ServerPort>>,
-    daemon: std::sync::Weak<Inner>,
-) {
-    let publish = |engine: &mut Engine, evs: Vec<EngineEvent>| {
+}
+
+impl Outputs {
+    /// The snapshot, then the frame, then the events, under `publishing`.
+    fn publish(&self, engine: &mut Engine, evs: Vec<EngineEvent>) {
         let mut snap = engine.snapshot();
-        let port = lock(&publishing);
+        let port = lock(&self.publishing);
         (snap.port, snap.port_error) = (port.port, port.error.clone());
+        self.snapshot.send_replace(Arc::new(snap));
         for e in evs {
-            // No subscriber is not an error.
-            let _ = events.send(Arc::new(e));
+            if let EngineEvent::FrameReady(img) = e {
+                self.frame.send_replace(Some(img));
+            } else {
+                // No subscriber is not an error.
+                let _ = self.events.send(Arc::new(e));
+            }
         }
-        snapshot.send_replace(Arc::new(snap));
-    };
+    }
+}
+
+/// The engine thread.
+fn run(mut engine: Engine, jobs: mpsc::Receiver<Job>, out: Outputs, daemon: std::sync::Weak<Inner>) {
+    let publish = |engine: &mut Engine, evs: Vec<EngineEvent>| out.publish(engine, evs);
     let mut rig = Rig::default();
     let mut last_tick = Instant::now();
     loop {

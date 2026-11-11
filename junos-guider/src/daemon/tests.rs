@@ -133,8 +133,11 @@ async fn connects_loops_guides_and_stops_on_the_simulator() {
     assert_eq!(d.set_connected(true).await, Ok(json!(0)));
 
     d.command(Command::Loop).await.unwrap();
-    wait_for(&mut ev, 5, |e| matches!(e, EngineEvent::LoopingExposures { .. })).await;
+    let seen = wait_for(&mut ev, 5, |e| matches!(e, EngineEvent::LoopingExposures { .. })).await;
     assert_eq!(app_state(&d), "Looping");
+    // The frames go to their own `watch`, never to the broadcast.
+    assert!(d.frames().borrow().is_some());
+    assert!(!seen.iter().any(|e| matches!(**e, EngineEvent::FrameReady(_))));
     let lock = find_star(&d, &mut ev).await;
     assert_eq!(app_state(&d), "Selected");
     assert!(lock.as_array().is_some_and(|a| a.len() == 2), "{lock}");

@@ -530,7 +530,8 @@ pub fn star_image(snap: &Snapshot, size: i32) -> Outcome {
         Some(sf) if !sf.is_empty() => sf,
         _ => Rect::new(0, 0, img.w, img.h),
     };
-    let rect = Rect::new(sx - halfw, sy - halfw, fullw, fullw).intersect(&frame);
+    // A subframe may stick out of the frame.
+    let rect = Rect::new(sx - halfw, sy - halfw, fullw, fullw).intersect(&frame).intersect(&Rect::new(0, 0, img.w, img.h));
     let mut bytes = Vec::with_capacity((rect.w.max(0) * rect.h.max(0) * 2) as usize);
     for y in rect.y..=rect.bottom() {
         let row = (y * img.w + rect.x) as usize;

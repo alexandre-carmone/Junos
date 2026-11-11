@@ -191,8 +191,6 @@ struct Track {
     settling: Option<Value>,
     limit_reached: bool,
     app_state: Option<&'static str>,
-    /// The frame just shown, encoded with the snapshot that follows it.
-    frame: Option<Arc<UsImage>>,
     frame_seq: u64,
 }
 
@@ -277,6 +275,7 @@ async fn hub(d: Daemon, sh: Arc<Shared>, mut part: ProfilePart, mut track: Track
     let origin = Origin::new(d.options().engine.instance);
     let mut events = d.subscribe();
     let mut snaps = d.snapshots();
+    let mut frames = d.frames();
     let (ptx, mut prx) = mpsc::channel(1);
     let (d2, sh2) = (d.clone(), sh.clone());
     tokio::spawn(async move {
@@ -301,9 +300,16 @@ async fn hub(d: Daemon, sh: Arc<Shared>, mut part: ProfilePart, mut track: Track
                 }
                 let s = snaps.borrow_and_update().clone();
                 publish(&d, &sh, &s, &part, &mut track, false);
-                if let Some(img) = track.frame.take() {
+            }
+            r = frames.changed() => {
+                if r.is_err() {
+                    return;
+                }
+                // The frame's snapshot was published before it.
+                let img = frames.borrow_and_update().clone();
+                if let Some(img) = img.filter(|_| lock(&sh.filter).frames) {
                     track.frame_seq += 1;
-                    send_frame(&sh, img, s, &part, track.frame_seq);
+                    send_frame(&sh, img, d.snapshot(), &part, track.frame_seq);
                 }
             }
             Some(p) = prx.recv() => {
@@ -364,7 +370,6 @@ fn on_event(ev: &EngineEvent, sh: &Shared, origin: &Origin, track: &mut Track) {
         EngineEvent::LockPositionShiftLimitReached => track.limit_reached = true,
         EngineEvent::LockPositionSet(_) => track.limit_reached = false,
         EngineEvent::ConfigurationChange => sh.refresh.notify_one(),
-        EngineEvent::FrameReady(img) if lock(&sh.filter).frames => track.frame = Some(img.clone()),
         _ => {}
     }
 }
