@@ -247,4 +247,8 @@ pub struct Snapshot {
     pub polar_drift: Option<PolarDriftView>,
     /// The daemon is connecting the gear ([`Command::Connecting`](super::Command::Connecting)).
     pub connecting: bool,
+    /// The event server's port once it listens, and why it does not while
+    /// it retries; the daemon's, the engine leaves them empty.
+    pub port: Option<u16>,
+    pub port_error: Option<String>,
 }

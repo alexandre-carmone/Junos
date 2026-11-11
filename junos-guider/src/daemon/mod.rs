@@ -77,6 +77,13 @@ fn task<R: Send + 'static>(f: impl FnOnce(&mut Engine, &mut Rig) -> R + Send + '
     })
 }
 
+/// The event server's port, or its error.
+#[derive(Debug, Default)]
+struct ServerPort {
+    port: Option<u16>,
+    error: Option<String>,
+}
+
 enum Job {
     Command(Command, oneshot::Sender<Reply>),
     Run(Task),
@@ -88,10 +95,13 @@ struct Inner {
     jobs: mpsc::Sender<Job>,
     events: broadcast::Sender<Arc<EngineEvent>>,
     snapshot: watch::Receiver<Arc<Snapshot>>,
+    /// The engine thread's, shared for the event server's port.
+    snapshot_tx: Arc<watch::Sender<Arc<Snapshot>>>,
     /// Held while a job's events and snapshot go out, so that a new
     /// client's catch-up and its events are taken at one point
-    /// ([`Daemon::subscribe_with_snapshot`]).
-    publishing: Arc<Mutex<()>>,
+    /// ([`Daemon::subscribe_with_snapshot`]); it holds the event server's
+    /// port, which every snapshot carries.
+    publishing: Arc<Mutex<ServerPort>>,
     stop: StopRequest,
     cancel: CancelToken,
     /// A `set_connected true` is running (PHD2's modal gear dialog).
@@ -127,12 +137,14 @@ impl Daemon {
         let (jobs, rx) = mpsc::channel();
         let (events, _) = broadcast::channel(EVENT_BACKLOG);
         let (snap_tx, snapshot) = watch::channel(Arc::new(engine.snapshot()));
-        let publishing = Arc::new(Mutex::new(()));
+        let snap_tx = Arc::new(snap_tx);
+        let publishing = Arc::new(Mutex::new(ServerPort::default()));
         let inner = Arc::new(Inner {
             opts,
             jobs,
             events: events.clone(),
             snapshot,
+            snapshot_tx: snap_tx.clone(),
             publishing: publishing.clone(),
             stop: engine.stop_request(),
             cancel: engine.cancel_token(),
@@ -171,6 +183,17 @@ impl Daemon {
     pub fn subscribe_with_snapshot(&self) -> (broadcast::Receiver<Arc<EngineEvent>>, Arc<Snapshot>) {
         let _publishing = lock(&self.0.publishing);
         (self.0.events.subscribe(), self.snapshot())
+    }
+
+    /// The event server's port once it listens (`port`), or why it does
+    /// not (`error`), published at once in the snapshot.
+    pub fn set_event_server(&self, port: Option<u16>, error: Option<String>) {
+        let mut p = lock(&self.0.publishing);
+        *p = ServerPort { port, error };
+        self.0.snapshot_tx.send_modify(|s| {
+            let s = Arc::make_mut(s);
+            (s.port, s.port_error) = (p.port, p.error.clone());
+        });
     }
 
     /// One command, answered once the engine handled it. `stop_capture`
@@ -352,18 +375,19 @@ fn run(
     mut engine: Engine,
     jobs: mpsc::Receiver<Job>,
     events: broadcast::Sender<Arc<EngineEvent>>,
-    snapshot: watch::Sender<Arc<Snapshot>>,
-    publishing: Arc<Mutex<()>>,
+    snapshot: Arc<watch::Sender<Arc<Snapshot>>>,
+    publishing: Arc<Mutex<ServerPort>>,
     daemon: std::sync::Weak<Inner>,
 ) {
     let publish = |engine: &mut Engine, evs: Vec<EngineEvent>| {
-        let snap = Arc::new(engine.snapshot());
-        let _publishing = lock(&publishing);
+        let mut snap = engine.snapshot();
+        let port = lock(&publishing);
+        (snap.port, snap.port_error) = (port.port, port.error.clone());
         for e in evs {
             // No subscriber is not an error.
             let _ = events.send(Arc::new(e));
         }
-        snapshot.send_replace(snap);
+        snapshot.send_replace(Arc::new(snap));
     };
     let mut rig = Rig::default();
     let mut last_tick = Instant::now();

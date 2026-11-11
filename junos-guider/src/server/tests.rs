@@ -19,6 +19,11 @@ use crate::profile::ProfileStore;
 /// The daemon on the simulator in a fresh folder under `target/`, short
 /// exposures, and its server on a free port.
 pub(super) async fn start(name: &str) -> (Daemon, EventServer, PathBuf) {
+    start_with(name, ServerOptions { port: 0, instance: 1, shutdown_exits: false }).await
+}
+
+/// [`start`] with the server's options.
+pub(super) async fn start_with(name: &str, server: ServerOptions) -> (Daemon, EventServer, PathBuf) {
     let d = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/test-server").join(name);
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(&d).unwrap();
@@ -43,7 +48,7 @@ pub(super) async fn start(name: &str) -> (Daemon, EventServer, PathBuf) {
         indi_port: 7624,
     };
     let daemon = Daemon::start(opts, store, Box::new(DiskFiles));
-    let server = EventServer::start(daemon.clone(), ServerOptions { port: 0, instance: 1 });
+    let server = EventServer::start(daemon.clone(), server);
     (daemon, server, d)
 }
 
@@ -252,5 +257,73 @@ async fn methods_answer_as_phd2() {
     assert!(fs::read_to_string(&file).unwrap().starts_with("PHD Config 1"));
 
     d.shutdown().await;
+    d.close();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_taken_port_is_tried_again() {
+    let blocker = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+    let port = blocker.local_addr().unwrap().port();
+    let (d, server, _dir) = start_with("retry", ServerOptions { port, instance: 1, shutdown_exits: false }).await;
+    let t = std::time::Instant::now();
+    while d.snapshot().port_error.is_none() {
+        assert!(t.elapsed() < Duration::from_secs(5), "no port error");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let snap = d.snapshot();
+    assert_eq!(snap.port, None);
+    let error = snap.port_error.clone().unwrap();
+    assert!(error.starts_with(&format!("Could not listen at port {port}: ")), "{error}");
+
+    // The port freed, the server takes it at its next try.
+    drop(blocker);
+    let addr = tokio::time::timeout(Duration::from_secs(10), server.local_addr()).await.unwrap();
+    assert_eq!(addr.port(), port);
+    let snap = d.snapshot();
+    assert_eq!((snap.port, snap.port_error.as_deref()), (Some(port), None));
+    let mut c = Client::connect(&server).await;
+    c.until("AppState").await;
+    d.close();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_answers_then_stops() {
+    let (d, server, _dir) = start("shutdown").await;
+    let mut c = Client::connect(&server).await;
+    c.until("AppState").await;
+    d.set_connected(true).await.unwrap();
+    d.command(Command::Loop).await.unwrap();
+    c.until("LoopingExposures").await;
+
+    // The reply comes before the stop; the gear is disconnected and the
+    // server goes on serving.
+    c.send(r#"{"method":"shutdown","id":1}"#).await;
+    loop {
+        let v = c.line().await;
+        if v.get("jsonrpc").is_some() {
+            assert_eq!((&v["result"], &v["id"]), (&json!(0), &json!(1)));
+            break;
+        }
+        assert_ne!(v["Event"], "LoopingExposuresStopped");
+    }
+    c.until("LoopingExposuresStopped").await;
+    c.send(r#"{"method":"get_connected","id":2}"#).await;
+    loop {
+        let v = c.line().await;
+        if v.get("jsonrpc").is_some() {
+            assert_eq!(v["result"], false);
+            break;
+        }
+    }
+    assert!(!d.snapshot().capture_active);
+
+    // With --shutdown-exits the process is asked to end.
+    let opts = ServerOptions { port: 0, instance: 1, shutdown_exits: true };
+    let exiting = EventServer::start(d.clone(), opts);
+    let mut c = Client::connect(&exiting).await;
+    c.until("AppState").await;
+    c.send(r#"{"method":"shutdown","id":3}"#).await;
+    assert_eq!(c.text().await, r#"{"jsonrpc":"2.0","result":0,"id":3}"#);
+    tokio::time::timeout(Duration::from_secs(5), exiting.exit_requested()).await.unwrap();
     d.close();
 }

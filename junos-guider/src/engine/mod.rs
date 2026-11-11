@@ -1538,6 +1538,8 @@ impl Engine {
             darks_build: self.darks_view(),
             polar_drift: self.polar_drift_view(),
             connecting: self.connecting,
+            port: None,
+            port_error: None,
         }
     }
 }

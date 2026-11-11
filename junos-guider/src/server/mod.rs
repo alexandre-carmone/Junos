@@ -7,7 +7,8 @@
 //! methods, from the engine or its snapshot.
 //!
 //! The server listens on every interface with `SO_REUSEADDR`, as PHD2's
-//! `wxSocketServer` does. Each client gets a task that reads its requests
+//! `wxSocketServer` does; a port in use is tried again rather than given up
+//! ([`EventServer::start`]). Each client gets a task that reads its requests
 //! and a writer that sends, one JSON text per line ended by `\r\n`:
 //!
 //! 1. on connect, the catch-up (`Version`, the lock and the star, the
@@ -41,13 +42,14 @@ pub mod rpc;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{Notify, broadcast, mpsc, oneshot, watch};
 
 use self::events::Origin;
 use self::rpc::{Call, LineReader, Parsed, RpcError};
@@ -61,6 +63,9 @@ const REPLY_QUEUE: usize = 16;
 const READ_CHUNK: usize = 16 * 1024;
 /// The backlog of the listening socket.
 const BACKLOG: u32 = 128;
+/// The first wait before binding again, and the longest.
+const RETRY_FIRST: Duration = Duration::from_secs(1);
+const RETRY_MAX: Duration = Duration::from_secs(60);
 
 /// Where and as what the server runs.
 #[derive(Clone, Debug)]
@@ -69,6 +74,10 @@ pub struct ServerOptions {
     pub port: u16,
     /// The events' `Inst`.
     pub instance: u32,
+    /// `shutdown` ends the process, as PHD2's does (`--shutdown-exits`);
+    /// otherwise it stops capture and disconnects the gear, and the server
+    /// keeps serving.
+    pub shutdown_exits: bool,
 }
 
 struct Shared {
@@ -76,6 +85,20 @@ struct Shared {
     origin: Origin,
     /// The address once listening.
     addr: watch::Sender<Option<SocketAddr>>,
+    shutdown_exits: bool,
+    /// A client's `shutdown` asks the process to end.
+    exit: Notify,
+}
+
+impl Shared {
+    /// What `shutdown` does once its reply is out (`MyFrame::OnClose`).
+    async fn shutdown(&self) {
+        if self.shutdown_exits {
+            self.exit.notify_one();
+        } else {
+            self.daemon.shutdown().await;
+        }
+    }
 }
 
 /// The running server. Clones share it.
@@ -84,16 +107,36 @@ pub struct EventServer(Arc<Shared>);
 
 impl EventServer {
     /// Starts listening on `opts.port` and serving the daemon's clients.
+    ///
+    /// A port that cannot be had (PHD2 or another instance on it) is not
+    /// fatal, unlike PHD2's "Server start failed": the server tries again,
+    /// waiting twice as long each time up to a minute, with the reason in
+    /// the snapshot's `port_error` meanwhile — a service that exited would
+    /// only be restarted into the same conflict.
     pub fn start(daemon: Daemon, opts: ServerOptions) -> EventServer {
-        let shared = Arc::new(Shared { daemon, origin: Origin::new(opts.instance), addr: watch::Sender::new(None) });
+        let shared = Arc::new(Shared {
+            daemon,
+            origin: Origin::new(opts.instance),
+            addr: watch::Sender::new(None),
+            shutdown_exits: opts.shutdown_exits,
+            exit: Notify::new(),
+        });
         let s = shared.clone();
         tokio::spawn(async move {
-            match bind(opts.port) {
-                Ok(listener) => serve(listener, s).await,
-                Err(e) => {
-                    tracing::error!("Event server failed to start - Could not listen at port {}: {e}", opts.port)
+            let mut wait = RETRY_FIRST;
+            let listener = loop {
+                match bind(opts.port) {
+                    Ok(listener) => break listener,
+                    Err(e) => {
+                        let msg = format!("Could not listen at port {}: {e}", opts.port);
+                        tracing::warn!("Event server failed to start - {msg}; trying again in {} s", wait.as_secs());
+                        s.daemon.set_event_server(None, Some(msg));
+                        tokio::time::sleep(wait).await;
+                        wait = (wait * 2).min(RETRY_MAX);
+                    }
                 }
-            }
+            };
+            serve(listener, s).await
         });
         EventServer(shared)
     }
@@ -104,6 +147,12 @@ impl EventServer {
         let addr = rx.wait_for(Option::is_some).await.map(|a| *a);
         // The sender lives as long as `self`.
         addr.ok().flatten().expect("the server's address")
+    }
+
+    /// Resolves when a client's `shutdown` asks the process to end
+    /// ([`ServerOptions::shutdown_exits`]).
+    pub async fn exit_requested(&self) {
+        self.0.exit.notified().await
     }
 }
 
@@ -120,6 +169,7 @@ async fn serve(listener: TcpListener, s: Arc<Shared>) {
     if let Some(a) = addr {
         tracing::info!("event server started, listening on port {}", a.port());
     }
+    s.daemon.set_event_server(addr.map(|a| a.port()), None);
     s.addr.send_replace(addr);
     loop {
         match listener.accept().await {
@@ -129,15 +179,16 @@ async fn serve(listener: TcpListener, s: Arc<Shared>) {
             Err(e) => {
                 // Out of descriptors, mostly: wait a little rather than spin.
                 tracing::warn!("event server: accept failed: {e}");
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
     }
 }
 
-/// A reply for the writer.
+/// A reply for the writer, and who waits until it is written.
 struct Outgoing {
     text: String,
+    written: Option<oneshot::Sender<()>>,
 }
 
 /// One client (`OnEventServerEvent`, `OnEventServerClientEvent`).
@@ -199,6 +250,9 @@ async fn write_loop(
                 if send(&mut wr, &out.text).await.is_err() {
                     return;
                 }
+                if let Some(written) = out.written {
+                    let _ = written.send(());
+                }
             }
             e = events.recv(), if events_open => match e {
                 Ok(e) => {
@@ -237,11 +291,22 @@ async fn read_loop(mut rd: OwnedReadHalf, tx: mpsc::Sender<Outgoing>, s: &Shared
         };
         for input in lines.feed(&buf[..n]) {
             let mut guard = ReplyGuard::new(rpc::parse(&input), tx.clone());
+            let mut shutdown = false;
             for call in guard.calls() {
                 let outcome = methods::run(s, &call).await;
+                shutdown |= call.method.name == "shutdown" && outcome.is_ok();
                 guard.outcomes.push(outcome);
             }
-            guard.send().await;
+            if !shutdown {
+                guard.send(None).await;
+                continue;
+            }
+            // PHD2 closes after answering: once the reply is out (or the
+            // writer gone, or no reply for a notification).
+            let (written, out) = oneshot::channel();
+            guard.send(Some(written)).await;
+            let _ = out.await;
+            s.shutdown().await;
         }
     }
 }
@@ -270,10 +335,10 @@ impl ReplyGuard {
         self.parsed.take()?.reply(std::mem::take(&mut self.outcomes))
     }
 
-    /// The reply, to the writer.
-    async fn send(mut self) {
+    /// The reply, to the writer; `written` is told once it is sent.
+    async fn send(mut self, written: Option<oneshot::Sender<()>>) {
         if let Some(text) = self.text() {
-            let _ = self.tx.send(Outgoing { text }).await;
+            let _ = self.tx.send(Outgoing { text, written }).await;
         }
     }
 }
@@ -281,7 +346,7 @@ impl ReplyGuard {
 impl Drop for ReplyGuard {
     fn drop(&mut self) {
         if let Some(text) = self.text() {
-            let _ = self.tx.try_send(Outgoing { text });
+            let _ = self.tx.try_send(Outgoing { text, written: None });
         }
     }
 }

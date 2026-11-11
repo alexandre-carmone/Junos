@@ -52,7 +52,7 @@ fn start(name: &str) -> (Daemon, EventServer) {
         indi_port: 7624,
     };
     let daemon = Daemon::start(opts, store, Box::new(DiskFiles));
-    let server = EventServer::start(daemon.clone(), ServerOptions { port: 0, instance: 1 });
+    let server = EventServer::start(daemon.clone(), ServerOptions { port: 0, instance: 1, shutdown_exits: false });
     (daemon, server)
 }
 

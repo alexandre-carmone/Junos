@@ -97,13 +97,24 @@ fn main() {
     };
     rt.block_on(async {
         let daemon = Daemon::start(opts, store, Box::new(DiskFiles));
-        if server_mode {
+        let server = server_mode.then(|| {
             let port = cfg.event_server_port();
-            EventServer::start(daemon.clone(), ServerOptions { port, instance: cfg.instance });
-        } else {
+            let opts = ServerOptions { port, instance: cfg.instance, shutdown_exits: cfg.shutdown_exits };
+            EventServer::start(daemon.clone(), opts)
+        });
+        if server.is_none() {
             tracing::info!("server mode is off (/ServerMode): no event server");
         }
-        wait_for_signal().await;
+        let exit = async {
+            match &server {
+                Some(s) => s.exit_requested().await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            _ = wait_for_signal() => {}
+            _ = exit => tracing::info!("shutdown asked by a client"),
+        }
         tracing::info!("junos-guider stopping");
         daemon.shutdown().await;
         tokio::task::spawn_blocking(move || daemon.close()).await.ok();

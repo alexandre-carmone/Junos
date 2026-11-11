@@ -177,12 +177,9 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
         }
         "get_use_subframes" => Ok(json!(snap.camera.is_some() && snap.use_subframes)),
         "get_search_region" => Ok(json!(snap.search_region)),
-        "shutdown" => {
-            // `TerminateApp` only posts the close: the reply goes first.
-            let d = d.clone();
-            tokio::spawn(async move { d.shutdown().await });
-            Ok(json!(0))
-        }
+        // `TerminateApp` only posts the close: the client's reader runs it
+        // once the reply is out (`Shared::shutdown`).
+        "shutdown" => Ok(json!(0)),
         "get_camera_binning" if camera_connected => Ok(json!(snap.binning)),
         "get_camera_frame_size" if camera_connected => Ok(json!([snap.frame_size.0, snap.frame_size.1])),
         "get_camera_binning" | "get_camera_frame_size" => err(1, "camera not connected"),

@@ -104,3 +104,20 @@ impl Config {
         base.join("junos-guider")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instance_ports() {
+        let port = |args: &[&str]| Config::parse_from([&["junos-guider"][..], args].concat()).event_server_port();
+        assert_eq!(port(&[]), 4400);
+        assert_eq!(port(&["--instance", "2"]), 4401);
+        assert_eq!(port(&["--instance", "0"]), 4399);
+        assert_eq!(port(&["--instance", "61136"]), 65535);
+        assert_eq!(port(&["--instance", "3", "--server-port", "0"]), 0);
+        assert_eq!(port(&["--server-port", "4500"]), 4500);
+        assert!(Config::try_parse_from(["junos-guider", "--instance", "61137"]).is_err());
+    }
+}
