@@ -851,12 +851,13 @@ impl Scope {
     }
 
     /// `Mount::MoveOffset` on this scope (see [`Mount::move_offset`]): the
-    /// backlash compensation may write the profile.
+    /// backlash compensation may write the profile. `frame` is read after
+    /// the pulses.
     pub fn move_offset(
         &mut self,
         ofs: &mut GuiderOffset,
         opts: MoveOpts,
-        frame: &StepFrame,
+        frame: impl FnOnce() -> StepFrame,
         ctx: &AlgoCtx,
         io: &mut ScopeIo,
         profile: &mut impl ProfileAccess,
@@ -2096,7 +2097,7 @@ mod tests {
         let mut pulses = Pulses::default();
         let cancel = CancelToken::new();
         let mut io = ScopeIo { output: &mut pulses, pointing: None, cancel: &cancel, now };
-        let r = scope.move_offset(&mut ofs, opts, &sf, &ctx, &mut io, profile, &mut ev);
+        let r = scope.move_offset(&mut ofs, opts, || sf, &ctx, &mut io, profile, &mut ev);
         render(&mut ev, out);
         out.push(format!("RESULT: {}", r as i32));
         pulses.sent
@@ -2442,7 +2443,7 @@ mod tests {
         let mut io = ScopeIo { output: &mut pulses, pointing: Some(&rig), cancel: &cancel, now: 0.0 };
         let mut ofs = GuiderOffset { camera_ofs: Point::new(2.0, 2.0), mount_ofs: None };
         let ctx = AlgoCtx::default();
-        let r = scope.move_offset(&mut ofs, MoveOpts::GUIDE_STEP, &StepFrame::default(), &ctx, &mut io, &mut p, &mut ev);
+        let r = scope.move_offset(&mut ofs, MoveOpts::GUIDE_STEP, StepFrame::default, &ctx, &mut io, &mut p, &mut ev);
         assert_eq!(r, MoveResult::Slewing);
         assert!(!ev.iter().any(|e| matches!(e, MountEvent::Debug(l) if l.starts_with("MoveAxis(S") || l.starts_with("MoveAxis(N"))));
         let Some(MountEvent::GuideStep(step)) = ev.last() else { panic!("no guide step") };

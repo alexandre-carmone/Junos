@@ -159,16 +159,28 @@ pub struct GuideStepInfo {
 
 /// What `MoveOffset` copies from the frame and the guider into the
 /// [`GuideStepInfo`] (`pFrame->m_frameCounter`, `TimeSinceGuidingStarted`,
-/// the primary star, `CurrentGuideError`).
+/// the primary star, `CurrentGuideError`). PHD2 reads them after both
+/// pulses (`mount.cpp:1059-1077`), and a pulse blocks until it ends, so the
+/// time and the error (which turns to 100 px 20 s after the star was last
+/// found) include the pulses: [`Mount::move_offset`] asks for them then.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct StepFrame {
     pub frame_number: i32,
+    /// Seconds since guiding started, as the clock reads them; the step
+    /// keeps them cut to whole ms ([`stopwatch_seconds`]).
     pub time: f64,
     pub star_mass: f64,
     pub star_snr: f64,
     pub star_hfd: f64,
     pub star_error: i32,
     pub avg_dist: f64,
+}
+
+/// `MyFrame::TimeSinceGuidingStarted` (`myframe.h:736`) from the elapsed
+/// seconds: `wxStopWatch::Time()` counts whole ms, so the time is cut, not
+/// rounded, to the ms below (12.3456 s reads 12.345).
+pub fn stopwatch_seconds(elapsed: f64) -> f64 {
+    (elapsed * 1000.0).trunc() / 1000.0
 }
 
 /// PHD2's `GuiderOffset` (`guider.h:131`): the offset to correct, camera
@@ -316,6 +328,8 @@ pub struct Mount {
     x_algo: Box<dyn GuideAlgorithm>,
     y_algo: Box<dyn GuideAlgorithm>,
     cal: MountCalibration,
+    /// `m_lastStep`: the last guide step recorded, kept after its event.
+    last_step: Option<GuideStepInfo>,
 }
 
 impl Mount {
@@ -338,7 +352,16 @@ impl Mount {
             x_algo,
             y_algo,
             cal: MountCalibration::default(),
+            last_step: None,
         }
+    }
+
+    /// `m_lastStep`: the last move [`move_offset`](Self::move_offset)
+    /// recorded, `None` before the first. The AO's `MoveOffset` reads its
+    /// `ra_limited` / `dec_limited` right after the mount's to choose the
+    /// large bump (`stepguider.cpp:1172`).
+    pub fn last_step(&self) -> Option<&GuideStepInfo> {
+        self.last_step.as_ref()
     }
 
     /// `GetMountClassName`.
@@ -638,12 +661,16 @@ impl Mount {
     /// rate, the Dec one possibly lengthened by the backlash compensation.
     /// Dec is skipped when RA reports a slew or an AO limit; otherwise Dec's
     /// result is the one returned, so an RA error followed by a good Dec move
-    /// reads OK (PHD2's quirk). The [`MountEvent::GuideStep`] is pushed last.
+    /// reads OK (PHD2's quirk). `frame` is called once, after the pulses,
+    /// for what the step copies from the guider; the step is kept as
+    /// [`last_step`](Self::last_step) and pushed last as a
+    /// [`MountEvent::GuideStep`]. PHD2 never sends `MoveOpts::MANUAL` here:
+    /// manual moves are scheduled axis moves, which record no step.
     pub fn move_offset(
         &mut self,
         ofs: &mut GuiderOffset,
         opts: MoveOpts,
-        frame: &StepFrame,
+        frame: impl FnOnce() -> StepFrame,
         ctx: &AlgoCtx,
         axes: &mut dyn AxisMover,
         events: &mut Vec<MountEvent>,
@@ -701,10 +728,12 @@ impl Mount {
             (result, y_info) = axes.move_axis(self.guiding_enabled, y_dir, y_amount, opts, events);
         }
 
-        events.push(MountEvent::GuideStep(GuideStepInfo {
+        // Read after the pulses, as PHD2 does.
+        let frame = frame();
+        let step = GuideStepInfo {
             move_options: opts,
             frame_number: frame.frame_number,
-            time: frame.time,
+            time: stopwatch_seconds(frame.time),
             is_ao: self.is_step_guider(),
             camera_offset: ofs.camera_ofs,
             mount_offset: ofs.mount_ofs.unwrap_or_default(),
@@ -722,7 +751,9 @@ impl Mount {
             star_hfd: frame.star_hfd,
             avg_dist: frame.avg_dist,
             star_error: frame.star_error,
-        }));
+        };
+        self.last_step = Some(step.clone());
+        events.push(MountEvent::GuideStep(step));
         result
     }
 
@@ -735,6 +766,9 @@ impl Mount {
 
     /// `NotifyGuidingStopped`. PHD2 also resets the backlash compensation
     /// here, which only a scope has: `Scope::notify_guiding_stopped` does it.
+    /// The AO overrides it without calling it (`stepguider.cpp:830`): no
+    /// line and no algorithm reset, only its bump state cleared and a move
+    /// to the centre. Its `NotifyGuidingResumed` does call the mount's.
     pub fn notify_guiding_stopped(&mut self, ctx: &AlgoCtx, events: &mut Vec<MountEvent>) {
         events.push(MountEvent::Debug("Mount: notify guiding stopped".into()));
         self.x_algo.guiding_stopped(ctx);
@@ -806,7 +840,9 @@ impl Mount {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::HashMap;
+    use std::rc::Rc;
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -914,12 +950,14 @@ mod tests {
         std::mem::take(&mut *log.lock().unwrap())
     }
 
-    /// A scope type's moves, scripted.
+    /// A scope type's moves, scripted. Each pulse blocks: `clock` (seconds)
+    /// moves on by its length.
     #[derive(Default)]
     struct FakeAxes {
         results: Vec<MoveResult>,
         calls: Vec<(bool, Dir, i32, u32)>,
         blc: Vec<String>,
+        clock: Rc<Cell<f64>>,
     }
 
     impl AxisMover for FakeAxes {
@@ -932,6 +970,7 @@ mod tests {
             _events: &mut Vec<MountEvent>,
         ) -> (MoveResult, MoveResultInfo) {
             self.calls.push((guiding_enabled, dir, amount, opts.0));
+            self.clock.set(self.clock.get() + amount as f64 / 1000.0);
             let r = if self.results.is_empty() { MoveResult::Ok } else { self.results.remove(0) };
             (r, MoveResultInfo { amount_moved: amount, limited: dir == Dir::South })
         }
@@ -1096,7 +1135,7 @@ mod tests {
         m.set_calibration(&square_cal(), "T", &mut Profile::default(), &mut ev);
         let frame = StepFrame {
             frame_number: 7,
-            time: 12.5,
+            time: 12.5004,
             star_mass: 900.0,
             star_snr: 15.0,
             star_hfd: 2.0,
@@ -1105,11 +1144,15 @@ mod tests {
         };
 
         // A guide step: transform, raw Dec to the compensation, the algorithms
-        // (which halve), West / North, the compensation's 100 ms on Dec.
+        // (which halve), West / North, the compensation's 100 ms on Dec. The
+        // time is read after the two 150 ms pulses, cut to whole ms.
         let mut axes = FakeAxes::default();
+        axes.clock.set(frame.time);
+        let clock = axes.clock.clone();
+        let after = || StepFrame { time: clock.get(), ..frame };
         let mut ofs = GuiderOffset { camera_ofs: Point::new(3.0, -2.0), mount_ofs: None };
         ev.clear();
-        assert_eq!(m.move_offset(&mut ofs, MoveOpts::GUIDE_STEP, &frame, &ctx, &mut axes, &mut ev), MoveResult::Ok);
+        assert_eq!(m.move_offset(&mut ofs, MoveOpts::GUIDE_STEP, after, &ctx, &mut axes, &mut ev), MoveResult::Ok);
         assert_eq!(axes.calls, [(true, Dir::West, 150, 13), (true, Dir::North, 150, 13)]);
         assert_eq!(axes.blc, ["track 13 -2.000000 0.15 0.02", "apply 13 -1.000000 50"]);
         let mount = ofs.mount_ofs.unwrap();
@@ -1119,31 +1162,34 @@ mod tests {
         let Some(MountEvent::GuideStep(step)) = ev.last() else { panic!("no guide step") };
         assert_eq!(
             (step.move_options, step.frame_number, step.time, step.is_ao, step.ao_pos),
-            (MoveOpts::GUIDE_STEP, 7, 12.5, false, (3, -4))
+            (MoveOpts::GUIDE_STEP, 7, 12.8, false, (3, -4))
         );
         assert_eq!((step.duration_ra, step.direction_ra, step.ra_limited), (150, Dir::West, false));
         assert_eq!((step.duration_dec, step.direction_dec), (150, Dir::North));
         assert_eq!((step.star_mass, step.star_snr, step.star_hfd, step.avg_dist), (900.0, 15.0, 2.0, 0.3));
         assert!((step.guide_distance_ra - 1.5).abs() < 1e-12 && (step.guide_distance_dec + 1.0).abs() < 1e-12);
+        assert_eq!(m.last_step(), Some(step));
+        assert_eq!(stopwatch_seconds(12.3456), 12.345);
 
         // Mount axes given, no algorithm: no transform, South flagged limited by the fake.
         let mut axes = FakeAxes::default();
         let mut ofs = GuiderOffset { camera_ofs: Point::new(0.5, 0.5), mount_ofs: Some(Point::new(0.5, 0.5)) };
         ev.clear();
-        m.move_offset(&mut ofs, MoveOpts::RECOVERY_MOVE, &frame, &ctx, &mut axes, &mut ev);
+        m.move_offset(&mut ofs, MoveOpts::RECOVERY_MOVE, || frame, &ctx, &mut axes, &mut ev);
         assert_eq!(axes.calls, [(true, Dir::West, 50, 4), (true, Dir::South, 125, 4)]);
         assert_eq!(ev[0], MountEvent::Debug("Moving (0.50, 0.50) raw xDistance=0.50 yDistance=0.50".into()));
         let Some(MountEvent::GuideStep(step)) = ev.last() else { panic!("no guide step") };
-        assert!(step.dec_limited);
+        assert!(step.dec_limited && step.time == 12.5);
 
         // Dead reckoning: nothing at all when both say 0, else no tracking.
         let mut axes = FakeAxes::default();
         let mut ofs = GuiderOffset::default();
         ev.clear();
-        assert_eq!(m.move_offset(&mut ofs, MoveOpts::DEDUCED_MOVE, &frame, &ctx, &mut axes, &mut ev), MoveResult::Ok);
+        assert_eq!(m.move_offset(&mut ofs, MoveOpts::DEDUCED_MOVE, || frame, &ctx, &mut axes, &mut ev), MoveResult::Ok);
         assert!(ev.is_empty() && axes.calls.is_empty() && ofs.mount_ofs.is_none());
+        assert!(m.last_step().is_some_and(|s| s.dec_limited));
         m.x_algo = Box::new(Recorder { log: Arc::default(), deduce: 0.2 });
-        m.move_offset(&mut ofs, MoveOpts::DEDUCED_MOVE, &frame, &ctx, &mut axes, &mut ev);
+        m.move_offset(&mut ofs, MoveOpts::DEDUCED_MOVE, || frame, &ctx, &mut axes, &mut ev);
         assert_eq!(ev[0], MountEvent::Debug("Dead-reckoning move xDistance=0.20 yDistance=0.00".into()));
         assert_eq!(axes.calls, [(true, Dir::West, 20, 14), (true, Dir::North, 100, 14)]);
         assert_eq!(axes.blc, ["apply 14 0.000000 0"]);
@@ -1157,14 +1203,15 @@ mod tests {
         ] {
             let mut axes = FakeAxes { results, ..FakeAxes::default() };
             let mut ofs = GuiderOffset { camera_ofs: Point::new(1.0, 1.0), mount_ofs: None };
-            let r = m.move_offset(&mut ofs, MoveOpts::GUIDE_STEP, &frame, &ctx, &mut axes, &mut ev);
+            let r = m.move_offset(&mut ofs, MoveOpts::GUIDE_STEP, || frame, &ctx, &mut axes, &mut ev);
             assert_eq!((r, axes.calls.len()), (expect, calls));
         }
         // Guiding disabled is the mover's to enforce.
         m.set_guiding_enabled(false, &ctx, &mut ev);
         let mut axes = FakeAxes::default();
-        m.move_offset(&mut GuiderOffset::default(), MoveOpts::MANUAL, &frame, &ctx, &mut axes, &mut ev);
-        assert!(axes.calls.iter().all(|c| !c.0));
+        let mut ofs = GuiderOffset { camera_ofs: Point::new(1.0, 1.0), mount_ofs: None };
+        m.move_offset(&mut ofs, MoveOpts::GUIDE_STEP, || frame, &ctx, &mut axes, &mut ev);
+        assert!(axes.calls.len() == 2 && axes.calls.iter().all(|c| !c.0));
     }
 
     #[test]
