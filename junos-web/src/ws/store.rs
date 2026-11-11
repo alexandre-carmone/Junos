@@ -161,6 +161,7 @@ pub struct DeviceStore {
     pub guider_darks: RwSignal<serde_json::Value>,
     pub guider_ga: RwSignal<serde_json::Value>,
     pub guider_pa: RwSignal<serde_json::Value>,
+    pub guider_tools: RwSignal<serde_json::Value>,
     /// Newest first, at most 50.
     pub guider_alerts: RwSignal<Vec<GuiderAlert>>,
     /// The guide log's INFO and calibration lines, newest first, at most 200.
@@ -307,6 +308,7 @@ impl DeviceStore {
             guider_darks: RwSignal::new(serde_json::Value::Null),
             guider_ga: RwSignal::new(serde_json::Value::Null),
             guider_pa: RwSignal::new(serde_json::Value::Null),
+            guider_tools: RwSignal::new(serde_json::Value::Null),
             guider_alerts: RwSignal::new(Vec::new()),
             guider_log: RwSignal::new(Vec::new()),
             guider_frame: RwSignal::new(None),
@@ -332,6 +334,7 @@ impl DeviceStore {
             self.guider_darks,
             self.guider_ga,
             self.guider_pa,
+            self.guider_tools,
         ] {
             s.set(serde_json::Value::Null);
         }
@@ -1452,6 +1455,7 @@ impl DeviceStore {
             "guider_darks" => self.guider_darks.set(payload.clone()),
             "guider_ga" => self.guider_ga.set(payload.clone()),
             "guider_pa" => self.guider_pa.set(payload.clone()),
+            "guider_tools" => self.guider_tools.set(payload.clone()),
             "guider_alert" => {
                 let alert = GuiderAlert {
                     t_ms: web_sys::js_sys::Date::now(),

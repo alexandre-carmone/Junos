@@ -59,6 +59,7 @@ use crate::Tab;
 
 mod algorithms;
 mod assistant;
+mod cal_assistant;
 mod calibration;
 mod darks;
 mod equipment;
@@ -76,6 +77,7 @@ mod star_profile;
 mod stats;
 mod target;
 mod timeline;
+mod tools;
 use native::NativeGuide;
 use settings::{settings_i64, GuideSettings, GUIDERS};
 use target::target_plot;
@@ -136,6 +138,8 @@ enum Sheet {
     Assistant,
     PolarTools,
     Logs,
+    /// Star-cross, lock nudge and bookmarks, meridian flip calibration.
+    Tools,
 }
 
 /// Download the accumulated guide log as a text file.

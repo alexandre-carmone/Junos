@@ -3,7 +3,9 @@
 //! switch sends `set_lock_shift_enabled`, the rates, units and axes
 //! `set_lock_shift_params` whole; the state is `guider_state.lock_shift`.
 //! PHD2 turns multi-star guiding off while it shifts, and stops shifting
-//! when the lock reaches the frame's edge (`limit_reached`).
+//! when the lock reaches the frame's edge (`limit_reached`). Below, the
+//! tool's rate training: `comet_train_start` / `comet_train_stop` and
+//! PHD2's instructions from `guider_tools.comet`.
 
 use leptos::prelude::*;
 use serde_json::json;
@@ -17,7 +19,12 @@ use super::protocol::{Reply, Rpc};
 
 const NUM: &str = "input input--sm font-mono w-[104px] shrink-0 text-right max-md:h-9";
 
-pub fn lock_shift_card(state: RwSignal<Option<GuiderStatusData>>, rpc: Rpc, lang: RwSignal<Lang>) -> impl IntoView {
+pub fn lock_shift_card(
+    state: RwSignal<Option<GuiderStatusData>>,
+    tools: RwSignal<serde_json::Value>,
+    rpc: Rpc,
+    lang: RwSignal<Lang>,
+) -> impl IntoView {
     let tr = move || t(lang.get());
     let ls = Memo::new(move |_| state.with(|s| s.as_ref().map(|s| s.lock_shift.clone()).unwrap_or_default()));
     let reply = RwSignal::new(None::<Reply>);
@@ -69,6 +76,8 @@ pub fn lock_shift_card(state: RwSignal<Option<GuiderStatusData>>, rpc: Rpc, lang
         Box::new(move || s(GuiderLockShift { axes: axes.into(), ..ls.get_untracked() })) as Box<dyn Fn() + Send + Sync>
     };
     let rpc_en = rpc.clone();
+    let rpc_comet = rpc.clone();
+    let training = move || tools.with(|t| t["comet"]["training"].as_bool().unwrap_or(false));
     view! {
         <div class=CARD>
             <span class=CARD_TITLE>{move || tr().guider_lock_shift_title}</span>
@@ -89,6 +98,19 @@ pub fn lock_shift_card(state: RwSignal<Option<GuiderStatusData>>, rpc: Rpc, lang
                 <span class="text-xs text-state-warn">{move || tr().guider_lock_shift_limit}</span>
             </Show>
             <span class="text-xs text-text-muted">{move || tr().guider_lock_shift_note}</span>
+            <div class=ROW>
+                <span class=format!("{LABEL} flex-1")>{move || tr().guider_comet_training}</span>
+                <button class=move || if training() { "btn btn-danger h-9 px-4" } else { "btn btn-ghost h-9 px-4" }
+                        on:click=move |_| {
+                            let m = if training() { "comet_train_stop" } else { "comet_train_start" };
+                            reply.set(Some(rpc_comet.call(m, json!({}))));
+                        }>
+                    {move || if training() { tr().guider_btn_stop } else { tr().guider_ga_start }}
+                </button>
+            </div>
+            <span class="text-xs text-text-muted whitespace-pre-line">
+                {move || tools.with(|t| t["comet"]["status"].as_str().unwrap_or("").to_string())}
+            </span>
             {move || error().map(|m| view! { <span class="text-xs text-state-err">{m}</span> })}
         </div>
     }

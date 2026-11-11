@@ -39,6 +39,14 @@ const IMAGE_LOGGER: [&str; 7] = [
     "/ImageLogger/LogAutoSelectFrames",
 ];
 
+/// `set_image_logger`'s params for `IMAGE_LOGGER`, in its order.
+const LOGGER_PARAMS: [&str; 7] = ["enabled", "over_rel", "thresh_rel", "over_px", "thresh_px", "dropped", "auto_select"];
+
+/// `set_image_logger {enabled, over_rel, …}` from the keys' values.
+fn logger_params(cur: &impl Fn(&str) -> Value) -> serde_json::Map<String, Value> {
+    IMAGE_LOGGER.iter().zip(LOGGER_PARAMS).map(|(k, n)| (n.to_string(), cur(k))).collect()
+}
+
 /// PHD2's defaults for the keys this sheet shows.
 fn defaults() -> Vec<(&'static str, Value)> {
     vec![
@@ -109,6 +117,7 @@ fn local_num(label: impl Fn() -> &'static str + Send + 'static, v: RwSignal<f64>
 pub fn native_settings_sheet(
     state: RwSignal<Option<GuiderStatusData>>,
     settings: RwSignal<Value>,
+    tools: RwSignal<Value>,
     rpc: Rpc,
     settle: Settle,
     lang: RwSignal<Lang>,
@@ -118,15 +127,13 @@ pub fn native_settings_sheet(
 
     // The live setters take a group of keys at once: the others' current
     // values (or PHD2's defaults) complete the call.
+    let stored = move |k: &str| {
+        settings.with_untracked(|s| s.get(k).cloned()).or_else(|| defaults().into_iter().find(|d| d.0 == k).map(|d| d.1)).unwrap_or(Value::Null)
+    };
     let write = {
         let rpc = rpc.clone();
         move |key: &'static str, v: Value| -> Reply {
-            let cur = |k: &str| {
-                if k == key {
-                    return v.clone();
-                }
-                settings.with_untracked(|s| s.get(k).cloned()).or_else(|| defaults().into_iter().find(|d| d.0 == k).map(|d| d.1)).unwrap_or(Value::Null)
-            };
+            let cur = |k: &str| if k == key { v.clone() } else { stored(k) };
             let f = |k: &str| cur(k).as_f64().unwrap_or(0.0);
             let b = |k: &str| cur(k).as_bool().unwrap_or(false);
             if VAR_DELAY.contains(&key) {
@@ -141,9 +148,7 @@ pub fn native_settings_sheet(
                 return rpc.call("set_dither_mode", json!({ "mode": mode, "ra_only": b(KEY_DITHER_RA_ONLY), "scale": f(KEY_DITHER_SCALE) }));
             }
             if IMAGE_LOGGER.contains(&key) {
-                let all: serde_json::Map<String, Value> =
-                    IMAGE_LOGGER.iter().map(|k| (k.trim_start_matches("/ImageLogger/").to_string(), cur(k))).collect();
-                return rpc.call("set_image_logger", Value::Object(all));
+                return rpc.call("set_image_logger", Value::Object(logger_params(&cur)));
             }
             rpc.set_profile_value(key, v)
         }
@@ -278,6 +283,24 @@ pub fn native_settings_sheet(
         }
     };
     let server_body = bool_row(r, "/server/guide_allow_recalibrate", |t| t.guider_allow_recal);
+    // "Save the next N frames": a one-off series, not stored.
+    let next_n = RwSignal::new("1".to_string());
+    let next_reply = RwSignal::new(None::<Reply>);
+    Effect::new(move |_| {
+        if let Some(Err(e)) = next_reply.get().and_then(|r| r.get()) {
+            err.set(Some(e.message));
+        }
+    });
+    let save_next = {
+        let rpc = rpc.clone();
+        move || {
+            let mut p = logger_params(&stored);
+            let n = next_n.with_untracked(|s| s.trim().parse::<i64>().unwrap_or(1)).clamp(1, 100);
+            p.insert("next_n".into(), json!(true));
+            p.insert("next_n_count".into(), json!(n));
+            next_reply.set(Some(rpc.call("set_image_logger", Value::Object(p))));
+        }
+    };
     let logger_body = view! {
         {bool_row(r, IMAGE_LOGGER[0], |t| t.guider_imglog_enabled)}
         {bool_row(r, IMAGE_LOGGER[1], |t| t.guider_imglog_rel)}
@@ -286,6 +309,16 @@ pub fn native_settings_sheet(
         {num_row(r, IMAGE_LOGGER[4], |t| t.guider_imglog_px_thresh, 1.0, 10.0, 0.1)}
         {bool_row(r, IMAGE_LOGGER[5], |t| t.guider_imglog_dropped)}
         {bool_row(r, IMAGE_LOGGER[6], |t| t.guider_imglog_autoselect)}
+        <div class=ROW>
+            <span class=format!("{LABEL} flex-1")>{move || tr().guider_imglog_next_n}</span>
+            <input type="number" min="1" max="100" step="1" class=NUM prop:value=move || next_n.get()
+                   on:input=move |ev| next_n.set(event_target_value(&ev)) />
+            <button class="btn btn-ghost h-9 px-3"
+                    disabled=move || !settings.with(|s| s.get(IMAGE_LOGGER[0]).and_then(Value::as_bool).unwrap_or(false))
+                    on:click=move |_| save_next()>
+                {move || tr().save_btn}
+            </button>
+        </div>
     };
     // Export settings: PHD2's `PHD Config 1` text, downloaded.
     let export = RwSignal::new(None::<Reply>);
@@ -318,7 +351,7 @@ pub fn native_settings_sheet(
                     {section(title(|t| t.guider_server_title), false, server_body)}
                     {section(title(|t| t.guider_imglog_title), false, logger_body)}
                     {pulses_card(state, rpc_p, lang)}
-                    {lock_shift_card(state, rpc_l, lang)}
+                    {lock_shift_card(state, tools, rpc_l, lang)}
                 </div>
             </div>
         </div>

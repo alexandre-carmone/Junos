@@ -40,6 +40,7 @@ use super::logs::{alert_toast, logs_sheet};
 use super::protocol::{Reply, Rpc, Settle, CALIBRATING, GUIDING, LOOPING, LOST_LOCK, PAUSED, SELECTED};
 use super::settings::{settings_i64, GuideSettings};
 use super::star_profile::star_profile;
+use super::tools::tools_sheet;
 use super::stats::{compute, stats_tiles};
 use super::target::target_plot;
 use super::timeline::{drift_plot, DriftSeries, WINDOW_MS};
@@ -387,6 +388,9 @@ pub fn NativeGuide(
                                 {tool(Sheet::Assistant, |tr| tr.guider_ga_title, busy(|s| s.ga_running))}
                                 {tool(Sheet::PolarTools, |tr| tr.guider_pa_title, busy(|s| s.pa_running))}
                                 {tool(Sheet::Logs, |tr| tr.guider_logs_title, idle())}
+                                {tool(Sheet::Tools, |tr| tr.guider_tools, Signal::derive(move || guider.tools.with(|t| {
+                                    t["starcross"]["running"] == true || !t["pierflip"].is_null() || t["comet"]["training"] == true
+                                })))}
                             </div>
                         </div>
                     </div>
@@ -427,20 +431,23 @@ pub fn NativeGuide(
                         calibration: guider.calibration,
                         cal_steps: guider.cal_steps,
                         settings: guider.settings,
+                        tools: guider.tools,
                         rpc: rpc.clone(),
                         settle,
                         lang,
                     })).into_any()),
                     Sheet::Settings => Some(sheet(move || tr().guider_settings_title, close,
-                                                  native_settings_sheet(state, guider.settings, rpc.clone(), settle, lang)).into_any()),
+                                                  native_settings_sheet(state, guider.settings, guider.tools, rpc.clone(), settle, lang)).into_any()),
                     Sheet::Darks => Some(sheet(move || tr().guider_darks_title, close,
-                                               darks_sheet(state, darks, rpc.clone(), lang)).into_any()),
+                                               darks_sheet(state, darks, guider.settings, rpc.clone(), lang)).into_any()),
                     Sheet::Assistant => Some(sheet(move || tr().guider_ga_title, close,
                                                    assistant_sheet(state, guider.ga, rpc.clone(), lang)).into_any()),
                     Sheet::PolarTools => Some(sheet(move || tr().guider_pa_title, close,
                                                     pa_tools_sheet(guider.pa, guider.settings, rpc.clone(), lang)).into_any()),
                     Sheet::Logs => Some(sheet(move || tr().guider_logs_title, close,
                                               logs_sheet(guider.alerts, rpc.clone(), lang)).into_any()),
+                    Sheet::Tools => Some(sheet(move || tr().guider_tools, close,
+                                               tools_sheet(guider.tools, rpc.clone(), lang)).into_any()),
                 }
             }}
         </div>

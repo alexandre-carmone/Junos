@@ -266,6 +266,17 @@ translations! {
     guider_imglog_px_thresh, guider_imglog_dropped, guider_imglog_autoselect, guider_export_settings,
     guider_pulses_title, guider_pulses_busy, guider_steps, guider_lock_shift_title, guider_lock_shift_enable,
     guider_lock_shift_limit, guider_lock_shift_note,
+    // Guide tab — secondary tools: star-cross, lock, bookmarks, meridian flip, calibration
+    // assistant, comet training, image logger series, defect map refine, static PA, drift align
+    guider_sct_title, guider_sct_hint, guider_sct_pulse_size, guider_sct_pulse_count, guider_nudge_title,
+    guider_nudge_step, guider_lock_restore, guider_bookmarks_title, guider_bookmarks_none,
+    guider_bookmark_lock, guider_bookmark_star, guider_pierflip_title, guider_pierflip_hint,
+    guider_pierflip_next, guider_pierflip_restart, guider_hour_angle, guider_ca_title, guider_ca_hint,
+    guider_ca_current, guider_ca_target, guider_ca_offset, guider_ca_recommended, guider_ca_load,
+    guider_ca_save, guider_ca_single_side, guider_slew, guider_ca_calibrate, guider_comet_training,
+    guider_imglog_next_n, guider_bpm_stats, guider_pa_auto, guider_pa_manual, guider_pa_ref_star,
+    guider_pa_flip, guider_pa_pos1, guider_pa_pos2, guider_pa_pos3, guider_pa_rotation, guider_pa_alt,
+    guider_pa_az, guider_pa_circle, guider_pa_adjust,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
     // Guide tab — junos-guider tools card, darks and bad-pixel map sheet

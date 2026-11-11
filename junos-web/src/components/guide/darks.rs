@@ -4,7 +4,8 @@
 //! loading one unloads the other), a dark library build (`darks_build`, one
 //! set of frames per exposure between min and max), and the defect map: its
 //! master dark (`bpm_build`), then the hot / cold aggressiveness
-//! (`bpm_set`, sent on release) and `bpm_save`. A build asks to cover the
+//! (`bpm_set`, sent on release: its reply counts the pixels and gives the
+//! master dark's stats) and `bpm_save` at those values. A build asks to cover the
 //! scope first (a second tap), as PHD2's "Cover guide scope" box.
 
 use leptos::prelude::*;
@@ -68,13 +69,21 @@ fn aggr_row(label: impl Fn() -> &'static str + Send + Sync + 'static, v: RwSigna
 pub(super) fn darks_sheet(
     state: RwSignal<Option<GuiderStatusData>>,
     darks: RwSignal<Value>,
+    settings: RwSignal<Value>,
     rpc: Rpc,
     lang: RwSignal<Lang>,
 ) -> impl IntoView {
     let tr = move || t(lang.get());
     let rpc = StoredValue::new(rpc);
     let last = RwSignal::new(None::<Reply>);
-    let call = move |method: &'static str, params: Value| last.set(Some(rpc.with_value(|r| r.call(method, params))));
+    let call_r = move |method: &'static str, params: Value| {
+        let r = rpc.with_value(|r| r.call(method, params));
+        last.set(Some(r));
+        r
+    };
+    let call = move |method: &'static str, params: Value| {
+        call_r(method, params);
+    };
 
     let exposures = Memo::new(move |_| {
         state.with(|s| s.as_ref().map(|s| s.exposure_options.iter().copied().filter(|&ms| ms > 0).collect::<Vec<_>>()))
@@ -88,8 +97,12 @@ pub(super) fn darks_sheet(
     let new_library = RwSignal::new(false);
     let dm_exp_s = RwSignal::new(15_i64);
     let dm_count = RwSignal::new(25_i64);
-    let hot = RwSignal::new(75_i64);
-    let cold = RwSignal::new(75_i64);
+    // The refine dialog starts from the last saved map's (DefDMSigmaX 75).
+    let factor = |k: &str| settings.with_untracked(|s| s[k].as_i64()).unwrap_or(75);
+    let hot = RwSignal::new(factor("/camera/dmap_hot_factor"));
+    let cold = RwSignal::new(factor("/camera/dmap_cold_factor"));
+    // `bpm_set`'s reply: the pixel counts and the master dark's stats.
+    let refine = RwSignal::new(None::<Reply>);
     // The build waiting for its second tap ("cover the scope"): defect map or not.
     let armed = RwSignal::new(None::<bool>);
 
@@ -155,7 +168,23 @@ pub(super) fn darks_sheet(
             </button>
         }
     };
-    let set_aggr = move || call("bpm_set", json!({"hot": hot.get_untracked(), "cold": cold.get_untracked()}));
+    let aggr = move || json!({"hot": hot.get_untracked(), "cold": cold.get_untracked()});
+    let set_aggr = move || refine.set(Some(call_r("bpm_set", aggr())));
+    let refined = move || {
+        let v = refine.get().and_then(|r| r.get()).and_then(Result::ok)?;
+        let n = |k: &str| v[k].as_f64().unwrap_or(0.0);
+        let tr = tr();
+        Some(view! {
+            <span class="text-sm text-text-blue">
+                {format!("{} {} \u{00b7} {} {}", tr.guider_bpm_hot, n("hot"), tr.guider_bpm_cold, n("cold"))}
+            </span>
+            <span class="text-xs text-text-muted font-mono break-words">
+                {tr.guider_bpm_stats.replace("{exp}", &exp_label(n("exposure_ms") as i64)).replace("{n}", &n("frames").to_string())
+                    .replace("{mean}", &format!("{:.0}", n("mean"))).replace("{sd}", &format!("{:.1}", n("stdev")))
+                    .replace("{med}", &format!("{:.0}", n("median"))).replace("{mad}", &format!("{:.0}", n("mad")))}
+            </span>
+        })
+    };
 
     view! {
         <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] \
@@ -215,7 +244,8 @@ pub(super) fn darks_sheet(
                 <span class="text-xs text-text-muted">{move || tr().guider_bpm_aggressiveness}</span>
                 {aggr_row(move || tr().guider_bpm_hot, hot, set_aggr)}
                 {aggr_row(move || tr().guider_bpm_cold, cold, set_aggr)}
-                <button class="btn btn-ghost h-11 px-4" on:click=move |_| call("bpm_save", json!({}))>
+                {refined}
+                <button class="btn btn-ghost h-11 px-4" on:click=move |_| call("bpm_save", aggr())>
                     {move || tr().guider_bpm_save}
                 </button>
             </div>

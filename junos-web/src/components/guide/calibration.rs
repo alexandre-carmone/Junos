@@ -8,7 +8,8 @@
 //! with `recalibrate`), PHD2's calibration step calculator
 //! (`calstep_dialog.cpp`, as `engine/calibration.rs::calibration_step_size`)
 //! whose Apply writes the step and the distance, and the manual
-//! calibration form (`manualcal_dialog.cpp`, `set_calibration_data`).
+//! calibration form (`manualcal_dialog.cpp`, `set_calibration_data`), and
+//! the Calibration Assistant (`cal_assistant.rs`).
 
 use leptos::prelude::*;
 use serde_json::{json, Value};
@@ -18,6 +19,7 @@ use crate::dom::event_target_value;
 use crate::i18n::{t, Lang, Translations};
 use crate::ws::{GuiderCalStep, GuiderStatusData};
 
+use super::cal_assistant::cal_assistant_card;
 use super::protocol::{second_tap, Reply, Rpc, Settle, CALIBRATING, GUIDING, KEY_CAL_DISTANCE, KEY_CAL_DURATION, KEY_FOCAL_LENGTH, KEY_PIXEL_SIZE, LOST_LOCK};
 use super::rows::section;
 
@@ -30,6 +32,8 @@ pub struct CalSheet {
     pub calibration: RwSignal<Value>,
     pub cal_steps: RwSignal<Vec<GuiderCalStep>>,
     pub settings: RwSignal<Value>,
+    /// `guider_tools`, for the assistant card.
+    pub tools: RwSignal<Value>,
     pub rpc: Rpc,
     pub settle: Settle,
     pub lang: RwSignal<Lang>,
@@ -326,6 +330,7 @@ pub fn calibration_sheet(c: CalSheet) -> impl IntoView {
                 </div>
                 <div class="flex flex-col gap-3">
                     <div class=CARD>{actions}</div>
+                    {cal_assistant_card(c.tools, c.rpc.clone(), lang)}
                     {section(title(|t| t.guider_calstep_title), false, calc)}
                     {section(title(|t| t.guider_manual_cal_title), false, manual)}
                 </div>
