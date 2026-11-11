@@ -233,6 +233,17 @@ pub fn read_fits_blob(bytes: &[u8], sub: Option<((i32, i32), Rect)>) -> Result<U
     Ok(img)
 }
 
+/// `fits_open_diskfile` then `fits_get_img_size(fptr, 2, …)` of the primary
+/// HDU, as the dark-library and defect-map size checks read a file: only
+/// the header, whatever the HDU count or `NAXIS`. `None` when the header
+/// does not open. An axis past `NAXIS` is 0 (PHD2 leaves it uninitialised;
+/// it compares unequal to any camera size). The header blocks suffice.
+pub fn primary_size(bytes: &[u8]) -> Option<(i64, i64)> {
+    let hdu = read_hdu(bytes, 0)?;
+    let axis = |i: usize| hdu.axes.get(i).copied().unwrap_or(0);
+    Some((axis(0), axis(1)))
+}
+
 /// `usImage::Load` (usImage.cpp:434): a single 2-D FITS image (one PHD2
 /// saved, typically), PHD2's cards read back — `EXPOSURE` (truncated to ms),
 /// `STACKCNT`, `PEDESTAL`, `SATURATE` (bit depth 16 when > 255, else 8) and
@@ -923,6 +934,20 @@ mod tests {
         assert_eq!(read_fits_blob(&f, None).unwrap_err(), "Error reading data");
         let f = image_fits(16, i64::MAX, 3, &[], &[]);
         assert_eq!(read_fits_blob(&f, None).unwrap_err(), "Error reading data");
+    }
+
+    #[test]
+    fn primary_size_reads_only_the_first_header() {
+        // Header blocks alone (no data) suffice.
+        assert_eq!(primary_size(&image_fits(16, 640, 480, &[], &[])), Some((640, 480)));
+        // NAXIS 3: the first two axes; NAXIS 1: the missing one is 0.
+        let f = raw_fits(&["SIMPLE  =                    T", "BITPIX  =                    8", "NAXIS   =                    3", "NAXIS1  =                    5", "NAXIS2  =                    4", "NAXIS3  =                    3"], &[]);
+        assert_eq!(primary_size(&f), Some((5, 4)));
+        let f = raw_fits(&["SIMPLE  =                    T", "BITPIX  =                    8", "NAXIS   =                    1", "NAXIS1  =                    2"], &[1, 2]);
+        assert_eq!(primary_size(&f), Some((2, 0)));
+        // What cfitsio's open refuses.
+        assert_eq!(primary_size(&image_fits(8, -1, 2, &[], &[])), None);
+        assert_eq!(primary_size(b"nonsense"), None);
     }
 
     #[test]

@@ -43,6 +43,16 @@ pub const DMAP_NUM_FRAMES_RANGE: (i32, i32) = (5, 25);
 pub const DMAP_FACTOR_DEFAULT: i32 = 75;
 /// `/camera/darks_note` is capped at 65 characters (`MaxNoteLength`).
 pub const DARKS_NOTE_MAX_LEN: usize = 65;
+/// `/camera/AutoLoadDarks` default (gear_dialog.cpp:983): load the dark
+/// library when the camera connects, unless a defect map was just loaded.
+/// `LoadDarkHandler` writes it, true or false, on every use.
+pub const AUTO_LOAD_DARKS_DEFAULT: bool = true;
+/// `/camera/AutoLoadDefectMap` default (gear_dialog.cpp:974): load the
+/// defect map when the camera connects. `LoadDefectMapHandler` writes it.
+pub const AUTO_LOAD_DEFECT_MAP_DEFAULT: bool = true;
+/// `/camera/dmap_show_details` default (Refine_DefMap.cpp:280): the refine
+/// dialog's "Show details" box, saved when the dialog closes.
+pub const DMAP_SHOW_DETAILS_DEFAULT: bool = true;
 
 /// `MyFrame::ExposureDurationLabel` (myframe.cpp:779): `%g s` from 10 s up,
 /// else `%.2f s` under 100 ms and `%.1f s` otherwise. The dark-library
@@ -182,8 +192,9 @@ impl DarkLibrary {
     /// does not clear them), a frame without `EXPOSURE` taking
     /// `requested_exp_ms` (`RequestedExposureDuration`); then the dark for
     /// `exposure_ms` (`m_exposureDuration`) is selected. `Err` is the read's
-    /// alert: the frames before it stay added, as in PHD2, and nothing is
-    /// selected ("Darks not loaded").
+    /// alert ("Darks not loaded"): the frames before it stay added, as in
+    /// PHD2, and the selection is left as it was — following a replaced dark
+    /// to the frame that replaced it, as with [`DarkLibrary::add_dark`].
     pub fn load_fits(
         &mut self,
         bytes: &[u8],
@@ -203,7 +214,7 @@ impl DarkLibrary {
     }
 }
 
-/// `DarksDialog::CreateMasterDarkFrame` (darks_dialog.cpp:494): `count` raw
+/// `DarksDialog::CreateMasterDarkFrame` (darks_dialog.cpp:498): `count` raw
 /// dark frames (`CAPTURE_DARK`: no subtraction, no recon) summed pixel by
 /// pixel in `u32`, each sum then divided by `count`. The library builds one
 /// per exposure of [`dark_lib_exposures`]; the defect map one of
@@ -222,7 +233,8 @@ impl MasterDarkBuilder {
         Self { exp_ms, count, taken: 0, sum: Vec::new(), last: None }
     }
 
-    /// Frames taken so far (the "Taking dark frame j/N" status).
+    /// Frames taken so far. PHD2's "Taking dark frame j/N" status, shown
+    /// before each capture, has `j = taken() + 1` (darks_dialog.cpp:513).
     pub fn taken(&self) -> i32 {
         self.taken
     }
@@ -271,19 +283,32 @@ impl MasterDarkBuilder {
 
 // ---------------------------------------------------------------- geometry check
 
-/// The dark library file (its primary HDU) or the defect map's master dark,
-/// as `DarkLibExists` / `DefectMapExists` see it. For the defect map the
-/// `.txt` must exist too: pass `Missing` when it does not.
+/// The dark library file or the defect map's master dark, as `DarkLibExists`
+/// / `DefectMapExists` see it (myframe.cpp:2532, image_math.cpp:1198).
+/// The dark library: `Missing` without the file, else
+/// [`FileGeometry::from_fits`] of its bytes. The defect map: its `.txt`
+/// decides presence, so `Missing` without it; with it, `from_fits` of the
+/// master dark's bytes, or `Unreadable` when the master is missing or does
+/// not read — cfitsio's open fails, no alert, and the map still passes
+/// while the frame size is unknown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileGeometry {
     Missing,
     /// The FITS file does not open (no alert).
     Unreadable,
-    /// `NAXIS1` × `NAXIS2` of its first image.
+    /// `NAXIS1` × `NAXIS2` of its primary HDU.
     Size(i64, i64),
 }
 
 impl FileGeometry {
+    /// A present file's bytes as PHD2 checks them: only the primary header
+    /// ([`fits::primary_size`]), so a 3-axis file passes when its first two
+    /// axes match. PHD2 alerts when the size read fails after the open, but
+    /// the primary HDU is always an image, so it cannot.
+    pub fn from_fits(bytes: &[u8]) -> Self {
+        fits::primary_size(bytes).map_or(FileGeometry::Unreadable, |(w, h)| FileGeometry::Size(w, h))
+    }
+
     /// `DarkLibExists` / `DefectMapExists`: the file is there and its first
     /// image has the camera's frame size — or that size is still unknown,
     /// `(0, 0)` (`UNDEFINED_FRAME_SIZE`), and then any present file passes.
@@ -314,24 +339,37 @@ pub const DARKS_AND_DEFECT_MAP_MISMATCH: &str = "Dark library and bad-pixel maps
 
 /// The state `MyFrame` keeps about darks between frames: whether the "Use
 /// Dark Library" and "Use Bad-pixel Map" menu items are enabled (a matching
-/// file exists) and the camera frame size (`DarkFrameSize`) the last check
-/// ran against — PHD2 checks again whenever a frame comes in with another
-/// size (myframe_events.cpp:569), and when capture starts.
+/// file exists) and checked, and the camera frame size (`DarkFrameSize`)
+/// the last check ran against — PHD2 checks again whenever a frame comes in
+/// with another size (myframe_events.cpp:569), and when capture starts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DarkGeometry {
     pub darks_enabled: bool,
     pub defect_map_enabled: bool,
+    /// The items' check marks (`IsChecked`). They are not "loaded":
+    /// [`DarkGeometry::refresh`] clears the mark of an item it disables and
+    /// unloads nothing, so darks loaded on connect (`AutoLoadDarks`, no size
+    /// check) can stay in use unchecked. The load handlers keep them
+    /// (myframe_events.cpp:722-800): `LoadDarkHandler(true)` checks the dark
+    /// item and unchecks it again when the library fails to load;
+    /// `LoadDefectMapHandler(true)` checks the map item and unchecks the dark
+    /// item once the map loads (a failed map load changes neither); each
+    /// handler's `false` form unchecks its item. Loading one unloads the
+    /// other through that `false` form.
+    pub darks_checked: bool,
+    pub defect_map_checked: bool,
     pub prev_frame_size: (i32, i32),
 }
 
 /// What [`DarkGeometry::check`] asks of the caller.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GeometryActions {
-    /// `LoadDefectMapHandler(false)`: drop the map in use and set
-    /// `/camera/AutoLoadDefectMap` to false.
+    /// `LoadDefectMapHandler(false)`: set `/camera/AutoLoadDefectMap` to
+    /// false and drop the map in use, if any.
     pub unload_defect_map: bool,
-    /// `LoadDarkHandler(false)`: clear the darks and set
-    /// `/camera/AutoLoadDarks` to false.
+    /// `LoadDarkHandler(false)`: set `/camera/AutoLoadDarks` to false, then
+    /// clear the darks when one is selected (`CurrentDarkFrame`; otherwise
+    /// they stay held).
     pub unload_darks: bool,
     /// The alerts, in PHD2's order.
     pub alerts: Vec<&'static str>,
@@ -339,18 +377,15 @@ pub struct GeometryActions {
 
 impl DarkGeometry {
     /// `CheckDarkFrameGeometry` (myframe.cpp:2580): a library or map that no
-    /// longer fits the camera is unloaded (when in use) and disabled, one
-    /// that fits again is enabled. A mismatch alerts only while its item was
-    /// enabled; when both are dropped a third alert says so. `darks_in_use`
-    /// and `defect_map_in_use` stand for the items' check marks: a library
-    /// or a map loaded.
+    /// longer fits the camera is unloaded (when its item is checked) and
+    /// disabled, one that fits again is enabled. A mismatch alerts only
+    /// while its item was enabled; when both are dropped a third alert says
+    /// so.
     pub fn check(
         &mut self,
         frame_size: (i32, i32),
         dark_lib: FileGeometry,
         defect_map: FileGeometry,
-        darks_in_use: bool,
-        defect_map_in_use: bool,
     ) -> GeometryActions {
         let mut out = GeometryActions::default();
         // The two existence tests run first, each alerting on its own.
@@ -366,7 +401,8 @@ impl DarkGeometry {
         let mut defect_map_ok = true;
         if self.defect_map_enabled {
             if !have_defect_map {
-                out.unload_defect_map = defect_map_in_use;
+                // The handler's `false` form unchecks the item.
+                out.unload_defect_map = std::mem::take(&mut self.defect_map_checked);
                 self.defect_map_enabled = false;
                 defect_map_ok = false;
             }
@@ -376,7 +412,7 @@ impl DarkGeometry {
 
         if self.darks_enabled {
             if !have_dark_lib {
-                out.unload_darks = darks_in_use;
+                out.unload_darks = std::mem::take(&mut self.darks_checked);
                 self.darks_enabled = false;
                 if !defect_map_ok {
                     out.alerts.push(DARKS_AND_DEFECT_MAP_MISMATCH);
@@ -392,7 +428,7 @@ impl DarkGeometry {
 
     /// `SetDarkMenuState` (myframe.cpp:2624), run after the files change: both
     /// items enabled from the files, each mismatch alerting (dark library
-    /// first). PHD2 also unchecks an item it disables but unloads nothing.
+    /// first). An item it disables is unchecked, but nothing is unloaded.
     pub fn refresh(
         &mut self,
         frame_size: (i32, i32),
@@ -407,7 +443,9 @@ impl DarkGeometry {
             alerts.push(DEFECT_MAP_MISMATCH);
         }
         self.darks_enabled = dark_lib.usable(frame_size);
+        self.darks_checked &= self.darks_enabled;
         self.defect_map_enabled = defect_map.usable(frame_size);
+        self.defect_map_checked &= self.defect_map_enabled;
         alerts
     }
 }
@@ -512,39 +550,34 @@ impl DefectMap {
 /// PHD2 reads out of bounds) reads 0.
 fn median_bordering_pixels(img: &UsImage, x: i32, y: i32) -> u16 {
     let (xs, ys) = (img.w, img.h);
-    let px = |x: i32, y: i32| img.data.get((x + y * xs) as usize).copied().unwrap_or(0);
-    let mut a: Vec<u16> = if x > 0 && y > 0 && x < xs - 1 && y < ys - 1 {
-        vec![
-            px(x - 1, y - 1),
-            px(x, y - 1),
-            px(x + 1, y - 1),
-            px(x - 1, y),
-            px(x + 1, y),
-            px(x - 1, y + 1),
-            px(x, y + 1),
-            px(x + 1, y + 1),
-        ]
+    // The neighbours' offsets, in PHD2's order.
+    let offsets: &[(i32, i32)] = if x > 0 && y > 0 && x < xs - 1 && y < ys - 1 {
+        &[(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
     } else if x == 0 && y > 0 && y < ys - 1 {
-        vec![px(x, y - 1), px(x, y + 1), px(x + 1, y - 1), px(x + 1, y), px(x + 1, y + 1)]
+        &[(0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
     } else if x == xs - 1 && y > 0 && y < ys - 1 {
-        vec![px(x, y - 1), px(x, y + 1), px(x - 1, y - 1), px(x - 1, y), px(x - 1, y + 1)]
+        &[(0, -1), (0, 1), (-1, -1), (-1, 0), (-1, 1)]
     } else if y == 0 && x > 0 && x < xs - 1 {
-        vec![px(x - 1, y), px(x - 1, y + 1), px(x, y + 1), px(x + 1, y), px(x + 1, y + 1)]
+        &[(-1, 0), (-1, 1), (0, 1), (1, 0), (1, 1)]
     } else if y == ys - 1 && x > 0 && x < xs - 1 {
-        vec![px(x - 1, y), px(x - 1, y - 1), px(x, y - 1), px(x + 1, y), px(x + 1, y - 1)]
+        &[(-1, 0), (-1, -1), (0, -1), (1, 0), (1, -1)]
     } else if x == 0 && y == 0 {
-        vec![px(x + 1, y), px(x, y + 1), px(x + 1, y + 1)]
+        &[(1, 0), (0, 1), (1, 1)]
     } else if x == 0 && y == ys - 1 {
-        vec![px(x + 1, y), px(x, y - 1), px(x + 1, y - 1)]
+        &[(1, 0), (0, -1), (1, -1)]
     } else if x == xs - 1 && y == ys - 1 {
-        vec![px(x - 1, y), px(x, y - 1), px(x - 1, y - 1)]
+        &[(-1, 0), (0, -1), (-1, -1)]
     } else if x == xs - 1 && y == 0 {
-        vec![px(x - 1, y), px(x, y + 1), px(x - 1, y + 1)]
+        &[(-1, 0), (0, 1), (-1, 1)]
     } else {
         // PHD2's "unreachable".
         return 0;
     };
-    window_median(&mut a)
+    let mut a = [0u16; 8];
+    for (v, &(dx, dy)) in a.iter_mut().zip(offsets) {
+        *v = img.data.get((x + dx + (y + dy) * xs) as usize).copied().unwrap_or(0);
+    }
+    window_median(&mut a[..offsets.len()])
 }
 
 // ---------------------------------------------------------------- defect map builder
@@ -756,11 +789,12 @@ impl DefectMapBuilder {
     /// hot ones, each from the smallest deviation to the largest.
     pub fn build(&self, cold_aggr: i32, hot_aggr: i32) -> DefectMapBuild {
         let (tc, th) = self.thresholds(cold_aggr, hot_aggr);
+        let at = |(_, &(x, y)): (&i32, &(u16, u16))| (x as i32, y as i32);
         let mut map = DefectMap::default();
-        for (_, &(x, y)) in self.cold.range(tc..).chain(self.hot.range(th..)) {
-            map.pixels.push((x as i32, y as i32));
-        }
-        let (cold, hot) = self.counts(cold_aggr, hot_aggr);
+        map.pixels.extend(self.cold.range(tc..).map(at));
+        let cold = map.pixels.len() as u32;
+        map.pixels.extend(self.hot.range(th..).map(at));
+        let hot = map.pixels.len() as u32 - cold;
         DefectMapBuild { map, cold, hot }
     }
 
@@ -870,6 +904,30 @@ mod tests {
         }
         // A fresh frame: none of the master's metadata.
         assert_eq!((f.img_exp_dur, f.img_stack_cnt), (0, 1));
+    }
+
+    #[test]
+    fn narrow_frame_first_window_reads_the_next_rows() {
+        // From PHD2's C++ MedianFilter on a 10 × 40 frame: each row's first
+        // window spans columns 0..=15 through the flat index, and no column
+        // ever enters or leaves it, so a whole row takes one value. Rows
+        // from 24 on read past PHD2's buffer and are left out.
+        let mut dark = UsImage::new(10, 40);
+        for y in 0..40 {
+            for x in 0..10 {
+                *dark.pixel_mut(x, y) = (500 + (x * 13 + y * 29 + x * y * 7) % 97) as u16;
+            }
+        }
+        let f = build_filtered_dark(&dark);
+        let col0: Vec<u16> = (0..=23).map(|y| f.pixel(0, y)).collect();
+        assert_eq!(
+            col0,
+            [
+                551, 551, 551, 551, 551, 551, 551, 551, 550, 549, 549, 549, 549, 550, 550, 549, 550, 549, 549, 549, 548,
+                548, 548, 548
+            ]
+        );
+        assert!((0..=23).all(|y| (0..10).all(|x| f.pixel(x, y) == f.pixel(0, y))));
     }
 
     #[test]
@@ -1103,11 +1161,10 @@ mod tests {
         }
         assert_eq!(back.current_dark().unwrap().img_exp_dur, 2500);
 
-        // A broken file: the error, nothing selected.
-        let mut broken = DarkLibrary::default();
-        let err = broken.load_fits(b"nonsense", "lib.fit", 1000, 1000).unwrap_err();
+        // A broken file: the error, the selection left as it was.
+        let err = back.load_fits(b"nonsense", "lib.fit", 1000, 1000).unwrap_err();
         assert_eq!(err, "Error opening FITS file lib.fit");
-        assert!(broken.current_dark().is_none());
+        assert_eq!(back.current_dark().unwrap().img_exp_dur, 2500);
     }
 
     #[test]
@@ -1172,9 +1229,15 @@ mod tests {
     #[test]
     fn geometry_check_drops_what_no_longer_fits() {
         use FileGeometry::*;
-        let mut g = DarkGeometry { darks_enabled: true, defect_map_enabled: true, prev_frame_size: (640, 480) };
+        let mut g = DarkGeometry {
+            darks_enabled: true,
+            defect_map_enabled: true,
+            darks_checked: true,
+            defect_map_checked: false,
+            prev_frame_size: (640, 480),
+        };
         // Binning changed: both files are 640×480, the camera now 320×240.
-        let out = g.check((320, 240), Size(640, 480), Size(640, 480), true, false);
+        let out = g.check((320, 240), Size(640, 480), Size(640, 480));
         assert_eq!(
             out,
             GeometryActions {
@@ -1183,34 +1246,65 @@ mod tests {
                 alerts: vec![DEFECT_MAP_MISMATCH, DARK_LIB_MISMATCH, DARKS_AND_DEFECT_MAP_MISMATCH],
             }
         );
-        assert_eq!(g, DarkGeometry { darks_enabled: false, defect_map_enabled: false, prev_frame_size: (320, 240) });
+        assert_eq!(g, DarkGeometry { prev_frame_size: (320, 240), ..DarkGeometry::default() });
 
         // Disabled items do not alert again; back at 640×480 they come back.
-        assert!(g.check((320, 240), Size(640, 480), Size(640, 480), false, false).alerts.is_empty());
-        let out = g.check((640, 480), Size(640, 480), Size(640, 480), false, false);
+        assert!(g.check((320, 240), Size(640, 480), Size(640, 480)).alerts.is_empty());
+        let out = g.check((640, 480), Size(640, 480), Size(640, 480));
         assert_eq!(out, GeometryActions::default());
         assert!(g.darks_enabled && g.defect_map_enabled);
 
         // Only the map gone (its .txt deleted): it is unloaded, no alert.
-        let out = g.check((640, 480), Size(640, 480), Missing, false, true);
+        g.defect_map_checked = true;
+        let out = g.check((640, 480), Size(640, 480), Missing);
         assert_eq!(out, GeometryActions { unload_defect_map: true, unload_darks: false, alerts: vec![] });
+        assert!(!g.defect_map_checked);
 
         // An unknown frame size accepts any present file, even unreadable.
         let mut g = DarkGeometry::default();
-        g.check((0, 0), Unreadable, Size(1, 1), false, false);
+        g.check((0, 0), Unreadable, Size(1, 1));
         assert!(g.darks_enabled && g.defect_map_enabled);
         assert!(!FileGeometry::Unreadable.usable((640, 480)));
     }
 
     #[test]
+    fn darks_kept_in_use_after_refresh_unchecks_them() {
+        use FileGeometry::*;
+        // AutoLoadDarks loaded a 640×480 library on a 320×240 camera:
+        // SetDarkMenuState disables and unchecks the item, the darks stay.
+        let mut g = DarkGeometry { darks_checked: true, ..DarkGeometry::default() };
+        assert_eq!(g.refresh((320, 240), Size(640, 480), Missing), [DARK_LIB_MISMATCH]);
+        assert!(!g.darks_enabled && !g.darks_checked);
+        // Back at 640×480 the item comes back, unchecked; at 320×240 again
+        // it alerts but nothing is unloaded, AutoLoadDarks left alone.
+        assert_eq!(g.check((640, 480), Size(640, 480), Missing), GeometryActions::default());
+        let out = g.check((320, 240), Size(640, 480), Missing);
+        assert_eq!(out.alerts, [DARK_LIB_MISMATCH]);
+        assert!(!out.unload_darks && !out.unload_defect_map);
+    }
+
+    #[test]
+    fn file_geometry_reads_the_primary_header_only() {
+        // A two-HDU library: the primary's size, whatever follows.
+        let mut lib = DarkLibrary::default();
+        lib.add_dark(flat(4, 3, 7, 1000));
+        lib.add_dark(flat(4, 3, 9, 2000));
+        let bytes = lib.to_fits("");
+        assert_eq!(FileGeometry::from_fits(&bytes), FileGeometry::Size(4, 3));
+        assert!(FileGeometry::from_fits(&bytes).usable((4, 3)));
+        assert_eq!(FileGeometry::from_fits(b"nonsense"), FileGeometry::Unreadable);
+    }
+
+    #[test]
     fn refresh_alerts_dark_library_first() {
         use FileGeometry::*;
-        let mut g = DarkGeometry { darks_enabled: true, defect_map_enabled: false, prev_frame_size: (0, 0) };
+        let mut g = DarkGeometry { darks_enabled: true, defect_map_checked: true, ..DarkGeometry::default() };
         let alerts = g.refresh((320, 240), Size(640, 480), Size(640, 480));
         assert_eq!(alerts, [DARK_LIB_MISMATCH, DEFECT_MAP_MISMATCH]);
-        assert!(!g.darks_enabled && !g.defect_map_enabled);
+        assert!(!g.darks_enabled && !g.defect_map_enabled && !g.defect_map_checked);
+        g.darks_checked = true;
         assert!(g.refresh((320, 240), Size(320, 240), Missing).is_empty());
-        assert!(g.darks_enabled && !g.defect_map_enabled);
+        assert!(g.darks_enabled && g.darks_checked && !g.defect_map_enabled);
         // PHD2's texts, one line each.
         assert_eq!(
             DARK_LIB_MISMATCH,
