@@ -15,4 +15,5 @@ pub mod multistar;
 pub mod rng;
 pub mod star;
 pub mod stats;
+pub mod tools;
 pub mod traits;

@@ -19,6 +19,8 @@ Copyright holders of the ported code:
 - Copyright (c) 2018 Ken Self (`src/zfilterfactory.cpp`, the ZFilter design),
   based on *mkfilter* by A.J. Fisher, University of York, September 1992
   (https://www-users.cs.york.ac.uk/~fisher/mkfilter/).
+- Copyright (c) 2017 Ken Self (`src/polardrift_toolwin.cpp`,
+  `src/staticpa_toolwin.cpp`: the polar drift and static polar alignment tools).
 
 ## BSD-3-Clause
 
