@@ -141,7 +141,7 @@ pub struct AutoExposureCfg {
 
 /// PHD2's `VarDelayCfg`: a long delay between exposures while guiding
 /// calmly, a short one otherwise.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct VarDelayCfg {
     pub enabled: bool,
     pub short_ms: i32,
@@ -271,7 +271,8 @@ pub enum ControlEvent {
     /// `StartGuiding`'s `CheckLogRollover`: the logs move to a new file at
     /// the start of a new imaging day. The engine's.
     CheckLogRollover,
-    /// The exposure changed: `pCamera->SelectDark(ms)`. The engine's.
+    /// The exposure changed: `pCamera->SelectDark(ms)`. The engine's, only
+    /// when a camera is chosen (`if (pCamera)`), connected or not.
     SelectDark(i32),
     /// AutoSelect set the camera's saturation level (AutoFind's
     /// `SetSaturationByADU(true, level)`): the engine saves it to
@@ -443,10 +444,13 @@ impl Control {
             dither_ra_only: false,
             spiral: DitherSpiral::default(),
             time_lapse_ms: 0,
-            var_delay: VarDelayCfg { enabled: false, short_ms: 0, long_ms: 0 },
+            var_delay: VarDelayCfg::default(),
             last_exposure_delay: -1,
             rng: Rng::default(),
         };
+        // `DitherSpiral`'s constructor calls `Reset`, which logs, before
+        // the frame reads its settings.
+        c.spiral.reset(ev);
         c.load_profile_settings(profile, ev);
         c
     }
@@ -486,6 +490,11 @@ impl Control {
     /// `IsSettling`.
     pub fn is_settling(&self) -> bool {
         matches!(self.state, State::SettleBegin | State::SettleWait)
+    }
+
+    /// Settling after a dither, not a guide (`guider_state.dithering`).
+    pub fn is_dithering(&self) -> bool {
+        self.is_settling() && self.settle_op == SettleOp::Dither
     }
 
     /// `IsIdle`: not working through a guide or a dither.
@@ -804,9 +813,8 @@ impl Control {
         let locked = cx.guider.multistar().is_locked();
         let error = cx.guider.current_error(cx.gcx.ra_only, cx.gcx.now_ms);
         let in_range = locked && error <= self.settle.tolerance_px;
-        // `IsAoBumpInProgress`
-        let ao_bump =
-            cx.gcx.primary.as_deref().is_some_and(|m| m.mount().is_step_guider() && m.is_bump_in_progress());
+        // `IsAoBumpInProgress` (never on a scope).
+        let ao_bump = cx.gcx.primary.as_deref().is_some_and(|m| m.is_bump_in_progress());
         let mut time_in_range = 0;
         self.settle_frame_count += 1;
         if !locked {
@@ -1189,6 +1197,9 @@ impl Control {
             debug(ev, "cannot auto-select star while calibrating or guiding");
             return false;
         }
+        // PHD2 reads these live; the engine's copies can be a frame old (the
+        // exposure adjusted by the frame this controller update follows),
+        // so they are refreshed, and stay so for the rest of the call.
         cx.gcx.settling = self.is_settling();
         (cx.gcx.exposure_ms, cx.gcx.auto_exposure) = self.exposure_info(cx.camera_connected);
         let mut gev = Vec::new();
@@ -1370,8 +1381,11 @@ impl Control {
     }
 
     /// `SetCustomExposureDuration`: the last duration offered. False (PHD2's
-    /// error) for one of the standard durations. The exposure follows when
-    /// it was the custom one, whether auto exposure is on or not.
+    /// error) for one of the standard durations, and for one its only
+    /// caller, the custom-duration dialog (myframe_events.cpp:85), does not
+    /// let through: 0 < s < 3600, truncated to ms — the port refuses the 0
+    /// a value under 1 ms truncates to. The exposure follows when it was
+    /// the custom one, whether auto exposure is on or not.
     pub fn set_custom_exposure_duration(
         &mut self,
         ms: i32,
@@ -1379,7 +1393,7 @@ impl Control {
         ev: &mut Vec<ControlEvent>,
     ) -> bool {
         let custom = self.durations.len() - 1;
-        if self.durations[..custom].contains(&ms) {
+        if !(1..3_600_000).contains(&ms) || self.durations[..custom].contains(&ms) {
             return false;
         }
         if self.exposure_ms == self.durations[custom] && self.durations[custom] != ms {
@@ -1412,7 +1426,9 @@ impl Control {
 
     /// The settings dialog's auto exposure (`UnloadValues`): the maximum no
     /// shorter than the minimum, saved, and announced when auto exposure is
-    /// on and something changed. True when it changed.
+    /// on and something changed; whether it changed. `None`, and nothing
+    /// set, for what the dialog cannot pick: a minimum or maximum that is
+    /// not an offered duration, an SNR outside its 3.5–99.9.
     pub fn set_auto_exposure_cfg(
         &mut self,
         min_ms: i32,
@@ -1420,13 +1436,17 @@ impl Control {
         target_snr: f64,
         profile: &mut dyn ProfileAccess,
         ev: &mut Vec<ControlEvent>,
-    ) -> bool {
+    ) -> Option<bool> {
+        let offered = |ms| self.durations.contains(&ms);
+        if !offered(min_ms) || !offered(max_ms) || !(3.5..=99.9).contains(&target_snr) {
+            return None;
+        }
         let max_ms = if max_ms < min_ms { min_ms } else { max_ms };
         let changed = self.store_auto_exposure_cfg(min_ms, max_ms, target_snr, profile, ev);
         if self.auto_exp.enabled && changed {
             self.notify_exposure_changed(profile, ev);
         }
-        changed
+        Some(changed)
     }
 
     /// `ResetAutoExposure`: under auto exposure, back to the longest.
@@ -1530,7 +1550,7 @@ impl Control {
 
     /// `GetExposureDelay`: the wait before an exposure, ms — the time lapse,
     /// or with the variable delay on, the long delay while guiding with
-    /// nothing in progress (no guide or dither settling, no recenter) and
+    /// nothing in progress (no guide or dither in progress, no recenter) and
     /// the mount guiding, else the short one. A new value is logged.
     pub fn exposure_delay(&mut self, guider: &Guider, guiding_enabled: bool, ev: &mut Vec<ControlEvent>) -> i32 {
         let v = self.var_delay;
@@ -1574,12 +1594,12 @@ mod tests {
 
     use super::*;
     use crate::engine::algo::AlgoCtx;
-    use crate::engine::calibration::{Calibration, ScopePointing};
+    use crate::engine::calibration::{Adjustment, Calibration, ScopePointing};
     use crate::engine::guider::ScheduledMove;
     use crate::engine::image::UsImage;
-    use crate::engine::mount::{GuideOutput, StepFrame};
+    use crate::engine::mount::{GuideOutput, Mount, PointingSource, StepFrame};
     use crate::engine::multistar::FindParams;
-    use crate::engine::scope::{CalibrationEnv, Scope, ScopeIo};
+    use crate::engine::scope::{CalibrationEnv, CalibrationNext, Scope, ScopeIo};
     use crate::engine::star::FindMode;
     use crate::engine::traits::{CancelToken, Dir, MoveOpts, MoveResult, Parity, PierSide};
 
@@ -1659,12 +1679,77 @@ mod tests {
         Arc::new(img)
     }
 
+    /// The bench's scope as the primary mount, with an AO bump in progress
+    /// when told so — all the controller reads of an AO.
+    struct BenchMount<'a> {
+        scope: &'a mut Scope,
+        bump: bool,
+    }
+
+    impl GuiderMount for BenchMount<'_> {
+        fn mount(&self) -> &Mount {
+            &self.scope.mount
+        }
+        fn mount_mut(&mut self) -> &mut Mount {
+            &mut self.scope.mount
+        }
+        fn is_calibrated(&self) -> bool {
+            GuiderMount::is_calibrated(&*self.scope)
+        }
+        fn calibration_tot_distance(&self) -> i32 {
+            GuiderMount::calibration_tot_distance(&*self.scope)
+        }
+        fn begin_calibration(
+            &mut self,
+            location: Option<Point>,
+            env: &CalibrationEnv,
+            pointing: Option<&dyn PointingSource>,
+            profile: &mut dyn ProfileAccess,
+            events: &mut Vec<MountEvent>,
+        ) -> bool {
+            GuiderMount::begin_calibration(self.scope, location, env, pointing, profile, events)
+        }
+        fn update_calibration_state(
+            &mut self,
+            cur: Point,
+            env: &CalibrationEnv,
+            pointing: Option<&dyn PointingSource>,
+            profile: &mut dyn ProfileAccess,
+            events: &mut Vec<MountEvent>,
+        ) -> CalibrationNext {
+            GuiderMount::update_calibration_state(self.scope, cur, env, pointing, profile, events)
+        }
+        fn adjust_calibration_for_scope_pointing(
+            &mut self,
+            pointing: &ScopePointing,
+            timestamp: &str,
+            profile: &mut dyn ProfileAccess,
+            events: &mut Vec<MountEvent>,
+        ) -> Adjustment {
+            GuiderMount::adjust_calibration_for_scope_pointing(self.scope, pointing, timestamp, profile, events)
+        }
+        fn notify_guiding_stopped(&mut self, ctx: &AlgoCtx, profile: &mut dyn ProfileAccess, ev: &mut Vec<MountEvent>) {
+            GuiderMount::notify_guiding_stopped(self.scope, ctx, profile, ev)
+        }
+        fn clear_calibration(&mut self) {
+            GuiderMount::clear_calibration(self.scope)
+        }
+        fn is_bump_in_progress(&self) -> bool {
+            self.bump
+        }
+        fn scope_mut(&mut self) -> Option<&mut Scope> {
+            Some(self.scope)
+        }
+    }
+
     /// The controller in front of a guider on a scope that moves a star,
     /// with the engine's part played by [`Bench::step`].
     struct Bench {
         ctl: Control,
         guider: Guider,
         scope: Scope,
+        /// An AO bump in progress, as the primary mount tells it.
+        bump: bool,
         profile: Profile,
         star: Point,
         visible: bool,
@@ -1692,6 +1777,7 @@ mod tests {
                 ctl,
                 guider,
                 scope,
+                bump: false,
                 profile,
                 star: Point::new(100.0, 100.0),
                 visible: true,
@@ -1728,10 +1814,11 @@ mod tests {
         fn call<R>(&mut self, f: impl FnOnce(&mut Control, &mut ControlCx, &mut Vec<ControlEvent>) -> R) -> R {
             let (exposure_ms, auto_exposure) = self.ctl.exposure_info(self.camera);
             let ra_only = self.scope.dec_guide_mode() == DecGuideMode::None;
+            let mut primary = BenchMount { scope: &mut self.scope, bump: self.bump };
             let mut cx = ControlCx {
                 guider: &mut self.guider,
                 gcx: GuiderCx {
-                    primary: Some(&mut self.scope),
+                    primary: Some(&mut primary),
                     secondary: None,
                     profile: &mut self.profile,
                     pointing: None,
@@ -1920,6 +2007,7 @@ mod tests {
         // The sticky lock is the user's again.
         assert!(!b.guider.lock_pos_is_sticky());
         assert!(b.ctl.is_settling());
+        assert!(!b.ctl.is_dithering());
 
         let begin = b.mono_ms;
         b.settle(40);
@@ -2023,6 +2111,113 @@ mod tests {
     }
 
     #[test]
+    fn a_forced_recalibration_clears_the_calibration_then_calibrates() {
+        let mut b = Bench::guiding();
+        let settle = SettleParams { tolerance_px: 1.5, settle_time_s: 0, timeout_s: 60, frames: 99999 };
+        let opts = GuideOpts { force_recal: true, use_sticky_lock: true };
+        b.call(|c, cx, ev| c.guide(opts, settle, None, cx, ev)).unwrap();
+        // Guiding, straight to the calibration: no settle on the way.
+        let lines = [
+            "PhdController: newstate STATE_ATTEMPT_START",
+            "PhdController: newstate STATE_CALIBRATE",
+            "PhdController: clearing calibration",
+            "PhdController: start calibration",
+            "PhdController: newstate STATE_CALIBRATION_WAIT",
+        ];
+        let at = |l: &str| b.ev.iter().position(|e| *e == ControlEvent::Debug(l.into())).unwrap();
+        let pos: Vec<usize> = lines.iter().map(|l| at(l)).collect();
+        assert!(pos.windows(2).all(|w| w[0] < w[1]), "{pos:?}");
+        assert!(!b.ev.contains(&ControlEvent::SettleBegin));
+        assert!(!GuiderMount::is_calibrated(&b.scope));
+        assert!(b.guider.is_calibrating());
+        assert!(b.guider.lock_pos_is_sticky());
+
+        b.ev.clear();
+        b.settle(100);
+        assert!(GuiderMount::is_calibrated(&b.scope));
+        assert!(b.guider.is_guiding());
+        assert_eq!(b.settle_done().unwrap().0, None);
+        assert!(!b.guider.lock_pos_is_sticky());
+    }
+
+    #[test]
+    fn a_calibration_that_cannot_start_gives_the_sticky_lock_back() {
+        let mut b = Bench::new();
+        assert!(!b.guider.lock_pos_is_sticky());
+        let settle = SettleParams { tolerance_px: 1.5, settle_time_s: 10, timeout_s: 60, frames: 99999 };
+        let opts = GuideOpts { force_recal: false, use_sticky_lock: true };
+        b.call(|c, cx, ev| c.guide(opts, settle, None, cx, ev)).unwrap();
+        b.step();
+        assert!(b.debug("PhdController: newstate STATE_WAIT_SELECTED"));
+        // The camera drops out before the star is selected: the next frame
+        // finds it selected, and calibration cannot start.
+        b.camera = false;
+        b.ev.clear();
+        b.step();
+        assert!(b.debug("PhdController: start calibration"));
+        assert_eq!(b.settle_done(), Some((Some("could not start calibration".into()), 0, 0)));
+        assert!(!b.guider.lock_pos_is_sticky());
+        assert!(b.ctl.is_idle());
+    }
+
+    #[test]
+    fn frames_without_the_star_are_dropped_from_the_settle() {
+        let mut b = Bench::guiding();
+        let settle = SettleParams { tolerance_px: 1.5, settle_time_s: 0, timeout_s: 60, frames: 99999 };
+        b.call(|c, cx, ev| c.guide(GuideOpts::default(), settle, None, cx, ev)).unwrap();
+        b.visible = false;
+        b.step();
+        b.step();
+        b.visible = true;
+        assert_eq!(b.settle(3), 1);
+        assert_eq!(b.settle_done(), Some((None, 3, 2)));
+        let locked: Vec<bool> = b.settling().iter().map(|s| s.2).collect();
+        assert_eq!(locked, [false, false]);
+        assert!(b.ev.iter().any(
+            |e| matches!(e, ControlEvent::Debug(l) if l.starts_with("PhdController: settling, locked = 0,"))
+        ));
+    }
+
+    #[test]
+    fn an_ao_bump_holds_the_settle_back() {
+        let mut b = Bench::guiding();
+        let settle = SettleParams { tolerance_px: 1.5, settle_time_s: 2, timeout_s: 60, frames: 99999 };
+        b.bump = true;
+        b.call(|c, cx, ev| c.guide(GuideOpts::default(), settle, None, cx, ev)).unwrap();
+        for _ in 0..5 {
+            assert!(b.step());
+        }
+        // In range from the first frame, past the 2 s, still settling.
+        assert!(b.ctl.is_settling());
+        let times: Vec<f64> = b.settling().iter().map(|s| s.1).collect();
+        assert_eq!(times, [0.0, 1.0, 2.0, 3.0, 4.0]);
+        let bump_line = |l: &String| l.contains("aobump = 1 frame = 5 / 99999");
+        assert!(b.ev.iter().any(|e| matches!(e, ControlEvent::Debug(l) if bump_line(l))));
+        b.bump = false;
+        assert_eq!(b.settle(3), 1);
+        assert_eq!(b.settle_done(), Some((None, 6, 0)));
+    }
+
+    #[test]
+    fn a_manual_dither_aborts_the_settle_in_progress() {
+        let mut b = Bench::guiding();
+        let settle = SettleParams { tolerance_px: 1.5, settle_time_s: 10, timeout_s: 60, frames: 99999 };
+        b.call(|c, cx, ev| c.dither(3.0, false, settle, cx, ev)).unwrap();
+        b.step();
+        b.ev.clear();
+        b.call(|c, cx, ev| c.dither_compat(2.0, cx, ev)).unwrap();
+        assert_eq!(b.settle_done(), Some((Some("manual or phd1-style dither".into()), 1, 0)));
+        let done = b.ev.iter().position(|e| matches!(e, ControlEvent::SettleDone { .. })).unwrap();
+        let dithered = b.ev.iter().position(|e| matches!(e, ControlEvent::GuidingDithered { .. })).unwrap();
+        assert!(done < dithered);
+        assert!(b.ctl.is_dithering());
+        // The new dither settles over its ten frames.
+        b.ev.clear();
+        assert_eq!(b.settle(12), 10);
+        assert_eq!(b.settle_done(), Some((None, 10, 0)));
+    }
+
+    #[test]
     fn a_guide_or_dither_in_progress_refuses_another() {
         let mut b = Bench::new();
         let settle = SettleParams { tolerance_px: 1.5, settle_time_s: 10, timeout_s: 60, frames: 99999 };
@@ -2065,6 +2260,7 @@ mod tests {
         let i = b.ev.iter().position(|e| matches!(e, ControlEvent::GuidingDithered { .. })).unwrap();
         assert_eq!(b.ev[i + 2], ControlEvent::SettleBegin);
         assert!(b.ctl.is_settling());
+        assert!(b.ctl.is_dithering());
 
         // The error jumps by the dither, then the fast recenter brings the
         // star to the new lock.
@@ -2495,6 +2691,15 @@ mod tests {
         assert_eq!(b.ctl.exposure_duration(), 60000);
         assert_eq!(b.ev.last(), Some(&summary("60000 ms")));
         assert_eq!(b.profile.get_i32(keys::CUSTOM_EXPOSURE, 0), 60000);
+        // Only what the dialog lets through: 0 < s < 3600, in ms.
+        b.call(|c, cx, ev| {
+            for ms in [0, -1000, 3_600_000] {
+                assert!(!c.set_custom_exposure_duration(ms, cx.gcx.profile, ev));
+            }
+            assert!(c.set_custom_exposure_duration(3_599_999, cx.gcx.profile, ev));
+            assert!(c.set_custom_exposure_duration(60000, cx.gcx.profile, ev));
+        });
+        assert_eq!(b.ctl.exposure_duration(), 60000);
 
         // The variable delay joins the summary.
         b.call(|c, cx, ev| c.set_variable_delay_config(true, 2000, 1000, cx.gcx.profile, ev));
@@ -2522,6 +2727,7 @@ mod tests {
         assert_eq!(
             lines,
             [
+                "reset dither spiral",
                 "set dither mode 0",
                 "Variable delay: Disabled, Short = 1000 ms, Long = 10000 ms",
                 "AutoExp: config min = 1000 max = 4000 snr = 6.00",
@@ -2550,8 +2756,13 @@ mod tests {
         assert_eq!(exp, [4438, 3939, 3354, 2856, 2432, 3891, 4864, 5000]);
         assert!(ev.contains(&ControlEvent::Debug("AutoExp: adjust SNR=12.00 new exposure 4438".into())));
         assert!(ev.contains(&ControlEvent::Debug("AutoExp: low SNR (0.50), reset exp to 5000".into())));
+        // Only durations offered, and an SNR the dialog allows.
+        assert_eq!(b.ctl.set_auto_exposure_cfg(1234, 3000, 6.0, &mut b.profile, &mut ev), None);
+        assert_eq!(b.ctl.set_auto_exposure_cfg(2000, 3001, 6.0, &mut b.profile, &mut ev), None);
+        assert_eq!(b.ctl.set_auto_exposure_cfg(2000, 3000, 3.0, &mut b.profile, &mut ev), None);
+        assert_eq!(b.ctl.auto_exposure().max_ms, 5000);
         // Bounded by the limits.
-        b.ctl.set_auto_exposure_cfg(2000, 3000, 6.0, &mut b.profile, &mut ev);
+        assert_eq!(b.ctl.set_auto_exposure_cfg(2000, 3000, 6.0, &mut b.profile, &mut ev), Some(true));
         assert_eq!(
             ev.last(),
             Some(&ControlEvent::ParamChange {
