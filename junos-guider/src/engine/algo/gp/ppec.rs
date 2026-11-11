@@ -51,7 +51,9 @@ const HYPERPARAMETERS: [(f64, f64, &str); NUM_PARAMETERS] = [
     (DEFAULT_PERIOD_LENGTH_PER_KER, 1.0, "gp_period_per_kern"),
 ];
 
-/// `GuideAlgorithmGaussianProcess` ("Predictive PEC"), RA only.
+/// `GuideAlgorithmGaussianProcess` ("Predictive PEC"). Offered on RA only,
+/// but built on whatever axis the profile names, as in PHD2; it always
+/// takes the mount's X rate for gear time.
 #[derive(Debug, Clone)]
 pub struct GaussianProcess {
     gpg: GaussianProcessGuider,

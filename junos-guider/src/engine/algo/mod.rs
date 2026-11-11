@@ -294,55 +294,48 @@ pub trait GuideAlgorithm: Send {
 /// `profile` reads a full profile path (e.g.
 /// `/scope/GuideAlgorithm/X/Hysteresis/minMove`), `None` meaning unset; the
 /// algorithm asks for its keys under its own [`config_path`]. `None` builds
-/// Identity. The Gaussian process is built only where [`allowed`] (scope
-/// RA), else `Err`.
-pub fn make(
-    kind: AlgoKind,
-    axis: Axis,
-    mount_class: MountClass,
-    profile: ParamLookup,
-) -> Result<Box<dyn GuideAlgorithm>, String> {
-    // The axis and mount class only pick the profile group; the classic
-    // algorithms behave the same on every axis.
+/// Identity. Like PHD2's factory it builds any kind on any axis: only the
+/// choices offered are limited ([`allowed_kinds`]), so a profile asking for
+/// Predictive PEC on Dec gets it.
+pub fn make(kind: AlgoKind, axis: Axis, mount_class: MountClass, profile: ParamLookup) -> Box<dyn GuideAlgorithm> {
+    // The axis and mount class only pick the profile group; the algorithms
+    // behave the same on every axis.
     let group = config_path(mount_class, axis, kind);
     let lookup = |key: &str| profile(&format!("{group}/{key}"));
     let params: ParamLookup = &lookup;
-    Ok(match kind {
+    match kind {
         AlgoKind::None | AlgoKind::Identity => Box::new(identity::Identity::new()),
         AlgoKind::Hysteresis => Box::new(hysteresis::Hysteresis::new(params)),
         AlgoKind::Lowpass => Box::new(lowpass::Lowpass::new(params)),
         AlgoKind::Lowpass2 => Box::new(lowpass2::Lowpass2::new(params)),
         AlgoKind::ResistSwitch => Box::new(resist_switch::ResistSwitch::new(params)),
+        AlgoKind::GaussianProcess => Box::new(gp::ppec::GaussianProcess::new(params)),
         AlgoKind::ZFilter => Box::new(zfilter::ZFilter::new(params)),
-        AlgoKind::GaussianProcess if allowed(kind, axis, mount_class) => {
-            Box::new(gp::ppec::GaussianProcess::new(params))
-        }
-        AlgoKind::GaussianProcess => {
-            return Err(format!("{} is RA only", kind.class_name()));
-        }
-    })
+    }
 }
 
-/// `Mount::SetXGuideAlgorithm` / `SetYGuideAlgorithm` (`mount.cpp:598-645`):
-/// `None` means the axis default, and a kind that cannot be built falls back
-/// to the default too. Returns the algorithm and the kind to persist (under
-/// `/<mountClass>/XGuideAlgorithm` or `YGuideAlgorithm`).
+/// `Mount::SetXGuideAlgorithm` / `SetYGuideAlgorithm` (`mount.cpp:598-645`)
+/// on the integer the profile stores (`/<mountClass>/XGuideAlgorithm` or
+/// `YGuideAlgorithm`): −1 means the axis default, and so does a value
+/// PHD2's factory refuses (outside −1..=6). Returns the algorithm and the
+/// kind to persist under that key.
+///
+/// PHD2 does all this only when the axis has no algorithm yet or a different
+/// one (`mount.cpp:600`): asking for the running kind rebuilds nothing, keeps
+/// the history and writes nothing. The caller must skip the call when
+/// `current.kind() as i32 == stored`, comparing before −1 is mapped to the
+/// default (so −1 does rebuild a running default).
 pub fn make_or_default(
-    kind: AlgoKind,
+    stored: i32,
     axis: Axis,
     mount_class: MountClass,
     profile: ParamLookup,
 ) -> (Box<dyn GuideAlgorithm>, AlgoKind) {
-    let kind = if kind == AlgoKind::None { default_kind(axis, mount_class) } else { kind };
-    match make(kind, axis, mount_class, profile) {
-        Ok(algo) => (algo, kind),
-        Err(_) => {
-            let fallback = default_kind(axis, mount_class);
-            let algo = make(fallback, axis, mount_class, profile)
-                .expect("the default algorithms are the classic ones, always buildable");
-            (algo, fallback)
-        }
-    }
+    let kind = match AlgoKind::from_i32(stored) {
+        Some(AlgoKind::None) | None => default_kind(axis, mount_class),
+        Some(kind) => kind,
+    };
+    (make(kind, axis, mount_class, profile), kind)
 }
 
 /// The algorithms the Brain offers for an axis, in PHD2's order
@@ -487,24 +480,30 @@ mod tests {
 
     #[test]
     fn factory() {
-        let a = make(AlgoKind::None, Axis::X, MountClass::Scope, &no_params).unwrap();
+        let a = make(AlgoKind::None, Axis::X, MountClass::Scope, &no_params);
         assert_eq!(a.kind(), AlgoKind::Identity);
+        // Every kind on every axis, Predictive PEC on Dec and on an AO
+        // included: PHD2's factory checks neither.
         for k in [
             AlgoKind::Identity,
             AlgoKind::Hysteresis,
             AlgoKind::Lowpass,
             AlgoKind::Lowpass2,
             AlgoKind::ResistSwitch,
+            AlgoKind::GaussianProcess,
             AlgoKind::ZFilter,
         ] {
-            let a = make(k, Axis::Y, MountClass::Scope, &no_params).unwrap();
-            assert_eq!(a.kind(), k);
-            assert_eq!(a.class_name(), k.class_name());
+            for (axis, mc) in [
+                (Axis::X, MountClass::Scope),
+                (Axis::Y, MountClass::Scope),
+                (Axis::X, MountClass::StepGuider),
+                (Axis::Y, MountClass::StepGuider),
+            ] {
+                let a = make(k, axis, mc, &no_params);
+                assert_eq!(a.kind(), k);
+                assert_eq!(a.class_name(), k.class_name());
+            }
         }
-        let a = make(AlgoKind::GaussianProcess, Axis::X, MountClass::Scope, &no_params).unwrap();
-        assert_eq!(a.kind(), AlgoKind::GaussianProcess);
-        assert!(make(AlgoKind::GaussianProcess, Axis::Y, MountClass::Scope, &no_params).is_err());
-        assert!(make(AlgoKind::GaussianProcess, Axis::X, MountClass::StepGuider, &no_params).is_err());
     }
 
     #[test]
@@ -516,24 +515,24 @@ mod tests {
             "/scope/GuideAlgorithm/Y/Hysteresis/aggression" => Some(0.3),
             _ => None,
         };
-        let a = make(AlgoKind::ResistSwitch, Axis::Y, MountClass::Scope, &profile).unwrap();
+        let a = make(AlgoKind::ResistSwitch, Axis::Y, MountClass::Scope, &profile);
         assert_eq!(a.min_move(), 0.4);
-        let a = make(AlgoKind::Hysteresis, Axis::Y, MountClass::StepGuider, &profile).unwrap();
+        let a = make(AlgoKind::Hysteresis, Axis::Y, MountClass::StepGuider, &profile);
         assert_eq!(a.get_param("aggression"), Some(1.2));
         assert_eq!(a.min_move(), 0.2);
         // Predictive PEC's group keeps the space in its class name.
         let profile = |k: &str| (k == "/scope/GuideAlgorithm/X/Predictive PEC/gp_min_move").then_some(0.3);
-        let a = make(AlgoKind::GaussianProcess, Axis::X, MountClass::Scope, &profile).unwrap();
+        let a = make(AlgoKind::GaussianProcess, Axis::X, MountClass::Scope, &profile);
         assert_eq!(a.min_move(), 0.3);
         // A fallback reads the default algorithm's own group.
         let profile = |k: &str| (k == "/stepguider/GuideAlgorithm/X/Hysteresis/minMove").then_some(0.33);
-        let (a, _) = make_or_default(AlgoKind::GaussianProcess, Axis::X, MountClass::StepGuider, &profile);
+        let (a, _) = make_or_default(99, Axis::X, MountClass::StepGuider, &profile);
         assert_eq!(a.min_move(), 0.33);
     }
 
     #[test]
     fn summaries() {
-        let algo = |k| make(k, Axis::X, MountClass::Scope, &no_params).unwrap().settings_summary();
+        let algo = |k| make(k, Axis::X, MountClass::Scope, &no_params).settings_summary();
         // Identity's newline ends the X line: "X guide algorithm = None, \n".
         assert_eq!(algo(AlgoKind::None), "\n");
         assert_eq!(algo(AlgoKind::Hysteresis), "Hysteresis = 0.100, Aggression = 0.700, Minimum move = 0.200\n");
@@ -545,13 +544,21 @@ mod tests {
 
     #[test]
     fn make_or_default_falls_back() {
-        let (a, k) = make_or_default(AlgoKind::None, Axis::Y, MountClass::Scope, &no_params);
+        // −1 and the values PHD2's factory refuses take the axis default.
+        let (a, k) = make_or_default(-1, Axis::Y, MountClass::Scope, &no_params);
         assert_eq!((a.kind(), k), (AlgoKind::ResistSwitch, AlgoKind::ResistSwitch));
-        let (a, k) = make_or_default(AlgoKind::GaussianProcess, Axis::X, MountClass::StepGuider, &no_params);
+        let (a, k) = make_or_default(7, Axis::X, MountClass::StepGuider, &no_params);
         assert_eq!((a.kind(), k), (AlgoKind::Hysteresis, AlgoKind::Hysteresis));
-        let (a, k) = make_or_default(AlgoKind::ZFilter, Axis::X, MountClass::StepGuider, &no_params);
+        let (a, k) = make_or_default(-2, Axis::Y, MountClass::Scope, &no_params);
+        assert_eq!((a.kind(), k), (AlgoKind::ResistSwitch, AlgoKind::ResistSwitch));
+        // Any valid kind is built and kept, offered on that axis or not.
+        let (a, k) = make_or_default(0, Axis::X, MountClass::Scope, &no_params);
+        assert_eq!((a.kind(), k), (AlgoKind::Identity, AlgoKind::Identity));
+        let (a, k) = make_or_default(6, Axis::X, MountClass::StepGuider, &no_params);
         assert_eq!((a.kind(), k), (AlgoKind::ZFilter, AlgoKind::ZFilter));
-        let (a, k) = make_or_default(AlgoKind::Lowpass2, Axis::X, MountClass::Scope, &no_params);
+        let (a, k) = make_or_default(5, Axis::Y, MountClass::Scope, &no_params);
+        assert_eq!((a.kind(), k), (AlgoKind::GaussianProcess, AlgoKind::GaussianProcess));
+        let (a, k) = make_or_default(3, Axis::X, MountClass::Scope, &no_params);
         assert_eq!((a.kind(), k), (AlgoKind::Lowpass2, AlgoKind::Lowpass2));
     }
 
@@ -559,7 +566,7 @@ mod tests {
     fn trait_defaults_and_hooks() {
         // Identity has no min-move and no params; the base defaults apply
         // but for its summary.
-        let mut a = make(AlgoKind::Identity, Axis::X, MountClass::Scope, &no_params).unwrap();
+        let mut a = make(AlgoKind::Identity, Axis::X, MountClass::Scope, &no_params);
         assert_eq!(a.min_move(), -1.0);
         assert!(a.set_min_move(0.3));
         assert!(a.param_names().is_empty());
@@ -570,7 +577,7 @@ mod tests {
 
         // The hooks that reset drop Hysteresis' last move; the others keep it.
         let ctx = AlgoCtx::default();
-        let mut h = make(AlgoKind::Hysteresis, Axis::X, MountClass::Scope, &no_params).unwrap();
+        let mut h = make(AlgoKind::Hysteresis, Axis::X, MountClass::Scope, &no_params);
         let prime = |h: &mut Box<dyn GuideAlgorithm>| {
             h.result(1.0, &ctx);
         };
