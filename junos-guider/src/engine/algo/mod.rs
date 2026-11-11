@@ -33,6 +33,8 @@ pub mod identity;
 pub mod lowpass;
 pub mod lowpass2;
 pub mod resist_switch;
+pub mod zfilter;
+pub mod zfilter_factory;
 
 use super::traits::PierSide;
 
@@ -282,8 +284,8 @@ pub trait GuideAlgorithm: Send {
 /// `profile` reads a full profile path (e.g.
 /// `/scope/GuideAlgorithm/X/Hysteresis/minMove`), `None` meaning unset; the
 /// algorithm asks for its keys under its own [`config_path`]. `None` builds
-/// Identity. The Gaussian process and ZFilter are not ported yet and give
-/// `Err` with the kind's name.
+/// Identity. The Gaussian process is not ported yet and gives `Err` with
+/// the kind's name.
 pub fn make(
     kind: AlgoKind,
     axis: Axis,
@@ -301,8 +303,9 @@ pub fn make(
         AlgoKind::Lowpass => Box::new(lowpass::Lowpass::new(params)),
         AlgoKind::Lowpass2 => Box::new(lowpass2::Lowpass2::new(params)),
         AlgoKind::ResistSwitch => Box::new(resist_switch::ResistSwitch::new(params)),
-        // TODO: ported in later commits (gp/, zfilter.rs).
-        AlgoKind::GaussianProcess | AlgoKind::ZFilter => {
+        AlgoKind::ZFilter => Box::new(zfilter::ZFilter::new(params)),
+        // TODO: ported in a later commit (gp/).
+        AlgoKind::GaussianProcess => {
             return Err(format!("{} not ported yet", kind.class_name()));
         }
     })
@@ -464,13 +467,13 @@ mod tests {
             AlgoKind::Lowpass,
             AlgoKind::Lowpass2,
             AlgoKind::ResistSwitch,
+            AlgoKind::ZFilter,
         ] {
             let a = make(k, Axis::Y, MountClass::Scope, &no_params).unwrap();
             assert_eq!(a.kind(), k);
             assert_eq!(a.class_name(), k.class_name());
         }
         assert!(make(AlgoKind::GaussianProcess, Axis::X, MountClass::Scope, &no_params).is_err());
-        assert!(make(AlgoKind::ZFilter, Axis::X, MountClass::Scope, &no_params).is_err());
     }
 
     #[test]
@@ -501,14 +504,17 @@ mod tests {
         assert_eq!(algo(AlgoKind::Lowpass), "Slope weight = 5.000, Minimum move = 0.200\n");
         assert_eq!(algo(AlgoKind::Lowpass2), "Aggressiveness = 80.000, Minimum move = 0.200\n");
         assert_eq!(algo(AlgoKind::ResistSwitch), "Minimum move = 0.200 Aggression = 100% FastSwitch = enabled\n");
+        assert_eq!(algo(AlgoKind::ZFilter), "Type=Bessel-4, Exp-factor=2.0, Minimum move = 0.100\n");
     }
 
     #[test]
     fn make_or_default_falls_back() {
         let (a, k) = make_or_default(AlgoKind::None, Axis::Y, MountClass::Scope, &no_params);
         assert_eq!((a.kind(), k), (AlgoKind::ResistSwitch, AlgoKind::ResistSwitch));
-        let (a, k) = make_or_default(AlgoKind::ZFilter, Axis::X, MountClass::StepGuider, &no_params);
+        let (a, k) = make_or_default(AlgoKind::GaussianProcess, Axis::X, MountClass::StepGuider, &no_params);
         assert_eq!((a.kind(), k), (AlgoKind::Hysteresis, AlgoKind::Hysteresis));
+        let (a, k) = make_or_default(AlgoKind::ZFilter, Axis::X, MountClass::StepGuider, &no_params);
+        assert_eq!((a.kind(), k), (AlgoKind::ZFilter, AlgoKind::ZFilter));
         let (a, k) = make_or_default(AlgoKind::Lowpass2, Axis::X, MountClass::Scope, &no_params);
         assert_eq!((a.kind(), k), (AlgoKind::Lowpass2, AlgoKind::Lowpass2));
     }
