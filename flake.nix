@@ -63,6 +63,7 @@
           filter = path: _type:
             let rel = pkgs.lib.removePrefix (toString ./.) (toString path);
             in !(pkgs.lib.hasPrefix "/kstars" rel)
+            && !(pkgs.lib.hasPrefix "/phd2" rel)
             && !(pkgs.lib.hasPrefix "/target" rel)
             && !(pkgs.lib.hasPrefix "/junos-web/dist" rel)
             && !(pkgs.lib.hasPrefix "/junos-web/bin" rel)
@@ -167,6 +168,28 @@
           doCheck = false;
         };
 
+        # ── Guider daemon ───────────────────────────────────────────────────
+        #
+        # junos-guider (the PHD2 port) is not a default member either; it
+        # pulls no C library (no TLS, pure-Rust zlib and JPEG).
+        junosGuider = pkgs.rustPlatform.buildRustPackage {
+          pname = "junos-guider";
+          version = "0.1.0";
+          src = filteredSrc;
+          cargoLock.lockFile = ./Cargo.lock;
+
+          buildPhase = ''
+            cargo build -p junos-guider --release
+          '';
+          installPhase = ''
+            mkdir -p $out/bin $out/share/doc/junos-guider
+            cp target/release/junos-guider $out/bin/
+            cp junos-guider/THIRD_PARTY.md $out/share/doc/junos-guider/
+          '';
+
+          doCheck = false;
+        };
+
         # ── Dev shell ───────────────────────────────────────────────────────
         devShell = pkgs.mkShell {
           packages = [
@@ -195,6 +218,7 @@
       in {
         packages = {
           inherit junosWebDist junosServer;
+          junos-guider = junosGuider;
 
           # Default package: thin wrapper that bakes --dist-dir into the binary
           # so callers never have to pass it explicitly.
@@ -215,6 +239,13 @@
           type = "app";
           program = "${self.packages.${system}.default}/bin/junos-server";
         };
+
+        # `nix run .#junos-guider` starts the guider against INDI on
+        # localhost:7624 (no `--sim`: the gear simulator is a dev feature).
+        apps.junos-guider = {
+          type = "app";
+          program = "${junosGuider}/bin/junos-guider";
+        };
       }
     )
 
@@ -234,7 +265,8 @@
       nixosModules.default = { config, lib, pkgs, ... }: {
         imports = [ ./nix/module.nix ];
         # Supply the package built for the current system as the default
-        services.junos-web.package = lib.mkDefault self.packages.${pkgs.system}.default;
+        services.junos-web.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        services.junos-web.guider.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.junos-guider;
       };
     };
 }

@@ -53,6 +53,30 @@ let
   taskqueuePath = if cfg.taskqueueDir != null then toString cfg.taskqueueDir else null;
   taskqueueArgs = optionals (taskqueuePath != null) [ "--taskqueue-dir" taskqueuePath ];
 
+  # junos-guider listens on PHD2's event-server port 4400 + instance - 1 and
+  # on the relay's socket 4410 + instance - 1 (junos-guider/src/config.rs).
+  gcfg = cfg.guider;
+  guiderEventPort = 4399 + gcfg.instance;
+  guiderArgs = optionals gcfg.enable [ "--guider-ws" "ws://127.0.0.1:${toString (4409 + gcfg.instance)}" ];
+
+  # The system unit keeps profiles and darks in its StateDirectory and the
+  # guide logs there too unless logDir names another folder; the user unit
+  # uses the user's XDG folders and PHD2's ~/Documents/PHD2.
+  guiderStateDir = "/var/lib/junos-guider";
+  guiderLogPath = if gcfg.logDir != null then toString gcfg.logDir
+                  else if cfg.apps.enable then null
+                  else "${guiderStateDir}/logs";
+  guiderExecStart = concatStringsSep " " (
+    [ "${gcfg.package}/bin/junos-guider"
+      "--indi-host" gcfg.indiHost
+      "--indi-port" (toString gcfg.indiPort)
+      "--instance" (toString gcfg.instance)
+    ]
+    ++ optionals (!cfg.apps.enable) [ "--data-dir" guiderStateDir ]
+    ++ optionals (guiderLogPath != null) [ "--log-dir" guiderLogPath ]
+    ++ map escapeShellArg gcfg.extraArgs
+  );
+
   execStart = concatStringsSep " " (
     [ "${cfg.package}/bin/junos-server"
       "--http-addr" cfg.httpAddr
@@ -63,6 +87,7 @@ let
     ++ capturesArgs
     ++ skymapArgs
     ++ taskqueueArgs
+    ++ guiderArgs
     ++ map escapeShellArg cfg.extraArgs
   );
 
@@ -203,13 +228,13 @@ in
 
       packages = mkOption {
         type = types.listOf types.package;
-        default = [ pkgs.kstars pkgs.phd2 ];
-        defaultText = literalExpression "[ pkgs.kstars pkgs.phd2 ]";
+        default = [ pkgs.kstars pkgs.phd2 cfg.guider.package ];
+        defaultText = literalExpression "[ pkgs.kstars pkgs.phd2 config.services.junos-web.guider.package ]";
         description = ''
           Packages put on the service's PATH. The Launch buttons exec
-          `kstars` and `phd2` by bare name. INDI drivers do not need to be
-          listed: KStars resolves indiserver and the drivers from its own
-          settings.
+          `kstars`, `phd2` and `junos-guider` by bare name. INDI drivers do
+          not need to be listed: KStars resolves indiserver and the drivers
+          from its own settings.
         '';
       };
     };
@@ -301,6 +326,68 @@ in
         Additional command-line arguments passed verbatim to junos-server.
       '';
     };
+
+    guider = {
+      enable = mkEnableOption ''
+        junos-guider, the PHD2-compatible autoguider, as a service. It serves
+        PHD2's event server (Ekos connects to it as to PHD2) and the Guide
+        tab's native mode through the relay, which is pointed at it. It runs
+        as a user unit next to the relay when apps.enable is set, else as a
+        hardened system unit. Do not run PHD2 at the same time: both listen
+        on the same port'';
+
+      package = mkOption {
+        type = types.package;
+        description = ''
+          The junos-guider package. Defaults to the package from the same
+          flake revision.
+        '';
+      };
+
+      indiHost = mkOption {
+        type = types.str;
+        default = "localhost";
+        description = "INDI server host the guider drives the camera and mount through.";
+      };
+
+      indiPort = mkOption {
+        type = types.port;
+        default = 7624;
+        description = "INDI server port.";
+      };
+
+      instance = mkOption {
+        type = types.ints.between 0 61136;
+        default = 1;
+        description = ''
+          PHD2 instance number: the event server listens on 4400 + instance
+          - 1 (the port Ekos' PHD2 settings must name) and the relay's socket
+          on 4410 + instance - 1.
+        '';
+      };
+
+      logDir = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        example = "/home/astronaut/Documents/PHD2";
+        description = ''
+          Folder for the guide and debug logs. When null the system unit
+          writes them to /var/lib/junos-guider/logs and the user unit to
+          ~/Documents/PHD2, like PHD2. The system unit gets this folder in
+          ReadWritePaths (bind-mounted when under /home), so it must exist
+          and be writable by `user`.
+        '';
+      };
+
+      extraArgs = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "--shutdown-exits" ];
+        description = ''
+          Additional command-line arguments passed verbatim to junos-guider.
+        '';
+      };
+    };
   };
 
   config = mkIf cfg.enable (mkMerge [
@@ -323,6 +410,7 @@ in
       networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall (
         [ (portOf cfg.httpAddr) ]
         ++ optional cfg.enableHttps (portOf cfg.httpsAddr)
+        ++ optional gcfg.enable guiderEventPort
       );
 
       # `systemctl poweroff` from an unprivileged user asks logind, which asks
@@ -431,6 +519,59 @@ in
 
           StateDirectory = "junos-web";
           WorkingDirectory = stateDir;
+        };
+      };
+    })
+
+    (mkIf (gcfg.enable && !cfg.apps.enable) {
+      systemd.services.junos-guider = {
+        description = "junos-guider PHD2-compatible autoguider";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "network.target" ];
+
+        serviceConfig =
+          let
+            # As for the relay: a log dir under /home is bind-mounted into a
+            # tmpfs home, any other one made writable.
+            logUnderHome = gcfg.logDir != null && hasPrefix "/home/" guiderLogPath;
+          in
+          {
+            ExecStart = guiderExecStart;
+            Restart = "on-failure";
+            RestartSec = "5s";
+
+            StateDirectory = "junos-guider";
+            StateDirectoryMode = "0750";
+            WorkingDirectory = guiderStateDir;
+            ReadWritePaths = optional (gcfg.logDir != null && !logUnderHome) guiderLogPath;
+            BindPaths = optional logUnderHome guiderLogPath;
+
+            DynamicUser = cfg.user == null;
+            PrivateTmp = true;
+            ProtectSystem = "strict";
+            ProtectHome = if logUnderHome then "tmpfs" else true;
+            NoNewPrivileges = true;
+            RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
+          }
+          // optionalAttrs (cfg.user  != null) { User  = cfg.user;  }
+          // optionalAttrs (cfg.group != null) { Group = cfg.group; };
+      };
+    })
+
+    # Same graphical session as the relay's user unit, as the guider the
+    # Profiles tab would launch.
+    (mkIf (gcfg.enable && cfg.apps.enable) {
+      systemd.user.services.junos-guider = {
+        description = "junos-guider PHD2-compatible autoguider";
+        wantedBy = [ "graphical-session.target" ];
+        partOf   = [ "graphical-session.target" ];
+        after    = [ "graphical-session.target" ];
+        unitConfig.ConditionUser = cfg.user;
+
+        serviceConfig = {
+          ExecStart = guiderExecStart;
+          Restart = "on-failure";
+          RestartSec = "5s";
         };
       };
     })
