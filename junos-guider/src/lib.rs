@@ -13,5 +13,6 @@ pub mod config;
 pub mod engine;
 pub mod indi;
 pub mod profile;
+pub mod server;
 #[cfg(any(test, feature = "sim"))]
 pub mod sim;
