@@ -1,0 +1,145 @@
+#### secondary
+== start
+DEBUG: Changing from state SELECTED to CALIBRATING_PRIMARY
+MOUNT secondary: BeginCalibration
+StartCalibration secondary
+DEBUG: guider state => CALIBRATING_PRIMARY
+== frame 1
+DEBUG: UpdateGuideState(): m_state=3
+DEBUG: Changing from state CALIBRATING_PRIMARY to CALIBRATING_SECONDARY
+MOUNT secondary: BeginCalibration
+StartCalibration secondary
+DEBUG: guider state => CALIBRATING_SECONDARY
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: m=31725 SNR=117.0
+== frame 2
+DEBUG: UpdateGuideState(): m_state=4
+MOUNT secondary: UpdateCalibrationState
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: m=31725 SNR=117.0
+== frame 3
+DEBUG: UpdateGuideState(): m_state=4
+MOUNT secondary: UpdateCalibrationState
+DEBUG: Changing from state CALIBRATING_SECONDARY to CALIBRATED
+DEBUG: guider state => CALIBRATED
+DEBUG: Changing from state CALIBRATED to GUIDING
+MOUNT primary: AdjustCalibrationForScopePointing
+MOUNT secondary: AdjustCalibrationForScopePointing
+DEBUG: setting lock position to (99.99, 100.00)
+DEBUG: guider state => GUIDING
+STATUS: Guiding
+MOUNT primary: Mount: notify guiding started
+MOUNT secondary: Mount: notify guiding started
+GuidingStarted
+SetAutoLoadCalibration 0
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: m=31725 SNR=117.0
+== frame 4
+DEBUG: UpdateGuideState(): m_state=6
+DEBUG: SchedulePrimaryMove(, x=0.00, y=0.00, opts=13)
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: m=31725 SNR=117.0
+#### secondary fails
+== start
+DEBUG: Changing from state SELECTED to CALIBRATING_PRIMARY
+MOUNT secondary: BeginCalibration
+StartCalibration secondary
+DEBUG: guider state => CALIBRATING_PRIMARY
+== frame 1
+DEBUG: UpdateGuideState(): m_state=3
+DEBUG: Changing from state CALIBRATING_PRIMARY to CALIBRATING_SECONDARY
+MOUNT secondary: BeginCalibration
+StartCalibration secondary
+DEBUG: guider state => CALIBRATING_SECONDARY
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: m=31725 SNR=117.0
+== frame 2
+DEBUG: UpdateGuideState(): m_state=4
+MOUNT secondary: UpdateCalibrationState
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: m=31725 SNR=117.0
+== frame 3
+DEBUG: UpdateGuideState(): m_state=4
+MOUNT secondary: UpdateCalibrationState
+DEBUG: Changing from state CALIBRATING_SECONDARY to UNINITIALIZED
+LockPositionLost
+DEBUG: guider state => SELECTING
+DEBUG: Error thrown from guider.cpp:1462->Calibration failed
+STATUS: calibration failed
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: calibration failed
+#### ao fails
+== start
+DEBUG: Changing from state SELECTED to CALIBRATING_PRIMARY
+MOUNT primary: BeginCalibration
+StartCalibration primary
+DEBUG: guider state => CALIBRATING_PRIMARY
+== frame 1
+DEBUG: UpdateGuideState(): m_state=3
+MOUNT primary: UpdateCalibrationState
+DEBUG: Changing from state CALIBRATING_PRIMARY to UNINITIALIZED
+LockPositionLost
+DEBUG: guider state => SELECTING
+DEBUG: Error thrown from guider.cpp:1429->Calibration failed
+STATUS: AO calibration failed
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: AO calibration failed
+#### sticky
+== start
+DEBUG: Changing from state SELECTED to CALIBRATING_PRIMARY
+DEBUG: guider state => CALIBRATED
+== frame 1
+DEBUG: UpdateGuideState(): m_state=5
+DEBUG: Changing from state CALIBRATED to GUIDING
+MOUNT primary: AdjustCalibrationForScopePointing
+DEBUG: keeping sticky lock position
+DEBUG: guider state => GUIDING
+STATUS: Guiding
+MOUNT primary: Mount: notify guiding started
+GuidingStarted
+ALERT: Do you want to automatically restore this calibration whenever the profile is used? [Auto-restore]
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: m=31725 SNR=117.0
+== frame 2
+DEBUG: UpdateGuideState(): m_state=6
+DEBUG: SchedulePrimaryMove(, x=-1.51, y=1.75, opts=13)
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: m=31725 SNR=117.0
+== stop, start
+MOUNT primary: Mount: notify guiding stopped
+GuidingStopped
+DEBUG: Changing from state GUIDING to STOP
+DEBUG: guider state => SELECTED
+DEBUG: Changing from state SELECTED to CALIBRATING_PRIMARY
+DEBUG: guider state => CALIBRATED
+== frame 3
+DEBUG: UpdateGuideState(): m_state=5
+DEBUG: Changing from state CALIBRATED to GUIDING
+MOUNT primary: AdjustCalibrationForScopePointing
+DEBUG: keeping sticky lock position
+DEBUG: guider state => GUIDING
+STATUS: Guiding
+MOUNT primary: Mount: notify guiding started
+GuidingStarted
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: m=31725 SNR=117.0
+== stop, start, new profile
+MOUNT primary: Mount: notify guiding stopped
+GuidingStopped
+DEBUG: Changing from state GUIDING to STOP
+DEBUG: guider state => SELECTED
+DEBUG: Changing from state SELECTED to CALIBRATING_PRIMARY
+DEBUG: guider state => CALIBRATED
+== frame 4
+DEBUG: UpdateGuideState(): m_state=5
+DEBUG: Changing from state CALIBRATED to GUIDING
+MOUNT primary: AdjustCalibrationForScopePointing
+DEBUG: keeping sticky lock position
+DEBUG: guider state => GUIDING
+STATUS: Guiding
+MOUNT primary: Mount: notify guiding started
+GuidingStarted
+SetAutoLoadCalibration 1
+DEBUG: UpdateImageDisplay
+DEBUG: UpdateGuideState exits: m=31725 SNR=117.0
+asked 1

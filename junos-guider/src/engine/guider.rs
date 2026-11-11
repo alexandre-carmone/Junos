@@ -528,7 +528,11 @@ pub struct GuiderCx<'a> {
     /// `MyFrame::GetExposureInfo`: the exposure, ms, and auto exposure.
     pub exposure_ms: i32,
     pub auto_exposure: bool,
-    /// `TimeSinceGuidingStarted`, s, as the clock reads it.
+    /// `TimeSinceGuidingStarted`, s, as the clock reads it: PHD2's
+    /// `m_guidingElapsed` is a stopwatch running from the frame's creation
+    /// and restarted only when guiding starts (myframe.cpp:2263), so before
+    /// the first guiding it counts from startup, e.g. a `StarLost.Time`
+    /// while looping.
     pub guide_time: f64,
     /// UTC milliseconds (`wxGetUTCTimeMillis`); `CurrentError` reads whole
     /// seconds of it (`wxDateTime::GetTimeNow`).
@@ -661,7 +665,10 @@ impl Guider {
     /// `Guider::Guider` and `GuiderMultiStar::GuiderMultiStar`, which leave
     /// it SELECTING (they set UNINITIALIZED, which moves on at once), then
     /// the profile settings as [`Guider::load_profile_settings`] reads them.
-    /// `sticky_lock` is the global `/StickyLockPosition`.
+    /// `sticky_lock` is the global `/StickyLockPosition`. The events go to a
+    /// guide log already open, as PHD2 opens it before the guider: their
+    /// forced `MultiStar` parameter change is its second line, and keeps the
+    /// log file (guidinglog.cpp:736-741).
     pub fn new(profile: &mut dyn ProfileAccess, sticky_lock: bool, ev: &mut Vec<GuiderEvent>) -> Guider {
         debug(ev, "guider state => UNINITIALIZED");
         // `SetOverlaySlitCoords` writes the slit overlay back, so a profile
@@ -881,6 +888,12 @@ impl Guider {
                     }
                 }
                 if secondary_due {
+                    // Quirk kept: asked for CALIBRATING_PRIMARY with the
+                    // primary calibrated, this begins the secondary's
+                    // calibration but the state stays CALIBRATING_PRIMARY;
+                    // the next frame's CALIBRATING_SECONDARY begins it
+                    // again, so `StartCalibration` and the guide log's
+                    // calibration header come twice.
                     match cx.secondary.as_deref().map(|m| (m.mount().is_connected(), m.is_calibrated())) {
                         None | Some((false, _)) => new = Calibrated,
                         Some((true, false)) => {
@@ -1294,7 +1307,7 @@ impl Guider {
         found
     }
 
-    /// `MoveLockPosition` (guider.cpp:839): move the lock by `mount_delta`
+    /// `MoveLockPosition` (guider.cpp:838): move the lock by `mount_delta`
     /// (mount axes, px), as a dither does. Near the frame edge the move is
     /// reflected in RA, Dec or both — the first of the four that leaves a
     /// valid lock position, else the one farthest from the edge. The error
@@ -2057,6 +2070,7 @@ mod tests {
     use std::f64::consts::PI;
 
     use super::*;
+    use crate::engine::algo::MountClass;
     use crate::engine::calibration::{CALIBRATION_RATE_UNCALIBRATED, Calibration};
     use crate::engine::mount::{GuideOutput, StepFrame};
     use crate::engine::scope::ScopeIo;
@@ -2130,6 +2144,85 @@ mod tests {
         }
     }
 
+    /// A mount whose calibration is scripted, as the C++ harness's
+    /// `MountStub`: it begins at once, is calibrated after `cal_frames`
+    /// updates or fails on update number `fail_at` (from 0), and says each
+    /// call it gets.
+    struct FakeMount {
+        mount: Mount,
+        calibrated: bool,
+        cal_frames: u32,
+        fail_at: Option<u32>,
+        calls: u32,
+    }
+
+    impl FakeMount {
+        fn new(class: MountClass, calibrated: bool) -> FakeMount {
+            let mut mount = Mount::new(class, &mut Profile::default(), 0.0, &mut Vec::new());
+            mount.connect();
+            FakeMount { mount, calibrated, cal_frames: 1, fail_at: None, calls: 0 }
+        }
+    }
+
+    impl GuiderMount for FakeMount {
+        fn mount(&self) -> &Mount {
+            &self.mount
+        }
+        fn mount_mut(&mut self) -> &mut Mount {
+            &mut self.mount
+        }
+        fn is_calibrated(&self) -> bool {
+            self.mount.is_connected() && self.calibrated
+        }
+        fn calibration_tot_distance(&self) -> i32 {
+            0
+        }
+        fn begin_calibration(
+            &mut self,
+            _: Option<Point>,
+            _: &CalibrationEnv,
+            _: Option<&dyn PointingSource>,
+            _: &mut dyn ProfileAccess,
+            events: &mut Vec<MountEvent>,
+        ) -> bool {
+            events.push(MountEvent::Debug("BeginCalibration".into()));
+            self.calls = 0;
+            true
+        }
+        fn update_calibration_state(
+            &mut self,
+            _: Point,
+            _: &CalibrationEnv,
+            _: Option<&dyn PointingSource>,
+            _: &mut dyn ProfileAccess,
+            events: &mut Vec<MountEvent>,
+        ) -> CalibrationNext {
+            events.push(MountEvent::Debug("UpdateCalibrationState".into()));
+            let n = self.calls;
+            self.calls += 1;
+            if self.fail_at == Some(n) {
+                return CalibrationNext::Failed;
+            }
+            if self.calls >= self.cal_frames {
+                self.calibrated = true;
+            }
+            CalibrationNext::NoMove
+        }
+        fn adjust_calibration_for_scope_pointing(
+            &mut self,
+            _: &ScopePointing,
+            _: &str,
+            _: &mut dyn ProfileAccess,
+            events: &mut Vec<MountEvent>,
+        ) -> Adjustment {
+            events.push(MountEvent::Debug("AdjustCalibrationForScopePointing".into()));
+            Adjustment::default()
+        }
+        fn notify_guiding_stopped(&mut self, ctx: &AlgoCtx, _: &mut dyn ProfileAccess, events: &mut Vec<MountEvent>) {
+            self.mount.notify_guiding_stopped(ctx, events);
+        }
+    }
+
     const W: i32 = 200;
     const H: i32 = 200;
     /// px per ms of pulse: West moves the star +x, North +y.
@@ -2187,6 +2280,9 @@ mod tests {
         /// What each call's finds read, [`FP`] at first.
         fp: FindParams,
         pointing: Option<Pointing>,
+        /// Scripted mounts the calls drive instead of the scope: the
+        /// primary and the secondary.
+        fakes: Option<(FakeMount, Option<FakeMount>)>,
         ev: Vec<GuiderEvent>,
         /// What the scope said while the bench made the moves.
         mev: Vec<MountEvent>,
@@ -2233,15 +2329,20 @@ mod tests {
                 busy: false,
                 fp: FP,
                 pointing: None,
+                fakes: None,
                 ev,
                 mev: Vec::new(),
             }
         }
 
         fn call<R>(&mut self, f: impl FnOnce(&mut Guider, &mut GuiderCx, &mut Vec<GuiderEvent>) -> R) -> R {
+            let (primary, secondary): (&mut dyn GuiderMount, _) = match &mut self.fakes {
+                Some((p, s)) => (p, s.as_mut().map(|s| s as &mut dyn GuiderMount)),
+                None => (&mut self.scope, None),
+            };
             let mut cx = GuiderCx {
-                primary: Some(&mut self.scope),
-                secondary: None,
+                primary: Some(primary),
+                secondary,
                 profile: &mut self.profile,
                 pointing: self.pointing.as_ref().map(|p| p as &dyn PointingSource),
                 cal_env: &self.env,
@@ -3202,5 +3303,121 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// An event as the C++ harness prints it; `None` for what it stubs out
+    /// (the tracker's transform lines, the lock shift's rate, the pointing
+    /// adjustments).
+    fn harness_line(e: &GuiderEvent) -> Option<String> {
+        let role = |r: &MountRole| if *r == MountRole::Primary { "primary" } else { "secondary" };
+        Some(match e {
+            GuiderEvent::Debug(s) if s.starts_with("CameraToMount") => return None,
+            GuiderEvent::Debug(s) if s.starts_with("UpdateLockPosShiftCameraCoords") => return None,
+            GuiderEvent::Mount(_, MountEvent::Debug(s)) if s.starts_with("MountToCamera") => return None,
+            GuiderEvent::Debug(s) if s.starts_with("UpdateImageDisplay:") => "DEBUG: UpdateImageDisplay".into(),
+            GuiderEvent::Debug(s) => format!("DEBUG: {s}"),
+            GuiderEvent::Mount(r, MountEvent::Debug(s)) => format!("MOUNT {}: {s}", role(r)),
+            GuiderEvent::PointingAdjusted(..) => return None,
+            GuiderEvent::StartCalibration(r) => format!("StartCalibration {}", role(r)),
+            GuiderEvent::Status(s) => format!("STATUS: {s}"),
+            GuiderEvent::Alert { msg, button: Some(b), .. } => format!("ALERT: {msg} [{}]", b.label()),
+            GuiderEvent::SetAutoLoadCalibration(on) => format!("SetAutoLoadCalibration {}", *on as i32),
+            other => format!("{other:?}"),
+        })
+    }
+
+    fn flush(b: &mut Bench, out: &mut Vec<String>) {
+        out.extend(b.ev.drain(..).filter_map(|e| harness_line(&e)));
+    }
+
+    /// A frame of the star where it was selected; its moves are not made.
+    fn still_frame(b: &mut Bench, n: u32, out: &mut Vec<String>) {
+        out.push(format!("== frame {n}"));
+        let img = render(Some(b.star), b.amp, n);
+        b.call(|g, cx, ev| g.update_guide_state(Some(img), false, cx, ev));
+        flush(b, out);
+    }
+
+    /// SELECTED, then the scripted mounts in place of the scope.
+    fn selected_on(primary: FakeMount, secondary: Option<FakeMount>) -> Bench {
+        let mut b = Bench::new();
+        b.select();
+        b.fakes = Some((primary, secondary));
+        b.ev.clear();
+        b
+    }
+
+    fn start(b: &mut Bench, label: &str, out: &mut Vec<String>) {
+        out.push(format!("== {label}"));
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        flush(b, out);
+    }
+
+    /// The state machine against PHD2's own, guider.cpp compiled over the
+    /// same scripted mounts (testdata/guider_phd2_state_machine.txt): an AO
+    /// calibrated with the scope behind it not, whose calibration begins
+    /// twice; the same failing; an AO failing alone; a sticky lock, the
+    /// auto-restore offer asked once, then a new profile.
+    #[test]
+    fn the_state_machine_matches_phd2() {
+        const GOLDEN: &str = include_str!("testdata/guider_phd2_state_machine.txt");
+        let mut out = Vec::new();
+        let ao = || FakeMount::new(MountClass::StepGuider, true);
+
+        out.push("#### secondary".into());
+        let mut scope = FakeMount::new(MountClass::Scope, false);
+        scope.cal_frames = 2;
+        let mut b = selected_on(ao(), Some(scope));
+        start(&mut b, "start", &mut out);
+        // The quirk: CALIBRATING_PRIMARY begins the secondary's calibration
+        // and stays there; the next frame begins it again.
+        assert_eq!(b.guider.state(), GuiderState::CalibratingPrimary);
+        for n in 1..=4 {
+            still_frame(&mut b, n, &mut out);
+        }
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+        let begun = out.iter().filter(|l| *l == "StartCalibration secondary").count();
+        assert_eq!(begun, 2);
+
+        out.push("#### secondary fails".into());
+        let mut scope = FakeMount::new(MountClass::Scope, false);
+        (scope.cal_frames, scope.fail_at) = (5, Some(1));
+        let mut b = selected_on(ao(), Some(scope));
+        start(&mut b, "start", &mut out);
+        for n in 1..=3 {
+            still_frame(&mut b, n, &mut out);
+        }
+
+        out.push("#### ao fails".into());
+        let mut lone = FakeMount::new(MountClass::StepGuider, false);
+        lone.fail_at = Some(0);
+        let mut b = selected_on(lone, None);
+        start(&mut b, "start", &mut out);
+        still_frame(&mut b, 1, &mut out);
+
+        out.push("#### sticky".into());
+        let mut b = selected_on(FakeMount::new(MountClass::Scope, true), None);
+        b.pointing = Some(Pointing { dec: 0.0, reports: true });
+        b.profile.set_i32("/AutoLoadCalibration", 0);
+        b.guider.set_lock_pos_is_sticky(true);
+        b.call(|g, cx, ev| g.set_lock_position(Point::new(101.5, 98.25), cx, ev));
+        b.ev.clear();
+        start(&mut b, "start", &mut out);
+        still_frame(&mut b, 1, &mut out);
+        still_frame(&mut b, 2, &mut out);
+        b.call(|g, cx, ev| g.stop_guiding(cx, ev));
+        start(&mut b, "stop, start", &mut out);
+        still_frame(&mut b, 3, &mut out);
+        b.profile.i.remove("/AutoLoadCalibration");
+        b.call(|g, cx, ev| g.stop_guiding(cx, ev));
+        start(&mut b, "stop, start, new profile", &mut out);
+        still_frame(&mut b, 4, &mut out);
+        out.push(format!("asked {}", b.profile.get_i32("/AlreadyAskedCalibAutoload", -1)));
+
+        let golden: Vec<&str> = GOLDEN.lines().collect();
+        for (i, (got, want)) in out.iter().zip(&golden).enumerate() {
+            assert_eq!(got, want, "line {}", i + 1);
+        }
+        assert_eq!(out.len(), golden.len());
     }
 }
