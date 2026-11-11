@@ -18,7 +18,8 @@ use serde_json::Value;
 
 use super::algo::{self, AlgoCtx, AlgoKind, Axis, GuideAlgorithm, MountClass};
 use super::calibration::{
-    self, Calibration, CalibrationDetails, MountCalibration, ProfileAccess, norm_angle, sidereal_rate_from_guide_speed,
+    self, Calibration, CalibrationDetails, MountCalibration, ProfileAccess, UNKNOWN_DECLINATION, degrees, norm_angle,
+    parity_str, point_angle, sidereal_rate_from_guide_speed,
 };
 use super::log::cfmt::fmt_f;
 use super::traits::{CancelToken, Dir, MoveOpts, MoveResult, Parity, PierSide, Point, phd_round};
@@ -40,13 +41,6 @@ pub fn dump_move_option_bits(opts: MoveOpts) -> String {
     .filter(|(bit, _)| opts.has(*bit))
     .map(|(_, c)| *c)
     .collect()
-}
-
-/// `PHD_Point::Angle(p)` (`point.h`): the angle of the vector from `from`
-/// to `to`, 0 for a zero vector (where `atan2` could give ±π).
-pub(super) fn phd_angle(to: Point, from: Point) -> f64 {
-    let (dx, dy) = (to.x - from.x, to.y - from.y);
-    if dx != 0.0 || dy != 0.0 { dy.atan2(dx) } else { 0.0 }
 }
 
 /// Where guide pulses go: PHD2's `Scope::Guide` (the mount's pulse-guide
@@ -337,6 +331,8 @@ fn persist_algorithm(class: MountClass, axis: Axis, algorithm: &dyn GuideAlgorit
 /// PHD2's `Mount`: what the scope and the AO share.
 pub struct Mount {
     class: MountClass,
+    /// `m_Name`.
+    name: String,
     connected: bool,
     error_count: i32,
     guiding_enabled: bool,
@@ -368,6 +364,7 @@ impl Mount {
         let y_algo = build_algorithm(class, Axis::Y, stored_y, profile, now, true, events);
         Mount {
             class,
+            name: String::new(),
             connected: false,
             error_count: 0,
             guiding_enabled: true,
@@ -384,6 +381,16 @@ impl Mount {
     /// large bump (`stepguider.cpp:1172`).
     pub fn last_step(&self) -> Option<&GuideStepInfo> {
         self.last_step.as_ref()
+    }
+
+    /// `Name`: what the guide log and the event server call the device
+    /// (`INDI Mount [<dev>]`); empty until the device side sets it.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
     }
 
     /// `GetMountClassName`.
@@ -621,6 +628,81 @@ impl Mount {
         calibration::get_last_calibration(profile, self.class)
     }
 
+    /// `Mount::GetSettingsSummary` (`mount.cpp:1878`): the mount's block of
+    /// the guide-log header, each line ending in `\n`. `calibrated` is the
+    /// mount type's `IsCalibrated` (a virtual call in PHD2:
+    /// `Scope::is_calibrated` on a scope); `aux_mount` the pointing
+    /// source's name when it is an aux mount, connected and reporting its
+    /// position; `blc` the backlash compensation's (enabled, pulse ms),
+    /// which only a scope has. A calibrated mount reads its stored details
+    /// here, with their guide-speed check (`validated`, see
+    /// [`load_calibration_details`](Self::load_calibration_details)). The
+    /// parities are the calibration's own (not [`ra_parity`](Self::ra_parity));
+    /// `xRate` is the Dec-compensated rate, the "Norm rates" the stored
+    /// ones. The scope and the AO append their own lines.
+    pub fn settings_summary(
+        &self,
+        calibrated: bool,
+        aux_mount: Option<&str>,
+        blc: Option<(bool, i32)>,
+        profile: &mut impl ProfileAccess,
+        validated: Option<&mut bool>,
+        events: &mut Vec<MountEvent>,
+    ) -> String {
+        let mut s = format!(
+            "{} = {},{} connected, guiding {}, ",
+            if self.is_step_guider() { "AO" } else { "Mount" },
+            self.name,
+            if self.connected { "" } else { " not" },
+            if self.guiding_enabled { "enabled" } else { "disabled" }
+        );
+        if let Some(aux) = aux_mount {
+            s += &format!("AuxMount={aux}, ");
+        }
+        if calibrated {
+            let cal = &self.cal.cal;
+            s += &format!(
+                "xAngle = {}, xRate = {}, yAngle = {}, yRate = {}, parity = {}/{}\n",
+                fmt_f(degrees(self.x_angle()), 1),
+                fmt_f(self.x_rate() * 1000.0, 3),
+                fmt_f(degrees(self.y_angle()), 1),
+                fmt_f(self.y_rate() * 1000.0, 3),
+                parity_str(cal.ra_guide_parity),
+                parity_str(cal.dec_guide_parity)
+            );
+            let det = self.load_calibration_details(profile, validated, events);
+            let scale = if det.is_valid() { det.image_scale } else { 1.0 };
+            let ortho = if det.is_valid() { format!("{} deg", fmt_f(det.ortho_error, 1)) } else { "unknown".into() };
+            if self.is_step_guider() {
+                s += &format!(
+                    "Norm rates X = {} mas/step, Y = {} mas/step; ortho.err. = {ortho}\n",
+                    fmt_f(cal.x_rate * 1000.0 * scale, 0),
+                    fmt_f(cal.y_rate * 1000.0 * scale, 0)
+                );
+            } else {
+                let x_rate_d0 = if cal.declination != UNKNOWN_DECLINATION {
+                    cal.x_rate * 1000.0 / cal.declination.cos() * scale
+                } else {
+                    cal.x_rate * 1000.0 * scale
+                };
+                s += &format!(
+                    "Norm rates RA = {}\"/s @ dec 0, Dec = {}\"/s; ortho.err. = {ortho}\n",
+                    fmt_f(x_rate_d0, 1),
+                    fmt_f(self.y_rate() * 1000.0 * scale, 1)
+                );
+            }
+        } else {
+            s += "not calibrated\n";
+        }
+        for (axis, a) in [("X", &self.x_algo), ("Y", &self.y_algo)] {
+            s += &format!("{axis} guide algorithm = {}, {}", a.kind().ui_name(), a.settings_summary());
+        }
+        if let Some((enabled, pulse)) = blc {
+            s += &format!("Backlash comp = {}, pulse = {pulse} ms\n", if enabled { "enabled" } else { "disabled" });
+        }
+        s
+    }
+
     /// `LoadCalibrationDetails` (`mount.cpp:1781`). With a pointing source
     /// (`validated` is its once-per-session flag), stored guide speeds it
     /// finds bogus are dropped to −1 here and in the profile.
@@ -689,7 +771,7 @@ impl Mount {
         if logged {
             let cal = &self.cal.cal;
             let hyp = mount.x.hypot(mount.y);
-            let mut theta = phd_angle(mount, Point::default());
+            let mut theta = point_angle(mount);
             if cal.y_angle_error().abs() > std::f64::consts::PI / 2.0 {
                 theta = -theta;
             }
@@ -709,7 +791,7 @@ impl Mount {
                 fmt_f(theta, 2),
                 fmt_f(camera.x, 2),
                 fmt_f(camera.y, 2),
-                fmt_f(phd_angle(camera, Point::default()), 2)
+                fmt_f(point_angle(camera), 2)
             )));
         }
         camera
@@ -1306,6 +1388,176 @@ mod tests {
         let mut ofs = GuiderOffset { camera_ofs: Point::new(1.0, 1.0), mount_ofs: None };
         m.move_offset(&mut ofs, MoveOpts::GUIDE_STEP, || frame, &ctx, &mut axes, &mut ev);
         assert!(axes.calls.len() == 2 && axes.calls.iter().all(|c| !c.0));
+    }
+
+    /// Debug lines out of the events.
+    fn debug_lines(ev: &[MountEvent]) -> Vec<&str> {
+        ev.iter().filter_map(|e| if let MountEvent::Debug(l) = e { Some(l.as_str()) } else { None }).collect()
+    }
+
+    #[test]
+    fn transforms_and_moves_match_phd2_off_axis() {
+        // PHD2's mount.cpp on the same calibrations (harness mount_r5): the
+        // axes 98.6° apart, then a Dec axis the other way round
+        // (|yAngleError| > π/2), where MountToCamera mirrors the angle.
+        let ctx = AlgoCtx::default();
+        let off = Calibration {
+            x_rate: 0.004,
+            y_rate: 0.005,
+            x_angle: 0.3,
+            y_angle: 2.0,
+            declination: radians(20.0),
+            ..square_cal()
+        };
+        let reversed = Calibration { y_angle: -1.2, ..off.clone() };
+        let cases = [
+            (
+                off,
+                -0.1292036732051034,
+                [
+                    "CameraToMount -- cameraTheta (-0.59) - m_xAngle (0.30) = xAngle (-0.89 = -0.89)",
+                    "CameraToMount -- cameraTheta (-0.59) - (m_xAngle (0.30) + m_yAngleError (-0.13)) = yAngle (-0.76 = -0.76)",
+                    "CameraToMount -- cameraX=3.00 cameraY=-2.00 hyp=3.61 cameraTheta=-0.59 mountX=2.27 mountY=-2.48, mountTheta=-0.83",
+                    "MountToCamera -- mountTheta (-0.46) + m_xAngle (0.30) = xAngle (-0.16 = -0.16)",
+                    "MountToCamera -- mountX=1.50 mountY=-0.75 hyp=1.68 mountTheta=-0.46 cameraX=1.65, cameraY=-0.27 cameraTheta=-0.16",
+                    "MountToCamera -- mountTheta (0.00) + m_xAngle (0.30) = xAngle (0.30 = 0.30)",
+                    "MountToCamera -- mountX=-0.00 mountY=0.00 hyp=0.00 mountTheta=0.00 cameraX=0.00, cameraY=0.00 cameraTheta=0.00",
+                ],
+                Point::new(2.274969054054139, -2.4808008886776425),
+                Point::new(1.6546448886844138, -0.27322205685219514),
+                (Dir::North, 248),
+            ),
+            (
+                reversed,
+                3.0707963267948966,
+                [
+                    "CameraToMount -- cameraTheta (-0.59) - m_xAngle (0.30) = xAngle (-0.89 = -0.89)",
+                    "CameraToMount -- cameraTheta (-0.59) - (m_xAngle (0.30) + m_yAngleError (3.07)) = yAngle (-3.96 = 2.32)",
+                    "CameraToMount -- cameraX=3.00 cameraY=-2.00 hyp=3.61 cameraTheta=-0.59 mountX=2.27 mountY=2.63, mountTheta=0.86",
+                    "MountToCamera -- mountTheta (0.46) + m_xAngle (0.30) = xAngle (0.76 = 0.76)",
+                    "MountToCamera -- mountX=1.50 mountY=-0.75 hyp=1.68 mountTheta=0.46 cameraX=1.21, cameraY=1.16 cameraTheta=0.76",
+                    "MountToCamera -- mountTheta (-0.00) + m_xAngle (0.30) = xAngle (0.30 = 0.30)",
+                    "MountToCamera -- mountX=-0.00 mountY=0.00 hyp=0.00 mountTheta=-0.00 cameraX=0.00, cameraY=0.00 cameraTheta=0.00",
+                ],
+                Point::new(2.274969054054139, 2.6293015458356503),
+                Point::new(1.2113645786924043, 1.1597826768362138),
+                (Dir::South, 263),
+            ),
+        ];
+        let close = |a: Point, b: Point| (a.x - b.x).abs() < 1e-12 && (a.y - b.y).abs() < 1e-12;
+        for (cal, y_angle_error, lines, mount, camera, (y_dir, y_ms)) in cases {
+            let (mut m, _) = recorded(MountClass::Scope);
+            let mut ev = Vec::new();
+            m.set_calibration(&cal, "T", &mut Profile::default(), &mut ev);
+            assert!((m.mount_cal().y_angle_error() - y_angle_error).abs() < 1e-15);
+            ev.clear();
+            assert!(close(m.camera_to_mount(Point::new(3.0, -2.0), true, &mut ev), mount));
+            assert!(close(m.mount_to_camera(Point::new(1.5, -0.75), true, &mut ev), camera));
+            let zero = m.mount_to_camera(Point::new(-0.0, 0.0), true, &mut ev);
+            assert!(zero.x.is_sign_positive() && zero.y.is_sign_positive());
+            assert_eq!(debug_lines(&ev), lines);
+
+            // The whole guide step (the recorders halve, the fake's
+            // compensation adds 100 ms to Dec): PHD2 asks 284 ms West.
+            let mut axes = FakeAxes::default();
+            let mut ofs = GuiderOffset { camera_ofs: Point::new(3.0, -2.0), mount_ofs: None };
+            ev.clear();
+            m.move_offset(&mut ofs, MoveOpts::GUIDE_STEP, StepFrame::default, &ctx, &mut axes, &mut ev);
+            assert_eq!(debug_lines(&ev)[..3], lines[..3]);
+            let moving = format!("Moving (3.00, -2.00) raw xDistance=2.27 yDistance={}", fmt_f(mount.y, 2));
+            assert_eq!(debug_lines(&ev)[3], moving);
+            assert_eq!(axes.calls, [(true, Dir::West, 284, 13), (true, y_dir, y_ms + 100, 13)]);
+            let step = m.last_step().unwrap();
+            assert!(close(step.mount_offset, mount));
+            assert!((step.guide_distance_ra - mount.x / 2.0).abs() < 1e-15);
+            assert!((step.guide_distance_dec - mount.y / 2.0).abs() < 1e-15);
+            assert_eq!((step.direction_ra, step.duration_ra, step.direction_dec), (Dir::West, 284, y_dir));
+        }
+    }
+
+    #[test]
+    fn settings_summary_matches_phd2() {
+        // PHD2's GetSettingsSummary on the same mounts (harness mount_r5).
+        let mut ev = Vec::new();
+        let mut p = Profile::default();
+        let mut m = Mount::new(MountClass::Scope, &mut p, 0.0, &mut ev);
+        m.set_name("INDI Mount [Telescope Simulator]");
+        m.connect();
+        let off = Calibration {
+            x_rate: 0.004,
+            y_rate: 0.005,
+            x_angle: 0.3,
+            y_angle: 2.0,
+            declination: radians(20.0),
+            ..square_cal()
+        };
+        m.set_calibration(&off, "T", &mut p, &mut ev);
+        p.f.insert("/scope/calibration/image_scale".into(), 1.5);
+        p.f.insert("/scope/calibration/ortho_error".into(), 4.56);
+        p.i.insert("/scope/calibration/ra_step_count".into(), 8);
+        let algos = "X guide algorithm = Hysteresis, Hysteresis = 0.100, Aggression = 0.700, Minimum move = 0.200\n\
+                     Y guide algorithm = Resist Switch, Minimum move = 0.200 Aggression = 100% FastSwitch = enabled\n";
+        assert_eq!(
+            m.settings_summary(true, Some("INDI Mount [EQMod Mount]"), Some((false, 450)), &mut p, None, &mut ev),
+            format!(
+                "Mount = INDI Mount [Telescope Simulator], connected, guiding enabled, AuxMount=INDI Mount [EQMod Mount], \
+                 xAngle = 17.2, xRate = 4.000, yAngle = 114.6, yRate = 5.000, parity = +/-\n\
+                 Norm rates RA = 6.4\"/s @ dec 0, Dec = 7.5\"/s; ortho.err. = 4.6 deg\n\
+                 {algos}Backlash comp = disabled, pulse = 450 ms\n"
+            )
+        );
+        // Dec unknown: no Dec compensation; no steps: scale 1, error unknown.
+        m.set_calibration(&Calibration { declination: UNKNOWN_DECLINATION, ..off }, "T", &mut p, &mut ev);
+        p.i.insert("/scope/calibration/ra_step_count".into(), 0);
+        assert_eq!(
+            m.settings_summary(true, None, Some((true, 450)), &mut p, None, &mut ev),
+            format!(
+                "Mount = INDI Mount [Telescope Simulator], connected, guiding enabled, \
+                 xAngle = 17.2, xRate = 4.000, yAngle = 114.6, yRate = 5.000, parity = +/-\n\
+                 Norm rates RA = 4.0\"/s @ dec 0, Dec = 5.0\"/s; ortho.err. = unknown\n\
+                 {algos}Backlash comp = enabled, pulse = 450 ms\n"
+            )
+        );
+        let mut n = Mount::new(MountClass::Scope, &mut Profile::default(), 0.0, &mut ev);
+        n.set_name("On-camera");
+        assert_eq!(
+            n.settings_summary(n.is_calibrated(), None, Some((false, 0)), &mut p, None, &mut ev),
+            format!(
+                "Mount = On-camera, not connected, guiding enabled, not calibrated\n\
+                 {algos}Backlash comp = disabled, pulse = 0 ms\n"
+            )
+        );
+
+        // An AO: rates per step, no backlash line.
+        let mut p = Profile::default();
+        let mut ao = Mount::new(MountClass::StepGuider, &mut p, 0.0, &mut ev);
+        ao.set_name("INDI AO [SX AO]");
+        ao.connect();
+        ao.set_guiding_enabled(false, &AlgoCtx::default(), &mut ev);
+        let cal = Calibration {
+            x_rate: 0.25,
+            y_rate: 0.3,
+            x_angle: radians(-170.0),
+            y_angle: radians(95.0),
+            declination: UNKNOWN_DECLINATION,
+            ra_guide_parity: Parity::Odd,
+            dec_guide_parity: Parity::Even,
+            ..square_cal()
+        };
+        ao.set_calibration(&cal, "T", &mut p, &mut ev);
+        p.f.insert("/stepguider/calibration/image_scale".into(), 2.25);
+        p.f.insert("/stepguider/calibration/ortho_error".into(), 1.0);
+        p.i.insert("/stepguider/calibration/ra_step_count".into(), 3);
+        let hyst = "Hysteresis = 0.100, Aggression = 0.700, Minimum move = 0.200\n";
+        assert_eq!(
+            ao.settings_summary(ao.is_calibrated(), None, None, &mut p, None, &mut ev),
+            format!(
+                "AO = INDI AO [SX AO], connected, guiding disabled, \
+                 xAngle = -170.0, xRate = 250.000, yAngle = 95.0, yRate = 300.000, parity = -/+\n\
+                 Norm rates X = 562 mas/step, Y = 675 mas/step; ortho.err. = 1.0 deg\n\
+                 X guide algorithm = Hysteresis, {hyst}Y guide algorithm = Hysteresis, {hyst}"
+            )
+        );
     }
 
     #[test]

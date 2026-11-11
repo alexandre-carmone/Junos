@@ -518,8 +518,9 @@ pub fn camera_to_mount(offset: Point, cal: &Calibration) -> Point {
 }
 
 /// `PHD_Point::Angle()` (`point.h:96`): `atan2(y, x)`, but 0 for a zero
-/// vector whatever the signs of its zeros.
-fn point_angle(p: Point) -> f64 {
+/// vector whatever the signs of its zeros. The two-point `Angle(p)` is
+/// `point_angle(to - from)`.
+pub(super) fn point_angle(p: Point) -> f64 {
     if p.x != 0.0 || p.y != 0.0 { p.y.atan2(p.x) } else { 0.0 }
 }
 
@@ -569,10 +570,11 @@ pub fn camera_to_mount_logged(cam: Option<Point>, cal: &Calibration, log: &mut V
 /// `Mount::TransformMountCoordinatesToCameraCoordinates` (`mount.cpp:1181`):
 /// (RA, Dec) axis amounts back onto the camera plane. A plain rotation by
 /// `x_angle`, after mirroring the mount angle when the Dec axis runs the
-/// other way (`|y_angle_error| > π/2`). Only exact for orthogonal axes.
+/// other way (`|y_angle_error| > π/2`). Only exact for orthogonal axes. A
+/// zero vector has angle 0, so (−0, 0) gives (0, 0), not (−0, −0).
 pub fn mount_to_camera(offset: Point, cal: &Calibration) -> Point {
     let hyp = offset.x.hypot(offset.y);
-    let mut mount_theta = offset.y.atan2(offset.x);
+    let mut mount_theta = point_angle(offset);
     if cal.y_angle_error().abs() > PI / 2.0 {
         mount_theta = -mount_theta;
     }
@@ -581,7 +583,7 @@ pub fn mount_to_camera(offset: Point, cal: &Calibration) -> Point {
 }
 
 /// `ParityStr` (`mount.cpp:104`).
-fn parity_str(p: Parity) -> &'static str {
+pub(super) fn parity_str(p: Parity) -> &'static str {
     match p {
         Parity::Even => "+",
         Parity::Odd => "-",

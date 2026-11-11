@@ -20,12 +20,12 @@ use super::backlash::{BacklashComp, BacklashConfig, BlcEffects};
 use super::calibration::{
     self, AdjustOpts, Adjustment, CALIBRATION_RATE_UNCALIBRATED, CALSTEP_DEFAULT_DISTANCE, CALSTEP_DEFAULT_STEPS,
     Calibration, CalibrationDetails, CalibrationIssue, ProfileAccess, ROTATOR_POSITION_UNKNOWN, ScopePointing,
-    UNKNOWN_DECLINATION, degrees, norm_angle, radians, sidereal_rate_from_guide_speed,
+    UNKNOWN_DECLINATION, degrees, norm_angle, point_angle, radians, sidereal_rate_from_guide_speed,
 };
 use super::log::cfmt::fmt_f;
 use super::mount::{
     AlertKind, AxisMover, CalibrationStepInfo, GuideOutput, GuiderOffset, Mount, MountEvent, MoveResultInfo,
-    PointingSource, StepFrame, dump_move_option_bits, phd_angle,
+    PointingSource, StepFrame, dump_move_option_bits,
 };
 use super::traits::{CancelToken, Dir, MoveOpts, MoveResult, Parity, PierSide, Point, c_int};
 
@@ -464,7 +464,7 @@ fn ra_dec(pointing: Option<&dyn PointingSource>) -> Option<Point> {
 /// calibration being made.
 fn mount_coords(v: Point, x_angle: f64, y_angle: f64) -> Point {
     let hyp = v.x.hypot(v.y);
-    let theta = phd_angle(v, Point::default());
+    let theta = point_angle(v);
     let y_angle_error = norm_angle((x_angle - y_angle) + PI / 2.0);
     Point::new(hyp * (theta - x_angle).cos(), hyp * (theta - (x_angle + y_angle_error)).sin())
 }
@@ -1197,7 +1197,7 @@ impl Scope {
                     }
 
                     // West complete.
-                    self.calibration.x_angle = phd_angle(start, cur);
+                    self.calibration.x_angle = point_angle(start - cur);
                     self.calibration.x_rate = dist / (self.cw.steps * dur) as f64;
                     self.calibration.ra_guide_parity = Parity::Unknown;
                     if let Some(sc) = self.cw.starting_coords
@@ -1274,7 +1274,7 @@ impl Scope {
                         let east = self.cw.east_starting_location;
                         let east_dist = east.distance(&cur);
                         let west_dist = start.distance(&east);
-                        let east_angle = phd_angle(east, cur);
+                        let east_angle = point_angle(east - cur);
                         // A real east move retraces the west one within 30°.
                         if east_dist.abs() < 0.25 * west_dist
                             || norm_angle(east_angle - (self.calibration.x_angle + PI)).abs() > radians(30.0)
@@ -1461,7 +1461,7 @@ impl Scope {
                         let x_angle = self.calibration.x_angle;
                         let a1 = norm_angle(x_angle + PI / 2.0);
                         let a2 = norm_angle(x_angle - PI / 2.0);
-                        let y_angle = phd_angle(cur, leg_start);
+                        let y_angle = point_angle(cur - leg_start);
                         self.calibration.y_angle =
                             if norm_angle(a1 - y_angle).abs() < norm_angle(a2 - y_angle).abs() { a1 } else { a2 };
                         let dec_dist = dist * (y_angle - self.calibration.y_angle).cos();
@@ -1480,7 +1480,7 @@ impl Scope {
                             ),
                         );
                     } else {
-                        self.calibration.y_angle = phd_angle(cur, leg_start);
+                        self.calibration.y_angle = point_angle(cur - leg_start);
                         self.calibration.y_rate = dist / step_time;
                     }
                     self.cw.dec_steps = self.cw.steps;
@@ -1558,7 +1558,7 @@ impl Scope {
                     let leg_start = self.cw.starting_location.unwrap_or(cur);
                     let south_dist = south.distance(&cur);
                     let north_dist = leg_start.distance(&south);
-                    let south_angle = phd_angle(cur, south);
+                    let south_angle = point_angle(cur - south);
                     if south_dist.abs() < 0.25 * north_dist
                         || norm_angle(south_angle - (self.calibration.y_angle + PI)).abs() > radians(30.0)
                     {
