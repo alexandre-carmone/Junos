@@ -5,7 +5,7 @@
 //! onto an engine [`Command`] or the profile store; parameters are named
 //! (or positional in the table's order). The tools the engine does not
 //! have yet (static PA, drift align, calibration assistant, pier-flip,
-//! bookmarks, comet training, bad-pixel editing, the image logger's
+//! comet training, bad-pixel editing, the image logger's
 //! dialog, a single device's connect) answer code 1 "not available".
 //!
 //! The relay socket's own `set_frame_filter` and `get_history` are not
@@ -20,8 +20,8 @@ use crate::engine::algo::{AlgoKind, Axis};
 use crate::engine::assistant::{self, RecKind};
 use crate::engine::calibration::Calibration;
 use crate::engine::control::DitherMode;
-use crate::engine::traits::PierSide;
-use crate::engine::{Command, DarksBuildKind, Engine, ManualPointing, Which};
+use crate::engine::traits::{PierSide, Point};
+use crate::engine::{BookmarkOp, Command, DarksBuildKind, Engine, ManualPointing, Which};
 use crate::indi::client::Role;
 
 /// PHD2's `pConfig->Global` keys the UI edits through `set_profile_value`
@@ -86,6 +86,23 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
     match call.method.name {
         "select_star" => command(d, Command::SelectStar { x: num(p, "x")?, y: num(p, "y")? }).await,
         "nudge_lock" => command(d, Command::NudgeLock { dx: num(p, "dx")?, dy: num(p, "dy")? }).await,
+        "save_lock" => command(d, Command::SaveLock).await,
+        "restore_lock" => command(d, Command::RestoreLock).await,
+        "bookmark_add" => {
+            let op = match p.param("at").and_then(Value::as_str) {
+                None | Some("lock") => BookmarkOp::Lock,
+                Some("star") => BookmarkOp::Star,
+                Some(_) => return Err(RpcError::invalid_params("expected at param")),
+            };
+            command(d, Command::Bookmark(op)).await
+        }
+        "bookmark_toggle" => {
+            command(d, Command::Bookmark(BookmarkOp::Toggle(Point::new(num(p, "x")?, num(p, "y")?)))).await
+        }
+        "bookmark_delete" => {
+            command(d, Command::Bookmark(BookmarkOp::Delete(Point::new(num(p, "x")?, num(p, "y")?)))).await
+        }
+        "bookmarks_clear" => command(d, Command::Bookmark(BookmarkOp::Clear)).await,
         "set_profile_value" => {
             let key = text(p, "key")?.to_string();
             let value = need(p.param("value").cloned(), "value")?;

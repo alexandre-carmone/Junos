@@ -996,3 +996,36 @@ fn the_star_cross_test_pulses_the_cross_then_loops() {
     r.cmd(Command::StarCrossStop).unwrap();
     assert_eq!(r.e.snapshot().tools["starcross"]["status"], "Test cancelled");
 }
+
+#[test]
+fn the_lock_is_nudged_saved_restored_and_bookmarked() {
+    use crate::engine::BookmarkOp;
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    assert_eq!(r.cmd(Command::SaveLock).unwrap_err(), CmdError::new(1, "no lock position"));
+    r.cmd(Command::Loop).unwrap();
+    r.step();
+    r.cmd(Command::FindStar { roi: None }).unwrap();
+    let lock = r.e.snapshot().lock_position.unwrap();
+    assert_eq!(r.cmd(Command::RestoreLock).unwrap_err(), CmdError::new(1, "no saved lock position"));
+    r.cmd(Command::SaveLock).unwrap();
+    r.cmd(Command::NudgeLock { dx: 3.0, dy: -1.0 }).unwrap();
+    assert_eq!(r.e.snapshot().lock_position, Some(Point::new(lock.x + 3.0, lock.y - 1.0)));
+    // The profile keeps doubles as PHD2's config file does, to 6 digits.
+    let back = r.cmd(Command::RestoreLock).unwrap();
+    let restored = r.e.snapshot().lock_position.unwrap();
+    assert_eq!(back, serde_json::json!([restored.x, restored.y]));
+    assert!((restored.x - lock.x).abs() < 1e-3 && (restored.y - lock.y).abs() < 1e-3);
+    let lock = restored;
+    assert!(r.cmd(Command::NudgeLock { dx: -1e6, dy: 0.0 }).is_err());
+
+    r.cmd(Command::Bookmark(BookmarkOp::Lock)).unwrap();
+    r.cmd(Command::Bookmark(BookmarkOp::Toggle(Point::new(10.0, 10.0)))).unwrap();
+    assert_eq!(r.e.snapshot().tools["bookmarks"].as_array().unwrap().len(), 2);
+    let saved = r.e.store().profile().get_str("/guider/bookmarks", "");
+    assert_eq!(saved, format!("{:.5} {:.5} 10.00000 10.00000 ", lock.x, lock.y));
+    r.cmd(Command::Bookmark(BookmarkOp::Delete(Point::new(12.0, 8.0)))).unwrap();
+    assert!(r.cmd(Command::Bookmark(BookmarkOp::Delete(Point::new(12.0, 8.0)))).is_err());
+    r.cmd(Command::Bookmark(BookmarkOp::Clear)).unwrap();
+    assert_eq!(r.e.snapshot().tools["bookmarks"], serde_json::json!([]));
+    assert_eq!(r.e.store().profile().get_str("/guider/bookmarks", "x"), "");
+}

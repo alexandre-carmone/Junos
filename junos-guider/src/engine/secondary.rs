@@ -3,19 +3,22 @@
 //! machines of [`super::tools`]. Their state reaches the UI as one JSON
 //! view ([`Engine::tools_view`]).
 //!
-//! Ported from PHD2 src/starcross_test.cpp (OnStart, ExecuteTest) — BSD-3-Clause, see THIRD_PARTY.md
+//! Ported from PHD2 src/starcross_test.cpp (OnStart, ExecuteTest), src/nudge_lock.cpp (UpdateLockPos, DoMove), src/guider.cpp (the bookmarks) — BSD-3-Clause, see THIRD_PARTY.md
 
 use serde_json::{Value, json};
 
-use super::command::{CmdError, Reply};
+use super::command::{BookmarkOp, CmdError, INVALID_REQUEST, Reply};
+use super::tools::bookmarks;
 use super::tools::starcross::{self, StarCross};
+use super::traits::{MoveResult, Point};
 use super::{Engine, Pending};
-use super::traits::MoveResult;
 
 /// The tool windows of this module, each while open or running.
 #[derive(Default)]
 pub(super) struct Tools {
     starcross: Option<StarCross>,
+    /// `m_bookmarks`, read with the guider's profile settings.
+    bookmarks: Vec<Point>,
 }
 
 impl Engine {
@@ -32,6 +35,82 @@ impl Engine {
     /// place of exposures.
     pub(super) fn tool_pulsing(&self) -> bool {
         self.tools.starcross.as_ref().is_some_and(|t| t.running())
+    }
+
+    /// What the tools read with the guider's profile settings
+    /// (`Guider::LoadProfileSettings`).
+    pub(super) fn load_tool_settings(&mut self) {
+        self.tools.bookmarks = bookmarks::load(&self.store.profile());
+    }
+
+    // ---------------------------------------------------------- the lock
+
+    /// `UpdateLockPos`: a position inside the frame becomes the lock.
+    fn update_lock_pos(&mut self, p: Point) -> bool {
+        self.call(|c, cx, ev| {
+            let mut gev = Vec::new();
+            let set = cx.guider.is_valid_lock_position(p) && cx.guider.set_lock_position(p, &mut cx.gcx, &mut gev);
+            c.forward(gev, cx, ev);
+            set
+        })
+    }
+
+    /// The Adjust Lock Position tool's arrows (`DoMove`).
+    pub(super) fn nudge_lock(&mut self, dx: f64, dy: f64) -> Reply {
+        let Some(lock) = self.guider.lock_position() else { return Err(CmdError::new(1, "no lock position")) };
+        match self.update_lock_pos(Point::new(lock.x + dx, lock.y + dy)) {
+            true => Ok(json!(0)),
+            false => Err(CmdError::new(INVALID_REQUEST, "could not set lock position")),
+        }
+    }
+
+    /// Its Save (`OnSaveLockPosClicked`).
+    pub(super) fn save_lock(&mut self) -> Reply {
+        let Some(lock) = self.guider.lock_position() else { return Err(CmdError::new(1, "no lock position")) };
+        bookmarks::save_lock(&mut self.store.profile(), lock);
+        Ok(json!(0))
+    }
+
+    /// Its Restore (`OnRestoreLockPosClicked`; PHD2 asks first, the UI
+    /// does): the saved position, as set.
+    pub(super) fn restore_lock(&mut self) -> Reply {
+        if self.guider.lock_position().is_none() {
+            return Err(CmdError::new(1, "no lock position"));
+        }
+        let Some(p) = bookmarks::saved_lock(&self.store.profile()) else {
+            return Err(CmdError::new(1, "no saved lock position"));
+        };
+        match self.update_lock_pos(p) {
+            true => Ok(json!([p.x, p.y])),
+            false => Err(CmdError::new(INVALID_REQUEST, "could not set lock position")),
+        }
+    }
+
+    /// The Bookmarks menu.
+    pub(super) fn bookmark(&mut self, op: BookmarkOp) -> Reply {
+        let v = &mut self.tools.bookmarks;
+        match op {
+            BookmarkOp::Lock | BookmarkOp::Star => {
+                let pos = match op {
+                    BookmarkOp::Lock => self.guider.lock_position(),
+                    _ => self.guider.current_position(),
+                };
+                let Some(pos) = pos else { return Err(CmdError::new(1, "no position to bookmark")) };
+                bookmarks::add(v, pos);
+            }
+            BookmarkOp::Toggle(p) => bookmarks::toggle(v, p),
+            BookmarkOp::Delete(p) => match bookmarks::find(v, p) {
+                Some(i) => {
+                    v.remove(i);
+                }
+                None => return Err(CmdError::new(1, "no bookmark there")),
+            },
+            // PHD2 saves nothing when there was nothing to delete.
+            BookmarkOp::Clear if v.is_empty() => return Ok(json!(0)),
+            BookmarkOp::Clear => v.clear(),
+        }
+        bookmarks::save(&mut self.store.profile(), &self.tools.bookmarks);
+        Ok(json!(0))
     }
 
     // ------------------------------------------------------ star-cross test
@@ -109,6 +188,7 @@ impl Engine {
             })
         });
         json!({
+            "bookmarks": self.tools.bookmarks.iter().map(|b| [b.x, b.y]).collect::<Vec<_>>(),
             "starcross": sct,
         })
     }

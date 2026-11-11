@@ -169,6 +169,21 @@ pub enum DarksBuildKind {
     DefectMap { exp_s: i32, count: i32, note: String },
 }
 
+/// A change to the lock-position bookmarks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BookmarkOp {
+    /// "Bookmark Lock Position".
+    Lock,
+    /// "Bookmark Star Position".
+    Star,
+    /// Shift-click: the bookmark there goes, or one is added.
+    Toggle(Point),
+    /// The bookmark there goes.
+    Delete(Point),
+    /// "Delete all" (PHD2 asks first; the UI does).
+    Clear,
+}
+
 /// Everything that changes the engine. The read-only RPCs answer from the
 /// snapshot, without the engine thread.
 pub enum Command {
@@ -248,8 +263,13 @@ pub enum Command {
     SelectStar { x: f64, y: f64 },
     /// `set_calibration_data`: a calibration typed in or restored.
     SetCalibrationData { which: Which, cal: Calibration },
-    /// Nudge the lock by (dx, dy) camera px.
+    /// Nudge the lock by (dx, dy) camera px (the Adjust Lock Position
+    /// tool's arrows), save it, restore the saved one.
     NudgeLock { dx: f64, dy: f64 },
+    SaveLock,
+    RestoreLock,
+    /// The Bookmarks menu and shift-click.
+    Bookmark(BookmarkOp),
     /// `set_algorithm`: the axis' algorithm on pMount.
     SetAlgorithm { axis: Axis, kind: AlgoKind },
     /// `reset_algo_params`: the Brain's Reset.
@@ -327,6 +347,12 @@ impl Command {
             Command::SelectStar { .. } => "select_star",
             Command::SetCalibrationData { .. } => "set_calibration_data",
             Command::NudgeLock { .. } => "nudge_lock",
+            Command::SaveLock => "save_lock",
+            Command::RestoreLock => "restore_lock",
+            Command::Bookmark(BookmarkOp::Lock | BookmarkOp::Star) => "bookmark_add",
+            Command::Bookmark(BookmarkOp::Toggle(_)) => "bookmark_toggle",
+            Command::Bookmark(BookmarkOp::Delete(_)) => "bookmark_delete",
+            Command::Bookmark(BookmarkOp::Clear) => "bookmarks_clear",
             Command::SetAlgorithm { .. } => "set_algorithm",
             Command::ResetAlgoParams { .. } => "reset_algo_params",
             Command::SetDitherMode { .. } => "set_dither_mode",

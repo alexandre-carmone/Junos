@@ -266,6 +266,10 @@ pub static METHODS: &[Method] = &[
     ws("nudge_lock", &["dx", "dy"]),
     ws("save_lock", &[]),
     ws("restore_lock", &[]),
+    ws("bookmark_add", &["at"]),
+    ws("bookmark_toggle", &["x", "y"]),
+    ws("bookmark_delete", &["x", "y"]),
+    ws("bookmarks_clear", &[]),
     ws("comet_train_start", &[]),
     ws("comet_train_stop", &[]),
     ws("set_dither_mode", &["mode", "scale", "ra_only"]),
@@ -1170,7 +1174,7 @@ mod tests {
         use crate::engine::log::image_log::ImageLoggerSettings;
         use crate::engine::scope::DecGuideMode;
         use crate::engine::traits::Dir;
-        use crate::engine::{Command as C, DarksBuildKind, Gear, SingleFrame, Which};
+        use crate::engine::{BookmarkOp, Command as C, DarksBuildKind, Gear, SingleFrame, Which};
         let settle = SettleParams::default();
         let commands = [
             C::Loop,
@@ -1226,6 +1230,12 @@ mod tests {
             C::PolarDriftClose,
             C::StarCrossStart { pulse_count: None, pulse_size: None },
             C::StarCrossStop,
+            C::SaveLock,
+            C::RestoreLock,
+            C::Bookmark(BookmarkOp::Lock),
+            C::Bookmark(BookmarkOp::Toggle(Point::default())),
+            C::Bookmark(BookmarkOp::Delete(Point::default())),
+            C::Bookmark(BookmarkOp::Clear),
         ];
         for c in &commands {
             assert!(method(c.name(), true).is_some(), "no method for {}", c.name());

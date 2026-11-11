@@ -5,6 +5,7 @@
 //!
 //! Ported from PHD2 `src/polardrift_toolwin.cpp`, `src/staticpa_toolwin.cpp` — BSD-3-Clause, see THIRD_PARTY.md
 
+pub mod bookmarks;
 pub mod polar_drift;
 pub mod starcross;
 pub mod static_pa;

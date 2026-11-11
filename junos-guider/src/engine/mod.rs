@@ -97,7 +97,7 @@ use self::windows::{DarksJob, GaCommand};
 use crate::profile::ProfileStore;
 
 pub use self::command::{
-    CmdError, Command, DarksBuildKind, Gear, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator,
+    BookmarkOp, CmdError, Command, DarksBuildKind, Gear, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator,
     ScopeGear, ScopeOutput, SingleFrame, Which,
 };
 pub use self::event::{
@@ -343,6 +343,7 @@ impl Engine {
         let mut gev = Vec::new();
         e.guider = Guider::new(&mut e.store.profile(), sticky, &mut gev);
         e.emit_guider_events(gev);
+        e.load_tool_settings();
         e.load_frame_settings();
         e.new_control();
         e.load_gear_choices();
@@ -1220,6 +1221,7 @@ impl Engine {
                     upd
                 });
                 self.queue_moves(&upd.moves);
+                self.load_tool_settings();
                 // `SetProfile` then closes the dialog.
                 self.end_modal();
                 self.refresh_ra_guide_speed();
@@ -1259,19 +1261,10 @@ impl Engine {
                 if set { ok() } else { Err(CmdError::new(1, "could not select star")) }
             }
             Command::SetCalibrationData { which, cal } => self.set_calibration_data(which, cal),
-            Command::NudgeLock { dx, dy } => {
-                let Some(lock) = self.guider.lock_position() else {
-                    return Err(CmdError::new(1, "no lock position"));
-                };
-                let p = Point::new(lock.x + dx, lock.y + dy);
-                let set = self.call(|c, cx, ev| {
-                    let mut gev = Vec::new();
-                    let set = cx.guider.set_lock_position(p, &mut cx.gcx, &mut gev);
-                    c.forward(gev, cx, ev);
-                    set
-                });
-                if set { ok() } else { Err(CmdError::new(INVALID_REQUEST, "could not set lock position")) }
-            }
+            Command::NudgeLock { dx, dy } => self.nudge_lock(dx, dy),
+            Command::SaveLock => self.save_lock(),
+            Command::RestoreLock => self.restore_lock(),
+            Command::Bookmark(op) => self.bookmark(op),
             Command::SetAlgorithm { axis, kind } => {
                 let now = self.clock.mono();
                 let Engine { scope, ao, store, .. } = self;
