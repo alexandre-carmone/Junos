@@ -1,54 +1,63 @@
 == calibration
 DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
 ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
 CAL: West 0 0 0 100,100 0 State=West step   1, dist= 0.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
 CAL: West 1 2.8977774788672122 0.77645713530756666 97.102222521132788,99.223542864692433 3.000000000000008 State=West step   2, dist= 3.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
 CAL: West 2 5.7955549577344243 1.5529142706151333 94.204445042265576,98.447085729384867 6.000000000000016 State=West step   3, dist= 6.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
 CAL: West 3 8.6933324366016365 2.3293714059227 91.306667563398364,97.6706285940773 9.0000000000000249 State=West step   4, dist= 9.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
 CAL: West 4 11.591109915468849 3.1058285412302666 88.408890084531151,96.894171458769733 12.000000000000032 State=West step   5, dist=12.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
 CAL: West 5 14.488887394336061 3.8822856765378333 85.511112605663939,96.117714323462167 15.000000000000041 State=West step   6, dist=15.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
 CAL: West 6 17.386664873203273 4.6587428118454 82.613335126796727,95.3412571881546 18.00000000000005 State=West step   7, dist=18.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
 CAL: West 7 20.284442352070485 5.4351999471529666 79.715557647929515,94.564800052847033 21.000000000000057 State=West step   8, dist=21.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
 CAL: West 8 23.182219830937697 6.2116570824605333 76.817780169062303,93.788342917539467 24.000000000000064 State=West step   9, dist=24.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
@@ -59,18 +68,21 @@ DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
 AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
 DEBUG: Falling Through to state GO_EAST
 ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
 CAL: East 3 26.079997309804909 6.9881142177680999 73.920002690195091,93.0118857822319 27.000000000000075 State=East step   3, dist=27.0
 MOVE: East 2500
 DEBUG: scope move axis dir= 2 dur= 2500 opts= 0x0
 DEBUG: MoveAxis(E, 2500, -)
 DEBUG: Move returns status 0, amount 2500
 ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
 CAL: East 2 16.420739046914221 4.3999237667429014 83.579260953085779,95.600076233257099 17.000000000000071 State=East step   2, dist=17.0
 MOVE: East 2500
 DEBUG: scope move axis dir= 2 dur= 2500 opts= 0x0
 DEBUG: MoveAxis(E, 2500, -)
 DEBUG: Move returns status 0, amount 2500
 ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
 CAL: East 1 6.7614807840235329 1.8117333157177029 93.238519215976467,98.188266684282297 7.0000000000000684 State=East step   1, dist= 7.0
 MOVE: East 1750
 DEBUG: scope move axis dir= 2 dur= 1750 opts= 0x0
@@ -81,6 +93,7 @@ DEBUG: Backlash: Looking for 3 moves of 1.8 px, max attempts = 80
 DEBUG: Falling Through to state CLEAR_BACKLASH
 ROW: Backlash,0,0.000,0.000,100.000,100.000,0.000
 DEBUG: Backlash: Starting north clearing using pulse width of 750
+STATUS: Clearing backlash step 1
 CAL: Backlash 0 0 0 99.999999999999943,99.999999999999943 0 State=Clearing backlash step 1
 MOVE: North 750
 DEBUG: scope move axis dir= 0 dur= 750 opts= 0x0
@@ -88,6 +101,7 @@ DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: Backlash,1,0.000,0.000,100.000,100.000,0.000
 DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   2
 CAL: Backlash 1 0 0 99.999999999999943,99.999999999999943 0 State=Clearing backlash step   2
 DEBUG: Backlash: Clearing backlash step   2, Last Delta = 0.00 px, CumDistance = 0.00 px
 MOVE: North 750
@@ -96,6 +110,7 @@ DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: Backlash,2,0.000,0.000,100.000,100.000,0.000
 DEBUG: Backlash: Rejected small move of 0.0 px
+STATUS: Clearing backlash step   3
 CAL: Backlash 2 0 0 99.999999999999943,99.999999999999943 0 State=Clearing backlash step   3
 DEBUG: Backlash: Clearing backlash step   3, Last Delta = 0.00 px, CumDistance = 0.00 px
 MOVE: North 750
@@ -104,6 +119,7 @@ DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: Backlash,3,0.776,-2.898,99.224,102.898,3.000
 DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   4
 CAL: Backlash 3 0.77645713530756666 -2.8977774788671979 99.223542864692376,102.89777747886714 2.9999999999999942 State=Clearing backlash step   4
 DEBUG: Backlash: Clearing backlash step   4, Last Delta = 3.00 px, CumDistance = 3.00 px
 MOVE: North 750
@@ -112,6 +128,7 @@ DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: Backlash,4,1.553,-5.796,98.447,105.796,6.000
 DEBUG: Backlash: Accepted clearing move of 3.0
+STATUS: Clearing backlash step   5
 CAL: Backlash 4 1.5529142706151333 -5.7955549577343959 98.44708572938481,105.79555495773434 5.9999999999999885 State=Clearing backlash step   5
 DEBUG: Backlash: Clearing backlash step   5, Last Delta = 3.00 px, CumDistance = 6.00 px
 MOVE: North 750
@@ -126,48 +143,56 @@ DEBUG: Backlash: North calibration moves starting at {98.4,105.8}, Offset = 6.0 
 DEBUG: Backlash: Total distance moved = 9.0
 DEBUG: Backlash: Falling Through to state GO_NORTH
 ROW: North,1,0.776,-2.898,97.671,108.693,3.000
+STATUS: North step   2, dist= 3.0
 CAL: North 1 0.77645713530756666 -2.8977774788671979 97.670628594077243,108.69333243660154 2.9999999999999942 State=North step   2, dist= 3.0
 MOVE: North 750
 DEBUG: scope move axis dir= 0 dur= 750 opts= 0x0
 DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: North,2,1.553,-5.796,96.894,111.591,6.000
+STATUS: North step   3, dist= 6.0
 CAL: North 2 1.5529142706151333 -5.7955549577343959 96.894171458769677,111.59110991546873 5.9999999999999885 State=North step   3, dist= 6.0
 MOVE: North 750
 DEBUG: scope move axis dir= 0 dur= 750 opts= 0x0
 DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: North,3,2.329,-8.693,96.118,114.489,9.000
+STATUS: North step   4, dist= 9.0
 CAL: North 3 2.3293714059227 -8.6933324366015938 96.11771432346211,114.48888739433593 8.999999999999984 State=North step   4, dist= 9.0
 MOVE: North 750
 DEBUG: scope move axis dir= 0 dur= 750 opts= 0x0
 DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: North,4,3.106,-11.591,95.341,117.387,12.000
+STATUS: North step   5, dist=12.0
 CAL: North 4 3.1058285412302666 -11.591109915468792 95.341257188154543,117.38666487320313 11.999999999999977 State=North step   5, dist=12.0
 MOVE: North 750
 DEBUG: scope move axis dir= 0 dur= 750 opts= 0x0
 DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: North,5,3.882,-14.489,94.565,120.284,15.000
+STATUS: North step   6, dist=15.0
 CAL: North 5 3.8822856765378333 -14.48888739433599 94.564800052846977,120.28444235207033 14.999999999999972 State=North step   6, dist=15.0
 MOVE: North 750
 DEBUG: scope move axis dir= 0 dur= 750 opts= 0x0
 DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: North,6,4.659,-17.387,93.788,123.182,18.000
+STATUS: North step   7, dist=18.0
 CAL: North 6 4.6587428118454 -17.386664873203188 93.78834291753941,123.18221983093753 17.999999999999968 State=North step   7, dist=18.0
 MOVE: North 750
 DEBUG: scope move axis dir= 0 dur= 750 opts= 0x0
 DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: North,7,5.435,-20.284,93.012,126.080,21.000
+STATUS: North step   8, dist=21.0
 CAL: North 7 5.4351999471529666 -20.284442352070386 93.011885782231843,126.07999730980472 20.999999999999961 State=North step   8, dist=21.0
 MOVE: North 750
 DEBUG: scope move axis dir= 0 dur= 750 opts= 0x0
 DEBUG: MoveAxis(N, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: North,8,6.212,-23.182,92.235,128.978,24.000
+STATUS: North step   9, dist=24.0
 CAL: North 8 6.2116570824605333 -23.182219830937584 92.235428646924277,128.97777478867192 23.999999999999954 State=North step   9, dist=24.0
 MOVE: North 750
 DEBUG: scope move axis dir= 0 dur= 750 opts= 0x0
@@ -178,18 +203,21 @@ DEBUG: NORTH calibration completes with angle=105.0 rate=4.000 parity=1
 AXIS: North calibration complete. Angle = 105.0 deg, Rate = 4.000 px/sec, Parity = Even
 DEBUG: Falling Through to state GO_SOUTH
 ROW: South,3,6.988,-26.080,91.459,131.876,27.000
+STATUS: South step   3, dist=27.0
 CAL: South 3 6.9881142177680999 -26.079997309804781 91.45897151161671,131.87555226753912 26.99999999999995 State=South step   3, dist=27.0
 MOVE: South 2500
 DEBUG: scope move axis dir= 1 dur= 2500 opts= 0x0
 DEBUG: MoveAxis(S, 2500, -)
 DEBUG: Move returns status 0, amount 2500
 ROW: South,2,6.056,-22.603,92.391,128.398,23.400
+STATUS: South step   2, dist=23.4
 CAL: South 2 6.0563656553990199 -22.60266433516415 92.39072007398579,128.39821929289849 23.399999999999963 State=South step   2, dist=23.4
 MOVE: South 2500
 DEBUG: scope move axis dir= 1 dur= 2500 opts= 0x0
 DEBUG: MoveAxis(S, 2500, -)
 DEBUG: Move returns status 0, amount 2500
 ROW: South,1,3.727,-13.909,94.720,119.705,14.400
+STATUS: South step   1, dist=14.4
 CAL: South 1 3.7269942494763342 -13.909331898562542 94.720091479908476,119.70488685629688 14.399999999999968 State=South step   1, dist=14.4
 MOVE: South 1750
 DEBUG: scope move axis dir= 1 dur= 1750 opts= 0x0
@@ -200,6 +228,7 @@ DEBUG: Falling Through to state CALIBRATION_STATE_NUDGE_SOUTH
 DEBUG: Nudge: theta = 3.14
 DEBUG: South nudging, decAmt = 14.100, Normal south moves = 18.900
 DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   1
 CAL: NudgeSouth 1 2.0964342653304584 -7.8239991929414145 96.350651464054351,113.61955415067575 8.099999999999973 State=Nudge South   1
 MOVE: South 750
 DEBUG: scope move axis dir= 1 dur= 750 opts= 0x0
@@ -208,6 +237,7 @@ DEBUG: Move returns status 0, amount 750
 DEBUG: Nudge: theta = 3.14
 DEBUG: South nudging, decAmt = 11.400, Normal south moves = 18.900
 DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   2
 CAL: NudgeSouth 2 1.3976228435536484 -5.2159994619609336 97.049462885831161,111.01155441969527 5.3999999999999755 State=Nudge South   2
 MOVE: South 750
 DEBUG: scope move axis dir= 1 dur= 750 opts= 0x0
@@ -216,6 +246,7 @@ DEBUG: Move returns status 0, amount 750
 DEBUG: Nudge: theta = 3.14
 DEBUG: South nudging, decAmt = 8.700, Normal south moves = 18.900
 DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   3
 CAL: NudgeSouth 3 0.69881142177683842 -2.6079997309804526 97.748274307607971,108.40355468871479 2.6999999999999775 State=Nudge South   3
 MOVE: South 750
 DEBUG: scope move axis dir= 1 dur= 750 opts= 0x0
@@ -224,6 +255,7 @@ DEBUG: Move returns status 0, amount 750
 DEBUG: Nudge: theta = 3.14
 DEBUG: South nudging, decAmt = 6.000, Normal south moves = 18.900
 DEBUG: Sending NudgeSouth pulse of duration 750 ms
+STATUS: Nudge South   4
 CAL: NudgeSouth 4 2.8421709430404007e-14 2.8421709430404007e-14 98.447085729384781,105.79555495773431 4.0194366942304644e-14 State=Nudge South   4
 MOVE: South 750
 DEBUG: scope move axis dir= 1 dur= 750 opts= 0x0
@@ -247,54 +279,63 @@ DEBUG: BLC: Backlash comp disabled, Comp pulse = 0 ms
 == calibration
 DEBUG: Scope::UpdateCalibrationState: starting location = 100.00,100.00 coords = 5.00,20.0
 ROW: West,0,0.000,0.000,100.000,100.000,0.000
+STATUS: West step   1, dist= 0.0
 CAL: West 0 0 0 100,100 0 State=West step   1, dist= 0.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,1,2.898,0.776,97.102,99.224,3.000
+STATUS: West step   2, dist= 3.0
 CAL: West 1 2.8977774788672122 0.77645713530756666 97.102222521132788,99.223542864692433 3.000000000000008 State=West step   2, dist= 3.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,2,5.796,1.553,94.204,98.447,6.000
+STATUS: West step   3, dist= 6.0
 CAL: West 2 5.7955549577344243 1.5529142706151333 94.204445042265576,98.447085729384867 6.000000000000016 State=West step   3, dist= 6.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,3,8.693,2.329,91.307,97.671,9.000
+STATUS: West step   4, dist= 9.0
 CAL: West 3 8.6933324366016365 2.3293714059227 91.306667563398364,97.6706285940773 9.0000000000000249 State=West step   4, dist= 9.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,4,11.591,3.106,88.409,96.894,12.000
+STATUS: West step   5, dist=12.0
 CAL: West 4 11.591109915468849 3.1058285412302666 88.408890084531151,96.894171458769733 12.000000000000032 State=West step   5, dist=12.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,5,14.489,3.882,85.511,96.118,15.000
+STATUS: West step   6, dist=15.0
 CAL: West 5 14.488887394336061 3.8822856765378333 85.511112605663939,96.117714323462167 15.000000000000041 State=West step   6, dist=15.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,6,17.387,4.659,82.613,95.341,18.000
+STATUS: West step   7, dist=18.0
 CAL: West 6 17.386664873203273 4.6587428118454 82.613335126796727,95.3412571881546 18.00000000000005 State=West step   7, dist=18.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,7,20.284,5.435,79.716,94.565,21.000
+STATUS: West step   8, dist=21.0
 CAL: West 7 20.284442352070485 5.4351999471529666 79.715557647929515,94.564800052847033 21.000000000000057 State=West step   8, dist=21.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
 DEBUG: MoveAxis(W, 750, -)
 DEBUG: Move returns status 0, amount 750
 ROW: West,8,23.182,6.212,76.818,93.788,24.000
+STATUS: West step   9, dist=24.0
 CAL: West 8 23.182219830937697 6.2116570824605333 76.817780169062303,93.788342917539467 24.000000000000064 State=West step   9, dist=24.0
 MOVE: West 750
 DEBUG: scope move axis dir= 3 dur= 750 opts= 0x0
@@ -305,18 +346,21 @@ DEBUG: WEST calibration completes with steps=9 angle=15.0 rate=4.000 parity=1
 AXIS: West calibration complete. Angle = 15.0 deg, Rate = 4.000 px/sec, Parity = Even
 DEBUG: Falling Through to state GO_EAST
 ROW: East,3,26.080,6.988,73.920,93.012,27.000
+STATUS: East step   3, dist=27.0
 CAL: East 3 26.079997309804909 6.9881142177680999 73.920002690195091,93.0118857822319 27.000000000000075 State=East step   3, dist=27.0
 MOVE: East 2500
 DEBUG: scope move axis dir= 2 dur= 2500 opts= 0x0
 DEBUG: MoveAxis(E, 2500, -)
 DEBUG: Move returns status 0, amount 2500
 ROW: East,2,16.421,4.400,83.579,95.600,17.000
+STATUS: East step   2, dist=17.0
 CAL: East 2 16.420739046914221 4.3999237667429014 83.579260953085779,95.600076233257099 17.000000000000071 State=East step   2, dist=17.0
 MOVE: East 2500
 DEBUG: scope move axis dir= 2 dur= 2500 opts= 0x0
 DEBUG: MoveAxis(E, 2500, -)
 DEBUG: Move returns status 0, amount 2500
 ROW: East,1,6.761,1.812,93.239,98.188,7.000
+STATUS: East step   1, dist= 7.0
 CAL: East 1 6.7614807840235329 1.8117333157177029 93.238519215976467,98.188266684282297 7.0000000000000684 State=East step   1, dist= 7.0
 MOVE: East 1750
 DEBUG: scope move axis dir= 2 dur= 1750 opts= 0x0

@@ -134,10 +134,26 @@ pub struct CalibrationEnv {
     pub fast_recenter: bool,
     /// `pGuider->GetMaxMovePixels()`.
     pub max_move_pixels: i32,
-    /// The guide output's `CanPulseGuide`.
+    /// The guide output's `CanPulseGuide`: one virtual call in PHD2, so the
+    /// engine fills it from the same [`GuideOutput::can_pulse_guide`] the
+    /// pulse-limit alert reads.
     pub can_pulse_guide: bool,
     /// `wxDateTime::Now().Format()`, stamped on what a calibration stores.
     pub timestamp: String,
+}
+
+/// The scope's alerts turned off with "Don't show again": PHD2's global
+/// `/Confirm/<profile id>/MaxRALimitWarningEnabled`,
+/// `…/MaxDecLimitWarningEnabled` and `…/CalWarning_<qualifier>` (see
+/// [`CalibrationIssue::warning_key_qualifier`]) set to false. The engine
+/// keeps it in step with the global config; a suppressed alert is only a
+/// debug line.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SuppressedAlerts {
+    pub ra_limit: bool,
+    pub dec_limit: bool,
+    /// The sanity-check issues whose advisory is off.
+    pub calibration: Vec<CalibrationIssue>,
 }
 
 /// What [`Scope::update_calibration_state`] asks for next.
@@ -168,8 +184,11 @@ struct MoveState {
     dec_limit_dir: Option<Dir>,
     dec_limit_count: i32,
     /// `AlertLimitReached`'s function-static `s_lastLogged`, shared by both
-    /// axes.
+    /// axes. Per scope here: PHD2's is shared by every `Scope` and outlives
+    /// a mount re-created on reconnect, so a reconnect within 30 s of an
+    /// alert may alert again here.
     last_limit_alert: Option<i64>,
+    suppressed: SuppressedAlerts,
     /// `None` only while the scope is being built, as in PHD2.
     blc: Option<BacklashComp>,
 }
@@ -310,8 +329,9 @@ impl MoveState {
     /// axes together), none during the grace period after guiding is
     /// re-enabled. The wording depends on whether the axis maximum is at the
     /// top of its range, below the default (lowered by the user) or between.
-    /// Quirk kept: PHD2 raises it through `SuppressibleAlert`, which drops
-    /// the information icon, so the `Alert` event says "warning".
+    /// A suppressed axis only logs it. Quirk kept: PHD2 raises it through
+    /// `SuppressibleAlert`, which drops the information icon, so the `Alert`
+    /// event says "warning".
     fn alert_limit_reached(&mut self, duration: i32, ra: bool, io: &ScopeIo, events: &mut Vec<MountEvent>) {
         let now = whole_seconds(io.now);
         if let Some(last) = self.last_limit_alert
@@ -347,7 +367,12 @@ impl MoveState {
                 if ra { "RA" } else { "Dec" }
             )
         };
-        events.push(MountEvent::Alert { msg, kind: AlertKind::Warning });
+        let suppressed = if ra { self.suppressed.ra_limit } else { self.suppressed.dec_limit };
+        if suppressed {
+            debug(events, format!("Suppressed alert:  {msg}"));
+        } else {
+            events.push(MountEvent::Alert { msg, kind: AlertKind::Warning });
+        }
     }
 }
 
@@ -477,8 +502,8 @@ pub struct Scope {
     assume_orthogonal: bool,
     use_dec_compensation: bool,
     has_hp_encoders: bool,
-    /// `m_CalDetailsValidated` of the pointing source: its guide speeds are
-    /// checked once per session.
+    /// `m_CalDetailsValidated` of the pointing source, see
+    /// [`cal_details_validated_mut`](Self::cal_details_validated_mut).
     cal_details_validated: bool,
     /// `m_calibration`: the calibration being made, and a copy of the last
     /// one set (its Dec rate is what `is_calibrated` reads).
@@ -523,6 +548,7 @@ impl Scope {
                 dec_limit_dir: None,
                 dec_limit_count: 0,
                 last_limit_alert: None,
+                suppressed: SuppressedAlerts::default(),
                 blc: None,
             },
             calibration_duration: DEFAULT_CALIBRATION_DURATION,
@@ -830,6 +856,12 @@ impl Scope {
         self.mv.limit_deferral_time = whole_seconds(now) + LIMIT_REACHED_GRACE_PERIOD_SECONDS;
     }
 
+    /// The alerts the user turned off (PHD2 reads its global config at
+    /// each alert).
+    pub fn set_suppressed_alerts(&mut self, suppressed: SuppressedAlerts) {
+        self.mv.suppressed = suppressed;
+    }
+
     /// The three-argument `Scope::MoveAxis` (`scope.cpp:571`), which the
     /// calibration and manual moves use: `duration` ms one way, no guide
     /// step recorded.
@@ -864,11 +896,6 @@ impl Scope {
     ) -> MoveResult {
         let mut mover = ScopeMover { mv: &mut self.mv, io, profile };
         self.mount.move_offset(ofs, opts, frame, ctx, &mut mover, events)
-    }
-
-    /// `NotifyGuidingStarted`.
-    pub fn notify_guiding_started(&mut self, ctx: &AlgoCtx, events: &mut Vec<MountEvent>) {
-        self.mount.notify_guiding_started(ctx, events);
     }
 
     /// `NotifyGuidingStopped`: the algorithms, then the backlash
@@ -925,7 +952,18 @@ impl Scope {
         self.cw.state = CalibrationState::Cleared;
     }
 
-    /// `LoadCalibrationDetails`, with the once-per-session guide-speed check.
+    /// `m_CalDetailsValidated` of the pointing source: set once the stored
+    /// guide speeds were checked (`ValidGuideRates`). PHD2 keeps it on
+    /// `pPointingSource` (the scope, or an aux mount), which starts with it
+    /// false whenever a mount is chosen anew. It is kept here: the engine
+    /// resets it to false when the pointing source changes, and lends it to
+    /// the AO's calls (their `validated`), which check the same flag.
+    pub fn cal_details_validated_mut(&mut self) -> &mut bool {
+        &mut self.cal_details_validated
+    }
+
+    /// `LoadCalibrationDetails`, with the guide-speed check of the pointing
+    /// source (once, see [`cal_details_validated_mut`](Self::cal_details_validated_mut)).
     pub fn load_calibration_details(
         &mut self,
         profile: &mut impl ProfileAccess,
@@ -1161,6 +1199,7 @@ impl Scope {
         };
         // `CalibrationStatus`: the status line and the `Calibrating` event.
         let status = |mut i: CalibrationStepInfo, msg: String, events: &mut Vec<MountEvent>| {
+            events.push(MountEvent::Status(msg.clone()));
             i.msg = msg;
             events.push(MountEvent::Calibrating(i));
         };
@@ -1710,8 +1749,7 @@ impl Scope {
     /// just stored, read back from the profile, against the previous one
     /// (see [`calibration::sanity_check_calibration`]). An issue is written
     /// into the stored details (`FlagCalibrationIssue`) and raised as its
-    /// advisory. PHD2 lets the user suppress each kind of advisory; that
-    /// switch is not ported, so the alert always shows.
+    /// advisory, or only logged when that kind is suppressed.
     fn sanity_check_calibration(&mut self, profile: &mut impl ProfileAccess, events: &mut Vec<MountEvent>) {
         let new_cal = self.mount.get_last_calibration(&*profile);
         let new_details = self.load_calibration_details(profile, events);
@@ -1730,7 +1768,15 @@ impl Scope {
         self.calibration_details = CalibrationDetails { last_issue: res.issue, ..new_details };
         let details = self.calibration_details.clone();
         self.mount.save_calibration_details(&details, profile, Some(&mut self.cal_details_validated), events);
-        events.push(MountEvent::Alert { msg: res.issue.advisory().into(), kind: AlertKind::Warning });
+        let msg = res.issue.advisory();
+        if self.mv.suppressed.calibration.contains(&res.issue) {
+            debug(
+                events,
+                format!("Alert detected in scope calibration but not shown to user - suppressed message was: {msg}"),
+            );
+        } else {
+            events.push(MountEvent::Alert { msg: msg.into(), kind: AlertKind::Warning });
+        }
         debug(events, format!("Calibration alert details: {}", res.detail));
     }
 }
@@ -2424,6 +2470,61 @@ mod tests {
     }
 
     #[test]
+    fn a_suppressed_limit_alert_is_only_logged_and_still_rate_limited() {
+        let mut p = Profile::default();
+        let mut scope = connected_scope(&mut p, 0.0);
+        let mut ev = Vec::new();
+        scope.set_max_ra_duration(300, &mut p, &mut ev);
+        scope.set_max_dec_duration(300, &mut p, &mut ev);
+        scope.set_suppressed_alerts(SuppressedAlerts { ra_limit: true, ..SuppressedAlerts::default() });
+        ev.clear();
+        for _ in 0..6 {
+            axis_move(&mut scope, Dir::West, 500, MoveOpts::GUIDE_STEP, 10.0, None, true, &mut ev);
+        }
+        assert!(alerts(&ev).is_empty());
+        let lowered = "Your Max RA Duration setting is preventing PHD from making adequate corrections to keep the guide star locked. Try restoring Max RA Duration setting to its default value to allow PHD2 to make larger corrections.";
+        let logged = format!("Suppressed alert:  {lowered}");
+        assert_eq!(ev.iter().filter(|e| **e == MountEvent::Debug(logged.clone())).count(), 1);
+        // The suppressed alert took the 30 s slot, as PHD2's checks come first.
+        ev.clear();
+        for _ in 0..6 {
+            axis_move(&mut scope, Dir::North, 500, MoveOpts::GUIDE_STEP, 20.0, None, true, &mut ev);
+        }
+        assert!(alerts(&ev).is_empty());
+        axis_move(&mut scope, Dir::North, 500, MoveOpts::GUIDE_STEP, 40.0, None, true, &mut ev);
+        assert_eq!(alerts(&ev).len(), 1);
+    }
+
+    #[test]
+    fn the_guide_speed_check_runs_once_per_pointing_source() {
+        let mut p = Profile::default();
+        let mut scope = connected_scope(&mut p, 0.0);
+        let mut ev = Vec::new();
+        // 0.1°/s is 24× sidereal: bogus.
+        let bogus = |p: &mut Profile| {
+            p.f.insert("/scope/calibration/ra_guide_rate".into(), 0.1);
+            p.f.insert("/scope/calibration/dec_guide_rate".into(), 0.1);
+        };
+        bogus(&mut p);
+        assert_eq!(scope.load_calibration_details(&mut p, &mut ev).ra_guide_speed, -1.0);
+        assert_eq!(
+            rendered(&mut ev),
+            [
+                "DEBUG: Invalid mount guide speeds: RA: 0.1000, Dec: 0.1000",
+                "DEBUG: Bogus guide speeds cleared in LoadCalibrationDetails",
+            ]
+        );
+        assert_eq!(p.f["/scope/calibration/ra_guide_rate"], -1.0);
+        // Checked: no second look until the pointing source changes.
+        bogus(&mut p);
+        assert_eq!(scope.load_calibration_details(&mut p, &mut ev).ra_guide_speed, 0.1);
+        assert!(ev.is_empty());
+        *scope.cal_details_validated_mut() = false;
+        assert_eq!(scope.load_calibration_details(&mut p, &mut ev).dec_guide_speed, -1.0);
+        assert_eq!(ev.len(), 2);
+    }
+
+    #[test]
     fn a_slewing_mount_still_gets_its_pulse() {
         // PHD2's INDI mount never checks for a slew: the setting is stored
         // and logged, and the move goes out all the same.
@@ -2542,6 +2643,24 @@ mod tests {
             [
                 "ALERT: Advisory: This calibration is substantially different from the previous one - have you changed configurations?",
                 "DEBUG: Calibration alert details: Current/previous Dec rate ratio is 0.769",
+            ]
+        );
+
+        // Back to the first rig: different again, this time suppressed.
+        scope.set_suppressed_alerts(SuppressedAlerts {
+            calibration: vec![CalibrationIssue::Different],
+            ..SuppressedAlerts::default()
+        });
+        out.clear();
+        run_calibration(&mut scope, &mut Rig::default(), &mut p, &mut out);
+        assert_eq!(scope.last_calibration_issue().0, CalibrationIssue::Different);
+        assert!(!out.iter().any(|l| l.starts_with("ALERT:")));
+        let k = out.iter().position(|l| l.starts_with("DEBUG: Alert detected")).expect("suppressed advisory");
+        assert_eq!(
+            out[k..k + 2],
+            [
+                "DEBUG: Alert detected in scope calibration but not shown to user - suppressed message was: Advisory: This calibration is substantially different from the previous one - have you changed configurations?",
+                "DEBUG: Calibration alert details: Current/previous Dec rate ratio is 1.300",
             ]
         );
     }
