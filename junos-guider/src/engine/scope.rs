@@ -514,7 +514,8 @@ impl Scope {
         now: f64,
         events: &mut Vec<MountEvent>,
     ) -> Scope {
-        let mount = Mount::new(MountClass::Scope, profile, now);
+        let mut algo_events = Vec::new();
+        let mount = Mount::new(MountClass::Scope, profile, now, &mut algo_events);
         let mut s = Scope {
             mount,
             mv: MoveState {
@@ -556,6 +557,7 @@ impl Scope {
         let v = profile.get_i32("/scope/DecGuideMode", DecGuideMode::Auto as i32);
         s.set_dec_guide_mode(v, profile, events);
         // The guide algorithms come next in PHD2: `Mount::new` built them.
+        events.append(&mut algo_events);
         let flip = profile.get_i32("/scope/CalFlipRequiresDecFlip", 0) != 0;
         s.set_calibration_flip_requires_dec_flip(flip, profile);
         let ortho = profile.get_i32("/scope/AssumeOrthogonal", 0) != 0;
@@ -2153,7 +2155,7 @@ mod tests {
         assert!(scope.is_calibrated());
 
         out.push("== moves".into());
-        scope.mount.set_guide_algorithm(Axis::Y, 1, &mut profile, 0.0);
+        scope.mount.set_guide_algorithm(Axis::Y, 1, &mut profile, 0.0, &mut ev);
         scope.set_calibration(&cal_15_105(), "T", &mut profile, &mut ev);
         scope.set_dec_guide_mode(DecGuideMode::Auto as i32, &mut profile, &mut ev);
         scope.set_max_dec_duration(600, &mut profile, &mut ev);
@@ -2264,6 +2266,7 @@ mod tests {
             ("MaxRaDuration", -1),
             ("MaxDecDuration", 300),
             ("DecGuideMode", 7),
+            ("YGuideAlgorithm", 9),
             ("DecBacklashPulse", 400),
             ("BacklashCompEnabled", 1),
         ] {
@@ -2279,6 +2282,7 @@ mod tests {
                 "DEBUG: Error thrown from scope.cpp:219->maxRaDuration < 0",
                 "PARAM: Dec Max Duration=300",
                 "DEBUG: Error thrown from scope.cpp:289->invalid decGuideMode",
+                "DEBUG: Error thrown from mount.cpp:742->invalid guideAlgorithm",
                 // The compensation pulse is above the Dec maximum: raised.
                 "PARAM: Dec Max Duration=400",
                 "DEBUG: BLC: Enabled with correction = 400 ms, Floor = 20, Ceiling = 600, Adjustable",
@@ -2291,6 +2295,8 @@ mod tests {
         assert_eq!(scope.dec_guide_mode(), DecGuideMode::None);
         assert_eq!(p.i["/scope/DecGuideMode"], 7);
         assert_eq!(p.i["/scope/MaxDecDuration"], 400);
+        // An unknown algorithm is the axis default, stored.
+        assert_eq!(p.i["/scope/YGuideAlgorithm"], 4);
     }
 
     #[test]

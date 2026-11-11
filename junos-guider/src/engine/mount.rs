@@ -113,7 +113,8 @@ impl AlertKind {
 /// event's fields. `dx`/`dy` are the leg's start minus the current position.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CalibrationStepInfo {
-    /// `West`, `East`, `Backlash`, `North`, `South` or `NudgeSouth`.
+    /// `West`, `East`, `Backlash`, `North`, `South` or `NudgeSouth`; the
+    /// AO's are `Left` and `Up` too (`stepguider.cpp:643, 695`).
     pub direction: &'static str,
     pub step: i32,
     pub dx: f64,
@@ -295,9 +296,10 @@ fn algorithm_key(class: MountClass, axis: Axis) -> String {
 }
 
 /// `CreateGuideAlgorithm` plus the setters' profile writes: build what the
-/// stored integer asks for (the axis default for −1 or an unknown value),
-/// persist its effective parameters, then the kind. `guiding_enabled` is
-/// the mount's switch, which Predictive PEC reads when it is built.
+/// stored integer asks for (the axis default for −1 or an unknown value,
+/// which PHD2's factory refuses with a debug line), persist its effective
+/// parameters, then the kind. `guiding_enabled` is the mount's switch,
+/// which Predictive PEC reads when it is built.
 fn build_algorithm(
     class: MountClass,
     axis: Axis,
@@ -305,18 +307,31 @@ fn build_algorithm(
     profile: &mut impl ProfileAccess,
     now: f64,
     guiding_enabled: bool,
+    events: &mut Vec<MountEvent>,
 ) -> Box<dyn GuideAlgorithm> {
-    let (algorithm, kind) = {
+    if AlgoKind::from_i32(stored).is_none() {
+        events.push(MountEvent::Debug("Error thrown from mount.cpp:742->invalid guideAlgorithm".into()));
+    }
+    let (algorithm, _) = {
         let p = &*profile;
-        let lookup = |k: &str| p.has(k).then(|| p.get_f64(k, 0.0));
+        // PHD2's getters fall back to the algorithm's default when the key
+        // is missing or does not parse: NaN as the default catches both.
+        let lookup = |k: &str| Some(p.get_f64(k, f64::NAN)).filter(|v| !v.is_nan());
         algo::make_or_default(stored, axis, class, &lookup, now, guiding_enabled)
     };
+    persist_algorithm(class, axis, &*algorithm, profile);
+    algorithm
+}
+
+/// The setters' profile writes: an algorithm's effective parameters under
+/// its group, then its kind (`SetXGuideAlgorithm`).
+fn persist_algorithm(class: MountClass, axis: Axis, algorithm: &dyn GuideAlgorithm, profile: &mut impl ProfileAccess) {
+    let kind = algorithm.kind();
     let group = algo::config_path(class, axis, kind);
     for (key, value) in algorithm.params() {
         profile.set_f64(&format!("{group}/{key}"), value);
     }
     profile.set_i32(&algorithm_key(class, axis), kind as i32);
-    algorithm
 }
 
 /// PHD2's `Mount`: what the scope and the AO share.
@@ -339,11 +354,18 @@ impl Mount {
     /// Resist Switch on its Dec, Hysteresis on an AO). The algorithms'
     /// effective settings and kinds are written back, as PHD2's setters do.
     /// `now` is the engine clock, where Predictive PEC starts its time.
-    pub fn new(class: MountClass, profile: &mut impl ProfileAccess, now: f64) -> Mount {
+    /// PHD2 builds them in the scope's (AO's) constructor after its own
+    /// settings, so a scope moves `events` there.
+    pub fn new(
+        class: MountClass,
+        profile: &mut impl ProfileAccess,
+        now: f64,
+        events: &mut Vec<MountEvent>,
+    ) -> Mount {
         let stored_x = profile.get_i32(&algorithm_key(class, Axis::X), algo::default_kind(Axis::X, class) as i32);
-        let x_algo = build_algorithm(class, Axis::X, stored_x, profile, now, true);
+        let x_algo = build_algorithm(class, Axis::X, stored_x, profile, now, true, events);
         let stored_y = profile.get_i32(&algorithm_key(class, Axis::Y), algo::default_kind(Axis::Y, class) as i32);
-        let y_algo = build_algorithm(class, Axis::Y, stored_y, profile, now, true);
+        let y_algo = build_algorithm(class, Axis::Y, stored_y, profile, now, true, events);
         Mount {
             class,
             connected: false,
@@ -397,17 +419,60 @@ impl Mount {
     /// `SetXGuideAlgorithm` / `SetYGuideAlgorithm` (`mount.cpp:598-641`) on
     /// the integer the profile stores. Asking for the running kind changes
     /// nothing (the history stays, nothing is written); anything else
-    /// builds the algorithm — the axis default for −1 or an unknown value,
-    /// so −1 rebuilds even a running default — and persists it.
-    pub fn set_guide_algorithm(&mut self, axis: Axis, algorithm: i32, profile: &mut impl ProfileAccess, now: f64) {
+    /// builds the algorithm — the axis default for −1 or an unknown value
+    /// (with PHD2's `invalid guideAlgorithm` debug line), so −1 rebuilds
+    /// even a running default — and persists it.
+    pub fn set_guide_algorithm(
+        &mut self,
+        axis: Axis,
+        algorithm: i32,
+        profile: &mut impl ProfileAccess,
+        now: f64,
+        events: &mut Vec<MountEvent>,
+    ) {
         let class = self.class;
         let enabled = self.guiding_enabled;
-        let slot = match axis {
+        let slot = self.slot(axis);
+        if slot.kind() as i32 != algorithm {
+            *slot = build_algorithm(class, axis, algorithm, profile, now, enabled, events);
+        }
+    }
+
+    /// The Brain's Reset button (`ResetRAGuidingParams` /
+    /// `ResetDecGuidingParams`, `mount.cpp:350-398`): the axis' algorithm
+    /// back to its defaults, a new one of the same kind. PHD2 deletes the
+    /// algorithm's profile group and gives the old algorithm the min-move
+    /// `smart_min_move` ([`algo::smart_default_min_move_current`]) when it
+    /// has one (`ResetParams`), then `SetXGuideAlgorithm` builds the kind
+    /// again from what is left: the defaults and that min-move. Here the new
+    /// one is built on the defaults and handed the min-move, then its
+    /// settings and kind are written over the old ones: [`ProfileAccess`]
+    /// has no group delete, so stray keys stay, but every key an algorithm
+    /// reads first is written again. The history is gone. The
+    /// scope's Reset also resets the Max RA / Dec duration, Dec mode and
+    /// backlash controls, which apply only when the dialog is saved.
+    pub fn reset_guide_algorithm_params(
+        &mut self,
+        axis: Axis,
+        smart_min_move: f64,
+        profile: &mut impl ProfileAccess,
+        now: f64,
+    ) {
+        let class = self.class;
+        let enabled = self.guiding_enabled;
+        let slot = self.slot(axis);
+        let mut algorithm = algo::make(slot.kind(), axis, class, &|_| None, now, enabled);
+        if algorithm.min_move() >= 0.0 {
+            algorithm.set_min_move(smart_min_move);
+        }
+        persist_algorithm(class, axis, &*algorithm, profile);
+        *slot = algorithm;
+    }
+
+    fn slot(&mut self, axis: Axis) -> &mut Box<dyn GuideAlgorithm> {
+        match axis {
             Axis::X => &mut self.x_algo,
             Axis::Y => &mut self.y_algo,
-        };
-        if slot.kind() as i32 != algorithm {
-            *slot = build_algorithm(class, axis, algorithm, profile, now, enabled);
         }
     }
 
@@ -418,9 +483,9 @@ impl Mount {
 
     /// `SetGuidingEnabled` (`mount.cpp:663`): on a change, the
     /// `MountGuidingEnabled` (`AOGuidingEnabled`) parameter change and the
-    /// algorithms' enabled / disabled hook. Returns whether it changed: a
-    /// scope then defers its pulse-limit alerts (`Scope::set_guiding_enabled`
-    /// does both).
+    /// algorithms' enabled / disabled hook. Returns whether it changed: when
+    /// that turned guiding back on, a scope defers its pulse-limit alerts
+    /// (`Scope::set_guiding_enabled` does both).
     pub fn set_guiding_enabled(&mut self, enabled: bool, ctx: &AlgoCtx, events: &mut Vec<MountEvent>) -> bool {
         if enabled == self.guiding_enabled {
             return false;
@@ -775,14 +840,10 @@ impl Mount {
         self.y_algo.guiding_stopped(ctx);
     }
 
-    /// `NotifyGuidingPaused`.
-    pub fn notify_guiding_paused(&mut self, ctx: &AlgoCtx, events: &mut Vec<MountEvent>) {
-        events.push(MountEvent::Debug("Mount: notify guiding paused".into()));
-        self.x_algo.guiding_paused(ctx);
-        self.y_algo.guiding_paused(ctx);
-    }
-
-    /// `NotifyGuidingResumed`.
+    /// `NotifyGuidingResumed`: PHD2 calls it on the primary mount only, when
+    /// a pause ends (`myframe.cpp:1940`). Pausing notifies nothing:
+    /// `Mount::NotifyGuidingPaused` is never called in PHD2 2.6.14, so it is
+    /// not ported.
     pub fn notify_guiding_resumed(&mut self, ctx: &AlgoCtx, events: &mut Vec<MountEvent>) {
         events.push(MountEvent::Debug("Mount: notify guiding resumed".into()));
         self.x_algo.guiding_resumed(ctx);
@@ -939,7 +1000,7 @@ mod tests {
 
     /// A mount whose two algorithms are recorders sharing one log.
     fn recorded(class: MountClass) -> (Mount, Arc<Mutex<Vec<String>>>) {
-        let mut m = Mount::new(class, &mut Profile::default(), 0.0);
+        let mut m = Mount::new(class, &mut Profile::default(), 0.0, &mut Vec::new());
         let log = Arc::new(Mutex::new(Vec::new()));
         m.x_algo = Box::new(Recorder { log: log.clone(), deduce: 0.0 });
         m.y_algo = Box::new(Recorder { log: log.clone(), deduce: 0.0 });
@@ -1019,7 +1080,12 @@ mod tests {
         let mut p = Profile::default();
         p.i.insert("/scope/XGuideAlgorithm".into(), 2);
         p.i.insert("/scope/YGuideAlgorithm".into(), -1);
-        let mut m = Mount::new(MountClass::Scope, &mut p, 0.0);
+        // A setting that does not read as a number is the default (0.2).
+        p.s.insert("/scope/GuideAlgorithm/X/Lowpass/minMove".into(), "x".into());
+        let mut ev = Vec::new();
+        let mut m = Mount::new(MountClass::Scope, &mut p, 0.0, &mut ev);
+        assert!(ev.is_empty());
+        assert_eq!(m.algo(Axis::X).min_move(), 0.2);
         assert_eq!(m.guide_algorithm_selection(Axis::X), AlgoKind::Lowpass);
         assert_eq!(m.guide_algorithm_selection(Axis::Y), AlgoKind::ResistSwitch);
         assert_eq!((p.i["/scope/XGuideAlgorithm"], p.i["/scope/YGuideAlgorithm"]), (2, 4));
@@ -1028,22 +1094,54 @@ mod tests {
 
         // The same kind again keeps the running algorithm and its history.
         let ctx = AlgoCtx::default();
-        m.set_guide_algorithm(Axis::X, 1, &mut p, 0.0);
+        m.set_guide_algorithm(Axis::X, 1, &mut p, 0.0, &mut ev);
         m.algo_mut(Axis::X).result(1.0, &ctx);
-        m.set_guide_algorithm(Axis::X, 1, &mut p, 0.0);
+        m.set_guide_algorithm(Axis::X, 1, &mut p, 0.0, &mut ev);
         assert!(m.algo_mut(Axis::X).result(1.0, &ctx) > 0.63 + 1e-12);
-        // −1 rebuilds the default even when it runs; an unknown value too.
-        m.set_guide_algorithm(Axis::X, -1, &mut p, 0.0);
+        // −1 rebuilds the default even when it runs, silently; an unknown
+        // value too, with the factory's error line.
+        m.set_guide_algorithm(Axis::X, -1, &mut p, 0.0, &mut ev);
         assert!((m.algo_mut(Axis::X).result(1.0, &ctx) - 0.63).abs() < 1e-12);
-        m.set_guide_algorithm(Axis::X, 42, &mut p, 0.0);
+        assert!(ev.is_empty());
+        m.set_guide_algorithm(Axis::X, 42, &mut p, 0.0, &mut ev);
         assert_eq!((m.guide_algorithm_selection(Axis::X), p.i["/scope/XGuideAlgorithm"]), (AlgoKind::Hysteresis, 1));
+        assert_eq!(ev, [MountEvent::Debug("Error thrown from mount.cpp:742->invalid guideAlgorithm".into())]);
 
-        // An AO: Hysteresis on both axes, under its own keys.
+        // An AO: Hysteresis on both axes, under its own keys; a stored 7 is
+        // refused when it is built.
         let mut p = Profile::default();
-        let ao = Mount::new(MountClass::StepGuider, &mut p, 0.0);
+        p.i.insert("/stepguider/XGuideAlgorithm".into(), 7);
+        ev.clear();
+        let ao = Mount::new(MountClass::StepGuider, &mut p, 0.0, &mut ev);
+        assert_eq!(ev.len(), 1);
+        assert_eq!(p.i["/stepguider/XGuideAlgorithm"], 1);
         assert_eq!(ao.guide_algorithm_selection(Axis::Y), AlgoKind::Hysteresis);
         assert_eq!(p.i["/stepguider/YGuideAlgorithm"], 1);
         assert!(ao.is_step_guider() && ao.guiding_enabled() && !ao.is_connected());
+    }
+
+    #[test]
+    fn reset_brings_back_the_defaults_and_the_smart_min_move() {
+        let ctx = AlgoCtx::default();
+        let mut p = Profile::default();
+        p.i.insert("/scope/YGuideAlgorithm".into(), 0);
+        for (k, v) in [("minMove", 0.5), ("hysteresis", 0.3), ("aggression", 0.9)] {
+            p.f.insert(format!("/scope/GuideAlgorithm/X/Hysteresis/{k}"), v);
+        }
+        let mut m = Mount::new(MountClass::Scope, &mut p, 0.0, &mut Vec::new());
+        m.algo_mut(Axis::X).result(1.0, &ctx);
+        m.reset_guide_algorithm_params(Axis::X, 0.25, &mut p, 0.0);
+        let x = |k: &str| p.f[&format!("/scope/GuideAlgorithm/X/Hysteresis/{k}")];
+        assert_eq!((x("minMove"), x("hysteresis"), x("aggression")), (0.25, 0.1, 0.7));
+        assert_eq!(p.i["/scope/XGuideAlgorithm"], 1);
+        // A new algorithm: no history, 0.9 × 0.7 of a fresh move.
+        assert!((m.algo_mut(Axis::X).result(1.0, &ctx) - 0.63).abs() < 1e-12);
+        // A refused min-move is the algorithm's default; Identity has none.
+        m.set_guide_algorithm(Axis::X, 4, &mut p, 0.0, &mut Vec::new());
+        m.reset_guide_algorithm_params(Axis::X, -1.0, &mut p, 0.0);
+        assert_eq!(p.f["/scope/GuideAlgorithm/X/ResistSwitch/minMove"], 0.2);
+        m.reset_guide_algorithm_params(Axis::Y, 0.25, &mut p, 0.0);
+        assert_eq!((m.algo(Axis::Y).min_move(), p.i["/scope/YGuideAlgorithm"]), (-1.0, 0));
     }
 
     #[test]
@@ -1082,7 +1180,6 @@ mod tests {
         m.set_calibration(&cal, "T", &mut Profile::default(), &mut ev);
         ev.clear();
         m.notify_guiding_started(&ctx, &mut ev);
-        m.notify_guiding_paused(&ctx, &mut ev);
         m.notify_guiding_resumed(&ctx, &mut ev);
         m.notify_guiding_stopped(&ctx, &mut ev);
         // A camera-axis dither is handed over on the mount axes.
@@ -1095,8 +1192,6 @@ mod tests {
             [
                 "started",
                 "started",
-                "paused",
-                "paused",
                 "resumed",
                 "resumed",
                 "stopped",
@@ -1116,7 +1211,6 @@ mod tests {
             debug,
             [
                 "Mount: notify guiding started",
-                "Mount: notify guiding paused",
                 "Mount: notify guiding resumed",
                 "Mount: notify guiding stopped",
                 "Mount: notify guiding dithered (0.0, 2.0)",
@@ -1253,7 +1347,7 @@ mod tests {
         assert!(!valid_guide_rates(0.01, half, &mut validated, &mut ev));
         assert_eq!(ev, [MountEvent::Debug("Invalid mount guide speeds: RA: 0.0100, Dec: 0.0021".into())]);
 
-        let m = Mount::new(MountClass::Scope, &mut Profile::default(), 0.0);
+        let m = Mount::new(MountClass::Scope, &mut Profile::default(), 0.0, &mut ev);
         let mut p = Profile::default();
         p.f.insert("/scope/calibration/ra_guide_rate".into(), 0.01);
         p.f.insert("/scope/calibration/dec_guide_rate".into(), half);
