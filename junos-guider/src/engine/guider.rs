@@ -213,8 +213,8 @@ pub struct GuideUpdate {
     pub moves: Vec<ScheduledMove>,
     /// The star tracker's verdict, `None` when no position was looked for.
     /// It carries what PHD2 does inside `UpdateCurrentPosition` outside the
-    /// guider: `AdjustAutoExposure(snr)` or `ResetAutoExposure()`, and the
-    /// image logger's distance or error.
+    /// guider: the image logger's distance or error. Its auto-exposure step
+    /// comes as an event, in its place among the debug lines.
     pub position: Option<Result<PositionUpdate, PositionLost>>,
     pub pa_tools: PaTools,
     /// AutoFind set the camera's saturation level
@@ -291,6 +291,13 @@ pub enum GuiderEvent {
     /// `MyFrame::SetAutoLoadCalibration`: the frame's flag, saved to
     /// `/AutoLoadCalibration` when it changes.
     SetAutoLoadCalibration(bool),
+    /// `pFrame->AdjustAutoExposure(snr)`: the star was found, with this
+    /// SNR. [`Control::forward`](super::control::Control::forward) applies
+    /// it, so its debug line lands here.
+    AdjustAutoExposure(f64),
+    /// `pFrame->ResetAutoExposure()`: the star was lost (not when none was
+    /// selected). Applied by `Control::forward` too.
+    ResetAutoExposure,
     /// `pFrame->Alert`. The event server's `Alert` carries `msg` and `kind`
     /// only; `button` is for the junos UI.
     Alert { msg: String, kind: AlertKind, button: Option<AlertButton> },
@@ -1741,8 +1748,15 @@ impl Guider {
                 if let Some((d, d_ra)) = u.current_distance {
                     self.update_current_distance(d, d_ra, cx.now_ms);
                 }
+                ev.push(GuiderEvent::AdjustAutoExposure(u.auto_exposure_snr));
             }
-            Err(lost) => self.log_position_lost(lost, ev),
+            Err(lost) => {
+                self.log_position_lost(lost, ev);
+                // The catch's, after the throw's line.
+                if lost.reset_auto_exposure() {
+                    ev.push(GuiderEvent::ResetAutoExposure);
+                }
+            }
         }
         res
     }
@@ -3428,10 +3442,11 @@ mod tests {
 
     /// An event as the C++ harness prints it; `None` for what it stubs out
     /// (the tracker's transform lines, the lock shift's rate, the pointing
-    /// adjustments).
+    /// adjustments, the auto-exposure step of `UpdateCurrentPosition`).
     fn harness_line(e: &GuiderEvent) -> Option<String> {
         let role = |r: &MountRole| if *r == MountRole::Primary { "primary" } else { "secondary" };
         Some(match e {
+            GuiderEvent::AdjustAutoExposure(_) | GuiderEvent::ResetAutoExposure => return None,
             GuiderEvent::Debug(s) if s.starts_with("CameraToMount") => return None,
             GuiderEvent::Debug(s) if s.starts_with("UpdateLockPosShiftCameraCoords") => return None,
             GuiderEvent::Mount(_, MountEvent::Debug(s)) if s.starts_with("MountToCamera") => return None,

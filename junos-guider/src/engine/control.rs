@@ -22,7 +22,7 @@
 //! frame, [`Control::on_capture_error`] for a failed exposure or, for a
 //! frame: runs it through the guider (stopping it unless
 //! [`Control::continue_capturing`]), hands the guider's events to
-//! [`Control::forward`] and its position to [`Control::on_star_position`],
+//! [`Control::forward`] (which takes the auto-exposure step among them),
 //! calls [`Control::after_frame`], and only then makes the frame's moves —
 //! PHD2 queues them to the worker thread, so the controller sees the frame
 //! before they are made.
@@ -47,7 +47,6 @@ use super::guider::{Guider, GuiderCx, GuiderEvent, GuiderMount, GuiderState, Mou
 use super::log::cfmt::fmt_f;
 use super::log::guide_log::ExposureSummary;
 use super::mount::MountEvent;
-use super::multistar::{PositionLost, PositionUpdate};
 use super::rng::Rng;
 use super::scope::DecGuideMode;
 use super::traits::{Point, Rect};
@@ -890,14 +889,21 @@ impl Control {
 
     /// The guider's events, passed on. `MyFrame::NotifyGuidingStopped`
     /// aborts the controller right after the `GuidingStopped` event, so the
-    /// abort's events come there. The engine sends every guider call's
-    /// events through here.
+    /// abort's events come there; the auto-exposure steps are applied where
+    /// they come, not passed on. The engine sends every guider call's events
+    /// through here.
     pub fn forward(&mut self, gev: Vec<GuiderEvent>, cx: &mut ControlCx, ev: &mut Vec<ControlEvent>) {
         for e in gev {
-            let stopped = e == GuiderEvent::GuidingStopped;
-            ev.push(ControlEvent::Guider(e));
-            if stopped {
-                self.abort("Guiding stopped", cx, ev);
+            match e {
+                GuiderEvent::AdjustAutoExposure(snr) => self.adjust_auto_exposure(snr, ev),
+                GuiderEvent::ResetAutoExposure => self.reset_auto_exposure(ev),
+                e => {
+                    let stopped = e == GuiderEvent::GuidingStopped;
+                    ev.push(ControlEvent::Guider(e));
+                    if stopped {
+                        self.abort("Guiding stopped", cx, ev);
+                    }
+                }
             }
         }
     }
@@ -1191,7 +1197,7 @@ impl Control {
     /// current frame (within `roi`); refused while calibrating or guiding.
     /// True when a star was selected; `find_star` then answers with the
     /// guider's lock position (event_server.cpp:1006), or fails when it is
-    /// invalid. Its auto-exposure step and saturation level are applied here.
+    /// invalid. Its saturation level comes as [`ControlEvent::SaturationAdu`].
     pub fn auto_select_star(&mut self, roi: Option<Rect>, cx: &mut ControlCx, ev: &mut Vec<ControlEvent>) -> bool {
         if cx.guider.is_calibrating_or_guiding() {
             debug(ev, "cannot auto-select star while calibrating or guiding");
@@ -1207,7 +1213,6 @@ impl Control {
         // no move comes of it.
         let (star, upd) = cx.guider.auto_select(roi, &mut cx.gcx, &mut gev);
         self.forward(gev, cx, ev);
-        self.on_star_position(&upd.position, ev);
         if let Some(adu) = upd.saturation_adu {
             ev.push(ControlEvent::SaturationAdu(adu));
         }
@@ -1484,21 +1489,6 @@ impl Control {
             self.exposure_ms = a.max_ms;
         }
         debug(ev, format!("AutoExp: adjust SNR={} new exposure {}", fmt_f(snr, 2), self.exposure_ms));
-    }
-
-    /// What `UpdateCurrentPosition` does to the exposure: adjust it to a
-    /// star accepted, reset it when the star was lost (not when none was
-    /// selected).
-    pub fn on_star_position(
-        &mut self,
-        position: &Option<Result<PositionUpdate, PositionLost>>,
-        ev: &mut Vec<ControlEvent>,
-    ) {
-        match position {
-            Some(Ok(u)) => self.adjust_auto_exposure(u.auto_exposure_snr, ev),
-            Some(Err(lost)) if lost.reset_auto_exposure() => self.reset_auto_exposure(ev),
-            _ => {}
-        }
     }
 
     // ----------------------------------------------------------------- delay
@@ -1863,7 +1853,6 @@ mod tests {
                 let stopping = !c.continue_capturing();
                 let upd = cx.guider.update_guide_state(Some(img), stopping, &mut cx.gcx, &mut gev);
                 c.forward(gev, cx, ev);
-                c.on_star_position(&upd.position, ev);
                 c.after_frame(cx, ev);
                 upd
             });
@@ -2781,15 +2770,30 @@ mod tests {
         b.ctl.adjust_auto_exposure(2.0, &mut ev);
         assert_eq!(b.ctl.exposure_duration(), 3000);
 
-        // On the frames: a star lost resets it, none selected does not.
+        // On the frames, in the guider's lines where PHD2 writes them
+        // (inside `UpdateCurrentPosition`): a star found adjusts it, a star
+        // lost resets it.
+        fn line_at(ev: &[ControlEvent], start: &str) -> usize {
+            let starts = |e: &ControlEvent| match e {
+                ControlEvent::Debug(l) | ControlEvent::Guider(GuiderEvent::Debug(l)) => l.starts_with(start),
+                _ => false,
+            };
+            ev.iter().position(starts).unwrap()
+        }
         let mut b = Bench::guiding();
         b.call(|c, cx, ev| c.set_exposure_duration(-1, cx.gcx.profile, ev));
+        b.ev.clear();
         b.step();
         assert!(b.ctl.exposure_duration() < 5000);
+        assert!(line_at(&b.ev, "AutoExp: adjust SNR=") < line_at(&b.ev, "UpdateGuideState exits"));
         b.visible = false;
+        b.ev.clear();
         b.step();
         assert_eq!(b.ctl.exposure_duration(), 5000);
         assert_eq!(b.ctl.exposure_request().unwrap().duration_ms, 5000);
+        let reset = line_at(&b.ev, "AutoExp: reset exp to 5000");
+        assert!(line_at(&b.ev, "Error thrown from guider_multistar.cpp:958->") < reset);
+        assert!(reset < line_at(&b.ev, "Throw from guider.cpp:1371->"));
     }
 
     #[test]
