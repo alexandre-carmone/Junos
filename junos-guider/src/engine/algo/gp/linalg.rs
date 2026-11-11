@@ -4,8 +4,8 @@
 //! gram matrix, its `LDLT` factorisation and the solves, and Eigen's
 //! `unsupported/FFT` (kissfft) for the period estimate. Neither library is
 //! available here, so this file holds the smallest replacement: a row-major
-//! `Mat`, Eigen's pivoted `LDLT` with its solves, a plain Cholesky and a 2×2
-//! closed form for the tests, and a radix-2 FFT with kissfft's sign
+//! `Mat`, Eigen's pivoted `LDLT` with its solves (PHD2 solves every system,
+//! 2×2 ones included, with LDLT), and a radix-2 FFT with kissfft's sign
 //! convention.
 //!
 //! The LDLT is ported from the Eigen header installed on this machine (Eigen
@@ -649,47 +649,6 @@ impl Ldlt {
     }
 }
 
-/// Plain Cholesky `A = L Lᵀ` (lower `L`), reading the lower triangle of `a`.
-/// `None` when `a` is not positive definite. For the tests and for a
-/// sample draw (`GP::drawSample`'s `llt()`), not for the guiding path.
-pub fn cholesky(a: &Mat) -> Option<Mat> {
-    assert_eq!(a.n_rows, a.n_cols, "cholesky: square");
-    let n = a.n_rows;
-    let mut l = Mat::zeros(n, n);
-    for j in 0..n {
-        let mut d = a.get(j, j);
-        for k in 0..j {
-            d -= l.get(j, k) * l.get(j, k);
-        }
-        if d <= 0.0 {
-            return None;
-        }
-        let d = d.sqrt();
-        l.set(j, j, d);
-        for i in j + 1..n {
-            let mut v = a.get(i, j);
-            for k in 0..j {
-                v -= l.get(i, k) * l.get(j, k);
-            }
-            l.set(i, j, v / d);
-        }
-    }
-    Some(l)
-}
-
-/// Cramer's rule for a 2×2 system `a · x = b`; `None` when the determinant
-/// is zero.
-pub fn solve_2x2(a: [[f64; 2]; 2], b: [f64; 2]) -> Option<[f64; 2]> {
-    let det = a[0][0] * a[1][1] - a[0][1] * a[1][0];
-    if det == 0.0 {
-        return None;
-    }
-    Some([
-        (b[0] * a[1][1] - a[0][1] * b[1]) / det,
-        (a[0][0] * b[1] - b[0] * a[1][0]) / det,
-    ])
-}
-
 /// The smallest power of two `>= n` (1 for `n <= 1`). PHD2 computes it as
 /// `pow(2, ceil(log(N) / log(2)))` (math_tools.cpp:184); the two agree for
 /// every `N` the GP can pass (checked up to 70,000).
@@ -761,6 +720,34 @@ mod tests {
         for (i, (x, y)) in a.iter().zip(b).enumerate() {
             assert!((x - y).abs() <= tol, "index {i}: {x} vs {y} (tol {tol})");
         }
+    }
+
+    /// Plain Cholesky `A = L Lᵀ` (lower `L`) of the lower triangle of `a`,
+    /// `None` unless positive definite: a cross-check for the LDLT. PHD2
+    /// solves every system with LDLT; only `drawSample`, not ported, uses
+    /// `llt()`.
+    fn cholesky(a: &Mat) -> Option<Mat> {
+        let n = a.n_rows;
+        let mut l = Mat::zeros(n, n);
+        for j in 0..n {
+            let mut d = a.get(j, j);
+            for k in 0..j {
+                d -= l.get(j, k) * l.get(j, k);
+            }
+            if d <= 0.0 {
+                return None;
+            }
+            let d = d.sqrt();
+            l.set(j, j, d);
+            for i in j + 1..n {
+                let mut v = a.get(i, j);
+                for k in 0..j {
+                    v -= l.get(i, k) * l.get(j, k);
+                }
+                l.set(i, j, v / d);
+            }
+        }
+        Some(l)
     }
 
     fn spd4() -> Mat {
@@ -1063,13 +1050,20 @@ mod tests {
         let mut z = Mat::zeros(2, 2);
         z.set(1, 0, 1.0);
         assert!(!ldlt(&z).success());
-        // A zero pivot followed by a valid one is NumericalIssue (LDLT.h:394):
-        // diag(1, 0, 0) with a 1 at (2, 1).
+        // A zero pivot over a non-zero A21 fails (LDLT.h:387): diag(1, 0, 0)
+        // with a 1 at (2, 1) stops at k = 1.
         let mut a = Mat::zeros(3, 3);
         a.set(0, 0, 1.0);
         a.set(2, 1, 1.0);
         a.set(1, 2, 1.0);
         assert!(!ldlt(&a).success());
+        // A zero pivot followed by a valid one is NumericalIssue (LDLT.h:389):
+        // [[1, 1, 0], [1, 1, 0], [0, 0, 0.5]] has the pivots 1, 0 (A21 = 0)
+        // then 0.5.
+        let a = Mat::new(3, 3, vec![1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.5]);
+        let f = ldlt(&a);
+        assert!(!f.success());
+        assert_eq!(f.vector_d(), vec![1.0, 0.0, 0.5]);
         // PSD diag(0, 0, 1): the zero pivots come last, success.
         let mut p = Mat::zeros(3, 3);
         p.set(2, 2, 1.0);
@@ -1080,17 +1074,13 @@ mod tests {
     }
 
     #[test]
-    fn cholesky_and_2x2() {
+    fn cholesky_helper_factorises_spd() {
         let a = spd4();
         let l = cholesky(&a).unwrap();
         let llt = l.mul(&l.transpose());
         assert_close(&llt.data, &a.data, 1e-12);
         assert_eq!(l.get(0, 0), 2.0);
         assert_eq!(l.get(0, 1), 0.0);
-        // [[3, 1], [1, 2]] · x = [5, 4] → x = [1.2, 1.4].
-        let x = solve_2x2([[3.0, 1.0], [1.0, 2.0]], [5.0, 4.0]).unwrap();
-        assert_close(&x, &[1.2, 1.4], 1e-15);
-        assert!(solve_2x2([[1.0, 2.0], [2.0, 4.0]], [1.0, 2.0]).is_none());
     }
 
     #[test]
