@@ -19,7 +19,8 @@
 //! with an optional `"profile": false` when the star crop isn't shown.
 //!
 //! Messages whose type starts with `guider_` (`guider_rpc`) are for
-//! junos-guider: they go to the daemon link, never to KStars.
+//! junos-guider: they go to the daemon link, never to KStars, and the
+//! `guider_rpc_result` comes back to this browser alone (`guider.rs`).
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -192,6 +193,8 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
                                     None => continue,
                                 }
                             }
+                            Outbound::Reply { to, text } if *to == guider_slot.id() => text.as_str(),
+                            Outbound::Reply { .. } => continue,
                         };
                         if sink.send(Message::Text(text.to_string())).await.is_err() {
                             debug!("Browser WebSocket closed (send failed)");
@@ -200,6 +203,13 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!("Browser lagged behind by {n} messages");
+                        // junos-guider re-sends only `guider_state` on its
+                        // own: give back its other snapshots and its history.
+                        for msg in hub.replay_guider().await {
+                            if sink.send(Message::Text(msg)).await.is_err() {
+                                return;
+                            }
+                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
@@ -242,8 +252,10 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
                             continue;
                         }
                         if is_guider_message(&text) {
-                            if !state.guider.send(text.to_string()) {
-                                debug!("Dropping guider command — junos-guider is not reading");
+                            if let Err(reply) = guider_slot.forward(&text) {
+                                if sink.send(Message::Text(reply)).await.is_err() {
+                                    break;
+                                }
                             }
                             continue;
                         }

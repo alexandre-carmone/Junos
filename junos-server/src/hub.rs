@@ -85,6 +85,9 @@ pub enum Outbound {
         full: String,
         lite: Option<String>,
     },
+    /// junos-guider's answer to one browser's `guider_rpc`, for the browser
+    /// task whose `GuiderSlot` id is `to` (`guider.rs`); the others skip it.
+    Reply { to: u64, text: String },
 }
 
 /// Per-session command queue capacity (browser → KStars).
@@ -124,7 +127,9 @@ const STICKY_TYPES: &[&str] = &[
     "focus_abins_result",
     // junos-guider (`guider.rs`): its snapshots, each sent whole on every
     // change. They survive a KStars attach (`reset_kstars`) and go when the
-    // daemon link drops (`remove_prefix`).
+    // daemon link drops (`forget_guider`). `guider_history` is not one: the
+    // daemon sends it only when the link opens, so it is rebuilt from the
+    // events (`GuiderHistory`).
     "guider_state",
     "guider_settings",
     "guider_calibration",
@@ -133,11 +138,95 @@ const STICKY_TYPES: &[&str] = &[
     "guider_darks",
     "guider_ga",
     "guider_pa",
-    "guider_history",
 ];
 
 /// Message types that belong to junos-guider rather than KStars.
 pub const GUIDER_PREFIX: &str = "guider_";
+
+/// The `guider_event`s junos-guider keeps in its `guider_history`
+/// (`junos-guider/src/ws.rs`, `on_event`), by their PHD2 `Event` name.
+const GUIDER_HISTORY_EVENTS: &[&str] = &[
+    "GuideStep",
+    "Calibrating",
+    "StartCalibration",
+    "CalibrationComplete",
+    "CalibrationFailed",
+    "StartGuiding",
+    "GuidingStopped",
+    "Paused",
+    "Resumed",
+    "GuidingDithered",
+    "SettleDone",
+    "StarLost",
+    "LockPositionLost",
+    "LoopingExposuresStopped",
+];
+
+/// junos-guider's `guider_history {events, states}`: seeded from the one
+/// the daemon sends when the link opens, then kept current from the
+/// `guider_event`s and the `guider_state` app-state changes, over the same
+/// window as the daemon (300 s, at most 2000 of each, counted back from the
+/// newest sample's daemon `Timestamp`, never from the relay's clock).
+#[derive(Default)]
+struct GuiderHistory {
+    /// `(Timestamp, event payload text)`.
+    events: VecDeque<(f64, String)>,
+    /// `(Timestamp, app_state)` at each change.
+    states: VecDeque<(f64, String)>,
+}
+
+impl GuiderHistory {
+    fn from_payload(payload: Option<&Value>) -> Self {
+        let list = |key: &str| payload.and_then(|p| p.get(key)).and_then(Value::as_array).cloned().unwrap_or_default();
+        let stamp = |v: &Value| v.get("Timestamp").and_then(Value::as_f64);
+        Self {
+            events: list("events").iter().filter_map(|e| Some((stamp(e)?, e.to_string()))).collect(),
+            states: list("states")
+                .iter()
+                .filter_map(|s| Some((stamp(s)?, s.get("app_state")?.as_str()?.to_string())))
+                .collect(),
+        }
+    }
+
+    fn push(q: &mut VecDeque<(f64, String)>, t: f64, item: String) {
+        q.push_back((t, item));
+        let oldest = t - GUIDE_WINDOW.as_secs_f64();
+        while q.front().is_some_and(|(f, _)| *f < oldest) || q.len() > GUIDE_HISTORY_CAP {
+            q.pop_front();
+        }
+    }
+
+    /// A `guider_event` payload, kept when the daemon would keep it.
+    fn event(&mut self, payload: &Value) {
+        let name = payload.get("Event").and_then(Value::as_str).unwrap_or_default();
+        if let (true, Some(t)) = (GUIDER_HISTORY_EVENTS.contains(&name), payload.get("Timestamp").and_then(Value::as_f64)) {
+            Self::push(&mut self.events, t, payload.to_string());
+        }
+    }
+
+    /// A `guider_state` payload: its app state, when it changed.
+    fn state(&mut self, payload: &Value) {
+        let (Some(s), Some(t)) =
+            (payload.get("app_state").and_then(Value::as_str), payload.get("Timestamp").and_then(Value::as_f64))
+        else {
+            return;
+        };
+        if self.states.back().map(|(_, last)| last.as_str()) != Some(s) {
+            Self::push(&mut self.states, t, s.to_string());
+        }
+    }
+
+    fn message(&self) -> String {
+        let events: Vec<&str> = self.events.iter().map(|(_, e)| e.as_str()).collect();
+        let states: Vec<Value> =
+            self.states.iter().map(|(t, s)| serde_json::json!({"Timestamp": t, "app_state": s})).collect();
+        format!(
+            r#"{{"type":"guider_history","payload":{{"events":[{}],"states":{}}}}}"#,
+            events.join(","),
+            Value::from(states)
+        )
+    }
+}
 
 /// INDI properties whose last `device_property_{set,get}` reply is kept per
 /// device so a reconnecting browser recovers the FOV inputs (sensor geometry
@@ -173,6 +262,8 @@ struct ReplayCache {
     last_preview: HashMap<FrameKind, Arc<Outbound>>,
     /// Recent `new_guide_state` messages within `GUIDE_WINDOW`, in arrival order.
     guide_history: VecDeque<(Instant, String)>,
+    /// junos-guider's history, while its link is up.
+    guider_history: Option<GuiderHistory>,
 }
 
 impl ReplayCache {
@@ -219,6 +310,20 @@ impl ReplayCache {
                     }
                 }
             }
+            "guider_history" => self.guider_history = Some(GuiderHistory::from_payload(payload)),
+            "guider_event" => {
+                if let Some(p) = payload {
+                    self.guider_history.get_or_insert_with(GuiderHistory::default).event(p);
+                }
+            }
+            "guider_state" => {
+                if let Some(p) = payload {
+                    if let Some(h) = &mut self.guider_history {
+                        h.state(p);
+                    }
+                }
+                self.latest_by_type.insert(t.to_string(), text.to_string());
+            }
             other if STICKY_TYPES.contains(&other) => {
                 self.latest_by_type.insert(other.to_string(), text.to_string());
             }
@@ -226,19 +331,36 @@ impl ReplayCache {
         }
     }
 
-    /// A new KStars session: forget everything but junos-guider's stickies
-    /// and frame, which a KStars attach says nothing about.
+    /// A new KStars session: forget everything but junos-guider's stickies,
+    /// history and frame, which a KStars attach says nothing about.
     fn reset_kstars(&mut self) {
         let mut latest_by_type = std::mem::take(&mut self.latest_by_type);
         latest_by_type.retain(|t, _| t.starts_with(GUIDER_PREFIX));
         let mut last_preview = std::mem::take(&mut self.last_preview);
         last_preview.retain(|k, _| *k == FrameKind::Guider);
-        *self = Self { latest_by_type, last_preview, ..Self::default() };
+        let guider_history = self.guider_history.take();
+        *self = Self { latest_by_type, last_preview, guider_history, ..Self::default() };
     }
 
-    /// Drop the sticky types starting with `prefix`.
-    fn remove_prefix(&mut self, prefix: &str) {
-        self.latest_by_type.retain(|t, _| !t.starts_with(prefix));
+    /// The daemon link dropped: forget junos-guider's stickies and history.
+    fn forget_guider(&mut self) {
+        self.latest_by_type.retain(|t, _| !t.starts_with(GUIDER_PREFIX));
+        self.guider_history = None;
+    }
+
+    /// junos-guider's part of the replay, in the daemon's own order:
+    /// `guider_state` first (a browser resets its guider view on the
+    /// `attached` edge), the other snapshots, then the history.
+    fn guider_snapshot(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.latest_by_type.get("guider_state").cloned().into_iter().collect();
+        out.extend(
+            self.latest_by_type
+                .iter()
+                .filter(|(t, _)| t.starts_with(GUIDER_PREFIX) && *t != "guider_state")
+                .map(|(_, m)| m.clone()),
+        );
+        out.extend(self.guider_history.as_ref().map(GuiderHistory::message));
+        out
     }
 
     /// Ordered messages to replay to a newly-connected browser. Coord-bearing
@@ -248,8 +370,8 @@ impl ReplayCache {
     /// which views it shows (`Hub::last_preview`).
     fn snapshot(&mut self) -> Vec<String> {
         self.prune_guide(Instant::now());
-        let mut out = Vec::new();
-        out.extend(self.latest_by_type.values().cloned());
+        let mut out = self.guider_snapshot();
+        out.extend(self.latest_by_type.iter().filter(|(t, _)| !t.starts_with(GUIDER_PREFIX)).map(|(_, m)| m.clone()));
         out.extend(self.latest_props.values().cloned());
         if let Some(m) = &self.last_mount_state {
             out.push(m.clone());
@@ -365,10 +487,15 @@ impl Hub {
         self.replay.lock().await.reset_kstars();
     }
 
-    /// Drop the sticky types starting with `prefix` — junos-guider's
-    /// snapshots when the daemon link drops.
-    pub async fn remove_prefix(&self, prefix: &str) {
-        self.replay.lock().await.remove_prefix(prefix);
+    /// junos-guider's part of the replay snapshot alone, for a browser that
+    /// lagged and lost some of its messages.
+    pub async fn replay_guider(&self) -> Vec<String> {
+        self.replay.lock().await.guider_snapshot()
+    }
+
+    /// Drop junos-guider's snapshots and history: the daemon link dropped.
+    pub async fn forget_guider(&self) {
+        self.replay.lock().await.forget_guider();
     }
 
     /// Send a command string to KStars. Returns `false` if no KStars session
@@ -566,7 +693,40 @@ mod tests {
 
         // The daemon link drops: its stickies go, KStars' stay.
         hub.capture(r#"{"type":"new_focus_state","payload":{"status":"Idle"}}"#).await;
-        hub.remove_prefix(GUIDER_PREFIX).await;
+        hub.forget_guider().await;
         assert_eq!(types(&hub.replay_snapshot().await), vec!["new_focus_state"]);
+    }
+
+    #[test]
+    fn guider_history_follows_the_events_and_replays_after_the_state() {
+        let mut c = ReplayCache::default();
+        c.capture(r#"{"type":"guider_settings","payload":{}}"#);
+        c.capture(r#"{"type":"guider_state","payload":{"attached":true,"app_state":"Looping","Timestamp":100.0}}"#);
+        c.capture(r#"{"type":"guider_history","payload":{"events":[{"Event":"GuideStep","Timestamp":90.0,"Frame":1}],"states":[{"Timestamp":80.0,"app_state":"Looping"}]}}"#);
+        c.capture(r#"{"type":"guider_event","payload":{"Event":"GuideStep","Timestamp":101.0,"Frame":2}}"#);
+        // Not in the daemon's history: left out of the relay's too.
+        c.capture(r#"{"type":"guider_event","payload":{"Event":"StarSelected","Timestamp":101.5}}"#);
+        // The same app state again (the 5 s re-push), then a change.
+        c.capture(r#"{"type":"guider_state","payload":{"attached":true,"app_state":"Looping","Timestamp":105.0}}"#);
+        c.capture(r#"{"type":"guider_state","payload":{"attached":true,"app_state":"Guiding","Timestamp":110.0}}"#);
+
+        let snap = c.snapshot();
+        assert_eq!(types(&snap), vec!["guider_state", "guider_settings", "guider_history"]);
+        let h: Value = serde_json::from_str(&snap[2]).unwrap();
+        let frames: Vec<_> = h["payload"]["events"].as_array().unwrap().iter().map(|e| e["Frame"].clone()).collect();
+        assert_eq!(frames, vec![serde_json::json!(1), serde_json::json!(2)]);
+        let states: Vec<_> = h["payload"]["states"].as_array().unwrap().iter().map(|s| s["app_state"].clone()).collect();
+        assert_eq!(states, vec!["Looping", "Guiding"]);
+
+        // 300 s past the first step, counted on the daemon's stamps.
+        c.capture(r#"{"type":"guider_event","payload":{"Event":"GuideStep","Timestamp":395.0,"Frame":3}}"#);
+        let h: Value = serde_json::from_str(&c.guider_snapshot()[2]).unwrap();
+        assert_eq!(h["payload"]["events"].as_array().unwrap().len(), 2);
+
+        // A KStars attach keeps it; a daemon drop does not.
+        c.reset_kstars();
+        assert_eq!(types(&c.guider_snapshot()), vec!["guider_state", "guider_settings", "guider_history"]);
+        c.forget_guider();
+        assert!(c.snapshot().is_empty());
     }
 }

@@ -3,12 +3,15 @@
 //! The daemon serves a local WebSocket (`--guider-ws`, default
 //! `ws://127.0.0.1:4410`) and the relay dials it, retrying every 1 s up to
 //! every 10 s: the daemon runs with or without the relay and restarts on its
-//! own. Everything it sends is `guider_*` JSON, folded into the replay cache
-//! and broadcast to every browser unchanged — except `guider_frame`, which
-//! becomes a `+J` `new_preview_image` so the per-browser media filter, the
-//! lite variant and the per-kind replay apply to it. The browsers' `guider_*`
-//! messages (`guider_rpc`, intercepted by `proxy.rs`) go the other way,
-//! verbatim.
+//! own. Everything it sends is `guider_*` JSON (anything else is dropped),
+//! folded into the replay cache and broadcast to every browser unchanged —
+//! except `guider_frame`, which becomes a `+J` `new_preview_image` so the
+//! per-browser media filter, the lite variant and the per-kind replay apply
+//! to it, and `guider_rpc_result`, which goes to the one browser that made
+//! the call. The browsers' `guider_*` messages (`guider_rpc`, intercepted by
+//! `proxy.rs`) go the other way with their `id` wrapped as `"b{slot}:{id}"`
+//! — every page counts its ids from 1 — and unwrapped in the reply. While
+//! the daemon is away a call is answered at once with a `-32603` error.
 //!
 //! Both ways go through bounded queues filled with `try_send`: a stalled
 //! daemon makes the relay drop browser commands rather than block a browser
@@ -24,6 +27,7 @@
 
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -131,21 +135,34 @@ pub struct GuiderLink {
     /// Browser → daemon messages, drained by the connection task.
     tx: mpsc::Sender<String>,
     wants: Arc<Mutex<Wants>>,
+    /// A session with the daemon is up.
+    attached: Arc<AtomicBool>,
 }
 
 impl GuiderLink {
     /// Start dialing the daemon at `url`, for the life of the server.
     pub fn spawn(hub: Hub, url: String) -> Self {
         let (tx, rx) = mpsc::channel(CMD_CAP);
-        let link = Self { tx, wants: Arc::default() };
+        let link = Self { tx, wants: Arc::default(), attached: Arc::default() };
         tokio::spawn(link.clone().run(hub, url, rx));
         link
     }
 
-    /// Queue a browser's `guider_*` message for the daemon. `false` when the
-    /// queue is full: the daemon stopped reading.
-    pub fn send(&self, text: String) -> bool {
-        self.tx.try_send(text).is_ok()
+    /// Queue browser `browser`'s `guider_*` message for the daemon, its
+    /// `id` wrapped so the reply comes back to that browser alone. `Err`
+    /// holds the `guider_rpc_result` error the browser gets instead when the
+    /// daemon is away or stopped reading.
+    fn forward(&self, browser: u64, text: &str) -> Result<(), String> {
+        let mut v: Value = serde_json::from_str(text).unwrap_or(Value::Null);
+        let Some(p) = v.get_mut("payload").and_then(Value::as_object_mut) else {
+            return Ok(()); // nothing the daemon would act on
+        };
+        let id = p.get("id").cloned().unwrap_or(Value::Null);
+        p.insert("id".into(), json!(format!("b{browser}:{id}")));
+        if !self.attached.load(Ordering::SeqCst) {
+            return Err(rpc_error(id, "junos-guider is not connected"));
+        }
+        self.tx.try_send(v.to_string()).map_err(|_| rpc_error(id, "junos-guider is not answering"))
     }
 
     /// A browser's place in the frame filter.
@@ -192,6 +209,7 @@ impl GuiderLink {
                     info!("junos-guider: connected to {url}");
                     self.session(ws, &hub, &mut rx, &frame_tx).await;
                     info!("junos-guider: link to {url} lost");
+                    self.attached.store(false, Ordering::SeqCst);
                     detach(&hub).await;
                     backoff = MIN_BACKOFF;
                     told = false;
@@ -223,9 +241,10 @@ impl GuiderLink {
         frames: &mpsc::Sender<Value>,
     ) {
         let (mut sink, mut stream) = ws.split();
-        // Browser commands queued while the daemon was away are stale (their
+        // Browser commands queued as the last link dropped are stale (their
         // browser gave up on them); the frame filter is re-sent whole.
         while rx.try_recv().is_ok() {}
+        self.attached.store(true, Ordering::SeqCst);
         if sink.send(Message::Text(self.filter_rpc())).await.is_err() {
             return;
         }
@@ -266,6 +285,17 @@ impl GuiderSlot {
     pub fn set_wanted(&self, want: FrameWant) {
         self.link.set_want(self.id, Some(want));
     }
+
+    /// This browser's mark on the replies meant for it (`Outbound::Reply`).
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Send this browser's `guider_*` message to the daemon (see
+    /// `GuiderLink::forward`).
+    pub fn forward(&self, text: &str) -> Result<(), String> {
+        self.link.forward(self.id, text)
+    }
 }
 
 impl Drop for GuiderSlot {
@@ -274,27 +304,62 @@ impl Drop for GuiderSlot {
     }
 }
 
+/// The `guider_rpc_result` error a browser gets for a call the daemon
+/// cannot answer.
+fn rpc_error(id: Value, message: &str) -> String {
+    json!({
+        "type": "guider_rpc_result",
+        "payload": {"id": id, "error": {"code": -32603, "message": message}},
+    })
+    .to_string()
+}
+
+/// The browser and the original `id` a wrapped reply id (`"b{slot}:{id}"`,
+/// from `GuiderLink::forward`) stands for.
+fn unwrap_id(id: &str) -> Option<(u64, Value)> {
+    let (slot, orig) = id.strip_prefix('b')?.split_once(':')?;
+    Some((slot.parse().ok()?, serde_json::from_str(orig).ok()?))
+}
+
 /// One daemon message: a frame to the re-encode queue, the reply to the
-/// relay's own call to the log, anything else to the browsers as is.
+/// relay's own call to the log, a browser's reply to that browser, any other
+/// `guider_*` to the replay cache and every browser as is.
 async fn from_daemon(text: String, hub: &Hub, frames: &mpsc::Sender<Value>) {
-    if text.contains("\"guider_frame\"") || text.contains(RELAY_RPC_ID) {
-        if let Ok(mut v) = serde_json::from_str::<Value>(&text) {
-            if v["type"] == "guider_frame" {
-                if frames.try_send(v["payload"].take()).is_err() {
-                    debug!("junos-guider: frame dropped, the previous one is still encoding");
-                }
-                return;
+    let Ok(mut v) = serde_json::from_str::<Value>(&text) else {
+        return;
+    };
+    let ty = v["type"].as_str().unwrap_or_default();
+    if !ty.starts_with(GUIDER_PREFIX) {
+        // It would escape both `reset_kstars` and `forget_guider`.
+        debug!("junos-guider: {ty:?} message dropped");
+        return;
+    }
+    match ty {
+        "guider_frame" => {
+            if frames.try_send(v["payload"].take()).is_err() {
+                debug!("junos-guider: frame dropped, the previous one is still encoding");
             }
-            if v["type"] == "guider_rpc_result" && v["payload"]["id"] == RELAY_RPC_ID {
+        }
+        "guider_rpc_result" => {
+            let id = &v["payload"]["id"];
+            if id == RELAY_RPC_ID {
                 if let Some(e) = v["payload"].get("error") {
                     warn!("junos-guider: set_frame_filter refused: {e}");
                 }
                 return;
             }
+            let Some((to, orig)) = id.as_str().and_then(unwrap_id) else {
+                debug!("junos-guider: reply to an unknown call dropped: {id}");
+                return;
+            };
+            v["payload"]["id"] = orig;
+            let _ = hub.browser_tx.send(Arc::new(Outbound::Reply { to, text: v.to_string() }));
+        }
+        _ => {
+            hub.capture(&text).await;
+            hub.broadcast_text(text);
         }
     }
-    hub.capture(&text).await;
-    hub.broadcast_text(text);
 }
 
 /// Turn the queued `guider_frame`s into `+J` previews, one at a time.
@@ -315,7 +380,7 @@ async fn publish_frames(hub: Hub, mut rx: mpsc::Receiver<Value>) {
 
 /// The daemon went away: browsers fall back to the Ekos guide UI.
 async fn detach(hub: &Hub) {
-    hub.remove_prefix(GUIDER_PREFIX).await;
+    hub.forget_guider().await;
     hub.clear_preview(FrameKind::Guider).await;
     let msg = json!({ "type": "guider_state", "payload": { "attached": false } }).to_string();
     hub.capture(&msg).await;
@@ -511,9 +576,34 @@ mod tests {
     }
 
     #[test]
+    fn a_browser_call_is_wrapped_and_its_reply_unwrapped() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let link = GuiderLink { tx, wants: Arc::default(), attached: Arc::default() };
+        let call = r#"{"payload":{"id":3,"method":"loop"},"type":"guider_rpc"}"#;
+        // The daemon is away: the browser is answered at once.
+        let err: Value = serde_json::from_str(&link.forward(7, call).unwrap_err()).unwrap();
+        assert_eq!(err["type"], "guider_rpc_result");
+        assert_eq!(
+            err["payload"],
+            json!({"id": 3, "error": {"code": -32603, "message": "junos-guider is not connected"}})
+        );
+        assert!(rx.try_recv().is_err());
+
+        link.attached.store(true, Ordering::SeqCst);
+        link.forward(7, call).unwrap();
+        let sent: Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+        assert_eq!(sent["payload"]["id"], "b7:3");
+        assert_eq!(sent["payload"]["method"], "loop");
+        assert_eq!(unwrap_id("b7:3"), Some((7, json!(3))));
+        assert_eq!(unwrap_id(r#"b12:"abc""#), Some((12, json!("abc"))));
+        assert_eq!(unwrap_id("b4:null"), Some((4, Value::Null)));
+        assert_eq!(unwrap_id(RELAY_RPC_ID), None);
+    }
+
+    #[test]
     fn frame_filter_sums_the_browsers_and_is_sent_on_change_only() {
         let (tx, mut rx) = mpsc::channel(8);
-        let link = GuiderLink { tx, wants: Arc::default() };
+        let link = GuiderLink { tx, wants: Arc::default(), attached: Arc::default() };
         let params = |rpc: String| -> Value {
             let v: Value = serde_json::from_str(&rpc).unwrap();
             assert_eq!(v["type"], "guider_rpc");
