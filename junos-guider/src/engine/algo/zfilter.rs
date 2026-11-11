@@ -46,11 +46,14 @@ impl ZFilter {
     /// Read `minMove` and `expFactor` through `params` (defaults 0.1, 2.0),
     /// each validated by its setter, which rebuilds the filter.
     pub fn new(params: ParamLookup) -> Self {
+        // A placeholder design (PHD2 starts with none): both setters below
+        // rebuild it.
+        let factory = design(DEFAULT_EXP_FACTOR);
         let mut a = ZFilter {
             xv: Vec::new(),
             yv: Vec::new(),
-            factory: design(DEFAULT_EXP_FACTOR),
-            gain: 0.0,
+            gain: factory.gain(),
+            factory,
             min_move: DEFAULT_MIN_MOVE,
             sum_corr: 0.0,
             exp_factor: DEFAULT_EXP_FACTOR,
@@ -61,7 +64,8 @@ impl ZFilter {
         a
     }
 
-    /// The corner in units of 4 frames, ≥ 1 (the UI offers 1 ..= 20).
+    /// The corner in units of 4 frames: ≥ 1, or NaN, which passes the
+    /// setter as in PHD2 (the UI offers 1 ..= 20).
     pub fn exp_factor(&self) -> f64 {
         self.exp_factor
     }
@@ -77,8 +81,9 @@ impl ZFilter {
     }
 
     /// `BuildFilter`: design for the current exp factor, then reset. PHD2
-    /// re-checks the order and the exp factor here; both setters already
-    /// guarantee them, so the checks are not repeated.
+    /// re-checks the order and the exp factor here. ORDER is constant and
+    /// set_exp_factor already refuses < 1 (NaN passes both checks, as in
+    /// PHD2), so the checks are not repeated.
     fn build_filter(&mut self) {
         self.factory = design(self.exp_factor);
         self.gain = self.factory.gain();
@@ -170,8 +175,10 @@ impl GuideAlgorithm for ZFilter {
     }
 
     /// Quirk kept: the exp factor printed is the factory's corner / 4, i.e.
-    /// `1 / (1 / (4·exp_factor)) / 4`, not the stored value (they can
-    /// differ in the last bit, never at one decimal).
+    /// `1 / (1 / (4·exp_factor)) / 4`, not the stored value. They can differ
+    /// in the last bit, which shows at one decimal when the stored value is
+    /// a tie: 12.25 prints as 12.3 (12.250000000000002), where the stored
+    /// value would print 12.2.
     fn settings_summary(&self) -> String {
         format!(
             "Type={}-{}, Exp-factor={}, Minimum move = {}\n",
@@ -200,10 +207,21 @@ mod tests {
         inputs.iter().map(|&x| a.result(x, &ctx)).collect()
     }
 
-    fn assert_close(got: &[f64], want: &[f64]) {
+    // result() is plain f64 in PHD2's order over coefficients that are
+    // bit-exact on x86-64 (where the goldens were made), so its outputs are
+    // too. Elsewhere tan / sin / cos may differ in the last bit.
+    fn assert_golden(got: f64, want: f64) {
+        if cfg!(target_arch = "x86_64") {
+            assert_eq!(got, want);
+        } else {
+            assert!((got - want).abs() < 1e-12, "{got} vs {want}");
+        }
+    }
+
+    fn assert_goldens(got: &[f64], want: &[f64]) {
         assert_eq!(got.len(), want.len());
-        for (g, w) in got.iter().zip(want) {
-            assert!((g - w).abs() < 1e-12, "{got:?} vs {want:?}");
+        for (&g, &w) in got.iter().zip(want) {
+            assert_golden(g, w);
         }
     }
 
@@ -216,8 +234,8 @@ mod tests {
     fn bessel_sequence_matches_phd2() {
         let mut a = with(2.0, 0.1);
         let want = [0.0, 0.0, 0.20465472927768832, 0.0, 0.1429939260167313, 0.0, 0.1175892699715464];
-        assert_close(&run(&mut a, &INPUTS), &want);
-        assert!((a.sum_corr - 0.46523792526596602).abs() < 1e-12);
+        assert_goldens(&run(&mut a, &INPUTS), &want);
+        assert_golden(a.sum_corr, 0.46523792526596602);
     }
 
     #[test]
@@ -232,8 +250,8 @@ mod tests {
             0.25682452893654362,
             0.0,
         ];
-        assert_close(&run(&mut a, &INPUTS), &want);
-        assert!((a.sum_corr - 0.82308029670133631).abs() < 1e-12);
+        assert_goldens(&run(&mut a, &INPUTS), &want);
+        assert_golden(a.sum_corr, 0.82308029670133631);
     }
 
     #[test]
@@ -241,8 +259,8 @@ mod tests {
         // A star held 1 px off whatever is done: the corrections pile up.
         let mut a = with(2.0, 0.0);
         let out = run(&mut a, &[1.0; 60]);
-        assert!((out[59] - 0.2815533806064856).abs() < 1e-12);
-        assert!((a.sum_corr - 16.57084848382808).abs() < 1e-12);
+        assert_golden(out[59], 0.2815533806064856);
+        assert_golden(a.sum_corr, 16.57084848382808);
     }
 
     #[test]
@@ -264,7 +282,7 @@ mod tests {
         for i in 0..60 {
             let m = a.result(pos, &ctx);
             if i < want.len() {
-                assert!((m - want[i]).abs() < 1e-12, "{i}: {m}");
+                assert_golden(m, want[i]);
             }
             pos -= m;
         }
@@ -273,7 +291,16 @@ mod tests {
     }
 
     #[test]
-    fn absurd_exp_factor_gives_no_moves() {
+    fn huge_exp_factors_match_phd2() {
+        // set_param takes any exp factor ≥ 1: the gain soars and the moves
+        // shrink to nothing.
+        let mut a = with(1e8, 0.0);
+        let want = [6.9388939039072315e-18, 5.5511150715646999e-17, 2.1094237003828219e-16];
+        assert_goldens(&run(&mut a, &[0.5, 0.5, -0.3]), &want);
+        let mut a = with(1e17, 0.0);
+        assert_eq!(a.factory.ycoeffs, [-1.0, 4.0, -6.0, 4.0, -1.0]);
+        let want = [9.6296497219361793e-35, 7.7037197775489434e-34, 2.9274135154685984e-33];
+        assert_goldens(&run(&mut a, &[0.5, 0.5, -0.3]), &want);
         // 1e308 · 4 overflows: every z-pole lands on 1, the gain is infinite
         // and PHD2 outputs 0 (not NaN).
         let mut a = with(1e308, 0.0);
@@ -322,6 +349,11 @@ mod tests {
         assert_eq!(a.get_param("aggression"), None);
         assert_eq!(a.param_names(), ["minMove", "expFactor"]);
         assert_eq!(a.params(), vec![("minMove", 0.0), ("expFactor", 1.5)]);
+        // NaN slips past `< 1`, as in PHD2: a Bessel design that outputs NaN.
+        assert!(a.set_param("expFactor", f64::NAN));
+        assert!(a.exp_factor().is_nan());
+        assert_eq!(a.factory.design(), Design::Bessel);
+        assert!(run(&mut a, &[0.5])[0].is_nan());
     }
 
     #[test]
@@ -339,5 +371,9 @@ mod tests {
         assert_eq!(ZFilter::new(&|_| None).settings_summary(), "Type=Bessel-4, Exp-factor=2.0, Minimum move = 0.100\n");
         assert_eq!(with(1.3, 0.25).settings_summary(), "Type=Butterworth-4, Exp-factor=1.3, Minimum move = 0.250\n");
         assert_eq!(with(7.7, 0.1).settings_summary(), "Type=Bessel-4, Exp-factor=7.7, Minimum move = 0.100\n");
+        // corner / 4 is 12.250000000000002: printed 12.3, not the stored
+        // 12.25's 12.2.
+        assert_eq!(with(12.25, 0.1).settings_summary(), "Type=Bessel-4, Exp-factor=12.3, Minimum move = 0.100\n");
+        assert_eq!(fmt_f(12.25, 1), "12.2");
     }
 }

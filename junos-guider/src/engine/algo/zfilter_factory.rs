@@ -288,11 +288,18 @@ impl Mul<f64> for C64 {
 
 /// libgcc's `__divdc3`, which GCC calls for a complex division: Smith's
 /// algorithm, and C99 Annex G's recovery of a finite / zero quotient as an
-/// infinity. That case is reachable: an absurd exp factor (≳ 1e75, which
-/// set_algo_param accepts) puts every z-pole at 1, the denominator's DC
-/// value is 0, and the gain comes out infinite, so PHD2's filter outputs 0
-/// rather than NaN. libgcc's rescaling of subnormal or near-overflow
-/// operands is left out: it only changes the last bits there.
+/// infinity. That case is reachable, since set_algo_param takes any exp
+/// factor ≥ 1. From about 1e17 the z-poles' real parts round to 1 (their
+/// imaginary parts stay non-zero until the corner overflows, ≳ 4.5e307).
+/// The denominator's DC value is then a rounding residue: exactly 0 for
+/// some exp factors (1e32, 1e52, 1e76, 1e100 …), giving an infinite gain
+/// and a filter that outputs 0 rather than NaN, and not for others (1e36,
+/// 1e68, 1e276 give a finite gain), so the gain is not monotonic.
+/// Left out: libgcc's scaling of tiny or huge operands by powers of 2
+/// (exact on what the design reaches), and its other formula when
+/// |ratio| ≤ DBL_MIN. The design reaches that one at the DC gain when the
+/// ratio is 0 (exp factor 1e17: bot(1) = (0, 3.08e-33)); the numerator is
+/// real there, so both formulas give the same quotient.
 impl Div for C64 {
     type Output = C64;
     fn div(self, o: C64) -> C64 {
@@ -385,6 +392,27 @@ mod tests {
         }
     }
 
+    // Huge exp factors, which set_algo_param accepts: the z-poles' real
+    // parts round to 1 and the gain soars, or turns infinite where the
+    // denominator's DC value rounds to 0 (goldens from the same harness).
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn huge_corners_are_bit_exact() {
+        let f = design_for(1e8);
+        let y = [-1.0, 3.9999999256926446, -5.9999997770779361, 3.9999997770779387, -0.99999992569264706];
+        assert_eq!(f.ycoeffs, y);
+        assert_eq!(f.gain(), 72057594037927904.0);
+        // bot(1) = (0, 3.08e-33): the DC gain's division takes the ratio == 0
+        // path of __divdc3.
+        let f = design_for(1e17);
+        assert_eq!(f.ycoeffs, [-1.0, 4.0, -6.0, 4.0, -1.0]);
+        assert_eq!(f.dc_gain.re, 0.0);
+        assert_eq!(f.gain(), 5.1922968585348276e+33);
+        // Not monotonic: infinite at 1e32, finite again at 1e36.
+        assert_eq!(design_for(1e32).gain(), f64::INFINITY);
+        assert_eq!(design_for(1e36).gain(), 4.7890485652059027e+52);
+    }
+
     #[test]
     fn design_choice_and_corner() {
         // Below a corner of 6 frames the Bessel prototype is swapped for
@@ -458,6 +486,8 @@ mod tests {
     fn division_follows_libgcc() {
         let q = C64 { re: 1.0, im: 2.0 } / C64 { re: 3.0, im: -4.0 };
         assert_eq!(q, C64 { re: -0.2, im: 0.4 });
+        // A zero real part in the divisor: ratio == 0.
+        assert_eq!(C64::real(16.0) / C64 { re: 0.0, im: 4.0 }, C64 { re: 0.0, im: -4.0 });
         // Finite over zero is an infinity, not NaN (Annex G).
         let q = C64::real(16.0) / C64::real(0.0);
         assert_eq!(q.re, f64::INFINITY);
