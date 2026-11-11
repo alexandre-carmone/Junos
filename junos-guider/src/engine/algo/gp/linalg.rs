@@ -104,12 +104,34 @@ impl Mat {
         out
     }
 
-    /// The product `self · v`.
+    /// The product `self · v`, summed in the order of Eigen's product of a
+    /// column-major `MatrixXd` by a vector, which every caller ports. A
+    /// single row is an inner product (ProductEvaluators.h:378): one sum in
+    /// column order. Otherwise the gemv kernel (GeneralMatrixVector.h:147)
+    /// sums each row over a block of columns from zero, then adds that to
+    /// the row: under 128 columns the block is all of them; past that it is
+    /// 16 columns wide, or 4 once a column spans 32,000 bytes.
     pub fn mul_vec(&self, v: &[f64]) -> Vec<f64> {
         assert_eq!(self.n_cols, v.len(), "Mat::mul_vec: inner dimensions");
-        (0..self.n_rows)
-            .map(|r| (0..self.n_cols).map(|c| self.get(r, c) * v[c]).sum())
-            .collect()
+        let block = if self.n_rows == 1 || self.n_cols < 128 {
+            self.n_cols.max(1)
+        } else if self.n_rows * 8 < 32000 {
+            16
+        } else {
+            4
+        };
+        let mut out = vec![0.0; self.n_rows];
+        for start in (0..self.n_cols).step_by(block) {
+            let end = (start + block).min(self.n_cols);
+            for (r, o) in out.iter_mut().enumerate() {
+                let mut acc = 0.0;
+                for c in start..end {
+                    acc += self.get(r, c) * v[c];
+                }
+                *o += acc;
+            }
+        }
+        out
     }
 
     /// Adds `d[i]` to diagonal element `(i, i)` — the GP's `K + diag(var)`.
@@ -1038,6 +1060,23 @@ mod tests {
         let s = ldlt(&a).solve_mat(&h);
         let row = |r: usize| (0..100).map(|c| s.get(r, c)).collect::<Vec<_>>();
         assert_eq!((fnv(&row(0)), fnv(&row(1))), (0x8c72_7520_1dcc_ef46, 0xb228_615e_96c5_73c2));
+    }
+
+    #[test]
+    fn mul_vec_sums_like_eigen_gemv() {
+        // Eigen 3.4.1's `M * v` (MatrixXd by VectorXd), from PHD2's C++
+        // side. Over 200 columns each row sums 16 columns at a time, and all
+        // three rows round differently from a straight sum (−12.395…665,
+        // −3.373…672, 1.121…658); a single row is an inner product, summed
+        // straight.
+        let c = 200;
+        let v: Vec<f64> = (0..c).map(|j| ((j * 37) % 101) as f64 / 50.0 - 1.0).collect();
+        let m3 = Mat::from_fn(3, c, |r, j| ((j * (13 + 7 * r)) % 97) as f64 / 30.0 - 1.5 + 1e-3 * j as f64);
+        let want = [-12.395586666666668, -3.3735866666666667, 1.1217466666666633];
+        assert_eq!(bits(&m3.mul_vec(&v)), bits(&want));
+        let m1 = Mat::from_fn(1, c, |_, j| m3.get(0, j));
+        assert_eq!(bits(&m1.mul_vec(&v)), bits(&[-12.395586666666665]));
+        assert_eq!(Mat::zeros(2, 0).mul_vec(&[]), vec![0.0, 0.0]);
     }
 
     #[test]
