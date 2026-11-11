@@ -51,3 +51,19 @@ LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
 OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
 OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## INDI
+
+`src/indi/` follows the client side of the INDI library
+(https://github.com/indilib/indi): the lilxml parser
+(`libs/indicore/lilxml.cpp`, Copyright (C) 2003 Elwood C. Downey),
+`f_scansexa` and the `crack*` helpers (`libs/indicore/indicom.c`,
+`indidevapi.c`, Copyright (C) 2003 Jason Harris, Elwood C. Downey), the
+client's message writers (`libs/indicore/indiuserio.c`, `userio.c`,
+Copyright (C) 2021 Pawel Soja) and the way libindiclient applies what the
+server sends (`libs/indidevice/basedevice.cpp`,
+`libs/indiabstractclient/abstractbaseclient.cpp`, Copyright (c) 2011-2016
+Jasem Mutlaq, 2022 Pawel Soja). The INDI library is licensed under the GNU
+Lesser General Public License, version 2.1 or later, whose section 3 allows
+its code to be used under the GNU General Public License instead; it is used
+here under the workspace license, GPL-3.0-or-later.
