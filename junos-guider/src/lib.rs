@@ -10,6 +10,7 @@
 //! way `kstars/` documents the Ekos Live wire format.
 
 pub mod config;
+pub mod daemon;
 pub mod engine;
 pub mod indi;
 pub mod profile;

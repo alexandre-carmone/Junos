@@ -81,7 +81,7 @@ use self::control::{Control, ControlCx, ControlEvent, ExposureRequest, GuideOpts
 use self::darks::{DarkGeometry, DarkLibrary};
 use self::guider::{Guider, GuiderCx, GuiderMount, MountRole, PauseType, ScheduledMove};
 use self::image::{NoiseReduction, UsImage, apply_noise_reduction};
-use self::log::debug_log::{DebugLog, LogFileStamp};
+use self::log::debug_log::{DebugLog, LogFileStamp, log_file_time};
 use self::log::guide_log::GuideLog;
 use self::log::image_log::{ImageLogger, ImageLoggerSettings};
 use self::mount::{GuideOutput, GuiderOffset, PointingSource, StepFrame, stopwatch_seconds};
@@ -222,10 +222,14 @@ impl Engine {
         cfg: EngineConfig,
         mut store: ProfileStore,
         clock: Box<dyn Clock + Send>,
-        files: Box<dyn Files>,
+        mut files: Box<dyn Files>,
     ) -> Engine {
         let now = clock.wall();
-        let stamp = LogFileStamp { instance: cfg.instance, time: now };
+        // `GetLogFileTime`: a restart within the imaging day appends to the
+        // night's logs.
+        let listing = files.list(&cfg.log_dir);
+        let time = log_file_time(listing.iter().map(|(n, _)| n.as_str()), now);
+        let stamp = LogFileStamp { instance: cfg.instance, time };
         let mut e = Engine {
             cam: CameraSettings::load(&store.profile()),
             guider: Guider::new(&mut store.profile(), false, &mut Vec::new()),
@@ -263,7 +267,7 @@ impl Engine {
             stamp,
             events: Vec::new(),
         };
-        e.open_logs(now);
+        e.open_logs(now, &listing);
         // The guider and the frame again, now that the logs are open: their
         // construction writes to both.
         let sticky = e.store.global().get_bool("/StickyLockPosition", false);

@@ -31,7 +31,7 @@ use std::cell::RefCell;
 use std::io::{self, Write};
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{DateTime, Local, Utc};
 use serde_json::{Value, json};
 
 use super::algo::{Axis, MountClass};
@@ -44,9 +44,9 @@ use super::event::EngineEvent;
 use super::fits::{CameraCards, SaveHeader, write_fits};
 use super::guider::{GuiderEvent, MountRole};
 use super::image::{NoiseReduction, UsImage};
-use super::log::debug_log::{PHD2_VERSION, execution_banner};
+use super::log::debug_log::{self, PHD2_VERSION, execution_banner};
 use super::log::guide_log::{
-    CameraSummary, GuideLogHeader, MountKind, MountSummary, PointingSummary, SUMMARY_TAIL_BYTES, ScopeSummary,
+    self,    CameraSummary, GuideLogHeader, MountKind, MountSummary, PointingSummary, SUMMARY_TAIL_BYTES, ScopeSummary,
 };
 use super::log::image_log::{ImageLogCall, ImageLogOut, ImageLoggerSettings, SaveCx};
 use super::mount::{AlertKind, MountEvent, stopwatch_seconds};
@@ -70,6 +70,12 @@ pub trait Files: Send {
     fn exists(&mut self, path: &str) -> bool;
     /// `mkdir -p`; true when the folder exists afterwards.
     fn mkdir(&mut self, path: &str) -> bool;
+    /// The regular files directly in `dir` (no sub-folders) with their
+    /// modification times: the log folder as PHD2's start-up reads it (the
+    /// log-file stamp, the old logs removed). Empty when it cannot be read.
+    fn list(&mut self, _dir: &str) -> Vec<(String, DateTime<Local>)> {
+        Vec::new()
+    }
 }
 
 /// Where the engine's files go.
@@ -95,8 +101,10 @@ impl Engine {
     // -------------------------------------------------------------- the logs
 
     /// `OpenLogs(false)` (phd.cpp:405): the debug log with its banner, then
-    /// the guide log, whatever `/LoggingMode` says.
-    pub(super) fn open_logs(&mut self, now: chrono::DateTime<chrono::Local>) {
+    /// the guide log, whatever `/LoggingMode` says. Then, as start-up goes on
+    /// (phd.cpp:605), the debug and guide logs past their retention removed
+    /// from `listing` (the log folder before the logs opened).
+    pub(super) fn open_logs(&mut self, now: DateTime<Local>, listing: &[(String, DateTime<Local>)]) {
         let dir = self.cfg.log_dir.clone();
         let files = RefCell::new(&mut self.files);
         let open_debug = |name: &str| files.borrow_mut().append(&join(&dir, name), 0).map(|f| f.0);
@@ -111,6 +119,17 @@ impl Engine {
             self.dlog.add_line(now, THREAD, &format!("cannot open the guide log: {e}"));
         }
         self.store.global().set_bool("/LoggingMode", self.glog.is_enabled());
+
+        let mut removed = Vec::new();
+        let mut remove = |name: &str| removed.push(join(&dir, name));
+        let records =
+            [debug_log::remove_old_files(listing, now, &mut remove), guide_log::remove_old_files(listing, now, &mut remove)];
+        for path in removed {
+            self.files.remove(&path);
+        }
+        for record in records.into_iter().flatten() {
+            self.dlog.write(now, THREAD, &record);
+        }
     }
 
     /// `CheckLogRollover`: on the first guide start of a new imaging day,
