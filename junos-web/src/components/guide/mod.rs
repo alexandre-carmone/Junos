@@ -57,6 +57,7 @@ use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
+mod algorithms;
 mod equipment;
 mod frame;
 mod native;
@@ -120,6 +121,7 @@ enum Sheet {
     /// Ekos' Guide settings (its guider choice, the PHD2 port).
     Ekos,
     Equipment,
+    Algorithms,
 }
 
 /// Download the accumulated guide log as a text file.

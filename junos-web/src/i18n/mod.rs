@@ -229,6 +229,20 @@ translations! {
     guider_optics_title, guider_focal_length, guider_pixel_scale, guider_manual_pointing_title,
     guider_manual_pointing_hint, guider_manual_pointing_incomplete, guider_latitude, guider_longitude,
     guider_ra_hours, guider_dec_deg, guider_pier_side, guider_apply, guider_clear,
+    // Guide tab — junos-guider algorithms
+    guider_tools_title, guider_algorithms_title, guider_ao_x, guider_ao_y, guider_algo,
+    guider_algo_hysteresis, guider_algo_aggression, guider_algo_min_move, guider_algo_slope_weight,
+    guider_algo_aggressiveness, guider_algo_fast_switch, guider_algo_prediction_gain,
+    guider_algo_control_gain, guider_algo_period, guider_algo_compute_period, guider_algo_points,
+    guider_algo_periods_inference, guider_algo_periods_estimation, guider_algo_se0_length,
+    guider_algo_se0_sigvar, guider_algo_per_length, guider_algo_per_sigvar, guider_algo_se1_length,
+    guider_algo_se1_sigvar, guider_algo_noreset, guider_algo_exp_factor, guider_algo_param,
+    guider_algo_advanced, guider_algo_reset, guider_mount_title, guider_max_ra, guider_max_dec,
+    guider_dec_guide_mode, guider_dec_off, guider_dec_auto, guider_dec_north, guider_dec_south,
+    guider_dec_comp, guider_assume_ortho, guider_flip_dec, guider_stop_slewing, guider_hires_encoders,
+    guider_backlash_title, guider_blc_enabled, guider_blc_pulse, guider_blc_floor, guider_blc_ceiling,
+    guider_calibration_title, guider_cal_step, guider_cal_distance, guider_smart_min_move,
+    guider_smart_min_move_hint,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
     // Rig (optical-train) manager — section in the Profiles tab

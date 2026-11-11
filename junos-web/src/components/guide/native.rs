@@ -28,6 +28,7 @@ use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
+use super::algorithms::algorithms_sheet;
 use super::equipment::{equipment_card, equipment_sheet, Equip};
 use super::frame::{frame_pane, zoom, FramePane};
 use super::protocol::{Reply, Rpc, Settle, CALIBRATING, GUIDING, LOOPING, LOST_LOCK, PAUSED, SELECTED};
@@ -364,6 +365,14 @@ pub fn NativeGuide(
                         </div>
                         {star_profile(guider.frame, rpc.clone(), last, pixel_scale, lang)}
                         {equipment_card(equip.clone())}
+                        <div class=CARD>
+                            <span class=CARD_TITLE>{move || tr().guider_tools_title}</span>
+                            <div class="grid grid-cols-2 gap-2">
+                                <button class="btn btn-ghost h-9" on:click=move |_| open.set(Some(Sheet::Algorithms))>
+                                    {move || tr().guider_algorithms_title}
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     {move || pane2(!pin_graph.get(), false)}
                 </div>
@@ -394,6 +403,8 @@ pub fn NativeGuide(
                     }).into_any()),
                     Sheet::Equipment => Some(sheet(move || tr().guider_equipment_title, close,
                                                    equipment_sheet(equip.clone())).into_any()),
+                    Sheet::Algorithms => Some(sheet(move || tr().guider_algorithms_title, close,
+                                                    algorithms_sheet(state, guider.settings, rpc.clone(), lang)).into_any()),
                 }
             }}
         </div>
