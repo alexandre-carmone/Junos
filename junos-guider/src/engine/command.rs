@@ -342,6 +342,12 @@ pub enum Command {
     CometTrainStart,
     CometTrainStop,
     CalAssistant(CalAssistCmd),
+    /// The Meridian Flip Calibration Tool: open, Next / Calibrate / Apply,
+    /// Start over, close.
+    PierFlipOpen,
+    PierFlipNext,
+    PierFlipRestart,
+    PierFlipClose,
 }
 
 impl Command {
@@ -418,6 +424,10 @@ impl Command {
             Command::StaticPaClose => "pa_static_stop",
             Command::CometTrainStart => "comet_train_start",
             Command::CometTrainStop => "comet_train_stop",
+            Command::PierFlipOpen => "pierflip_start",
+            Command::PierFlipNext => "pierflip_next",
+            Command::PierFlipRestart => "pierflip_restart",
+            Command::PierFlipClose => "pierflip_stop",
             Command::CalAssistant(c) => match c {
                 CalAssistCmd::Open => "cal_assistant_start",
                 CalAssistCmd::Set { .. } => "cal_assistant_set",

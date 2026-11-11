@@ -3,7 +3,7 @@
 //! machines of [`super::tools`]. Their state reaches the UI as one JSON
 //! view ([`Engine::tools_view`]).
 //!
-//! Ported from PHD2 src/starcross_test.cpp (OnStart, ExecuteTest), src/nudge_lock.cpp (UpdateLockPos, DoMove), src/comet_tool.cpp (OnStart, OnStop, CalcRate, OnAppStateNotify), src/guider.cpp (the bookmarks) — BSD-3-Clause, see THIRD_PARTY.md
+//! Ported from PHD2 src/starcross_test.cpp (OnStart, ExecuteTest), src/nudge_lock.cpp (UpdateLockPos, DoMove), src/comet_tool.cpp (OnStart, OnStop, CalcRate, OnAppStateNotify), src/pierflip_tool.cpp (StartCalibration, OnNextClick, OnGuidingStateUpdated), src/guider.cpp (the bookmarks) — BSD-3-Clause, see THIRD_PARTY.md
 
 use serde_json::{Value, json};
 
@@ -11,6 +11,10 @@ use super::command::{BookmarkOp, CmdError, INVALID_REQUEST, Reply};
 use super::guider::ShiftUnits;
 use super::tools::bookmarks;
 use super::tools::comet::{self, CometTraining};
+use super::tools::pierflip::{self, GuidingState, PierFlip, State as PftState};
+use super::control::{GuideOpts, SettleParams, can_guide};
+use super::scope::DecGuideMode;
+use super::traits::PierSide;
 use super::tools::starcross::{self, StarCross};
 use super::traits::{MoveResult, Point};
 use super::{Engine, Pending};
@@ -23,6 +27,7 @@ pub(super) struct Tools {
     bookmarks: Vec<Point>,
     /// The comet tool's training.
     comet: Option<CometTraining>,
+    pierflip: Option<PierFlip>,
 }
 
 impl Engine {
@@ -157,6 +162,114 @@ impl Engine {
         Ok(json!(0))
     }
 
+    // ---------------------------------------------------- pier-flip tool
+
+    /// `ShowPierFlipCalTool` after `CanRunTool`.
+    pub(super) fn pierflip_open(&mut self) -> Reply {
+        let dec_off = self.scope.as_ref().is_some_and(|s| s.scope.dec_guide_mode() == DecGuideMode::None);
+        if let Err((line, msg)) = pierflip::can_run(self.ao.is_some(), self.scope.is_some(), dec_off) {
+            self.debug(line);
+            return Err(CmdError::new(1, msg));
+        }
+        if self.tools.pierflip.is_none() {
+            self.tools.pierflip = Some(PierFlip::new());
+        }
+        self.drain_tool_logs();
+        Ok(json!(0))
+    }
+
+    fn pierside(&self) -> PierSide {
+        self.pointing().map_or(PierSide::Unknown, |p| p.pier_side())
+    }
+
+    /// Next / Calibrate / Apply. Apply sets 'Reverse Dec output after
+    /// meridian flip' and closes the window.
+    pub(super) fn pierflip_next(&mut self) -> Reply {
+        let pier = self.pierside();
+        let Some(state) = self.tools.pierflip.as_ref().map(|t| t.state()) else {
+            return Err(CmdError::new(1, "Meridian Flip Calibration Tool not open"));
+        };
+        // `StartCalibration`.
+        let started = match state {
+            PftState::Slew1 | PftState::Slew2 => {
+                let settle = SettleParams { tolerance_px: 99.0, settle_time_s: 0, timeout_s: 90, frames: 4 };
+                let opts = GuideOpts { force_recal: true, use_sticky_lock: false };
+                self.call(|c, cx, ev| {
+                    can_guide(cx)?;
+                    c.guide(opts, settle, None, cx, ev)
+                })
+                .map_err(|e| e.to_string())
+            }
+            _ => Ok(()),
+        };
+        let apply = self.tools.pierflip.as_mut().and_then(|t| t.next(pier, || started));
+        self.drain_tool_logs();
+        if let Some(on) = apply {
+            let Engine { scope, store, .. } = self;
+            if let Some(s) = scope.as_mut() {
+                s.scope.set_calibration_flip_requires_dec_flip(on, &mut store.profile());
+            }
+            self.pierflip_close()?;
+        }
+        Ok(json!(0))
+    }
+
+    /// "Start over".
+    pub(super) fn pierflip_restart(&mut self) -> Reply {
+        let Some(t) = self.tools.pierflip.as_mut() else {
+            return Err(CmdError::new(1, "Meridian Flip Calibration Tool not open"));
+        };
+        t.restart();
+        self.drain_tool_logs();
+        Ok(json!(0))
+    }
+
+    pub(super) fn pierflip_close(&mut self) -> Reply {
+        if self.tools.pierflip.take().is_none() {
+            return Err(CmdError::new(1, "Meridian Flip Calibration Tool not open"));
+        }
+        self.debug("PFT: closed");
+        Ok(json!(0))
+    }
+
+    /// `OnGuidingStateUpdated`, after each frame and command.
+    pub(super) fn pierflip_check(&mut self) {
+        if self.tools.pierflip.is_none() {
+            return;
+        }
+        let pier = self.pierside();
+        let scope = self.scope.as_ref();
+        let g = GuidingState {
+            calibrating_or_guiding: self.guider.is_calibrating_or_guiding(),
+            calibrating: self.guider.is_calibrating(),
+            calibrated_settled: scope.is_some_and(|s| s.scope.is_calibrated()) && !self.ctrl.is_settling(),
+            cal: scope.map_or((0.0, 0.0, PierSide::Unknown), |s| {
+                let c = s.scope.mount.mount_cal();
+                (c.x_angle, c.y_angle(), c.pier_side)
+            }),
+        };
+        let start_looping = self.tools.pierflip.as_mut().is_some_and(|t| t.guiding_state(g, pier));
+        self.drain_tool_logs();
+        if start_looping {
+            self.call(|c, cx, ev| c.start_looping(cx, ev));
+        }
+    }
+
+    fn pierflip_view(&self) -> Value {
+        let Some(t) = self.tools.pierflip.as_ref() else { return Value::Null };
+        let coords = self.pointing().and_then(|p| p.coordinates());
+        let p = t.position(coords, self.pierside());
+        json!({
+            "state": format!("{:?}", t.state()),
+            "instructions": t.instructions(),
+            "status": t.status(),
+            "dec": p.dec, "dec_colour": p.dec_colour,
+            "ha": p.ha, "ha_colour": p.ha_colour,
+            "pier": p.pier, "pier_colour": p.pier_colour,
+            "next_enabled": p.enable,
+        })
+    }
+
     // ------------------------------------------------------ star-cross test
 
     /// The dialog's Start (`OnStart`): the user has started the main
@@ -213,7 +326,8 @@ impl Engine {
     }
 
     fn drain_tool_logs(&mut self) {
-        let lines = self.tools.starcross.as_mut().map(|t| t.take_log()).unwrap_or_default();
+        let mut lines = self.tools.starcross.as_mut().map(|t| t.take_log()).unwrap_or_default();
+        lines.extend(self.tools.pierflip.as_mut().map(|t| t.take_log()).unwrap_or_default());
         for l in lines {
             self.debug(&l);
         }
@@ -235,6 +349,7 @@ impl Engine {
             "bookmarks": self.tools.bookmarks.iter().map(|b| [b.x, b.y]).collect::<Vec<_>>(),
             "starcross": sct,
             "cal_assistant": self.cal_assistant_view(),
+            "pierflip": self.pierflip_view(),
             "comet": {
                 "training": self.tools.comet.is_some(),
                 "status": comet::status(self.tools.comet.as_ref(), self.now_ms()),

@@ -1124,3 +1124,33 @@ fn the_calibration_assistant_calibrates_and_grades_it() {
     r.cmd(Command::CalAssistant(C::Close)).unwrap();
     assert!(r.e.snapshot().tools["cal_assistant"].is_null());
 }
+
+#[test]
+fn the_pier_flip_tool_calibrates_on_the_first_side() {
+    let mut a = Rig::new(SimParams::new(scale()), true, |_| {});
+    let e = a.cmd(Command::PierFlipOpen).unwrap_err();
+    assert_eq!(e.message, "The meridian flip calibration tool requires an equipment profile without an AO");
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    r.cmd(Command::PierFlipOpen).unwrap();
+    assert_eq!(r.e.snapshot().tools["pierflip"]["state"], "Intro");
+    r.cmd(Command::PierFlipNext).unwrap();
+    let v = r.e.snapshot().tools["pierflip"].clone();
+    assert_eq!((v["state"].as_str(), v["dec"].as_str()), (Some("Slew1"), Some("+25.0°")));
+    r.cmd(Command::Loop).unwrap();
+    r.step();
+    r.cmd(Command::PierFlipNext).unwrap();
+    assert_eq!(r.e.snapshot().tools["pierflip"]["state"], "Calibrate1");
+    for _ in 0..1200 {
+        r.step();
+        if r.e.snapshot().tools["pierflip"]["state"] == "Slew2" {
+            break;
+        }
+    }
+    let v = r.e.snapshot().tools["pierflip"].clone();
+    assert_eq!(v["state"], "Slew2", "{v}");
+    // Looping again, guiding stopped, for the slew.
+    assert!(r.e.snapshot().capture_active);
+    assert!(r.debug_log().contains("PFT: calibrate1 done, start looping"));
+    r.cmd(Command::PierFlipClose).unwrap();
+    assert!(r.e.snapshot().tools["pierflip"].is_null());
+}

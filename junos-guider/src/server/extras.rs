@@ -4,7 +4,7 @@
 //! Guiding Assistant, the darks, the polar drift tool, the logs. Each maps
 //! onto an engine [`Command`] or the profile store; parameters are named
 //! (or positional in the table's order). The tools the engine does not
-//! have yet (drift align, pier-flip,
+//! have yet (drift align,
 //! bad-pixel editing, a single device's connect) answer
 //! code 1 "not available".
 //!
@@ -324,6 +324,10 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
         }
         "pa_static_stop" => command(d, Command::StaticPaClose).await,
         "comet_train_start" => command(d, Command::CometTrainStart).await,
+        "pierflip_start" => command(d, Command::PierFlipOpen).await,
+        "pierflip_next" => command(d, Command::PierFlipNext).await,
+        "pierflip_restart" => command(d, Command::PierFlipRestart).await,
+        "pierflip_stop" => command(d, Command::PierFlipClose).await,
         "cal_assistant_start" => command(d, Command::CalAssistant(CalAssistCmd::Open)).await,
         "cal_assistant_set" => {
             let offset = p.param("offset").and_then(int_param);

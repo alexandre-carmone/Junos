@@ -202,6 +202,7 @@ impl Engine {
     /// one `ConfigurationChange` when the profile changed.
     pub fn finish(&mut self) {
         self.comet_check();
+        self.pierflip_check();
         self.flush_profile();
     }
 
