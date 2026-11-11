@@ -31,6 +31,7 @@ use crate::Tab;
 use super::algorithms::algorithms_sheet;
 use super::calibration::{calibration_sheet, CalSheet};
 use super::equipment::{equipment_card, equipment_sheet, Equip};
+use super::native_settings::native_settings_sheet;
 use super::frame::{frame_pane, zoom, FramePane};
 use super::protocol::{Reply, Rpc, Settle, CALIBRATING, GUIDING, LOOPING, LOST_LOCK, PAUSED, SELECTED};
 use super::settings::{settings_i64, GuideSettings};
@@ -375,6 +376,9 @@ pub fn NativeGuide(
                                 <button class="btn btn-ghost h-9" on:click=move |_| open.set(Some(Sheet::Calibration))>
                                     {move || tr().guider_calibration_title}
                                 </button>
+                                <button class="btn btn-ghost h-9 col-span-2" on:click=move |_| open.set(Some(Sheet::Settings))>
+                                    {move || tr().guider_settings_title}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -418,6 +422,8 @@ pub fn NativeGuide(
                         settle,
                         lang,
                     })).into_any()),
+                    Sheet::Settings => Some(sheet(move || tr().guider_settings_title, close,
+                                                  native_settings_sheet(state, guider.settings, rpc.clone(), settle, lang)).into_any()),
                 }
             }}
         </div>

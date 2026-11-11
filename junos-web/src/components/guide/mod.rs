@@ -61,8 +61,11 @@ mod algorithms;
 mod calibration;
 mod equipment;
 mod frame;
+mod lock_shift;
 mod native;
+mod native_settings;
 mod protocol;
+mod pulses;
 mod rows;
 mod settings;
 mod star_profile;
@@ -124,6 +127,7 @@ enum Sheet {
     Equipment,
     Algorithms,
     Calibration,
+    Settings,
 }
 
 /// Download the accumulated guide log as a text file.

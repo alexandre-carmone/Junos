@@ -251,6 +251,21 @@ translations! {
     guider_calstep_speed, guider_calstep_steps, guider_calstep_need_fl, guider_calstep_need_px,
     guider_manual_cal_title, guider_manual_cal_hint, guider_manual_cal_ra_rate, guider_manual_cal_dec_rate,
     guider_manual_cal_incomplete,
+    // Guide tab — junos-guider settings, manual pulses, lock shift
+    guider_settings_title, guider_exposure_title, guider_exposure_auto, guider_auto_min, guider_auto_max,
+    guider_auto_snr, guider_time_lapse, guider_var_delay, guider_var_delay_short, guider_var_delay_long,
+    guider_noise_title, guider_noise, guider_noise_none, guider_noise_mean, guider_noise_median,
+    guider_star_title, guider_search_region, guider_min_snr, guider_min_hfd, guider_max_hfd,
+    guider_mass_change, guider_mass_change_pct, guider_tolerate_jumps, guider_tolerate_jumps_px,
+    guider_multistar, guider_downsample, guider_downsample_auto, guider_fast_recenter, guider_sticky_lock,
+    guider_dither_title, guider_dither_random, guider_dither_spiral, guider_dither_ra_only,
+    guider_dither_scale, guider_settle_note, guider_dither_amount, guider_settle_px, guider_settle_time,
+    guider_settle_timeout, guider_ao_title, guider_ao_samples, guider_ao_bump_pct, guider_ao_bump_steps,
+    guider_ao_bump_dither, guider_ao_settle_boost, guider_server_title, guider_allow_recal,
+    guider_imglog_title, guider_imglog_enabled, guider_imglog_rel, guider_imglog_rel_thresh, guider_imglog_px,
+    guider_imglog_px_thresh, guider_imglog_dropped, guider_imglog_autoselect, guider_export_settings,
+    guider_pulses_title, guider_pulses_busy, guider_steps, guider_lock_shift_title, guider_lock_shift_enable,
+    guider_lock_shift_limit, guider_lock_shift_note,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
     // Rig (optical-train) manager — section in the Profiles tab
