@@ -1,11 +1,14 @@
-//! Application launcher — spawn and monitor KStars and PHD2 processes on the
-//! server host, pushing status changes to all connected browsers over `/ws`.
+//! Application launcher — spawn and monitor KStars, PHD2 and junos-guider
+//! processes on the server host, pushing status changes to all connected
+//! browsers over `/ws`.
 //!
 //! ## Process lifecycle
 //!
-//! - **Launch**: `POST /api/apps/launch {"app": "kstars"|"phd2"}` — spawns the
-//!   process if it is not already running and stores the `Child` handle.
-//! - **Stop**: `POST /api/apps/stop {"app": "kstars"|"phd2"}` — sends SIGTERM
+//! - **Launch**: `POST /api/apps/launch {"app": "kstars"|"phd2"|"junos-guider"}`
+//!   — spawns the process if it is not already running and stores the `Child`
+//!   handle. PHD2 and junos-guider both serve PHD2's event server on :4400, so
+//!   either is refused while the other runs.
+//! - **Stop**: `POST /api/apps/stop {"app": …}` — sends SIGTERM
 //!   to the child; clears the handle once the process exits.
 //! - **Monitor**: a background task polls every 2 s; when a process that was
 //!   running exits (whether by our stop or externally), it broadcasts an
@@ -47,6 +50,17 @@ use crate::AppState;
 /// Canonical names we support.  These are also the executable names on PATH.
 pub const APP_KSTARS: &str = "kstars";
 pub const APP_PHD2:   &str = "phd2";
+pub const APP_GUIDER: &str = "junos-guider";
+
+/// The app that cannot run next to `app`, and the refusal to launch `app`
+/// while it does: PHD2 and junos-guider both listen on PHD2's :4400.
+fn rival(app: &str) -> Option<(&'static str, &'static str)> {
+    match app {
+        APP_GUIDER => Some((APP_PHD2, "PHD2 is running on :4400")),
+        APP_PHD2 => Some((APP_GUIDER, "junos-guider is running on :4400")),
+        _ => None,
+    }
+}
 
 // ── Per-process state ────────────────────────────────────────────────────────
 
@@ -137,18 +151,26 @@ struct Inner {
     apps: HashMap<String, AppEntry>,
 }
 
+impl Inner {
+    /// Whether kstars, phd2 and junos-guider run, in that order.
+    fn running(&mut self) -> [bool; 3] {
+        [APP_KSTARS, APP_PHD2, APP_GUIDER].map(|app| self.apps.get_mut(app).is_some_and(|e| e.is_running()))
+    }
+}
+
 impl AppManager {
     pub fn new(hub: Hub) -> Self {
         let mut apps = HashMap::new();
         apps.insert(APP_KSTARS.to_string(), AppEntry::new_idle());
         apps.insert(APP_PHD2.to_string(),   AppEntry::new_idle());
+        apps.insert(APP_GUIDER.to_string(), AppEntry::new_idle());
         Self {
             inner: Arc::new(Mutex::new(Inner { apps })),
             hub,
         }
     }
 
-    /// Scan `/proc/*/comm` for already-running instances of kstars / phd2.
+    /// Scan `/proc/*/comm` for already-running instances of the three apps.
     /// Call once at server startup before starting the monitor task.
     pub async fn scan_existing(&self) {
         let entries = match std::fs::read_dir("/proc") {
@@ -164,9 +186,10 @@ impl AppManager {
             let comm_path = format!("/proc/{pid}/comm");
             let Ok(comm) = std::fs::read_to_string(&comm_path) else { continue };
             // Nix wrappers exec the real binary as `.kstars-wrapped` /
-            // `.phd2-wrapped.bin`, so drop the leading dot before matching.
+            // `.phd2-wrapped.bin`, so drop the leading dot before matching
+            // (`comm` keeps 15 bytes: `junos-guider-w` still matches).
             let comm = comm.trim().trim_start_matches('.').to_lowercase();
-            for app in [APP_KSTARS, APP_PHD2] {
+            for app in [APP_KSTARS, APP_PHD2, APP_GUIDER] {
                 if comm == app || comm.starts_with(app) {
                     found.entry(app.to_string()).or_insert(pid);
                 }
@@ -185,21 +208,13 @@ impl AppManager {
     /// `app_state` broadcasts on changes.
     pub fn start_monitor(self) {
         tokio::spawn(async move {
-            let mut prev_kstars = false;
-            let mut prev_phd2   = false;
+            let mut prev = [false; 3];
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                let (cur_kstars, cur_phd2) = {
-                    let mut g = self.inner.lock().await;
-                    let k = g.apps.get_mut(APP_KSTARS).map(|e| e.is_running()).unwrap_or(false);
-                    let p = g.apps.get_mut(APP_PHD2).map(|e| e.is_running()).unwrap_or(false);
-                    (k, p)
-                };
-                if cur_kstars != prev_kstars || cur_phd2 != prev_phd2 {
-                    prev_kstars = cur_kstars;
-                    prev_phd2   = cur_phd2;
-                    let msg = build_app_state_msg(cur_kstars, cur_phd2);
-                    self.hub.broadcast_text(msg);
+                let cur = self.inner.lock().await.running();
+                if cur != prev {
+                    prev = cur;
+                    self.hub.broadcast_text(build_app_state_msg(cur));
                 }
             }
         });
@@ -207,14 +222,21 @@ impl AppManager {
 
     /// Current status snapshot (non-mutating read).
     pub async fn status_json(&self) -> serde_json::Value {
-        let mut g = self.inner.lock().await;
-        let k = g.apps.get_mut(APP_KSTARS).map(|e| e.is_running()).unwrap_or(false);
-        let p = g.apps.get_mut(APP_PHD2).map(|e| e.is_running()).unwrap_or(false);
-        serde_json::json!({ "kstars": state_str(k), "phd2": state_str(p) })
+        status(self.inner.lock().await.running())
+    }
+
+    /// The `app_state` message for the current status.
+    pub async fn state_msg(&self) -> String {
+        build_app_state_msg(self.inner.lock().await.running())
     }
 
     async fn launch_app(&self, app: &str) -> Result<(), String> {
         let mut g = self.inner.lock().await;
+        if let Some((other, refusal)) = rival(app) {
+            if g.apps.get_mut(other).is_some_and(|e| e.is_running()) {
+                return Err(refusal.to_string());
+            }
+        }
         let entry = g.apps.get_mut(app).ok_or_else(|| format!("unknown app: {app}"))?;
         if entry.is_running() {
             return Ok(()); // already up
@@ -240,15 +262,17 @@ fn state_str(running: bool) -> &'static str {
     if running { "running" } else { "stopped" }
 }
 
-pub fn build_app_state_msg(kstars: bool, phd2: bool) -> String {
+/// `{kstars, phd2, junos_guider}`, each `"running"` or `"stopped"`.
+fn status([kstars, phd2, guider]: [bool; 3]) -> serde_json::Value {
     serde_json::json!({
-        "type": "app_state",
-        "payload": {
-            "kstars": state_str(kstars),
-            "phd2":   state_str(phd2),
-        }
+        "kstars":       state_str(kstars),
+        "phd2":         state_str(phd2),
+        "junos_guider": state_str(guider),
     })
-    .to_string()
+}
+
+fn build_app_state_msg(running: [bool; 3]) -> String {
+    serde_json::json!({ "type": "app_state", "payload": status(running) }).to_string()
 }
 
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
@@ -408,9 +432,24 @@ async fn guider_dbus(action: &str) -> Result<bool, String> {
 }
 
 async fn push_status(state: &AppState) {
-    let status = state.app_manager.status_json().await;
-    let kstars = status["kstars"].as_str() == Some("running");
-    let phd2   = status["phd2"].as_str()   == Some("running");
-    let msg = build_app_state_msg(kstars, phd2);
-    state.hub.broadcast_text(msg);
+    state.hub.broadcast_text(state.app_manager.state_msg().await);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phd2_and_junos_guider_exclude_each_other() {
+        assert_eq!(rival(APP_GUIDER), Some((APP_PHD2, "PHD2 is running on :4400")));
+        assert_eq!(rival(APP_PHD2), Some((APP_GUIDER, "junos-guider is running on :4400")));
+        assert_eq!(rival(APP_KSTARS), None);
+    }
+
+    #[test]
+    fn app_state_keeps_the_old_keys_and_adds_junos_guider() {
+        let v: serde_json::Value = serde_json::from_str(&build_app_state_msg([true, false, true])).unwrap();
+        assert_eq!(v["type"], "app_state");
+        assert_eq!(v["payload"], serde_json::json!({"kstars": "running", "phd2": "stopped", "junos_guider": "running"}));
+    }
 }

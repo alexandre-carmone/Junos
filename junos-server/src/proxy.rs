@@ -36,7 +36,6 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use crate::apps::build_app_state_msg;
 use crate::guider::FrameWant;
 use crate::hub::{FrameKind, Outbound, GUIDER_PREFIX};
 use crate::AppState;
@@ -160,12 +159,9 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
         let _ = sink.send(Message::Text(site.into())).await;
     }
 
-    // Also send the current app (KStars / PHD2) running state so the browser
+    // Also send the current app (KStars / PHD2 / junos-guider) running state so the browser
     // gets an up-to-date badge immediately on (re)connect.
-    let app_status = state.app_manager.status_json().await;
-    let kstars = app_status["kstars"].as_str() == Some("running");
-    let phd2   = app_status["phd2"].as_str()   == Some("running");
-    let app_init = build_app_state_msg(kstars, phd2);
+    let app_init = state.app_manager.state_msg().await;
     let _ = sink.send(Message::Text(app_init.into())).await;
 
     // Replay the cached KStars state (recent guiding metrics, FOV geometry,
