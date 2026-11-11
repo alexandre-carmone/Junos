@@ -11,3 +11,5 @@
 
 pub mod config;
 pub mod engine;
+#[cfg(any(test, feature = "sim"))]
+pub mod sim;
