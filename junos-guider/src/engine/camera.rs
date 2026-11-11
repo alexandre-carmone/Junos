@@ -159,6 +159,17 @@ pub trait GuideCamera: Send {
     fn pixel_size_um(&self) -> Option<f64>;
     /// `BitsPerPixel`.
     fn bits_per_pixel(&self) -> u8;
+    /// `HasBayer`: a colour sensor, whose light frames taken at binning 1
+    /// get `QuickLRecon` (cam_indi.cpp:1133).
+    fn has_bayer(&self) -> bool {
+        false
+    }
+    /// The pixel's width and height, µm (`PixSizeX`, `PixSizeY`): a light
+    /// frame is resampled by `SquarePixels` when they differ
+    /// (cam_indi.cpp:1137). `None` when the camera does not tell them.
+    fn pixel_size_xy(&self) -> Option<(f64, f64)> {
+        None
+    }
     /// `HasGainControl`: the gain setting is shown.
     fn has_gain_control(&self) -> bool {
         false

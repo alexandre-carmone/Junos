@@ -41,13 +41,18 @@ use super::store::{
     AO_INTERFACE, Blob, CCD_INTERFACE, ChangeKind, GUIDER_INTERFACE, PropertyStore, ROTATOR_INTERFACE,
     TELESCOPE_INTERFACE,
 };
-use super::xml::{self, BlobMode, Element, Kind, Message, Value, XmlStream};
-use crate::engine::traits::CancelToken;
+use super::xml::{self, BlobMode, Element, Kind, Message, PropState, Value, XmlStream};
+use crate::engine::calibration::ProfileAccess;
+use crate::engine::traits::{CancelToken, Dir};
 
 /// How long a dial may take: libindi's default connection timeout.
 pub const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long a wrapper waits for its device to connect: PHD2's 300 × 100 ms.
 pub const DEVICE_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a wrapper whose device just connected waits for the properties
+/// it works with, before it says it is connected anyway (as PHD2 does at
+/// once, its first use coming much later).
+pub const READY_GRACE: Duration = Duration::from_secs(2);
 const MIN_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(8);
 /// The longest a wait sleeps before it looks at its cancel token again.
@@ -552,6 +557,146 @@ pub fn connect_device(client: &IndiClient, device: &str, cancel: &CancelToken) -
     }
 }
 
+/// `/indi/PulseMinWait`, default on: see [`TimedGuide`].
+pub fn pulse_min_wait(p: &impl ProfileAccess) -> bool {
+    p.get_i32("/indi/PulseMinWait", 1) != 0
+}
+
+/// The two pulse properties: `TELESCOPE_TIMED_GUIDE_NS` / `_WE`.
+pub(crate) const TIMED_GUIDE_NS: &str = "TELESCOPE_TIMED_GUIDE_NS";
+pub(crate) const TIMED_GUIDE_WE: &str = "TELESCOPE_TIMED_GUIDE_WE";
+
+/// The property and members of a pulse: `(property, member pulsed, member set to 0)`.
+pub(crate) fn timed_guide_members(dir: Dir) -> (&'static str, &'static str, &'static str) {
+    match dir {
+        Dir::East => (TIMED_GUIDE_WE, "TIMED_GUIDE_E", "TIMED_GUIDE_W"),
+        Dir::West => (TIMED_GUIDE_WE, "TIMED_GUIDE_W", "TIMED_GUIDE_E"),
+        Dir::North => (TIMED_GUIDE_NS, "TIMED_GUIDE_N", "TIMED_GUIDE_S"),
+        Dir::South => (TIMED_GUIDE_NS, "TIMED_GUIDE_S", "TIMED_GUIDE_N"),
+    }
+}
+
+/// How a timed pulse ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PulseEnd {
+    Done,
+    /// A pulse is still in flight: "Cannot guide with guide pulse in progress!".
+    Busy,
+    /// The device lacks one of the two properties.
+    Missing,
+    /// The cancel token: "interrupt requested".
+    Interrupted,
+    /// No answer within `max(dur + 2 s, 5 s)` (the PLAN's deadline; PHD2
+    /// waits for ever).
+    TimedOut,
+}
+
+/// The pulse protocol of PHD2's INDI camera and mount
+/// (`ST4PulseGuideScope`, `ScopeINDI::Guide`): `guide_active` set with its
+/// axis before the pulse is sent, the pulsed member at the duration in ms
+/// and the opposite one at 0, then a wait for the axis to answer with
+/// anything but Busy. "Answer" is an update after the request: the store's
+/// sequence number is recorded before sending, and the property's must
+/// pass it.
+#[derive(Debug, Default)]
+pub(crate) struct TimedGuide {
+    /// `guide_active`: the property of the pulse in flight, the sequence
+    /// number recorded before it was sent, and the link generation.
+    active: Option<(&'static str, u64, u64)>,
+    /// `/indi/PulseMinWait` (deliberate addition, PLAN): when the driver
+    /// answers before the pulse could have ended, sleep the rest of it.
+    pub min_wait: bool,
+    min_wait_logged: bool,
+}
+
+impl TimedGuide {
+    pub(crate) fn new(min_wait: bool) -> Self {
+        TimedGuide { min_wait, ..Default::default() }
+    }
+
+    /// Whether `guide_active` is set. PHD2 clears it when the axis answers
+    /// with anything but Busy, or the server goes (`ClearStatus`), and sets
+    /// it when either axis reports Busy while it is clear (a pulse someone
+    /// else sent).
+    fn in_progress(&mut self, link: &Link, device: &str) -> bool {
+        if let Some((prop, seq0, generation)) = self.active {
+            let answered = link.store.property(device, prop).is_none_or(|p| p.seq > seq0 && p.state != PropState::Busy);
+            if answered || !link.up || link.generation != generation {
+                self.active = None;
+            }
+        }
+        self.active.is_some()
+            || [TIMED_GUIDE_NS, TIMED_GUIDE_WE]
+                .iter()
+                .any(|n| link.store.property(device, n).is_some_and(|p| p.state == PropState::Busy))
+    }
+
+    /// One pulse; `who` prefixes the PulseMinWait debug line.
+    pub(crate) fn pulse(
+        &mut self,
+        client: &IndiClient,
+        device: &str,
+        dir: Dir,
+        ms: u32,
+        cancel: &CancelToken,
+        who: &str,
+        debug: &mut Vec<String>,
+    ) -> PulseEnd {
+        let (prop, pulsed, other) = timed_guide_members(dir);
+        let start = Instant::now();
+        let (seq0, generation) = {
+            let link = client.lock();
+            let has = |n: &str| link.store.property(device, n).is_some_and(|p| p.kind == Kind::Number);
+            if !has(TIMED_GUIDE_NS) || !has(TIMED_GUIDE_WE) {
+                return PulseEnd::Missing;
+            }
+            if self.in_progress(&link, device) {
+                debug.push("Cannot guide with guide pulse in progress!".into());
+                return PulseEnd::Busy;
+            }
+            let seq0 = link.store.seq();
+            self.active = Some((prop, seq0, link.generation));
+            // Despite the INDI standard, every driver reads milliseconds.
+            client.send_number(&link, device, prop, &[(pulsed, ms as f64), (other, 0.0)]);
+            (seq0, link.generation)
+        };
+        let deadline = Duration::from_millis((ms as u64 + 2000).max(5000));
+        let r = client.wait(deadline, Some(cancel), |link| {
+            // The server went: PHD2's ClearStatus clears guide_active and
+            // wakes the wait, which then reports the pulse done.
+            if !link.up || link.generation != generation {
+                return Some(());
+            }
+            let p = link.store.property(device, prop)?;
+            (p.seq > seq0 && p.state != PropState::Busy).then_some(())
+        });
+        match r {
+            Ok(()) => self.active = None,
+            Err(WaitError::Cancelled) => {
+                // guide_active stays set until the axis answers.
+                debug.push("interrupt requested".into());
+                return PulseEnd::Interrupted;
+            }
+            Err(WaitError::Timeout) => {
+                debug.push(format!("{who}: no answer to a {ms} ms pulse within {} ms", deadline.as_millis()));
+                return PulseEnd::TimedOut;
+            }
+        }
+        let elapsed = start.elapsed().as_millis() as u64;
+        if self.min_wait && elapsed < ms as u64 {
+            if !self.min_wait_logged {
+                self.min_wait_logged = true;
+                debug.push(format!(
+                    "{who}: the driver completed a {ms} ms pulse after {elapsed} ms; waiting out the pulse \
+                     (PulseMinWait, logged once)"
+                ));
+            }
+            sleep_ms(ms as u64 - elapsed, cancel);
+        }
+        PulseEnd::Done
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,8 +744,8 @@ mod tests {
         fake.drop_conns();
         client.wait(Duration::from_secs(3), None, |l| (l.is_up() && l.generation() == 2).then_some(())).unwrap();
         assert!(t.elapsed() >= MIN_BACKOFF);
-        assert_eq!(fake.accepted(), 2);
         assert!(fake.wait_for(|r| r.len() == 4));
+        assert_eq!(fake.accepted(), 2);
         assert_eq!(asked(&fake)[3], "getProperties version=1.7 device=CCD Simulator");
         let again = client
             .wait(Duration::from_secs(2), None, |l| l.store.property("CCD Simulator", "DRIVER_INFO").map(|p| p.seq))

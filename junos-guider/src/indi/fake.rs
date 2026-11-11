@@ -2,6 +2,7 @@
 //! whose connections run a script on each element the client sends, plus
 //! the XML the drivers write, built from parts.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::xml::{Element, XmlStream};
+use crate::engine::calibration::ProfileAccess;
 
 /// One client connection, as the script sees it. Writes are serialised so
 /// a delayed reply never splits another.
@@ -145,6 +147,25 @@ pub(crate) fn summary(e: &Element) -> String {
     s
 }
 
+/// The members of a `newNumberVector`.
+pub(crate) fn numbers(e: &Element) -> Vec<(String, f64)> {
+    e.children.iter().map(|c| (c.attr("name").unwrap_or_default().to_owned(), c.text_str().parse().unwrap())).collect()
+}
+
+/// `(name, value, min, max)` per member.
+pub(crate) fn def_number(dev: &str, name: &str, state: &str, members: &[(&str, f64, f64, f64)]) -> String {
+    let body: String = members
+        .iter()
+        .map(|(n, v, min, max)| {
+            format!("<defNumber name='{n}' label='{n}' format='%g' min='{min}' max='{max}' step='1'>{v}</defNumber>")
+        })
+        .collect();
+    format!(
+        "<defNumberVector device='{dev}' name='{name}' label='{name}' group='Main' state='{state}' perm='rw' \
+         timeout='60'>{body}</defNumberVector>\n"
+    )
+}
+
 pub(crate) fn def_switch(dev: &str, name: &str, rule: &str, members: &[(&str, bool)]) -> String {
     let body: String = members
         .iter()
@@ -170,6 +191,11 @@ pub(crate) fn def_blob(dev: &str, name: &str, members: &[&str]) -> String {
         "<defBLOBVector device='{dev}' name='{name}' label='{name}' group='Main' state='Idle' perm='ro' \
          timeout='60'>{body}</defBLOBVector>\n"
     )
+}
+
+pub(crate) fn set_number(dev: &str, name: &str, state: &str, members: &[(&str, f64)]) -> String {
+    let body: String = members.iter().map(|(n, v)| format!("<oneNumber name='{n}'>{v}</oneNumber>")).collect();
+    format!("<setNumberVector device='{dev}' name='{name}' state='{state}' timeout='60'>{body}</setNumberVector>\n")
 }
 
 pub(crate) fn set_switch(dev: &str, name: &str, state: &str, members: &[(&str, bool)]) -> String {
@@ -218,4 +244,54 @@ pub(crate) fn driver(dev: &str, interfaces: u16, connected: bool) -> String {
                 ("DRIVER_INTERFACE", &interfaces.to_string()),
             ],
         )
+}
+
+/// A 16-bit FITS as the CCD Simulator writes one (`BZERO 32768`).
+pub(crate) fn fits(w: usize, h: usize, px: &[u16]) -> Vec<u8> {
+    let mut hdr = String::new();
+    for c in [
+        "SIMPLE  =                    T".to_string(),
+        "BITPIX  =                   16".into(),
+        "NAXIS   =                    2".into(),
+        format!("NAXIS1  = {w:20}"),
+        format!("NAXIS2  = {h:20}"),
+        "BZERO   =                32768".into(),
+        "END".into(),
+    ] {
+        hdr += &format!("{c:80}");
+    }
+    let mut bytes = format!("{hdr:2880}").into_bytes();
+    for &v in px {
+        bytes.extend_from_slice(&((v as i32 - 32768) as i16).to_be_bytes());
+    }
+    bytes.resize(bytes.len().div_ceil(2880) * 2880, 0);
+    bytes
+}
+
+/// A profile in memory, every value as text.
+#[derive(Default)]
+pub(crate) struct Profile(pub(crate) HashMap<String, String>);
+
+impl ProfileAccess for Profile {
+    fn has(&self, key: &str) -> bool {
+        self.0.contains_key(key)
+    }
+    fn get_f64(&self, key: &str, default: f64) -> f64 {
+        self.0.get(key).map_or(default, |v| v.parse().unwrap())
+    }
+    fn get_i32(&self, key: &str, default: i32) -> i32 {
+        self.0.get(key).map_or(default, |v| v.parse().unwrap())
+    }
+    fn get_str(&self, key: &str, default: &str) -> String {
+        self.0.get(key).cloned().unwrap_or_else(|| default.to_owned())
+    }
+    fn set_f64(&mut self, key: &str, value: f64) {
+        self.0.insert(key.to_owned(), value.to_string());
+    }
+    fn set_i32(&mut self, key: &str, value: i32) {
+        self.0.insert(key.to_owned(), value.to_string());
+    }
+    fn set_str(&mut self, key: &str, value: &str) {
+        self.0.insert(key.to_owned(), value.to_owned());
+    }
 }
