@@ -79,8 +79,6 @@ pub fn compute_spectrum(data: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
         return (Vec::new(), Vec::new());
     }
     let npad = next_pow2(n.max(n_data));
-    // PHD2 takes |X_k| (a hypot) then squares it; re² + im² differs in the
-    // last bit at most.
     let power = power_spectrum(data, npad);
     // ceil(N / N_data) on doubles; exact as an integer ceiling for any
     // N · N_data < 2^53.

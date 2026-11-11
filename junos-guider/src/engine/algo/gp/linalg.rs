@@ -28,6 +28,10 @@
 //! unobservable here: the GP's diagonal is at least the measurement variance
 //! (0.25 and up), far above any of these cutoffs.
 //!
+//! The FFT has kissfft's sign convention and its values to rounding, though
+//! not its operation order: kissfft splits a real input in half and runs
+//! radix-4 stages.
+//!
 //! Ported from PHD2 <contributions/MPI_IS_gaussian_process/tools/math_tools.cpp> — BSD-3-Clause, see THIRD_PARTY.md
 
 /// A dense row-major `f64` matrix.
@@ -700,14 +704,15 @@ pub fn fft_radix2(re: &mut [f64], im: &mut [f64]) {
 
 /// `|X_k|²` for `k in 0..=npad/2` of `data` zero-padded to `npad` (a power
 /// of two `>= data.len()`) — the amplitudes `compute_spectrum`
-/// (math_tools.cpp:174) slices its spectrum from.
+/// (math_tools.cpp:201) slices its spectrum from. As there, `|X_k|` is a
+/// hypot, then squared.
 pub fn power_spectrum(data: &[f64], npad: usize) -> Vec<f64> {
     assert!(npad >= data.len(), "power_spectrum: npad shorter than the data");
     let mut re = vec![0.0; npad];
     let mut im = vec![0.0; npad];
     re[..data.len()].copy_from_slice(data);
     fft_radix2(&mut re, &mut im);
-    (0..=npad / 2).map(|k| re[k] * re[k] + im[k] * im[k]).collect()
+    (0..=npad / 2).map(|k| re[k].hypot(im[k]).powi(2)).collect()
 }
 
 #[cfg(test)]
