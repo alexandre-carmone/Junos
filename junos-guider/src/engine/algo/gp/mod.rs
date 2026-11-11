@@ -2,3 +2,4 @@
 //! algebra and the FFT it rests on first, the GP math and the guider later.
 
 pub mod linalg;
+pub mod math;
