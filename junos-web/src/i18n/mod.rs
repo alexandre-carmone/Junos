@@ -290,6 +290,9 @@ translations! {
     guider_pa_applies_on_open, guider_pa_elapsed, guider_pa_alpha, guider_pa_offset, guider_pa_error,
     guider_pa_open, guider_pa_close, guider_pa_static_hint, guider_pa_rotate, guider_pa_mark,
     guider_pa_drift_align_hint, guider_pa_drift,
+    // Guide tab — junos-guider logs sheet and alerts
+    guider_logs_title, guider_logs_alerts, guider_logs_files, guider_logs_clear, guider_logs_refresh,
+    guider_logs_no_alerts, guider_logs_none, guider_logs_tail, guider_logs_download,
     // Rig (optical-train) manager — section in the Profiles tab
     rig_section, rig_add_train, rig_offline_hint, rig_no_trains, rig_train_name,
     rig_role_mount, rig_role_camera, rig_role_scope, rig_role_guider,

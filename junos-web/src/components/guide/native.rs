@@ -36,6 +36,7 @@ use super::equipment::{equipment_card, equipment_sheet, Equip};
 use super::native_settings::native_settings_sheet;
 use super::pa_tools::pa_tools_sheet;
 use super::frame::{frame_pane, zoom, FramePane};
+use super::logs::{alert_toast, logs_sheet};
 use super::protocol::{Reply, Rpc, Settle, CALIBRATING, GUIDING, LOOPING, LOST_LOCK, PAUSED, SELECTED};
 use super::settings::{settings_i64, GuideSettings};
 use super::star_profile::star_profile;
@@ -344,11 +345,7 @@ pub fn NativeGuide(
                 <Show when=move || alerts.with(|a| !a.is_empty())>
                     <button class="chip h-7 px-2 ml-auto shrink-0 text-state-warn font-mono"
                             title=move || alerts.with(|a| a.first().map(|a| a.msg.clone()).unwrap_or_default())
-                            on:click=move |_| {
-                                if let Some(a) = alerts.with_untracked(|a| a.first().cloned()) {
-                                    note.set(Some((a.msg, a.kind == "error")));
-                                }
-                            }>
+                            on:click=move |_| open.set(Some(Sheet::Logs))>
                         {move || format!("\u{26a0} {}", alerts.with(Vec::len))}
                     </button>
                 </Show>
@@ -389,6 +386,7 @@ pub fn NativeGuide(
                                       Signal::derive(move || darks.with(|d| !d["build"].is_null())))}
                                 {tool(Sheet::Assistant, |tr| tr.guider_ga_title, busy(|s| s.ga_running))}
                                 {tool(Sheet::PolarTools, |tr| tr.guider_pa_title, busy(|s| s.pa_running))}
+                                {tool(Sheet::Logs, |tr| tr.guider_logs_title, idle())}
                             </div>
                         </div>
                     </div>
@@ -411,6 +409,7 @@ pub fn NativeGuide(
                 {move || buttons(&app.get()).iter().map(|b| button(*b)).collect_view()}
             </div>
 
+            {alert_toast(alerts)}
             {zoom(fp.clone())}
             {move || {
                 let close = move || open.set(None);
@@ -440,6 +439,8 @@ pub fn NativeGuide(
                                                    assistant_sheet(state, guider.ga, rpc.clone(), lang)).into_any()),
                     Sheet::PolarTools => Some(sheet(move || tr().guider_pa_title, close,
                                                     pa_tools_sheet(guider.pa, guider.settings, rpc.clone(), lang)).into_any()),
+                    Sheet::Logs => Some(sheet(move || tr().guider_logs_title, close,
+                                              logs_sheet(guider.alerts, rpc.clone(), lang)).into_any()),
                 }
             }}
         </div>

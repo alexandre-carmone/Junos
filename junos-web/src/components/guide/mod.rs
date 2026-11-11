@@ -64,6 +64,7 @@ mod darks;
 mod equipment;
 mod frame;
 mod lock_shift;
+mod logs;
 mod native;
 mod native_settings;
 mod pa_tools;
@@ -134,6 +135,7 @@ enum Sheet {
     Darks,
     Assistant,
     PolarTools,
+    Logs,
 }
 
 /// Download the accumulated guide log as a text file.
