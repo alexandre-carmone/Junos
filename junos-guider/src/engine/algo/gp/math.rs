@@ -13,6 +13,7 @@
 //! Ported from PHD2 `contributions/MPI_IS_gaussian_process/tools/math_tools.cpp`, `contributions/MPI_IS_gaussian_process/src/gaussian_process_guider.cpp` — BSD-3-Clause, see THIRD_PARTY.md
 
 use std::f64::consts::PI;
+use std::fmt;
 
 use super::linalg::{Mat, ldlt, next_pow2, power_spectrum};
 
@@ -38,8 +39,8 @@ pub const FFT_SIZE: usize = 4096;
 /// pooled-mean branch is the only one ever taken (math_tools.cpp:82).
 pub fn square_distance(a: &[f64], b: &[f64]) -> Mat {
     let (na, nb) = (a.len(), b.len());
-    // Eigen's rowwise().mean(): the sum over the size. Eigen sums in SIMD
-    // packets, a plain loop may round the last bit differently.
+    // Eigen's rowwise().mean(): the sum over the size. The row of a 1×n
+    // column-major matrix is strided, so Eigen sums it left to right, as here.
     let mean_a = a.iter().sum::<f64>() / na as f64;
     let mean_b = b.iter().sum::<f64>() / nb as f64;
     let mean = na as f64 / (na + nb) as f64 * mean_a + nb as f64 / (nb + na) as f64 * mean_b;
@@ -53,13 +54,13 @@ pub fn square_distance(a: &[f64], b: &[f64]) -> Mat {
 
 /// `math_tools::hamming_window`: `0.54 − 0.46·cos(2π·r)` over Eigen's
 /// `LinSpaced(N, 0, 1)` — `r_i = i·(1/(N−1))`, the last one exactly 1, and a
-/// single point at 0.
+/// single point at r = 1 (Eigen returns `high` then), also 0.08.
 pub fn hamming_window(n: usize) -> Vec<f64> {
     let (alpha, beta) = (0.54, 0.46);
     let step = if n > 1 { 1.0 / (n - 1) as f64 } else { 0.0 };
     (0..n)
         .map(|i| {
-            let r = if n > 1 && i == n - 1 { 1.0 } else { i as f64 * step };
+            let r = if i == n - 1 { 1.0 } else { i as f64 * step };
             alpha - beta * (2.0 * PI * r).cos()
         })
         .collect()
@@ -67,9 +68,9 @@ pub fn hamming_window(n: usize) -> Vec<f64> {
 
 /// `math_tools::compute_spectrum` (math_tools.cpp:174): the power spectrum
 /// of `data` zero-padded to `Npad = nextpow2(max(n, data.len()))`, returned
-/// as `(amplitudes, frequencies)` for the bins `k ∈ [ceil(Npad/N), Npad/2]`
-/// with `f = k/Npad` in cycles per sample. Bins below `ceil(Npad/N)` only
-/// exist because of the padding and are dropped.
+/// as `(amplitudes, frequencies)` for the bins
+/// `k ∈ [ceil(Npad / data.len()), Npad/2]` with `f = k/Npad` in cycles per
+/// sample. Lower bins only exist because of the padding and are dropped.
 ///
 /// Fewer than two samples give empty vectors: the lowest bin would then lie
 /// above Nyquist, where PHD2 reads past the end of its FFT.
@@ -108,6 +109,16 @@ pub struct RegularizeOverrun {
     pub j: usize,
 }
 
+/// PHD2's exception text, which its guider logs after `PPEC: Model reset
+/// after exception: ` (gaussian_process_guider.cpp:285).
+impl fmt::Display for RegularizeOverrun {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Index over-run in regularize_dataset")
+    }
+}
+
+impl std::error::Error for RegularizeOverrun {}
+
 /// `GaussianProcessGuider::regularize_dataset` (gaussian_process_guider.cpp:686):
 /// resamples the raw (timestamp, gear error, variance) series onto a grid of
 /// [`GRID_INTERVAL`] cells starting at t = 0, each holding the trapezoidal
@@ -118,8 +129,9 @@ pub struct RegularizeOverrun {
 /// - Inside a cell only `last_timestamp` advances, not the last gear error or
 ///   variance, so every trapezoid in a cell starts from the value at the
 ///   cell's left edge (and edge values interpolate from it too).
-/// - The span between a cell edge and the point that crossed it is never
-///   integrated; the next point's trapezoid starts at the edge.
+/// - A point that crosses a cell edge only sets the value interpolated at
+///   that edge; it is never a trapezoid node itself. The next point's
+///   trapezoid runs from the edge, over the crossing point.
 /// - The first cell is centred at −2.5 s (edges start at −5 s), and the cell
 ///   still open after the last point is dropped.
 /// - Past [`REGULAR_BUFFER_SIZE`] cells the **oldest** ones are kept
@@ -317,7 +329,7 @@ mod tests {
         // r = 0, .25, .5, .75, 1: 0.54 − 0.46·cos(2πr).
         assert_close(&w, &[0.08, 0.54, 1.0, 0.54, 0.08], 1e-15);
         assert_eq!(w[0], w[4], "the last point is exactly r = 1");
-        // A single point sits at r = 0; none gives an empty window.
+        // A single point sits at r = 1, as in Eigen; none gives an empty window.
         assert_close(&hamming_window(1), &[0.08], 1e-15);
         assert!(hamming_window(0).is_empty());
     }
@@ -398,6 +410,7 @@ mod tests {
         // but t = 12 crosses the edges 5 and 10.
         let t = [0.0, 12.0, 3.0];
         assert_eq!(regularize_dataset(&t, &[0.0; 3], &[1.0; 3], true), Err(RegularizeOverrun { j: 2 }));
+        assert_eq!(RegularizeOverrun { j: 2 }.to_string(), "Index over-run in regularize_dataset");
         let r = regularize_dataset(&t, &[0.0; 3], &[1.0; 3], false).unwrap();
         assert_eq!(r.timestamps, vec![-2.5, 2.5, 7.5]);
     }

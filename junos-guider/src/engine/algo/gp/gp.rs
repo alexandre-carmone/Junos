@@ -41,6 +41,12 @@ pub struct Gp {
     beta: Vec<f64>,
 }
 
+impl Default for Gp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Gp {
     /// PHD2's `GP(covFunc)` followed by `enableExplicitTrend()` and
     /// `enableOutputProjection(...)` (gaussian_process_guider.cpp:71): default
