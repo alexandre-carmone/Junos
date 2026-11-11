@@ -413,7 +413,7 @@ pub(crate) fn lite_jpeg(jpeg: &[u8], max_width: u32, quality: u8) -> Option<(Vec
 
 /// Width of the real (unscaled) frame, parsed from KStars' `resolution` metadata
 /// field (`"WxH"`, media.cpp:403). `None` when the field is absent or malformed.
-fn frame_width(metadata: &Value) -> Option<f64> {
+pub(crate) fn frame_width(metadata: &Value) -> Option<f64> {
     metadata
         .get("resolution")
         .and_then(Value::as_str)

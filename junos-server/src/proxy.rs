@@ -14,7 +14,12 @@
 //!
 //! Until a browser has sent it, it receives no preview at all — KStars pushes
 //! a 1920 px guide frame every few seconds whether or not anyone looks at it,
-//! and the field use case is a phone on a weak wifi link.
+//! and the field use case is a phone on a weak wifi link. The same filter
+//! tells junos-guider whether to encode its `+J` frames at all (`guider.rs`),
+//! with an optional `"profile": false` when the star crop isn't shown.
+//!
+//! Messages whose type starts with `guider_` (`guider_rpc`) are for
+//! junos-guider: they go to the daemon link, never to KStars.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -32,7 +37,8 @@ use serde_json::Value;
 use tracing::{debug, warn};
 
 use crate::apps::build_app_state_msg;
-use crate::hub::{FrameKind, Outbound};
+use crate::guider::FrameWant;
+use crate::hub::{FrameKind, Outbound, GUIDER_PREFIX};
 use crate::AppState;
 
 const FILTER_TYPE: &str = "junos_media_filter";
@@ -107,6 +113,18 @@ fn media_filter_payload(text: &str) -> Option<Value> {
     Some(v.get("payload").cloned().unwrap_or(Value::Null))
 }
 
+/// Whether `text` is a browser message for junos-guider (`guider_rpc`).
+/// The same substring-then-parse test as `media_filter_payload`.
+fn is_guider_message(text: &str) -> bool {
+    if !text.contains("\"guider_") {
+        return false;
+    }
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|v| v.get("type")?.as_str().map(|t| t.starts_with(GUIDER_PREFIX)))
+        .unwrap_or(false)
+}
+
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
@@ -162,6 +180,7 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
 
     let mut filter = MediaFilter::default();
     let mut lite_slot = LiteSlot { counter: hub.lite_subscribers(), held: false };
+    let guider_slot = state.guider.slot();
 
     loop {
         tokio::select! {
@@ -190,7 +209,8 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
                 }
             }
 
-            // Browser command → KStars (or the relay, for `junos_*`)
+            // Browser command → KStars (or the relay, for `junos_*`, or
+            // junos-guider, for `guider_*`)
             frame = stream.next() => {
                 match frame {
                     Some(Ok(Message::Text(text))) => {
@@ -198,6 +218,11 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
                             let new = MediaFilter::parse(&payload);
                             debug!(?new, "Browser media filter");
                             lite_slot.set(new.lite);
+                            guider_slot.set_wanted(FrameWant {
+                                frames: new.kinds.contains(&FrameKind::Guider),
+                                profile: payload.get("profile").and_then(Value::as_bool).unwrap_or(true),
+                                lite: new.lite,
+                            });
                             // Push the current frame of every view the browser
                             // just subscribed to (all of them when the variant
                             // changed), so a tab switch shows an image at once.
@@ -217,6 +242,12 @@ async fn handle_browser_ws(socket: WebSocket, state: AppState) {
                                         }
                                     }
                                 }
+                            }
+                            continue;
+                        }
+                        if is_guider_message(&text) {
+                            if !state.guider.send(text.to_string()) {
+                                debug!("Dropping guider command — junos-guider is not reading");
                             }
                             continue;
                         }
@@ -279,6 +310,17 @@ mod tests {
         assert!(media_filter_payload(r#"{"type":"mount_goto_rade","payload":{}}"#).is_none());
         // A KStars command that merely mentions the name is not a control message.
         assert!(media_filter_payload(r#"{"type":"scheduler_add_jobs","payload":{"name":"junos_media_filter"}}"#).is_none());
+    }
+
+    #[test]
+    fn guider_messages_are_recognised_whatever_the_key_order() {
+        // As the browser's `json!` writes it: `payload` before `type`.
+        assert!(is_guider_message(r#"{"payload":{"id":3,"method":"loop","params":{}},"type":"guider_rpc"}"#));
+        assert!(is_guider_message(r#"{"type":"guider_rpc","payload":{"method":"guide","id":4}}"#));
+        // KStars commands, one merely naming a `guider_` value.
+        assert!(!is_guider_message(r#"{"payload":{"name":"guider_rpc"},"type":"option_set"}"#));
+        assert!(!is_guider_message(r#"{"type":"guide_start","payload":{}}"#));
+        assert!(!is_guider_message(r#"not json "guider_rpc""#));
     }
 
     #[test]

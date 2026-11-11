@@ -69,6 +69,12 @@ pub struct Config {
     /// `~/.var/app/org.kde.kstars/data/kstars/taskqueue` for Flatpak KStars.
     #[arg(long, env = "TASKQUEUE_DIR")]
     pub taskqueue_dir: Option<PathBuf>,
+
+    /// junos-guider's local WebSocket. The relay dials it and carries its
+    /// `guider_*` traffic to and from the browsers (`guider.rs`), retrying
+    /// for as long as the daemon is not running.
+    #[arg(long, default_value = "ws://127.0.0.1:4410", env = "GUIDER_WS")]
+    pub guider_ws: String,
 }
 
 impl Config {

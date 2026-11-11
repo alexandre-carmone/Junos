@@ -367,7 +367,6 @@ impl Hub {
 
     /// Drop the sticky types starting with `prefix` — junos-guider's
     /// snapshots when the daemon link drops.
-    #[allow(dead_code)] // called by guider.rs, the next commit
     pub async fn remove_prefix(&self, prefix: &str) {
         self.replay.lock().await.remove_prefix(prefix);
     }

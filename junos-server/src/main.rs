@@ -4,6 +4,7 @@ mod apps;
 mod auth;
 mod config;
 mod files;
+mod guider;
 mod http_cache;
 mod hub;
 mod kstars_ws;
@@ -45,6 +46,8 @@ pub struct AppState {
     pub skymap:      Arc<skymap::SkymapState>,
     /// The live stack relay (`stack.rs`), fed by the KStars message handler.
     pub stack:       stack::StackWatch,
+    /// The link to junos-guider (`guider.rs`), fed by the browser handler.
+    pub guider:      guider::GuiderLink,
 }
 
 #[tokio::main]
@@ -91,12 +94,16 @@ async fn main() -> anyhow::Result<()> {
     let stack = stack::StackWatch::new();
     stack.clone().spawn(hub.clone());
 
+    info!("junos-guider link → {}", config.guider_ws);
+    let guider = guider::GuiderLink::spawn(hub.clone(), config.guider_ws.clone());
+
     let state = AppState {
         hub,
         config: config.clone(),
         app_manager,
         skymap,
         stack,
+        guider,
     };
 
     let dist_dir = config.dist_dir.clone();

@@ -1,0 +1,554 @@
+//! The link to junos-guider, the PHD2 port in `junos-guider/`.
+//!
+//! The daemon serves a local WebSocket (`--guider-ws`, default
+//! `ws://127.0.0.1:4410`) and the relay dials it, retrying every 1 s up to
+//! every 10 s: the daemon runs with or without the relay and restarts on its
+//! own. Everything it sends is `guider_*` JSON, folded into the replay cache
+//! and broadcast to every browser unchanged — except `guider_frame`, which
+//! becomes a `+J` `new_preview_image` so the per-browser media filter, the
+//! lite variant and the per-kind replay apply to it. The browsers' `guider_*`
+//! messages (`guider_rpc`, intercepted by `proxy.rs`) go the other way,
+//! verbatim.
+//!
+//! Both ways go through bounded queues filled with `try_send`: a stalled
+//! daemon makes the relay drop browser commands rather than block a browser
+//! task, and a slow re-encode drops frames rather than hold up the events.
+//!
+//! The relay asks for frames only while a browser shows them: each browser
+//! task holds a `GuiderSlot` with what its media filter wants of `+J`, and
+//! the sum goes to the daemon as `set_frame_filter` on every change and on
+//! every (re)connect, so the daemon encodes nothing when nobody looks.
+//!
+//! When the link drops, browsers get `guider_state {attached:false}` (kept
+//! for late joiners too) and the other `guider_*` snapshots are forgotten.
+
+use std::collections::HashMap;
+use std::io::Cursor;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use futures_util::{SinkExt, StreamExt};
+use serde_json::{json, Value};
+use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::Message;
+use tracing::{debug, info, warn};
+
+use crate::hub::{FrameKind, Hub, Outbound, CMD_CAP, GUIDER_PREFIX};
+use crate::kstars_ws::{frame_width, lite_jpeg, LITE_MAX_WIDTH, LITE_QUALITY};
+
+const MIN_BACKOFF: Duration = Duration::from_secs(1);
+const MAX_BACKOFF: Duration = Duration::from_secs(10);
+/// A daemon that accepts the connection but never finishes the handshake
+/// must not hold the link for the OS TCP timeout.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Frames waiting for their lite re-encode. More are dropped: the next one
+/// is a few seconds away and supersedes them.
+const FRAME_CAP: usize = 2;
+/// The `id` of the relay's own `guider_rpc` calls, whose replies are not for
+/// the browsers.
+const RELAY_RPC_ID: &str = "junos-relay";
+
+type DaemonSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// What one browser wants of the `+J` frames, from its media filter.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FrameWant {
+    pub frames: bool,
+    /// The 16-bit star crop (`guider.star_image`) for the star profile.
+    pub profile: bool,
+    /// It takes the lite variant.
+    pub lite: bool,
+}
+
+/// The daemon's `set_frame_filter`, summed over the browsers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FrameFilter {
+    frames: bool,
+    profile: bool,
+    /// Set only when every browser showing `+J` is lite: nobody needs the
+    /// full-size JPEG then, and the daemon may encode the lite one directly.
+    max_width: Option<u32>,
+    quality: Option<u8>,
+}
+
+impl FrameFilter {
+    fn sum<'a>(wants: impl Iterator<Item = &'a FrameWant>) -> Self {
+        let mut f = Self::default();
+        let mut all_lite = true;
+        for w in wants.filter(|w| w.frames) {
+            f.frames = true;
+            f.profile |= w.profile;
+            all_lite &= w.lite;
+        }
+        if f.frames && all_lite {
+            f.max_width = Some(LITE_MAX_WIDTH);
+            f.quality = Some(LITE_QUALITY);
+        }
+        f
+    }
+
+    fn rpc(&self) -> String {
+        let mut kinds = Vec::new();
+        if self.frames {
+            kinds.push("frame");
+        }
+        if self.profile {
+            kinds.push("profile");
+        }
+        json!({
+            "type": "guider_rpc",
+            "payload": {
+                "method": "set_frame_filter",
+                "id": RELAY_RPC_ID,
+                "params": {
+                    "frames": self.frames,
+                    "profile": self.profile,
+                    // The same wish in the spelling of the daemon's method
+                    // table (`junos-guider/src/server/rpc.rs`).
+                    "kinds": kinds,
+                    "max_width": self.max_width,
+                    "quality": self.quality,
+                },
+            },
+        })
+        .to_string()
+    }
+}
+
+#[derive(Default)]
+struct Wants {
+    next_id: u64,
+    by_browser: HashMap<u64, FrameWant>,
+    /// The filter last sent (or queued) to the daemon.
+    sent: FrameFilter,
+}
+
+/// The relay's end of the daemon link, shared by every browser task.
+#[derive(Clone)]
+pub struct GuiderLink {
+    /// Browser → daemon messages, drained by the connection task.
+    tx: mpsc::Sender<String>,
+    wants: Arc<Mutex<Wants>>,
+}
+
+impl GuiderLink {
+    /// Start dialing the daemon at `url`, for the life of the server.
+    pub fn spawn(hub: Hub, url: String) -> Self {
+        let (tx, rx) = mpsc::channel(CMD_CAP);
+        let link = Self { tx, wants: Arc::default() };
+        tokio::spawn(link.clone().run(hub, url, rx));
+        link
+    }
+
+    /// Queue a browser's `guider_*` message for the daemon. `false` when the
+    /// queue is full: the daemon stopped reading.
+    pub fn send(&self, text: String) -> bool {
+        self.tx.try_send(text).is_ok()
+    }
+
+    /// A browser's place in the frame filter.
+    pub fn slot(&self) -> GuiderSlot {
+        let id = {
+            let mut w = self.wants.lock().unwrap_or_else(PoisonError::into_inner);
+            w.next_id += 1;
+            w.next_id
+        };
+        GuiderSlot { link: self.clone(), id }
+    }
+
+    fn set_want(&self, id: u64, want: Option<FrameWant>) {
+        let rpc = {
+            let mut w = self.wants.lock().unwrap_or_else(PoisonError::into_inner);
+            match want {
+                Some(want) => w.by_browser.insert(id, want),
+                None => w.by_browser.remove(&id),
+            };
+            let filter = FrameFilter::sum(w.by_browser.values());
+            if filter == w.sent {
+                return;
+            }
+            w.sent = filter;
+            filter.rpc()
+        };
+        // Lost while the daemon is away or stalled; each (re)connect sends
+        // the current filter anyway.
+        let _ = self.tx.try_send(rpc);
+    }
+
+    fn filter_rpc(&self) -> String {
+        self.wants.lock().unwrap_or_else(PoisonError::into_inner).sent.rpc()
+    }
+
+    async fn run(self, hub: Hub, url: String, mut rx: mpsc::Receiver<String>) {
+        let (frame_tx, frame_rx) = mpsc::channel(FRAME_CAP);
+        tokio::spawn(publish_frames(hub.clone(), frame_rx));
+        let mut backoff = MIN_BACKOFF;
+        let mut told = false;
+        loop {
+            match tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(url.as_str())).await {
+                Ok(Ok((ws, _))) => {
+                    info!("junos-guider: connected to {url}");
+                    self.session(ws, &hub, &mut rx, &frame_tx).await;
+                    info!("junos-guider: link to {url} lost");
+                    detach(&hub).await;
+                    backoff = MIN_BACKOFF;
+                    told = false;
+                }
+                // A relay without the daemon is a normal setup: say it once.
+                failure => {
+                    let why = match failure {
+                        Ok(Err(e)) => e.to_string(),
+                        _ => "handshake timed out".to_string(),
+                    };
+                    if told {
+                        debug!("junos-guider: {url} still unreachable: {why}");
+                    } else {
+                        info!("junos-guider: not reachable at {url} ({why}), retrying");
+                        told = true;
+                    }
+                }
+            }
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(MAX_BACKOFF);
+        }
+    }
+
+    async fn session(
+        &self,
+        ws: DaemonSocket,
+        hub: &Hub,
+        rx: &mut mpsc::Receiver<String>,
+        frames: &mpsc::Sender<Value>,
+    ) {
+        let (mut sink, mut stream) = ws.split();
+        // Browser commands queued while the daemon was away are stale (their
+        // browser gave up on them); the frame filter is re-sent whole.
+        while rx.try_recv().is_ok() {}
+        if sink.send(Message::Text(self.filter_rpc())).await.is_err() {
+            return;
+        }
+        loop {
+            tokio::select! {
+                msg = stream.next() => match msg {
+                    Some(Ok(Message::Text(text))) => from_daemon(text, hub, frames).await,
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Err(e)) => {
+                        warn!("junos-guider: link error: {e}");
+                        break;
+                    }
+                    // tungstenite answers pings itself.
+                    Some(Ok(_)) => {}
+                },
+                cmd = rx.recv() => match cmd {
+                    Some(cmd) => {
+                        if let Err(e) = sink.send(Message::Text(cmd)).await {
+                            warn!("junos-guider: send failed: {e}");
+                            break;
+                        }
+                    }
+                    None => break,
+                },
+            }
+        }
+    }
+}
+
+/// One browser's place in the frame filter, released however its
+/// connection ends.
+pub struct GuiderSlot {
+    link: GuiderLink,
+    id: u64,
+}
+
+impl GuiderSlot {
+    pub fn set_wanted(&self, want: FrameWant) {
+        self.link.set_want(self.id, Some(want));
+    }
+}
+
+impl Drop for GuiderSlot {
+    fn drop(&mut self) {
+        self.link.set_want(self.id, None);
+    }
+}
+
+/// One daemon message: a frame to the re-encode queue, the reply to the
+/// relay's own call to the log, anything else to the browsers as is.
+async fn from_daemon(text: String, hub: &Hub, frames: &mpsc::Sender<Value>) {
+    if text.contains("\"guider_frame\"") || text.contains(RELAY_RPC_ID) {
+        if let Ok(mut v) = serde_json::from_str::<Value>(&text) {
+            if v["type"] == "guider_frame" {
+                if frames.try_send(v["payload"].take()).is_err() {
+                    debug!("junos-guider: frame dropped, the previous one is still encoding");
+                }
+                return;
+            }
+            if v["type"] == "guider_rpc_result" && v["payload"]["id"] == RELAY_RPC_ID {
+                if let Some(e) = v["payload"].get("error") {
+                    warn!("junos-guider: set_frame_filter refused: {e}");
+                }
+                return;
+            }
+        }
+    }
+    hub.capture(&text).await;
+    hub.broadcast_text(text);
+}
+
+/// Turn the queued `guider_frame`s into `+J` previews, one at a time.
+async fn publish_frames(hub: Hub, mut rx: mpsc::Receiver<Value>) {
+    while let Some(payload) = rx.recv().await {
+        let want_lite = hub.lite_wanted();
+        match tokio::task::spawn_blocking(move || guider_preview(&payload, want_lite)).await {
+            Ok(Some(out)) => {
+                let out = Arc::new(out);
+                hub.capture_preview(out.clone()).await;
+                let _ = hub.browser_tx.send(out);
+            }
+            Ok(None) => warn!("junos-guider: malformed guider_frame dropped"),
+            Err(e) => warn!("junos-guider: frame task failed: {e}"),
+        }
+    }
+}
+
+/// The daemon went away: browsers fall back to the Ekos guide UI.
+async fn detach(hub: &Hub) {
+    hub.remove_prefix(GUIDER_PREFIX).await;
+    hub.clear_preview(FrameKind::Guider).await;
+    let msg = json!({ "type": "guider_state", "payload": { "attached": false } }).to_string();
+    hub.capture(&msg).await;
+    hub.broadcast_text(msg);
+}
+
+/// The `+J` preview of a `guider_frame` payload — `{seq, metadata{resolution,
+/// frame, exposure_ms, binning, subframe}, data (b64 JPEG), guider{…}}`, the
+/// overlay in the frame's pixels — as the `new_preview_image` a KStars media
+/// frame becomes, with the lite variant when a browser asked for one.
+fn guider_preview(payload: &Value, want_lite: bool) -> Option<Outbound> {
+    let data = payload.get("data")?.as_str()?;
+    let jpeg = BASE64.decode(data).ok()?;
+    let (w, h) = image::ImageReader::with_format(Cursor::new(&jpeg), image::ImageFormat::Jpeg)
+        .into_dimensions()
+        .ok()?;
+    let mut metadata = match payload.get("metadata") {
+        Some(Value::Object(m)) => Value::Object(m.clone()),
+        _ => json!({}),
+    };
+    // A new uuid per frame, so the browser's `<img>` always reloads.
+    let seq = payload.get("seq").and_then(Value::as_u64).unwrap_or(0);
+    metadata["uuid"] = json!(format!("+J-{seq}"));
+    metadata["ext"] = json!("jpg");
+    if metadata.get("resolution").is_none() {
+        metadata["resolution"] = json!(format!("{w}x{h}"));
+    }
+    // 1 unless the daemon encoded below the frame's size (`max_width`).
+    let ratio = frame_width(&metadata).filter(|fw| *fw > 0.0).map_or(1.0, |fw| w as f64 / fw);
+    let guider = payload.get("guider");
+    let full = preview_text(&metadata, data.to_string(), guider, ratio);
+    // A frame already within the lite width goes out as is to lite browsers
+    // too: re-encoding it would only lose quality.
+    let lite = if want_lite && w > LITE_MAX_WIDTH {
+        lite_jpeg(&jpeg, LITE_MAX_WIDTH, LITE_QUALITY)
+            .map(|(bytes, r)| preview_text(&metadata, BASE64.encode(bytes), guider, ratio * r))
+    } else {
+        None
+    };
+    Some(Outbound::Preview { kind: FrameKind::Guider, full, lite })
+}
+
+fn preview_text(metadata: &Value, data_b64: String, guider: Option<&Value>, ratio: f64) -> String {
+    let mut payload = json!({ "metadata": metadata, "data": data_b64 });
+    if let Some(g) = guider {
+        payload["guider"] = scale_guider_overlay(g, ratio);
+    }
+    json!({ "type": "new_preview_image", "payload": payload }).to_string()
+}
+
+/// The `guider` overlay in the pixels of a JPEG `ratio` times the frame's
+/// width, as `kstars_ws::preview_json` scales the focus stars: the positions
+/// (`lock`, `star`, `stars`), the search box half-size and the lock-shift
+/// vector. The measured values (mass, SNR, HFD, FWHM, peak) stay as the
+/// daemon gave them, since the UI prints them, and so does `star_image`, the
+/// raw 16-bit crop around the star.
+fn scale_guider_overlay(overlay: &Value, ratio: f64) -> Value {
+    let mut o = overlay.clone();
+    if ratio == 1.0 {
+        return o;
+    }
+    if let Some(m) = o.as_object_mut() {
+        for key in ["lock", "lock_shift_px_h"] {
+            if let Some(Value::Array(xy)) = m.get_mut(key) {
+                xy.iter_mut().for_each(|v| scale(v, ratio));
+            }
+        }
+        if let Some(v) = m.get_mut("search_region") {
+            scale(v, ratio);
+        }
+        if let Some(star) = m.get_mut("star") {
+            scale_xy(star, ratio);
+        }
+        if let Some(Value::Array(stars)) = m.get_mut("stars") {
+            stars.iter_mut().for_each(|s| scale_xy(s, ratio));
+        }
+    }
+    o
+}
+
+fn scale(v: &mut Value, ratio: f64) {
+    if let Some(x) = v.as_f64() {
+        *v = json!(x * ratio);
+    }
+}
+
+fn scale_xy(p: &mut Value, ratio: f64) {
+    for k in ["x", "y"] {
+        if let Some(v) = p.get_mut(k) {
+            scale(v, ratio);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_positions_scale_and_measurements_do_not() {
+        let overlay = json!({
+            "lock": [100.0, 50.0],
+            "star": {"x": 101.0, "y": 49.0, "mass": 5000.0, "snr": 30.0, "hfd": 2.4, "fwhm": 2.1, "peak": 900, "err": 0, "saturated": false},
+            "stars": [{"x": 101.0, "y": 49.0, "snr": 30.0, "hfd": 2.4, "mass": 5000.0, "primary": true, "lost": false},
+                      {"x": 300.0, "y": 200.0, "snr": 12.0, "hfd": 3.0, "mass": 900.0, "primary": false, "lost": true}],
+            "search_region": 15,
+            "lock_shift_px_h": [2.0, -4.0],
+            "star_image": {"width": 31, "height": 31, "star_pos": [15.2, 14.8], "pixels": "AAEC"},
+        });
+        let s = scale_guider_overlay(&overlay, 0.5);
+        assert_eq!(s["lock"], json!([50.0, 25.0]));
+        assert_eq!(s["star"]["x"], 50.5);
+        assert_eq!(s["star"]["y"], 24.5);
+        assert_eq!(s["star"]["hfd"], 2.4);
+        assert_eq!(s["star"]["snr"], 30.0);
+        assert_eq!(s["star"]["mass"], 5000.0);
+        assert_eq!(s["stars"][1]["x"], 150.0);
+        assert_eq!(s["stars"][1]["y"], 100.0);
+        assert_eq!(s["stars"][1]["lost"], true);
+        assert_eq!(s["stars"][0]["primary"], true);
+        assert_eq!(s["search_region"], 7.5);
+        assert_eq!(s["lock_shift_px_h"], json!([1.0, -2.0]));
+        assert_eq!(s["star_image"], overlay["star_image"]);
+        // The full-size variant goes out untouched, integers included.
+        assert_eq!(scale_guider_overlay(&overlay, 1.0), overlay);
+        // A lost lock or star is null, and stays so.
+        let none = json!({"lock": null, "star": null, "stars": [], "star_image": null});
+        assert_eq!(scale_guider_overlay(&none, 0.5), none);
+    }
+
+    fn gray_jpeg(w: u32, h: u32) -> Vec<u8> {
+        let mut buf = Vec::new();
+        image::GrayImage::from_fn(w, h, |x, _| image::Luma([(x % 256) as u8]))
+            .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+            .unwrap();
+        buf
+    }
+
+    fn frame(jpeg: &[u8]) -> Value {
+        json!({
+            "seq": 7,
+            "metadata": {"exposure_ms": 2000, "binning": 1, "subframe": null},
+            "data": BASE64.encode(jpeg),
+            "guider": {"lock": [600.0, 20.0], "star_image": {"width": 3, "height": 1, "star_pos": [1, 0], "pixels": "AAEAAgAD"}},
+        })
+    }
+
+    #[test]
+    fn guider_frame_becomes_a_plus_j_preview() {
+        let Some(Outbound::Preview { kind, full, lite }) = guider_preview(&frame(&gray_jpeg(1200, 40)), true) else {
+            panic!("frame should convert");
+        };
+        assert_eq!(kind, FrameKind::Guider);
+        let full: Value = serde_json::from_str(&full).unwrap();
+        assert_eq!(full["type"], "new_preview_image");
+        let meta = &full["payload"]["metadata"];
+        assert_eq!(meta["uuid"], "+J-7");
+        assert_eq!(meta["ext"], "jpg");
+        assert_eq!(meta["resolution"], "1200x40");
+        assert_eq!(meta["exposure_ms"], 2000);
+        assert_eq!(full["payload"]["data"], frame(&gray_jpeg(1200, 40))["data"]);
+        assert_eq!(full["payload"]["guider"]["lock"], json!([600.0, 20.0]));
+
+        // 960 / 1200: the overlay follows the lite pixels, the crop does not.
+        let lite: Value = serde_json::from_str(&lite.expect("lite variant requested")).unwrap();
+        assert_eq!(lite["payload"]["metadata"]["resolution"], "1200x40");
+        let lock = lite["payload"]["guider"]["lock"].as_array().unwrap();
+        assert!((lock[0].as_f64().unwrap() - 480.0).abs() < 1e-9);
+        assert!((lock[1].as_f64().unwrap() - 16.0).abs() < 1e-9);
+        assert_eq!(lite["payload"]["guider"]["star_image"], full["payload"]["guider"]["star_image"]);
+    }
+
+    #[test]
+    fn a_narrow_or_downsized_frame_gets_no_lite_reencode() {
+        let Some(Outbound::Preview { lite, .. }) = guider_preview(&frame(&gray_jpeg(640, 40)), true) else {
+            panic!("frame should convert");
+        };
+        assert!(lite.is_none());
+
+        // The daemon encoded at a set_frame_filter max_width: the overlay,
+        // in frame pixels, is brought onto the JPEG's.
+        let mut f = frame(&gray_jpeg(960, 30));
+        f["metadata"]["resolution"] = json!("1920x60");
+        let Some(Outbound::Preview { full, lite, .. }) = guider_preview(&f, true) else {
+            panic!("frame should convert");
+        };
+        assert!(lite.is_none());
+        let full: Value = serde_json::from_str(&full).unwrap();
+        assert_eq!(full["payload"]["metadata"]["resolution"], "1920x60");
+        assert_eq!(full["payload"]["guider"]["lock"], json!([300.0, 10.0]));
+
+        assert!(guider_preview(&json!({"seq": 1, "data": "not base64!"}), false).is_none());
+    }
+
+    #[test]
+    fn frame_filter_sums_the_browsers_and_is_sent_on_change_only() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let link = GuiderLink { tx, wants: Arc::default() };
+        let params = |rpc: String| -> Value {
+            let v: Value = serde_json::from_str(&rpc).unwrap();
+            assert_eq!(v["type"], "guider_rpc");
+            assert_eq!(v["payload"]["method"], "set_frame_filter");
+            assert_eq!(v["payload"]["id"], RELAY_RPC_ID);
+            v["payload"]["params"].clone()
+        };
+
+        let phone = link.slot();
+        let desktop = link.slot();
+        phone.set_wanted(FrameWant { frames: true, profile: false, lite: true });
+        let p = params(rx.try_recv().unwrap());
+        assert_eq!(p["frames"], true);
+        assert_eq!(p["profile"], false);
+        assert_eq!(p["kinds"], json!(["frame"]));
+        assert_eq!(p["max_width"], LITE_MAX_WIDTH);
+        assert_eq!(p["quality"], LITE_QUALITY);
+
+        // A browser on another tab changes nothing.
+        desktop.set_wanted(FrameWant { frames: false, profile: true, lite: false });
+        assert!(rx.try_recv().is_err());
+
+        // A full-size browser on the Guide tab: no width cap, its profile.
+        desktop.set_wanted(FrameWant { frames: true, profile: true, lite: false });
+        let p = params(rx.try_recv().unwrap());
+        assert_eq!(p["kinds"], json!(["frame", "profile"]));
+        assert_eq!(p["max_width"], Value::Null);
+        assert_eq!(p["quality"], Value::Null);
+
+        drop(desktop);
+        assert_eq!(params(rx.try_recv().unwrap())["max_width"], LITE_MAX_WIDTH);
+        drop(phone);
+        let p = params(rx.try_recv().unwrap());
+        assert_eq!(p["frames"], false);
+        assert_eq!(p["kinds"], json!([]));
+        assert_eq!(params(link.filter_rpc()), p);
+    }
+}
