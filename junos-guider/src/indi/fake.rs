@@ -1,0 +1,221 @@
+//! A scripted `indiserver` for the tests: a listener on an ephemeral port
+//! whose connections run a script on each element the client sends, plus
+//! the XML the drivers write, built from parts.
+
+use std::io::{Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use super::xml::{Element, XmlStream};
+
+/// One client connection, as the script sees it. Writes are serialised so
+/// a delayed reply never splits another.
+#[derive(Clone)]
+pub(crate) struct Peer(Arc<Mutex<TcpStream>>);
+
+impl Peer {
+    pub(crate) fn send(&self, xml: &str) {
+        let _ = self.0.lock().unwrap().write_all(xml.as_bytes());
+    }
+
+    /// Sends `xml` from another thread `ms` later.
+    pub(crate) fn send_after(&self, ms: u64, xml: String) {
+        let peer = self.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(ms));
+            peer.send(&xml);
+        });
+    }
+}
+
+type Script = Box<dyn FnMut(&Element, &Peer) + Send>;
+
+struct Inner {
+    got: Mutex<Vec<Element>>,
+    cond: Condvar,
+    peers: Mutex<Vec<Peer>>,
+    accepted: AtomicUsize,
+    script: Mutex<Script>,
+}
+
+pub(crate) struct Fake {
+    pub(crate) port: u16,
+    inner: Arc<Inner>,
+}
+
+impl Fake {
+    pub(crate) fn start(script: impl FnMut(&Element, &Peer) + Send + 'static) -> Fake {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let inner = Arc::new(Inner {
+            got: Mutex::default(),
+            cond: Condvar::new(),
+            peers: Mutex::default(),
+            accepted: AtomicUsize::new(0),
+            script: Mutex::new(Box::new(script)),
+        });
+        let acc = Arc::clone(&inner);
+        thread::spawn(move || {
+            for sock in listener.incoming().flatten() {
+                let peer = Peer(Arc::new(Mutex::new(sock.try_clone().unwrap())));
+                acc.peers.lock().unwrap().push(peer.clone());
+                acc.accepted.fetch_add(1, Ordering::SeqCst);
+                let inner = Arc::clone(&acc);
+                thread::spawn(move || serve(&inner, sock, &peer));
+            }
+        });
+        Fake { port, inner }
+    }
+
+    /// Sends to every live connection.
+    pub(crate) fn push(&self, xml: &str) {
+        for p in self.inner.peers.lock().unwrap().iter() {
+            p.send(xml);
+        }
+    }
+
+    /// Closes every live connection: the server went away.
+    pub(crate) fn drop_conns(&self) {
+        for p in self.inner.peers.lock().unwrap().drain(..) {
+            let _ = p.0.lock().unwrap().shutdown(Shutdown::Both);
+        }
+    }
+
+    pub(crate) fn accepted(&self) -> usize {
+        self.inner.accepted.load(Ordering::SeqCst)
+    }
+
+    /// Every element the clients sent, in order.
+    pub(crate) fn received(&self) -> Vec<Element> {
+        self.inner.got.lock().unwrap().clone()
+    }
+
+    /// Waits up to 3 s for what was received to satisfy `pred`.
+    pub(crate) fn wait_for(&self, pred: impl Fn(&[Element]) -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut got = self.inner.got.lock().unwrap();
+        while !pred(&got) {
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            got = self.inner.cond.wait_timeout(got, deadline - now).unwrap().0;
+        }
+        true
+    }
+}
+
+fn serve(inner: &Inner, mut sock: TcpStream, peer: &Peer) {
+    let mut stream = XmlStream::new();
+    let mut buf = [0u8; 4096];
+    while let Ok(n) = sock.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        for e in stream.push(&buf[..n]) {
+            inner.got.lock().unwrap().push(e.clone());
+            inner.cond.notify_all();
+            (inner.script.lock().unwrap())(&e, peer);
+        }
+    }
+}
+
+/// An element the client sent, on one line: `newNumberVector Dev.PROP A=1 B=0`,
+/// or the tag, its attributes and its text.
+pub(crate) fn summary(e: &Element) -> String {
+    if e.name.starts_with("new") {
+        let mut s =
+            format!("{} {}.{}", e.name, e.attr("device").unwrap_or_default(), e.attr("name").unwrap_or_default());
+        for c in &e.children {
+            s += &format!(" {}={}", c.attr("name").unwrap_or_default(), c.text_str());
+        }
+        return s;
+    }
+    let mut s = e.name.clone();
+    for (k, v) in &e.attrs {
+        s += &format!(" {k}={v}");
+    }
+    let t = e.text_str();
+    if !t.is_empty() {
+        s += &format!(" {t}");
+    }
+    s
+}
+
+pub(crate) fn def_switch(dev: &str, name: &str, rule: &str, members: &[(&str, bool)]) -> String {
+    let body: String = members
+        .iter()
+        .map(|(n, on)| format!("<defSwitch name='{n}' label='{n}'>{}</defSwitch>", if *on { "On" } else { "Off" }))
+        .collect();
+    format!(
+        "<defSwitchVector device='{dev}' name='{name}' label='{name}' group='Main' state='Idle' perm='rw' \
+         rule='{rule}' timeout='60'>{body}</defSwitchVector>\n"
+    )
+}
+
+pub(crate) fn def_text(dev: &str, name: &str, members: &[(&str, &str)]) -> String {
+    let body: String = members.iter().map(|(n, t)| format!("<defText name='{n}' label='{n}'>{t}</defText>")).collect();
+    format!(
+        "<defTextVector device='{dev}' name='{name}' label='{name}' group='Main' state='Idle' perm='ro' \
+         timeout='60'>{body}</defTextVector>\n"
+    )
+}
+
+pub(crate) fn def_blob(dev: &str, name: &str, members: &[&str]) -> String {
+    let body: String = members.iter().map(|n| format!("<defBLOB name='{n}' label='{n}'/>")).collect();
+    format!(
+        "<defBLOBVector device='{dev}' name='{name}' label='{name}' group='Main' state='Idle' perm='ro' \
+         timeout='60'>{body}</defBLOBVector>\n"
+    )
+}
+
+pub(crate) fn set_switch(dev: &str, name: &str, state: &str, members: &[(&str, bool)]) -> String {
+    let body: String = members
+        .iter()
+        .map(|(n, on)| format!("<oneSwitch name='{n}'>{}</oneSwitch>", if *on { "On" } else { "Off" }))
+        .collect();
+    format!("<setSwitchVector device='{dev}' name='{name}' state='{state}' timeout='60'>{body}</setSwitchVector>\n")
+}
+
+/// The answer of a driver to `CONNECTION`: the switch as asked, Ok.
+pub(crate) fn connection_reply(e: &Element) -> Option<String> {
+    let on = e.children.iter().any(|c| c.attr("name") == Some("CONNECT") && c.text_str() == "On");
+    let dev = e.attr("device")?;
+    (e.name == "newSwitchVector" && e.attr("name") == Some("CONNECTION"))
+        .then(|| set_switch(dev, "CONNECTION", "Ok", &[("CONNECT", on), ("DISCONNECT", !on)]))
+}
+
+pub(crate) fn set_blob(dev: &str, name: &str, member: &str, format: &str, data: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut enc = String::new();
+    for c in data.chunks(3) {
+        let n = c.iter().enumerate().fold(0u32, |n, (i, &b)| n | (b as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            enc.push(if i <= c.len() { A[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+        }
+    }
+    format!(
+        "<setBLOBVector device='{dev}' name='{name}' state='Ok' timeout='60'><oneBLOB name='{member}' size='{}' \
+         enclen='{}' format='{format}'>{enc}</oneBLOB></setBLOBVector>\n",
+        data.len(),
+        enc.len()
+    )
+}
+
+/// `CONNECTION` and `DRIVER_INFO`, the first two properties of a driver.
+pub(crate) fn driver(dev: &str, interfaces: u16, connected: bool) -> String {
+    def_switch(dev, "CONNECTION", "OneOfMany", &[("CONNECT", connected), ("DISCONNECT", !connected)])
+        + &def_text(
+            dev,
+            "DRIVER_INFO",
+            &[
+                ("DRIVER_NAME", dev),
+                ("DRIVER_EXEC", "indi_fake"),
+                ("DRIVER_VERSION", "1.0"),
+                ("DRIVER_INTERFACE", &interfaces.to_string()),
+            ],
+        )
+}

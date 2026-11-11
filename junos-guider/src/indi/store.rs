@@ -171,6 +171,15 @@ impl PropertyStore {
         self.seq
     }
 
+    /// Forgets every device, as libindi does when the server connection
+    /// goes. The sequence number is kept, so a wait that recorded [`seq`]
+    /// before a reconnect only sees what came after.
+    ///
+    /// [`seq`]: PropertyStore::seq
+    pub fn clear(&mut self) {
+        self.devices.clear();
+    }
+
     /// Applies a message from the server. Pings and the server's own
     /// `getProperties` change nothing: the client answers the former.
     pub fn apply(&mut self, msg: Message) -> Outcome {
