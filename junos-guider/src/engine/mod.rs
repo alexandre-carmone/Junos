@@ -8,6 +8,7 @@ pub mod algo;
 pub mod backlash;
 pub mod calibration;
 pub mod camera;
+pub mod control;
 pub mod darks;
 pub mod fits;
 pub mod guider;
