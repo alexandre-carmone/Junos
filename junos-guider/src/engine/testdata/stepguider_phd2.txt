@@ -1,0 +1,1799 @@
+DEBUG: StepGuider: Bump Limits: X: 36, 40; Y: 36, 40; center: 9
+BEGIN: 1
+FRAME: 1
+DEBUG: Stepguider::UpdateCalibrationstate: starting location = 100.00,80.00
+STATUS: Init Calibration:   9, distance  0.0 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (0, 0) + (0, -5)
+DEBUG: stepped: pos (0, -5)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (0, -5) + (5, 0)
+DEBUG: stepped: pos (5, -5)
+CALMOVE: R 5 -> 0
+FRAME: 2
+STATUS: Init Calibration:   8, distance  2.0 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (5, -5) + (0, -5)
+DEBUG: stepped: pos (5, -10)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (5, -10) + (5, 0)
+DEBUG: stepped: pos (10, -10)
+CALMOVE: R 5 -> 0
+FRAME: 3
+STATUS: Init Calibration:   7, distance  4.0 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (10, -10) + (0, -5)
+DEBUG: stepped: pos (10, -15)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (10, -15) + (5, 0)
+DEBUG: stepped: pos (15, -15)
+CALMOVE: R 5 -> 0
+FRAME: 4
+STATUS: Init Calibration:   6, distance  6.0 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (15, -15) + (0, -5)
+DEBUG: stepped: pos (15, -20)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (15, -20) + (5, 0)
+DEBUG: stepped: pos (20, -20)
+CALMOVE: R 5 -> 0
+FRAME: 5
+STATUS: Init Calibration:   5, distance  7.9 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (20, -20) + (0, -5)
+DEBUG: stepped: pos (20, -25)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (20, -25) + (5, 0)
+DEBUG: stepped: pos (25, -25)
+CALMOVE: R 5 -> 0
+FRAME: 6
+STATUS: Init Calibration:   4, distance  9.9 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (25, -25) + (0, -5)
+DEBUG: stepped: pos (25, -30)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (25, -30) + (5, 0)
+DEBUG: stepped: pos (30, -30)
+CALMOVE: R 5 -> 0
+FRAME: 7
+STATUS: Init Calibration:   3, distance 11.9 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (30, -30) + (0, -5)
+DEBUG: stepped: pos (30, -35)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (30, -35) + (5, 0)
+DEBUG: stepped: pos (35, -35)
+CALMOVE: R 5 -> 0
+FRAME: 8
+STATUS: Init Calibration:   2, distance 13.9 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (35, -35) + (0, -5)
+DEBUG: stepped: pos (35, -40)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (35, -40) + (5, 0)
+DEBUG: stepped: pos (40, -40)
+CALMOVE: R 5 -> 0
+FRAME: 9
+STATUS: Init Calibration:   1, distance 15.9 px
+DEBUG: stepguider move axis dir= 1 steps= 4 opts= 0x0
+DEBUG: MoveAxis(D, 4, -)
+DEBUG: stepping (40, -40) + (0, -4)
+DEBUG: stepped: pos (40, -44)
+CALMOVE: D 4 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 4 opts= 0x0
+DEBUG: MoveAxis(R, 4, -)
+DEBUG: stepping (40, -44) + (4, 0)
+DEBUG: stepped: pos (44, -44)
+CALMOVE: R 4 -> 0
+FRAME: 10
+DEBUG: Falling through to state AVERAGE_STARTING_LOCATION, position=(116.50, 74.31)
+STATUS: Averaging:   3, distance 17.5 px
+FRAME: 11
+STATUS: Averaging:   2, distance 17.5 px
+FRAME: 12
+DEBUG: Falling through to state GO_LEFT, startinglocation=(116.52, 74.31)
+ROW: Left,18,-0.020,0.017,116.545,74.296,0.026
+CAL: Left 18 -0.019999999999996021 0.016666666666665719 116.54461512194902,74.29564349166418 0.02603416558635185 State=Left Calibration:  18
+STATUS: Left Calibration:  18, distance  0.0 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (44, -44) + (-5, 0)
+DEBUG: stepped: pos (39, -44)
+CALMOVE: L 5 -> 0
+FRAME: 13
+ROW: Left,17,1.420,0.500,115.105,73.813,1.505
+CAL: Left 17 1.4195389311788631 0.49969688165516857 115.10507619077016,73.812613276675677 1.5049211775599174 State=Left Calibration:  17
+STATUS: Left Calibration:  17, distance  1.5 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (39, -44) + (-5, 0)
+DEBUG: stepped: pos (34, -44)
+CALMOVE: L 5 -> 0
+FRAME: 14
+ROW: Left,16,2.809,1.053,113.716,73.260,3.000
+CAL: Left 16 2.8090778623577108 1.052727096643693 113.71553725959131,73.259583061687152 2.9998587928094258 State=Left Calibration:  16
+STATUS: Left Calibration:  16, distance  3.0 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (34, -44) + (-5, 0)
+DEBUG: stepped: pos (29, -44)
+CALMOVE: L 5 -> 0
+FRAME: 15
+ROW: Left,15,4.249,1.536,112.276,72.777,4.518
+CAL: Left 15 4.2486167935365842 1.5357573116321959 112.27599832841244,72.77655284669865 4.5176647926282483 State=Left Calibration:  15
+STATUS: Left Calibration:  15, distance  4.5 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (29, -44) + (-5, 0)
+DEBUG: stepped: pos (24, -44)
+CALMOVE: L 5 -> 0
+FRAME: 16
+ROW: Left,14,5.638,2.019,110.886,72.294,5.989
+CAL: Left 14 5.6381557247154461 2.0187875266206987 110.88645939723358,72.293522631710147 5.9886812449637752 State=Left Calibration:  14
+STATUS: Left Calibration:  14, distance  6.0 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (24, -44) + (-5, 0)
+DEBUG: stepped: pos (19, -44)
+CALMOVE: L 5 -> 0
+FRAME: 17
+ROW: Left,13,7.028,2.572,109.497,71.740,7.483
+CAL: Left 13 7.0276946558943081 2.5718177416091947 109.49692046605472,71.740492416721651 7.4834977565668606 State=Left Calibration:  13
+STATUS: Left Calibration:  13, distance  7.5 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (19, -44) + (-5, 0)
+DEBUG: stepped: pos (14, -44)
+CALMOVE: L 5 -> 0
+FRAME: 18
+ROW: Left,12,8.467,3.055,108.057,71.257,9.001
+CAL: Left 12 8.4672335870731814 3.0548479565976976 108.05738153487584,71.257462201733148 9.0014521415152409 State=Left Calibration:  12
+STATUS: Left Calibration:  12, distance  9.0 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (14, -44) + (-5, 0)
+DEBUG: stepped: pos (9, -44)
+CALMOVE: L 5 -> 0
+FRAME: 19
+ROW: Left,11,9.857,3.608,106.668,70.704,10.496
+CAL: Left 11 9.8567725182520292 3.6078781715861936 106.667842603697,70.704431986744652 10.496320754320372 State=Left Calibration:  11
+STATUS: Left Calibration:  11, distance 10.5 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (9, -44) + (-5, 0)
+DEBUG: stepped: pos (4, -44)
+CALMOVE: L 5 -> 0
+FRAME: 20
+ROW: Left,10,11.296,4.091,105.228,70.221,12.014
+CAL: Left 10 11.296311449430888 4.0909083865746965 105.22830367251814,70.221401771756149 12.014249197927041 State=Left Calibration:  10
+STATUS: Left Calibration:  10, distance 12.0 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (4, -44) + (-5, 0)
+DEBUG: stepped: pos (-1, -44)
+CALMOVE: L 5 -> 0
+FRAME: 21
+ROW: Left,9,12.686,4.644,103.839,69.668,13.509
+CAL: Left 9 12.685850380609764 4.6439386015632209 103.83876474133926,69.668371556767624 13.509143777986296 State=Left Calibration:   9
+STATUS: Left Calibration:   9, distance 13.5 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (-1, -44) + (-5, 0)
+DEBUG: stepped: pos (-6, -44)
+CALMOVE: L 5 -> 0
+FRAME: 22
+ROW: Left,8,14.075,5.127,102.449,69.185,14.980
+CAL: Left 8 14.075389311788626 5.1269688165517238 102.4492258101604,69.185341341779122 14.980066539381836 State=Left Calibration:   8
+STATUS: Left Calibration:   8, distance 15.0 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (-6, -44) + (-5, 0)
+DEBUG: stepped: pos (-11, -44)
+CALMOVE: L 5 -> 0
+FRAME: 23
+ROW: Left,7,15.515,5.610,101.010,68.702,16.498
+CAL: Left 7 15.514928242967486 5.6099990315401982 101.00968687898154,68.702311126790647 16.498032837835915 State=Left Calibration:   7
+STATUS: Left Calibration:   7, distance 16.5 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (-11, -44) + (-5, 0)
+DEBUG: stepped: pos (-16, -44)
+CALMOVE: L 5 -> 0
+FRAME: 24
+ROW: Left,6,16.904,6.163,99.620,68.149,17.993
+CAL: Left 6 16.904467174146347 6.1630292465287226 99.620147947802678,68.149280911802123 17.992885814547922 State=Left Calibration:   6
+STATUS: Left Calibration:   6, distance 18.0 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (-16, -44) + (-5, 0)
+DEBUG: stepped: pos (-21, -44)
+CALMOVE: L 5 -> 0
+FRAME: 25
+ROW: Left,5,18.344,6.646,98.181,67.666,19.511
+CAL: Left 5 18.344006105325207 6.6460594615172255 98.180609016623819,67.66625069681362 19.510834588972127 State=Left Calibration:   5
+STATUS: Left Calibration:   5, distance 19.5 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (-21, -44) + (-5, 0)
+DEBUG: stepped: pos (-26, -44)
+CALMOVE: L 5 -> 0
+FRAME: 26
+ROW: Left,4,19.734,7.199,96.791,67.113,21.006
+CAL: Left 4 19.733545036504069 7.1990896765057215 96.791070085444957,67.113220481825124 21.005706174230507 State=Left Calibration:   4
+STATUS: Left Calibration:   4, distance 21.0 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (-26, -44) + (-5, 0)
+DEBUG: stepped: pos (-31, -44)
+CALMOVE: L 5 -> 0
+FRAME: 27
+ROW: Left,3,21.123,7.682,95.402,66.630,22.477
+CAL: Left 3 21.123083967682945 7.6821198914942244 95.401531154266081,66.630190266836621 22.476646598927417 State=Left Calibration:   3
+STATUS: Left Calibration:   3, distance 22.5 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (-31, -44) + (-5, 0)
+DEBUG: stepped: pos (-36, -44)
+CALMOVE: L 5 -> 0
+FRAME: 28
+ROW: Left,2,22.563,8.235,93.962,66.077,24.019
+CAL: Left 2 22.562622898861804 8.2351501064827204 93.961992223087222,66.077160051848125 24.018527210312989 State=Left Calibration:   2
+STATUS: Left Calibration:   2, distance 24.0 px
+DEBUG: stepguider move axis dir= 3 steps= 5 opts= 0x0
+DEBUG: MoveAxis(L, 5, -)
+DEBUG: stepping (-36, -44) + (-5, 0)
+DEBUG: stepped: pos (-41, -44)
+CALMOVE: L 5 -> 0
+FRAME: 29
+ROW: Left,1,23.952,8.718,92.572,65.594,25.489
+CAL: Left 1 23.952161830040652 8.7181803214712232 92.572453291908374,65.594129836859622 25.489463008273525 State=Left Calibration:   1
+STATUS: Left Calibration:   1, distance 25.5 px
+DEBUG: stepguider move axis dir= 3 steps= 3 opts= 0x0
+DEBUG: MoveAxis(L, 3, -)
+DEBUG: stepping (-41, -44) + (-3, 0)
+DEBUG: stepped: pos (-44, -44)
+CALMOVE: L 3 -> 0
+FRAME: 30
+DEBUG: Falling through to state AVERAGE_CENTER_LOCATION, position=(91.70, 65.32)
+STATUS: Averaging:   3, distance 26.4 px
+FRAME: 31
+STATUS: Averaging:   2, distance 26.4 px
+FRAME: 32
+AXIS: Left calibration complete. Angle = 20.0 deg, Rate = 299.935 px/sec, Parity = N/A
+DEBUG: LEFT calibration completes with angle=20.0 rate=0.30
+DEBUG: distance=26.39 iterations=18
+DEBUG: Falling through to state GO_UP, startinglocation=(91.72, 65.30)
+ROW: Up,18,-0.020,-0.007,91.737,65.306,0.021
+CAL: Up 18 -0.019999999999996021 -0.0066666666666748142 91.736729933201048,65.306311707866513 0.021081851067787996 State=Up Calibration:  18
+STATUS: Up Calibration:  18, distance  0.0 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, -44) + (0, 5)
+DEBUG: stepped: pos (-44, -39)
+CALMOVE: U 5 -> 0
+FRAME: 33
+ROW: Up,17,0.478,-1.126,91.238,66.425,1.223
+CAL: Up 17 0.4782582417699075 -1.1256464848751619 91.238471691431144,66.425291526075 1.2230335051553787 State=Up Calibration:  17
+STATUS: Up Calibration:  17, distance  1.2 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, -39) + (0, 5)
+DEBUG: stepped: pos (-44, -34)
+CALMOVE: U 5 -> 0
+FRAME: 34
+ROW: Up,16,0.927,-2.315,90.790,67.614,2.493
+CAL: Up 16 0.92651648353978544 -2.3146263030836423 90.790213449661266,67.61427134428348 2.4931762306739529 State=Up Calibration:  16
+STATUS: Up Calibration:  16, distance  2.5 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, -34) + (0, 5)
+DEBUG: stepped: pos (-44, -29)
+CALMOVE: U 5 -> 0
+FRAME: 35
+ROW: Up,15,1.425,-3.434,90.292,68.733,3.717
+CAL: Up 15 1.4247747253096747 -3.4336061212921294 90.291955207891377,68.733251162491968 3.7174768343671007 State=Up Calibration:  15
+STATUS: Up Calibration:  15, distance  3.7 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, -29) + (0, 5)
+DEBUG: stepped: pos (-44, -24)
+CALMOVE: U 5 -> 0
+FRAME: 36
+ROW: Up,14,1.873,-4.623,89.844,69.922,4.988
+CAL: Up 14 1.8730329670795669 -4.6225859395006097 89.843696966121485,69.922230980700448 4.98764004954604 State=Up Calibration:  14
+STATUS: Up Calibration:  14, distance  5.0 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, -24) + (0, 5)
+DEBUG: stepped: pos (-44, -19)
+CALMOVE: U 5 -> 0
+FRAME: 37
+ROW: Up,13,2.321,-5.812,89.395,71.111,6.258
+CAL: Up 13 2.3212912088494591 -5.81156575770909 89.395438724351592,71.111210798908928 6.2580100217607999 State=Up Calibration:  13
+STATUS: Up Calibration:  13, distance  6.3 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, -19) + (0, 5)
+DEBUG: stepped: pos (-44, -14)
+CALMOVE: U 5 -> 0
+FRAME: 38
+ROW: Up,12,2.820,-6.931,88.897,72.230,7.482
+CAL: Up 12 2.8195494506193484 -6.9305455759175771 88.897180482581703,72.230190617117415 7.4821334580692005 State=Up Calibration:  12
+STATUS: Up Calibration:  12, distance  7.5 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, -14) + (0, 5)
+DEBUG: stepped: pos (-44, -9)
+CALMOVE: U 5 -> 0
+FRAME: 39
+ROW: Up,11,3.268,-8.120,88.449,73.419,8.752
+CAL: Up 11 3.2678076923892263 -8.1195253941260574 88.448922240811825,73.419170435325896 8.7524430726681164 State=Up Calibration:  11
+STATUS: Up Calibration:  11, distance  8.8 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, -9) + (0, 5)
+DEBUG: stepped: pos (-44, -4)
+CALMOVE: U 5 -> 0
+FRAME: 40
+ROW: Up,10,3.766,-9.239,87.951,74.538,9.977
+CAL: Up 10 3.7660659341591156 -9.2385052123345446 87.950663999041936,74.538150253534383 9.9766342610504832 State=Up Calibration:  10
+STATUS: Up Calibration:  10, distance 10.0 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, -4) + (0, 5)
+DEBUG: stepped: pos (-44, 1)
+CALMOVE: U 5 -> 0
+FRAME: 41
+ROW: Up,9,4.214,-10.427,87.502,75.727,11.247
+CAL: Up 9 4.214324175929022 -10.427485030543039 87.50240575727203,75.727130071742877 11.24690945646932 State=Up Calibration:   9
+STATUS: Up Calibration:   9, distance 11.2 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, 1) + (0, 5)
+DEBUG: stepped: pos (-44, 6)
+CALMOVE: U 5 -> 0
+FRAME: 42
+ROW: Up,8,4.663,-11.546,87.054,76.846,12.452
+CAL: Up 8 4.6625824176989141 -11.546464848751512 87.054147515502137,76.84610988995135 12.452330115496029 State=Up Calibration:   8
+STATUS: Up Calibration:   8, distance 12.5 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, 6) + (0, 5)
+DEBUG: stepped: pos (-44, 11)
+CALMOVE: U 5 -> 0
+FRAME: 43
+ROW: Up,7,5.161,-12.735,86.556,78.035,13.741
+CAL: Up 7 5.1608406594688034 -12.735444666959992 86.555889273732248,78.03508970815983 13.741391020476279 State=Up Calibration:   7
+STATUS: Up Calibration:   7, distance 13.7 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, 11) + (0, 5)
+DEBUG: stepped: pos (-44, 16)
+CALMOVE: U 5 -> 0
+FRAME: 44
+ROW: Up,6,5.609,-13.924,86.108,79.224,15.012
+CAL: Up 6 5.6090989012386814 -13.924424485168487 86.10763103196237,79.224069526368325 15.011715016181086 State=Up Calibration:   6
+STATUS: Up Calibration:   6, distance 15.0 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, 16) + (0, 5)
+DEBUG: stepped: pos (-44, 21)
+CALMOVE: U 5 -> 0
+FRAME: 45
+ROW: Up,5,6.107,-15.043,85.609,80.343,16.236
+CAL: Up 5 6.1073571430085707 -15.04340430337696 85.609372790192481,80.343049344576798 16.235880767827727 State=Up Calibration:   5
+STATUS: Up Calibration:   5, distance 16.2 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, 21) + (0, 5)
+DEBUG: stepped: pos (-44, 26)
+CALMOVE: U 5 -> 0
+FRAME: 46
+ROW: Up,4,6.556,-16.232,85.161,81.532,17.506
+CAL: Up 4 6.5556153847784628 -16.23238412158544 85.161114548422589,81.532029162785278 17.506181403831139 State=Up Calibration:   4
+STATUS: Up Calibration:   4, distance 17.5 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, 26) + (0, 5)
+DEBUG: stepped: pos (-44, 31)
+CALMOVE: U 5 -> 0
+FRAME: 47
+ROW: Up,3,7.004,-17.351,84.713,82.651,18.712
+CAL: Up 3 7.003873626548355 -17.351363939793941 84.712856306652697,82.65100898099378 18.711602719912616 State=Up Calibration:   3
+STATUS: Up Calibration:   3, distance 18.7 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, 31) + (0, 5)
+DEBUG: stepped: pos (-44, 36)
+CALMOVE: U 5 -> 0
+FRAME: 48
+ROW: Up,2,7.502,-18.540,84.215,83.840,20.001
+CAL: Up 2 7.5021318683182585 -18.540343758002422 84.214598064882793,83.83998879920226 20.000658220032054 State=Up Calibration:   2
+STATUS: Up Calibration:   2, distance 20.0 px
+DEBUG: stepguider move axis dir= 0 steps= 5 opts= 0x0
+DEBUG: MoveAxis(U, 5, -)
+DEBUG: stepping (-44, 36) + (0, 5)
+DEBUG: stepped: pos (-44, 41)
+CALMOVE: U 5 -> 0
+FRAME: 49
+ROW: Up,1,7.950,-19.659,83.766,84.959,21.206
+CAL: Up 1 7.9503901100881365 -19.659323576210895 83.766339823112915,84.958968617410733 21.206077109563399 State=Up Calibration:   1
+STATUS: Up Calibration:   1, distance 21.2 px
+DEBUG: stepguider move axis dir= 0 steps= 3 opts= 0x0
+DEBUG: MoveAxis(U, 3, -)
+DEBUG: stepping (-44, 41) + (0, 3)
+DEBUG: stepped: pos (-44, 44)
+CALMOVE: U 3 -> 0
+FRAME: 50
+DEBUG: Falling through to state AVERAGE_ENDING_LOCATION, position=(83.46, 85.68)
+STATUS: Averaging:   3, distance 22.0 px
+FRAME: 51
+STATUS: Averaging:   2, distance 22.0 px
+FRAME: 52
+AXIS: Up calibration complete. Angle = 112.0 deg, Rate = 249.930 px/sec, Parity = N/A
+DEBUG: UP calibration completes with angle=112.0 rate=0.25
+DEBUG: distance=21.99 iterations=18
+DEBUG: Falling through to state RECENTER, position=(83.50, 85.67)
+DEBUG: CurrentPosition(LEFT)=44 CurrentPosition(UP)=44
+STATUS: Re-centering:   9, distance  0.0 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (-44, 44) + (0, -5)
+DEBUG: stepped: pos (-44, 39)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (-44, 39) + (5, 0)
+DEBUG: stepped: pos (-39, 39)
+CALMOVE: R 5 -> 0
+FRAME: 53
+DEBUG: CurrentPosition(LEFT)=39 CurrentPosition(UP)=39
+STATUS: Re-centering:   8, distance  2.0 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (-39, 39) + (0, -5)
+DEBUG: stepped: pos (-39, 34)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (-39, 34) + (5, 0)
+DEBUG: stepped: pos (-34, 34)
+CALMOVE: R 5 -> 0
+FRAME: 54
+DEBUG: CurrentPosition(LEFT)=34 CurrentPosition(UP)=34
+STATUS: Re-centering:   8, distance  4.0 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (-34, 34) + (0, -5)
+DEBUG: stepped: pos (-34, 29)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (-34, 29) + (5, 0)
+DEBUG: stepped: pos (-29, 29)
+CALMOVE: R 5 -> 0
+FRAME: 55
+DEBUG: CurrentPosition(LEFT)=29 CurrentPosition(UP)=29
+STATUS: Re-centering:   7, distance  5.9 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (-29, 29) + (0, -5)
+DEBUG: stepped: pos (-29, 24)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (-29, 24) + (5, 0)
+DEBUG: stepped: pos (-24, 24)
+CALMOVE: R 5 -> 0
+FRAME: 56
+DEBUG: CurrentPosition(LEFT)=24 CurrentPosition(UP)=24
+STATUS: Re-centering:   7, distance  8.0 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (-24, 24) + (0, -5)
+DEBUG: stepped: pos (-24, 19)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (-24, 19) + (5, 0)
+DEBUG: stepped: pos (-19, 19)
+CALMOVE: R 5 -> 0
+FRAME: 57
+DEBUG: CurrentPosition(LEFT)=19 CurrentPosition(UP)=19
+STATUS: Re-centering:   6, distance 10.0 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (-19, 19) + (0, -5)
+DEBUG: stepped: pos (-19, 14)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (-19, 14) + (5, 0)
+DEBUG: stepped: pos (-14, 14)
+CALMOVE: R 5 -> 0
+FRAME: 58
+DEBUG: CurrentPosition(LEFT)=14 CurrentPosition(UP)=14
+STATUS: Re-centering:   6, distance 11.9 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (-14, 14) + (0, -5)
+DEBUG: stepped: pos (-14, 9)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (-14, 9) + (5, 0)
+DEBUG: stepped: pos (-9, 9)
+CALMOVE: R 5 -> 0
+FRAME: 59
+DEBUG: CurrentPosition(LEFT)=9 CurrentPosition(UP)=9
+STATUS: Re-centering:   5, distance 13.9 px
+DEBUG: stepguider move axis dir= 1 steps= 5 opts= 0x0
+DEBUG: MoveAxis(D, 5, -)
+DEBUG: stepping (-9, 9) + (0, -5)
+DEBUG: stepped: pos (-9, 4)
+CALMOVE: D 5 -> 0
+DEBUG: stepguider move axis dir= 2 steps= 5 opts= 0x0
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (-9, 4) + (5, 0)
+DEBUG: stepped: pos (-4, 4)
+CALMOVE: R 5 -> 0
+FRAME: 60
+DEBUG: Falling through to state COMPLETE, position=(98.48, 80.54)
+DEBUG: Mount::SetCalibration (stepguider) -- xAngle=20.0 yAngle=112.0 xRate=299.935 yRate=249.930 bin=1 dec=Unknown pierSide=-1 par=?/? rotAng=None
+DEBUG: Mount::SetCalibration (stepguider) -- sets m_xAngle=20.0 m_yAngleError=-2.0
+COMPLETE: AO
+DEBUG: Calibration Complete
+STATUS: Calibration complete
+CALIBRATION: 0.34847248205642528 0.29993527625920624 1.954882311285969 0.24992976041011714 pos=-4,4
+DETAILS: n=18/18 ortho=2.0405033831841615 fl=1000 scale=0.78000000000000003 speeds=-1/-1 bin=1 ts=T side=-1 issue=0
+GUIDE: 1
+DEBUG: CameraToMount -- cameraTheta (-0.57) - m_xAngle (0.35) = xAngle (-0.92 = -0.92)
+DEBUG: CameraToMount -- cameraTheta (-0.57) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.88 = -0.88)
+DEBUG: CameraToMount -- cameraX=0.72 cameraY=-0.46 hyp=0.85 cameraTheta=-0.57 mountX=0.52 mountY=-0.66, mountTheta=-0.90
+DEBUG: Moving (0.72, -0.46) raw xDistance=0.52 yDistance=-0.66
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-4, 4) + (-1, 0)
+DEBUG: stepped: pos (-5, 4)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-5, 4) + (0, 2)
+DEBUG: stepped: pos (-5, 6)
+STEP: opts=13 frame=61 ao=1 cam=0.71999999999999886,-0.45999999999999375 mnt=0.51965193780086827,-0.65927212393653423 gd=0.327380720814547,-0.41534143808001656 ra=1 Left lim=0 dec=2 Up lim=0 pos=-5,6
+RESULT: 0 pos=-5,6 avg=-5,6 inprog=0 w=1
+GUIDE: 2
+DEBUG: CameraToMount -- cameraTheta (0.05) - m_xAngle (0.35) = xAngle (-0.30 = -0.30)
+DEBUG: CameraToMount -- cameraTheta (0.05) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.26 = -0.26)
+DEBUG: CameraToMount -- cameraX=1.19 cameraY=0.06 hyp=1.19 cameraTheta=0.05 mountX=1.14 mountY=-0.31, mountTheta=-0.26
+DEBUG: Moving (1.19, 0.06) raw xDistance=1.14 yDistance=-0.31
+DEBUG: MoveAxis(L, 2, ABG)
+DEBUG: stepping (-5, 6) + (-2, 0)
+DEBUG: stepped: pos (-7, 6)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-7, 6) + (0, 1)
+DEBUG: stepped: pos (-7, 7)
+STEP: opts=13 frame=62 ao=1 cam=1.1907889170562811,0.060985884285685188 mnt=1.1400414171166739,-0.30847563962304064 gd=0.74114274324052298,-0.22341355362811674 ra=2 Left lim=0 dec=1 Up lim=0 pos=-7,7
+RESULT: 0 pos=-7,7 avg=-5.6600000000000001,6.3300000000000001 inprog=0 w=1
+GUIDE: 3
+DEBUG: CameraToMount -- cameraTheta (-0.60) - m_xAngle (0.35) = xAngle (-0.94 = -0.94)
+DEBUG: CameraToMount -- cameraTheta (-0.60) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.91 = -0.91)
+DEBUG: CameraToMount -- cameraX=0.87 cameraY=-0.59 hyp=1.06 cameraTheta=-0.60 mountX=0.62 mountY=-0.83, mountTheta=-0.93
+DEBUG: Moving (0.87, -0.59) raw xDistance=0.62 yDistance=-0.83
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-7, 7) + (-1, 0)
+DEBUG: stepped: pos (-8, 7)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-8, 7) + (0, 2)
+DEBUG: stepped: pos (-8, 9)
+STEP: opts=13 frame=63 ao=1 cam=0.87332169623074662,-0.59243023806800466 mnt=0.6185383346239357,-0.83246323536188949 gd=0.44155914283991604,-0.54009078703195856 ra=1 Left lim=0 dec=2 Up lim=0 pos=-8,9
+RESULT: 0 pos=-8,9 avg=-6.4321999999999999,7.2111000000000001 inprog=0 w=1
+GUIDE: 4
+DEBUG: CameraToMount -- cameraTheta (-0.05) - m_xAngle (0.35) = xAngle (-0.40 = -0.40)
+DEBUG: CameraToMount -- cameraTheta (-0.05) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.37 = -0.37)
+DEBUG: CameraToMount -- cameraX=1.34 cameraY=-0.07 hyp=1.35 cameraTheta=-0.05 mountX=1.24 mountY=-0.48, mountTheta=-0.37
+DEBUG: Moving (1.34, -0.07) raw xDistance=1.24 yDistance=-0.48
+DEBUG: MoveAxis(L, 3, ABG)
+DEBUG: stepping (-8, 9) + (-3, 0)
+DEBUG: stepped: pos (-11, 9)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-11, 9) + (0, 1)
+DEBUG: stepped: pos (-11, 10)
+STEP: opts=13 frame=64 ao=1 cam=1.3441106132870289,-0.07144435378232572 mnt=1.2389278139397411,-0.48166675104839596 gd=0.81143366278083096,-0.34125640825272657 ra=3 Left lim=0 dec=1 Up lim=0 pos=-11,10
+RESULT: 0 pos=-11,10 avg=-7.9395740000000004,8.131437 inprog=0 w=1
+GUIDE: 5
+DEBUG: CameraToMount -- cameraTheta (0.02) - m_xAngle (0.35) = xAngle (-0.33 = -0.33)
+DEBUG: CameraToMount -- cameraTheta (0.02) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.30 = -0.30)
+DEBUG: CameraToMount -- cameraX=0.74 cameraY=0.01 hyp=0.74 cameraTheta=0.02 mountX=0.70 mountY=-0.22, mountTheta=-0.30
+DEBUG: Moving (0.74, 0.01) raw xDistance=0.70 yDistance=-0.22
+DEBUG: MoveAxis(L, 2, ABG)
+DEBUG: stepping (-11, 10) + (-2, 0)
+DEBUG: stepped: pos (-13, 10)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-13, 10) + (0, 1)
+DEBUG: stepped: pos (-13, 11)
+STEP: opts=13 frame=65 ao=1 cam=0.74473560622574553,0.012533480866281366 mnt=0.70425328366800688,-0.21728971596462032 gd=0.50047992510550243,-0.16078046963540166 ra=2 Left lim=0 dec=1 Up lim=0 pos=-13,11
+RESULT: 0 pos=-13,11 avg=-9.6095145800000008,9.0780627900000006 inprog=0 w=1
+GUIDE: 6
+DEBUG: CameraToMount -- cameraTheta (-0.56) - m_xAngle (0.35) = xAngle (-0.91 = -0.91)
+DEBUG: CameraToMount -- cameraTheta (-0.56) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.87 = -0.87)
+DEBUG: CameraToMount -- cameraX=1.03 cameraY=-0.64 hyp=1.21 cameraTheta=-0.56 mountX=0.75 mountY=-0.93, mountTheta=-0.89
+DEBUG: Moving (1.03, -0.64) raw xDistance=0.75 yDistance=-0.93
+DEBUG: MoveAxis(L, 2, ABG)
+DEBUG: stepping (-13, 11) + (-2, 0)
+DEBUG: stepped: pos (-15, 11)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-15, 11) + (0, 2)
+DEBUG: stepped: pos (-15, 13)
+STEP: opts=13 frame=66 ao=1 cam=1.0272683854002054,-0.64088264148745111 mnt=0.74668744073918503,-0.92594536466304123 gd=0.50544668242307178,-0.59460021261219409 ra=2 Left lim=0 dec=2 Up lim=0 pos=-15,13
+RESULT: 0 pos=-15,13 avg=-11.3883747686,10.3723020693 inprog=0 w=1
+GUIDE: 7
+DEBUG: CameraToMount -- cameraTheta (-0.18) - m_xAngle (0.35) = xAngle (-0.53 = -0.53)
+DEBUG: CameraToMount -- cameraTheta (-0.18) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.49 = -0.49)
+DEBUG: CameraToMount -- cameraX=1.22 cameraY=-0.22 hyp=1.24 cameraTheta=-0.18 mountX=1.07 mountY=-0.59, mountTheta=-0.50
+DEBUG: Moving (1.22, -0.22) raw xDistance=1.07 yDistance=-0.59
+DEBUG: MoveAxis(L, 2, ABG)
+DEBUG: stepping (-15, 13) + (-2, 0)
+DEBUG: stepped: pos (-17, 13)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-17, 13) + (0, 2)
+DEBUG: stepped: pos (-17, 15)
+STEP: opts=13 frame=67 ao=1 cam=1.2161495162207103,-0.22250280019945023 mnt=1.0670769728678908,-0.58600856849098748 gd=0.70763976067638623,-0.41080741303217566 ra=2 Left lim=0 dec=2 Up lim=0 pos=-17,15
+RESULT: 0 pos=-17,15 avg=-13.240211094962,11.899442386431 inprog=0 w=1
+GUIDE: 8
+DEBUG: CameraToMount -- cameraTheta (-0.67) - m_xAngle (0.35) = xAngle (-1.02 = -1.02)
+DEBUG: CameraToMount -- cameraTheta (-0.67) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.99 = -0.99)
+DEBUG: CameraToMount -- cameraX=0.81 cameraY=-0.64 hyp=1.03 cameraTheta=-0.67 mountX=0.54 mountY=-0.86, mountTheta=-1.01
+DEBUG: Moving (0.81, -0.64) raw xDistance=0.54 yDistance=-0.86
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-17, 15) + (-1, 0)
+DEBUG: stepped: pos (-18, 15)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-18, 15) + (0, 2)
+DEBUG: stepped: pos (-18, 17)
+STEP: opts=13 frame=68 ao=1 cam=0.80503064704120675,-0.64412295891143856 mnt=0.53670076602457018,-0.860628038323485 gd=0.38765626584282631,-0.57095218305604789 ra=1 Left lim=0 dec=2 Up lim=0 pos=-18,17
+RESULT: 0 pos=-18,17 avg=-14.81094143362454,13.58262639890877 inprog=0 w=1
+GUIDE: 9
+DEBUG: CameraToMount -- cameraTheta (-0.10) - m_xAngle (0.35) = xAngle (-0.44 = -0.44)
+DEBUG: CameraToMount -- cameraTheta (-0.10) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.41 = -0.41)
+DEBUG: CameraToMount -- cameraX=1.28 cameraY=-0.12 hyp=1.28 cameraTheta=-0.10 mountX=1.16 mountY=-0.51, mountTheta=-0.42
+DEBUG: Moving (1.28, -0.12) raw xDistance=1.16 yDistance=-0.51
+DEBUG: MoveAxis(L, 3, ABG)
+DEBUG: stepping (-18, 17) + (-3, 0)
+DEBUG: stepped: pos (-21, 17)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-21, 17) + (0, 1)
+DEBUG: stepped: pos (-21, 18)
+STEP: opts=13 frame=69 ao=1 cam=1.2758195640974748,-0.12313707462575962 mnt=1.1570902453403624,-0.50983155400998714 gd=0.7561027931734261,-0.36116053184021524 ra=3 Left lim=0 dec=1 Up lim=0 pos=-21,18
+RESULT: 0 pos=-21,18 avg=-16.853330760528443,15.040359687268877 inprog=0 w=1
+GUIDE: 10
+DEBUG: CameraToMount -- cameraTheta (-0.91) - m_xAngle (0.35) = xAngle (-1.26 = -1.26)
+DEBUG: CameraToMount -- cameraTheta (-0.91) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-1.23 = -1.23)
+DEBUG: CameraToMount -- cameraX=0.68 cameraY=-0.88 hyp=1.11 cameraTheta=-0.91 mountX=0.34 mountY=-1.04, mountTheta=-1.26
+DEBUG: Moving (0.68, -0.88) raw xDistance=0.34 yDistance=-1.04
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-21, 18) + (-1, 0)
+DEBUG: stepped: pos (-22, 18)
+DEBUG: MoveAxis(U, 3, ABG)
+DEBUG: stepping (-22, 18) + (0, 3)
+DEBUG: stepped: pos (-22, 21)
+STEP: opts=13 frame=70 ao=1 cam=0.67644455703619144,-0.87915923997715595 mnt=0.33558721566054106,-1.0446788378903118 gd=0.26434714138828069,-0.68342890509971155 ra=1 Left lim=0 dec=3 Up lim=0 pos=-22,21
+RESULT: 0 pos=-22,21 avg=-18.551731609554057,17.007040990470149 inprog=0 w=1
+GUIDE: 11
+DEBUG: CameraToMount -- cameraTheta (-0.12) - m_xAngle (0.35) = xAngle (-0.47 = -0.47)
+DEBUG: CameraToMount -- cameraTheta (-0.12) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.43 = -0.43)
+DEBUG: CameraToMount -- cameraX=1.05 cameraY=-0.13 hyp=1.06 cameraTheta=-0.12 mountX=0.95 mountY=-0.44, mountTheta=-0.44
+DEBUG: Moving (1.05, -0.13) raw xDistance=0.95 yDistance=-0.44
+DEBUG: MoveAxis(L, 2, ABG)
+DEBUG: stepping (-22, 21) + (-2, 0)
+DEBUG: stepped: pos (-24, 21)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-24, 21) + (0, 1)
+DEBUG: stepped: pos (-24, 22)
+STEP: opts=13 frame=71 ao=1 cam=1.0535818257384761,-0.12637739204977549 mnt=0.94710357062573758,-0.44451422767045801 gd=0.6151795493913943,-0.32788398678936836 ra=2 Left lim=0 dec=1 Up lim=0 pos=-24,22
+RESULT: 0 pos=-24,22 avg=-20.349660178401219,18.654717463615 inprog=0 w=1
+GUIDE: 12
+DEBUG: CameraToMount -- cameraTheta (0.05) - m_xAngle (0.35) = xAngle (-0.30 = -0.30)
+DEBUG: CameraToMount -- cameraTheta (0.05) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.27 = -0.27)
+DEBUG: CameraToMount -- cameraX=1.34 cameraY=0.06 hyp=1.34 cameraTheta=0.05 mountX=1.28 mountY=-0.35, mountTheta=-0.27
+DEBUG: Moving (1.34, 0.06) raw xDistance=1.28 yDistance=-0.35
+DEBUG: MoveAxis(L, 3, ABG)
+DEBUG: stepping (-24, 22) + (-3, 0)
+DEBUG: stepped: pos (-27, 22)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-27, 22) + (0, 1)
+DEBUG: stepped: pos (-27, 23)
+STEP: opts=13 frame=72 ao=1 cam=1.3361146049129502,0.060206485596523862 mnt=1.2763662271050258,-0.35394555740475592 gd=0.8471732915335638,-0.24593758024025203 ra=3 Left lim=0 dec=1 Up lim=0 pos=-27,23
+RESULT: 0 pos=-27,23 avg=-22.544272319528815,20.08866070062205 inprog=0 w=1
+GUIDE: 13
+DEBUG: CameraToMount -- cameraTheta (-0.76) - m_xAngle (0.35) = xAngle (-1.11 = -1.11)
+DEBUG: CameraToMount -- cameraTheta (-0.76) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-1.07 = -1.07)
+DEBUG: CameraToMount -- cameraX=0.74 cameraY=-0.70 hyp=1.01 cameraTheta=-0.76 mountX=0.45 mountY=-0.89, mountTheta=-1.10
+DEBUG: Moving (0.74, -0.70) raw xDistance=0.45 yDistance=-0.89
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-27, 23) + (-1, 0)
+DEBUG: stepped: pos (-28, 23)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-28, 23) + (0, 2)
+DEBUG: stepped: pos (-28, 25)
+STEP: opts=13 frame=73 ao=1 cam=0.73673959785165266,-0.69581567975488667 mnt=0.45486319742518644,-0.88879284128508962 gd=0.34586594478521693,-0.57715512062642405 ra=1 Left lim=0 dec=2 Up lim=0 pos=-28,25
+RESULT: 0 pos=-28,25 avg=-24.344662454084308,21.709402669416775 inprog=0 w=1
+GUIDE: 14
+DEBUG: CameraToMount -- cameraTheta (-0.14) - m_xAngle (0.35) = xAngle (-0.49 = -0.49)
+DEBUG: CameraToMount -- cameraTheta (-0.14) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.46 = -0.46)
+DEBUG: CameraToMount -- cameraX=1.21 cameraY=-0.17 hyp=1.22 cameraTheta=-0.14 mountX=1.08 mountY=-0.54, mountTheta=-0.46
+DEBUG: Moving (1.21, -0.17) raw xDistance=1.08 yDistance=-0.54
+DEBUG: MoveAxis(L, 2, ABG)
+DEBUG: stepping (-28, 25) + (-2, 0)
+DEBUG: stepped: pos (-30, 25)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-30, 25) + (0, 2)
+DEBUG: stepped: pos (-30, 27)
+STEP: opts=13 frame=74 ao=1 cam=1.2075285149079207,-0.17482979546917932 mnt=1.0752526767409885,-0.53799635697156467 gd=0.70161980248178779,-0.37933856333593541 ra=2 Left lim=0 dec=2 Up lim=0 pos=-30,27
+RESULT: 0 pos=-30,27 avg=-26.210923844236486,23.45529978850924 inprog=0 w=1
+GUIDE: 15
+DEBUG: CameraToMount -- cameraTheta (-0.64) - m_xAngle (0.35) = xAngle (-0.99 = -0.99)
+DEBUG: CameraToMount -- cameraTheta (-0.64) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.96 = -0.96)
+DEBUG: CameraToMount -- cameraX=0.80 cameraY=-0.60 hyp=0.99 cameraTheta=-0.64 mountX=0.54 mountY=-0.81, mountTheta=-0.98
+DEBUG: Moving (0.80, -0.60) raw xDistance=0.54 yDistance=-0.81
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-30, 27) + (-1, 0)
+DEBUG: stepped: pos (-31, 27)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-31, 27) + (0, 2)
+DEBUG: stepped: pos (-31, 29)
+STEP: opts=13 frame=75 ao=1 cam=0.79640964572843131,-0.59644995418119606 mnt=0.54487646989767125,-0.81261582680409361 gd=0.39238556220925808,-0.53850167032009444 ra=1 Left lim=0 dec=2 Up lim=0 pos=-31,29
+RESULT: 0 pos=-31,29 avg=-27.791318975638447,25.28505085830119 inprog=0 w=1
+GUIDE: 16
+DEBUG: CameraToMount -- cameraTheta (-0.06) - m_xAngle (0.35) = xAngle (-0.41 = -0.41)
+DEBUG: CameraToMount -- cameraTheta (-0.06) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.37 = -0.37)
+DEBUG: CameraToMount -- cameraX=1.27 cameraY=-0.08 hyp=1.27 cameraTheta=-0.06 mountX=1.17 mountY=-0.46, mountTheta=-0.38
+DEBUG: Moving (1.27, -0.08) raw xDistance=1.17 yDistance=-0.46
+DEBUG: MoveAxis(L, 3, ABG)
+DEBUG: stepping (-31, 29) + (-3, 0)
+DEBUG: stepped: pos (-34, 29)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-34, 29) + (0, 1)
+DEBUG: stepped: pos (-34, 30)
+STEP: opts=13 frame=76 ao=1 cam=1.2671985627846993,-0.075464069895502917 mnt=1.1652659492134685,-0.46181934249058215 gd=0.76158453735913323,-0.32864130269147335 ra=3 Left lim=0 dec=1 Up lim=0 pos=-34,30
+RESULT: 0 pos=-34,30 avg=-29.84018371367776,26.840984075061797 inprog=0 w=1
+GUIDE: 17
+DEBUG: CameraToMount -- cameraTheta (-0.58) - m_xAngle (0.35) = xAngle (-0.93 = -0.93)
+DEBUG: CameraToMount -- cameraTheta (-0.58) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.89 = -0.89)
+DEBUG: CameraToMount -- cameraX=1.27 cameraY=-0.83 hyp=1.52 cameraTheta=-0.58 mountX=0.91 mountY=-1.18, mountTheta=-0.92
+DEBUG: Moving (1.27, -0.83) raw xDistance=0.91 yDistance=-1.18
+DEBUG: MoveAxis(L, 2, ABG)
+DEBUG: stepping (-34, 30) + (-2, 0)
+DEBUG: stepped: pos (-36, 30)
+DEBUG: MoveAxis(U, 3, ABG)
+DEBUG: stepping (-36, 30) + (0, 3)
+DEBUG: stepped: pos (-36, 33)
+STEP: opts=13 frame=77 ao=1 cam=1.2678235557233819,-0.83148623524691345 mnt=0.90770015909754675,-1.1813346793304427 gd=0.62516201784659375,-0.76724573916658201 ra=2 Left lim=0 dec=3 Up lim=0 pos=-36,33
+RESULT: 0 pos=-36,33 avg=-31.8729230881641,28.873459330291404 inprog=0 w=1
+GUIDE: 18
+DEBUG: CameraToMount -- cameraTheta (-0.23) - m_xAngle (0.35) = xAngle (-0.58 = -0.58)
+DEBUG: CameraToMount -- cameraTheta (-0.23) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.55 = -0.55)
+DEBUG: CameraToMount -- cameraX=0.76 cameraY=-0.18 hyp=0.78 cameraTheta=-0.23 mountX=0.66 mountY=-0.41, mountTheta=-0.56
+DEBUG: Moving (0.76, -0.18) raw xDistance=0.66 yDistance=-0.41
+DEBUG: MoveAxis(L, 2, ABG)
+DEBUG: stepping (-36, 33) + (-2, 0)
+DEBUG: stepped: pos (-38, 33)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-38, 33) + (0, 1)
+DEBUG: stepped: pos (-38, 34)
+STEP: opts=13 frame=78 ao=1 cam=0.76305303818990922,-0.18131043031721106 mnt=0.65527932731172545,-0.40736170429250229 gd=0.45658731745564857,-0.3103450754459372 ra=2 Left lim=0 dec=1 Up lim=0 pos=-38,34
+DEBUG: starting a new bump
+DEBUG: MountToCamera -- mountTheta (-0.64) + m_xAngle (0.35) = xAngle (-0.30 = -0.30)
+DEBUG: MountToCamera -- mountX=10.17 mountY=-7.64 hyp=12.72 mountTheta=-0.64 cameraX=12.16, cameraY=-3.71 cameraTheta=-0.30
+DEBUG: incremental bump (12.164, -3.709) isValid = 1
+DEBUG: Scheduling Mount bump of (0.430, -0.109)
+RESULT: 0 pos=-38,34 avg=-33.894858469069945,30.56521775129524 inprog=1 w=1
+SHOWBUMP: 1.2240847381666859 -0.946176584976263
+BUMP: 0.4303451495345369 -0.10933332977237642
+GUIDE: 19
+DEBUG: CameraToMount -- cameraTheta (0.18) - m_xAngle (0.35) = xAngle (-0.16 = -0.16)
+DEBUG: CameraToMount -- cameraTheta (0.18) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.13 = -0.13)
+DEBUG: CameraToMount -- cameraX=0.62 cameraY=0.11 hyp=0.63 cameraTheta=0.18 mountX=0.62 mountY=-0.08, mountTheta=-0.13
+DEBUG: Moving (0.62, 0.11) raw xDistance=0.62 yDistance=-0.08
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-38, 34) + (-1, 0)
+DEBUG: stepped: pos (-39, 34)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=79 ao=1 cam=0.61524066782986608,0.11460677710145717 mnt=0.61739578968432662,-0.080315346838033 gd=0.42092045972302122,-0.072322823789176385 ra=1 Left lim=0 dec=0 Up lim=0 pos=-39,34
+DEBUG: outside bump range, increase bump weight 1.00 => 1.17
+DEBUG: MountToCamera -- mountTheta (-0.64) + m_xAngle (0.35) = xAngle (-0.29 = -0.29)
+DEBUG: MountToCamera -- mountX=10.67 mountY=-7.92 hyp=13.29 mountTheta=-0.64 cameraX=12.74, cameraY=-3.80 cameraTheta=-0.29
+DEBUG: incremental bump (12.735, -3.802) isValid = 1
+DEBUG: Scheduling Mount bump of (0.503, -0.125)
+RESULT: 0 pos=-39,34 avg=-35.579555174276862,31.698695893367812 inprog=1 w=1.1666666666666667
+SHOWBUMP: 1.4336183207816826 -1.0957117611149152
+BUMP: 0.50294855171250252 -0.12512742342123367
+GUIDE: 20
+DEBUG: CameraToMount -- cameraTheta (-1.27) - m_xAngle (0.35) = xAngle (-1.62 = -1.62)
+DEBUG: CameraToMount -- cameraTheta (-1.27) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-1.58 = -1.58)
+DEBUG: CameraToMount -- cameraX=0.17 cameraY=-0.54 hyp=0.57 cameraTheta=-1.27 mountX=-0.03 mountY=-0.57, mountTheta=-1.62
+DEBUG: Moving (0.17, -0.54) raw xDistance=-0.03 yDistance=-0.57
+DEBUG: MoveAxis(R, 0, ABG)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-39, 34) + (0, 1)
+DEBUG: stepped: pos (-39, 35)
+STEP: opts=13 frame=80 ao=1 cam=0.17038432988159968,-0.54287184247502296 mnt=-0.02522692836462018,-0.56896040240780299 gd=0,-0.36350765118215816 ra=0 Right lim=0 dec=1 Up lim=0 pos=-39,35
+DEBUG: outside bump range, increase bump weight 1.17 => 1.33
+DEBUG: MountToCamera -- mountTheta (-0.64) + m_xAngle (0.35) = xAngle (-0.29 = -0.29)
+DEBUG: MountToCamera -- mountX=11.01 mountY=-8.19 hyp=13.73 mountTheta=-0.64 cameraX=13.15, cameraY=-3.94 cameraTheta=-0.29
+DEBUG: incremental bump (13.147, -3.943) isValid = 1
+DEBUG: Scheduling Mount bump of (0.552, -0.138)
+RESULT: 0 pos=-39,35 avg=-36.708301966765497,32.788126248556438 inprog=1 w=1.3333333333333335
+SHOWBUMP: 1.5727559498495829 -1.2049263709559104
+BUMP: 0.5520067079652754 -0.13794655335588193
+GUIDE: 21
+DEBUG: CameraToMount -- cameraTheta (-0.03) - m_xAngle (0.35) = xAngle (-0.38 = -0.38)
+DEBUG: CameraToMount -- cameraTheta (-0.03) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.34 = -0.34)
+DEBUG: CameraToMount -- cameraX=0.46 cameraY=-0.01 hyp=0.46 cameraTheta=-0.03 mountX=0.43 mountY=-0.16, mountTheta=-0.35
+DEBUG: Moving (0.46, -0.01) raw xDistance=0.43 yDistance=-0.16
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-39, 35) + (-1, 0)
+DEBUG: stepped: pos (-40, 35)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=81 ao=1 cam=0.4647259735623237,-0.013129325477450493 mnt=0.43231063218240734,-0.15552539665433596 gd=0.27235569827491662,-0.12342653547498271 ra=1 Left lim=0 dec=0 Up lim=0 pos=-40,35
+DEBUG: outside bump range, increase bump weight 1.33 => 1.50
+DEBUG: MountToCamera -- mountTheta (-0.64) + m_xAngle (0.35) = xAngle (-0.29 = -0.29)
+DEBUG: MountToCamera -- mountX=11.34 mountY=-8.38 hyp=14.10 mountTheta=-0.64 cameraX=13.52, cameraY=-4.00 cameraTheta=-0.29
+DEBUG: incremental bump (13.515, -4.003) isValid = 1
+DEBUG: Scheduling Mount bump of (0.451, -0.111)
+RESULT: 0 pos=-40,35 avg=-37.794562317732883,33.518044586532817 inprog=1 w=1.5000000000000002
+SHOWBUMP: 1.2876146611872683 -0.97992207786820074
+BUMP: 0.4513682705490481 -0.11139701087777763
+GUIDE: 22
+DEBUG: CameraToMount -- cameraTheta (-0.79) - m_xAngle (0.35) = xAngle (-1.14 = -1.14)
+DEBUG: CameraToMount -- cameraTheta (-0.79) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-1.11 = -1.11)
+DEBUG: CameraToMount -- cameraX=0.67 cameraY=-0.68 hyp=0.96 cameraTheta=-0.79 mountX=0.40 mountY=-0.86, mountTheta=-1.14
+DEBUG: Moving (0.67, -0.68) raw xDistance=0.40 yDistance=-0.86
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-40, 35) + (-1, 0)
+DEBUG: stepped: pos (-41, 35)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-41, 35) + (0, 2)
+DEBUG: stepped: pos (-41, 37)
+STEP: opts=13 frame=82 ao=1 cam=0.67144991677750454,-0.68433835759736894 mnt=0.3974168016727021,-0.85777779297543477 gd=0.26943748393304645,-0.54903986705777263 ra=1 Left lim=0 dec=2 Up lim=0 pos=-41,37
+DEBUG: secondary mount is busy, cannot bump
+RESULT: 0 pos=-41,37 avg=-38.852356752881029,34.667089872976987 inprog=1 w=1.5000000000000002
+GUIDE: 23
+DEBUG: CameraToMount -- cameraTheta (-0.29) - m_xAngle (0.35) = xAngle (-0.64 = -0.64)
+DEBUG: CameraToMount -- cameraTheta (-0.29) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.61 = -0.61)
+DEBUG: CameraToMount -- cameraX=0.54 cameraY=-0.16 hyp=0.57 cameraTheta=-0.29 mountX=0.45 mountY=-0.32, mountTheta=-0.62
+DEBUG: Moving (0.54, -0.16) raw xDistance=0.45 yDistance=-0.32
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-41, 37) + (-1, 0)
+DEBUG: stepped: pos (-42, 37)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-42, 37) + (0, 1)
+DEBUG: stepped: pos (-42, 38)
+STEP: opts=13 frame=83 ao=1 cam=0.54223883383377824,-0.16335247331166158 mnt=0.45386904142457296,-0.3223132557023784 gd=0.30479811997279421,-0.24149014178654249 ra=1 Left lim=0 dec=1 Up lim=0 pos=-42,38
+DEBUG: FAR outside bump range, increase bump weight 1.50 => 2.50
+DEBUG: MountToCamera -- mountTheta (-0.64) + m_xAngle (0.35) = xAngle (-0.29 = -0.29)
+DEBUG: MountToCamera -- mountX=11.96 mountY=-8.94 hyp=14.94 mountTheta=-0.64 cameraX=14.30, cameraY=-4.32 cameraTheta=-0.29
+DEBUG: incremental bump (14.298, -4.316) isValid = 1
+DEBUG: Scheduling Mount bump of (0.549, -0.138)
+RESULT: 0 pos=-42,38 avg=-39.89107902443029,35.766950214894578 inprog=1 w=2.5
+SHOWBUMP: 1.5637205909582965 -1.2022656871311301
+BUMP: 0.54919938909768107 -0.13815576162139159
+GUIDE: 24
+DEBUG: CameraToMount -- cameraTheta (-0.80) - m_xAngle (0.35) = xAngle (-1.15 = -1.15)
+DEBUG: CameraToMount -- cameraTheta (-0.80) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-1.11 = -1.11)
+DEBUG: CameraToMount -- cameraX=0.56 cameraY=-0.58 hyp=0.80 cameraTheta=-0.80 mountX=0.33 mountY=-0.72, mountTheta=-1.14
+DEBUG: Moving (0.56, -0.58) raw xDistance=0.33 yDistance=-0.72
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-42, 38) + (-1, 0)
+DEBUG: stepped: pos (-43, 38)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-43, 38) + (0, 2)
+DEBUG: stepped: pos (-43, 40)
+STEP: opts=13 frame=84 ao=1 cam=0.55748001014634951,-0.57600679104626806 mnt=0.32728817824159856,-0.71962724112532206 gd=0.22752742069030268,-0.4702694718340108 ra=1 Left lim=0 dec=2 Up lim=0 pos=-43,40
+DEBUG: FAR outside bump range, increase bump weight 2.50 => 3.50
+DEBUG: MountToCamera -- mountTheta (-0.65) + m_xAngle (0.35) = xAngle (-0.30 = -0.30)
+DEBUG: MountToCamera -- mountX=12.27 mountY=-9.29 hyp=15.39 mountTheta=-0.65 cameraX=14.71, cameraY=-4.54 cameraTheta=-0.30
+DEBUG: incremental bump (14.706, -4.539) isValid = 1
+DEBUG: Scheduling Mount bump of (0.776, -0.200)
+RESULT: 0 pos=-43,40 avg=-40.917022946368292,37.163856643979365 inprog=1 w=3.5
+SHOWBUMP: 2.2054393880759862 -1.7161989296545368
+BUMP: 0.77633425480511609 -0.19968202187572653
+GUIDE: 25
+DEBUG: CameraToMount -- cameraTheta (2.75) - m_xAngle (0.35) = xAngle (2.40 = 2.40)
+DEBUG: CameraToMount -- cameraTheta (2.75) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.43 = 2.43)
+DEBUG: CameraToMount -- cameraX=-0.35 cameraY=0.14 hyp=0.38 cameraTheta=2.75 mountX=-0.28 mountY=0.24, mountTheta=2.42
+DEBUG: Moving (-0.35, 0.14) raw xDistance=-0.28 yDistance=0.24
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-43, 40) + (1, 0)
+DEBUG: stepped: pos (-42, 40)
+DEBUG: MoveAxis(D, 0, ABG)
+STEP: opts=13 frame=85 ao=1 cam=-0.34806532760248388,0.14466111511515578 mnt=-0.27774865414203137,0.24476648345237981 gd=-0.15905473266115858,0.12128402154661852 ra=1 Right lim=0 dec=0 Down lim=0 pos=-42,40
+DEBUG: FAR outside bump range, increase bump weight 3.50 => 4.50
+DEBUG: limit bump weight to 4.4
+DEBUG: MountToCamera -- mountTheta (-0.66) + m_xAngle (0.35) = xAngle (-0.31 = -0.31)
+DEBUG: MountToCamera -- mountX=12.38 mountY=-9.52 hyp=15.62 mountTheta=-0.66 cameraX=14.89, cameraY=-4.72 cameraTheta=-0.31
+DEBUG: incremental bump (14.887, -4.723) isValid = 1
+DEBUG: Scheduling Mount bump of (0.364, -0.096)
+RESULT: 0 pos=-42,40 avg=-41.274405374066752,38.099783951466172 inprog=1 w=4.4454035215952956
+SHOWBUMP: 1.0322760211506701 -0.81548711031599963
+BUMP: 0.36441254583387483 -0.096331754599710689
+GUIDE: 26
+DEBUG: CameraToMount -- cameraTheta (0.78) - m_xAngle (0.35) = xAngle (0.43 = 0.43)
+DEBUG: CameraToMount -- cameraTheta (0.78) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (0.47 = 0.47)
+DEBUG: CameraToMount -- cameraX=0.51 cameraY=0.50 hyp=0.72 cameraTheta=0.78 mountX=0.65 mountY=0.32, mountTheta=0.46
+DEBUG: Moving (0.51, 0.50) raw xDistance=0.65 yDistance=0.32
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-42, 40) + (-1, 0)
+DEBUG: stepped: pos (-43, 40)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-43, 40) + (0, -1)
+DEBUG: stepped: pos (-43, 39)
+STEP: opts=13 frame=86 ao=1 cam=0.50942991279939065,0.50359891271254753 mnt=0.65077097466955103,0.32236059033492154 gd=0.39885188275553596,0.21157705341926389 ra=1 Left lim=0 dec=1 Down lim=0 pos=-43,39
+DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
+DEBUG: limit bump weight to 4.4
+DEBUG: MountToCamera -- mountTheta (-0.65) + m_xAngle (0.35) = xAngle (-0.30 = -0.30)
+DEBUG: MountToCamera -- mountX=12.55 mountY=-9.60 hyp=15.80 mountTheta=-0.65 cameraX=15.07, cameraY=-4.73 cameraTheta=-0.30
+DEBUG: incremental bump (15.073, -4.734) isValid = 1
+DEBUG: Scheduling Mount bump of (0.693, -0.181)
+RESULT: 0 pos=-43,39 avg=-41.843851600624724,38.396855247482335 inprog=1 w=4.4454035215952956
+SHOWBUMP: 1.9651140033475822 -1.543853914887352
+BUMP: 0.69299018167456816 -0.18137063996883254
+GUIDE: 27
+DEBUG: CameraToMount -- cameraTheta (-0.53) - m_xAngle (0.35) = xAngle (-0.87 = -0.87)
+DEBUG: CameraToMount -- cameraTheta (-0.53) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.84 = -0.84)
+DEBUG: CameraToMount -- cameraX=0.57 cameraY=-0.33 hyp=0.66 cameraTheta=-0.53 mountX=0.42 mountY=-0.49, mountTheta=-0.86
+DEBUG: Moving (0.57, -0.33) raw xDistance=0.42 yDistance=-0.49
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-43, 39) + (-1, 0)
+DEBUG: stepped: pos (-44, 39)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-44, 39) + (0, 1)
+DEBUG: stepped: pos (-44, 40)
+STEP: opts=13 frame=87 ao=1 cam=0.56818359324302037,-0.32943245395800602 mnt=0.42154431615414784,-0.48831658297868391 gd=0.29349255097000065,-0.29282905353722238 ra=1 Left lim=0 dec=1 Up lim=0 pos=-44,40
+DEBUG: secondary mount is busy, cannot bump
+RESULT: 0 pos=-44,40 avg=-42.555380572418564,38.925893015813166 inprog=1 w=4.4454035215952956
+GUIDE: 28
+DEBUG: CameraToMount -- cameraTheta (-0.08) - m_xAngle (0.35) = xAngle (-0.42 = -0.42)
+DEBUG: CameraToMount -- cameraTheta (-0.08) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.39 = -0.39)
+DEBUG: CameraToMount -- cameraX=0.53 cameraY=-0.04 hyp=0.53 cameraTheta=-0.08 mountX=0.49 mountY=-0.20, mountTheta=-0.39
+DEBUG: Moving (0.53, -0.04) raw xDistance=0.49 yDistance=-0.20
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-44, 40) + (-1, 0)
+DEBUG: StepGuider step would hit limit: truncate move to (-44, 40) + (0, 0)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-44, 40) + (0, 1)
+DEBUG: stepped: pos (-44, 41)
+STEP: opts=13 frame=88 ao=1 cam=0.53262415865327739,-0.040242533314014395 mnt=0.48686968025660965,-0.2022201716119969 gd=0.32727237712956414,-0.14789674186316362 ra=0 Left lim=1 dec=1 Up lim=0 pos=-44,41
+DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
+DEBUG: limit bump weight to 4.4
+DEBUG: AO travel limit exceeded, using large bump correction
+DEBUG: Scheduling Mount bump of (0.373, -0.028)
+RESULT: 0 pos=-44,41 avg=-43.032104983520441,39.610348320594824 inprog=1 w=4.4454035215952956
+SHOWBUMP: 1.1362744003646217 -0.56637560847542723
+BUMP: 0.37283691105729416 -0.028169773319810073
+GUIDE: 29
+DEBUG: CameraToMount -- cameraTheta (-0.43) - m_xAngle (0.35) = xAngle (-0.78 = -0.78)
+DEBUG: CameraToMount -- cameraTheta (-0.43) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.74 = -0.74)
+DEBUG: CameraToMount -- cameraX=1.01 cameraY=-0.46 hyp=1.11 cameraTheta=-0.43 mountX=0.79 mountY=-0.75, mountTheta=-0.76
+DEBUG: Moving (1.01, -0.46) raw xDistance=0.79 yDistance=-0.75
+DEBUG: MoveAxis(L, 2, ABG)
+DEBUG: stepping (-44, 41) + (-2, 0)
+DEBUG: StepGuider step would hit limit: truncate move to (-44, 41) + (0, 0)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-44, 41) + (0, 2)
+DEBUG: stepped: pos (-44, 43)
+STEP: opts=13 frame=89 ao=1 cam=1.0061355992420147,-0.46027679635250252 mnt=0.78849495552240345,-0.74760232389907066 gd=0.51966088837818369,-0.48134223598683595 ra=0 Left lim=1 dec=2 Up lim=0 pos=-44,43
+DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
+DEBUG: limit bump weight to 4.4
+DEBUG: AO travel limit exceeded, using large bump correction
+DEBUG: Scheduling Mount bump of (0.704, -0.322)
+RESULT: 0 pos=-44,43 avg=-43.351510338958697,40.72893337479853 inprog=1 w=4.4454035215952956
+SHOWBUMP: 1.8402185823206947 -2.0938747985458614
+BUMP: 0.70429491946941025 -0.32219375744675172
+GUIDE: 30
+DEBUG: CameraToMount -- cameraTheta (0.82) - m_xAngle (0.35) = xAngle (0.47 = 0.47)
+DEBUG: CameraToMount -- cameraTheta (0.82) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (0.51 = 0.51)
+DEBUG: CameraToMount -- cameraX=0.45 cameraY=0.49 hyp=0.67 cameraTheta=0.82 mountX=0.59 mountY=0.32, mountTheta=0.50
+DEBUG: Moving (0.45, 0.49) raw xDistance=0.59 yDistance=0.32
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-44, 43) + (-1, 0)
+DEBUG: StepGuider step would hit limit: truncate move to (-44, 43) + (0, 0)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-44, 43) + (0, -1)
+DEBUG: stepped: pos (-44, 42)
+STEP: opts=13 frame=90 ao=1 cam=0.45453738306464686,0.4855088883776375 mnt=0.59300067359568465,0.32204352824478033 gd=0.40996668655175417,0.16919346627513307 ra=0 Left lim=1 dec=1 Down lim=0 pos=-44,42
+DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
+DEBUG: limit bump weight to 4.4
+DEBUG: AO travel limit exceeded, using large bump correction
+DEBUG: Scheduling Mount bump of (0.318, 0.340)
+RESULT: 0 pos=-44,42 avg=-43.565511927102328,41.148385361115018 inprog=1 w=4.4454035215952956
+SHOWBUMP: 1.3839668234230855 0.90197529658505116
+BUMP: 0.31817616814525279 0.33985622186434622
+GUIDE: 31
+DEBUG: CameraToMount -- cameraTheta (-0.87) - m_xAngle (0.35) = xAngle (-1.21 = -1.21)
+DEBUG: CameraToMount -- cameraTheta (-0.87) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-1.18 = -1.18)
+DEBUG: CameraToMount -- cameraX=0.49 cameraY=-0.58 hyp=0.76 cameraTheta=-0.87 mountX=0.26 mountY=-0.70, mountTheta=-1.21
+DEBUG: Moving (0.49, -0.58) raw xDistance=0.26 yDistance=-0.70
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-44, 42) + (-1, 0)
+DEBUG: StepGuider step would hit limit: truncate move to (-44, 42) + (0, 0)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-44, 42) + (0, 2)
+DEBUG: stepped: pos (-44, 44)
+STEP: opts=13 frame=91 ao=1 cam=0.49001286327337823,-0.57614329712841084 mnt=0.26382950558562435,-0.69899207644444339 gd=0.19491025657756614,-0.42852146552074 ra=0 Left lim=1 dec=2 Up lim=0 pos=-44,44
+DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
+DEBUG: limit bump weight to 4.4
+DEBUG: AO travel limit exceeded, using large bump correction
+DEBUG: Scheduling Mount bump of (0.343, -0.403)
+RESULT: 0 pos=-44,44 avg=-43.708892991158557,42.089418191947061 inprog=1 w=4.4454035215952956
+SHOWBUMP: 0.61573502194631669 -1.9577278540507248
+BUMP: 0.34300900429136472 -0.40330030798988759
+GUIDE: 32
+DEBUG: CameraToMount -- cameraTheta (1.24) - m_xAngle (0.35) = xAngle (0.89 = 0.89)
+DEBUG: CameraToMount -- cameraTheta (1.24) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (0.93 = 0.93)
+DEBUG: CameraToMount -- cameraX=0.22 cameraY=0.64 hyp=0.68 cameraTheta=1.24 mountX=0.43 mountY=0.54, mountTheta=0.91
+DEBUG: Moving (0.22, 0.64) raw xDistance=0.43 yDistance=0.54
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-44, 44) + (-1, 0)
+DEBUG: StepGuider step would hit limit: truncate move to (-44, 44) + (0, 0)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-44, 44) + (0, -1)
+DEBUG: stepped: pos (-44, 43)
+STEP: opts=13 frame=92 ao=1 cam=0.219700562274042,0.640748938144867 mnt=0.42528728153889506,0.54202593883194383 gd=0.28157470532993351,0.31147983887767278 ra=0 Left lim=1 dec=1 Down lim=0 pos=-44,43
+DEBUG: secondary mount is busy, cannot bump
+RESULT: 0 pos=-44,43 avg=-43.80495830407623,42.389910188604532 inprog=1 w=4.4454035215952956
+GUIDE: 33
+DEBUG: CameraToMount -- cameraTheta (1.61) - m_xAngle (0.35) = xAngle (1.26 = 1.26)
+DEBUG: CameraToMount -- cameraTheta (1.61) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (1.29 = 1.29)
+DEBUG: CameraToMount -- cameraX=-0.03 cameraY=0.76 hyp=0.76 cameraTheta=1.61 mountX=0.23 mountY=0.73, mountTheta=1.26
+DEBUG: Moving (-0.03, 0.76) raw xDistance=0.23 yDistance=0.73
+DEBUG: MoveAxis(L, 1, ABG)
+DEBUG: stepping (-44, 43) + (-1, 0)
+DEBUG: StepGuider step would hit limit: truncate move to (-44, 43) + (0, 0)
+DEBUG: MoveAxis(D, 2, ABG)
+DEBUG: stepping (-44, 43) + (0, -2)
+DEBUG: stepped: pos (-44, 41)
+STEP: opts=13 frame=93 ao=1 cam=-0.026647789371978092,0.758952974503174 mnt=0.23410784488996236,0.73031317583770661 gd=0.16719817165377165,0.48190088949919224 ra=0 Left lim=1 dec=2 Down lim=0 pos=-44,41
+DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
+DEBUG: limit bump weight to 4.4
+DEBUG: AO travel limit exceeded, using large bump correction
+DEBUG: Scheduling Mount bump of (-0.019, 0.531)
+RESULT: 0 pos=-44,41 avg=-43.869322063731076,41.931239826365037 inprog=1 w=4.4454035215952956
+SHOWBUMP: 0.54636951500613495 2.0454515790657335
+BUMP: -0.018653452560384663 0.53126708215222174
+GUIDE: 34
+DEBUG: CameraToMount -- cameraTheta (-1.03) - m_xAngle (0.35) = xAngle (-1.38 = -1.38)
+DEBUG: CameraToMount -- cameraTheta (-1.03) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-1.34 = -1.34)
+DEBUG: CameraToMount -- cameraX=0.44 cameraY=-0.73 hyp=0.85 cameraTheta=-1.03 mountX=0.17 mountY=-0.83, mountTheta=-1.37
+DEBUG: Moving (0.44, -0.73) raw xDistance=0.17 yDistance=-0.83
+DEBUG: MoveAxis(L, 0, ABG)
+DEBUG: MoveAxis(U, 2, ABG)
+DEBUG: stepping (-44, 41) + (0, 2)
+DEBUG: stepped: pos (-44, 43)
+STEP: opts=13 frame=94 ao=1 cam=0.43930895989636554,-0.72590603493244998 mnt=0.16503478132449576,-0.82587930807291732 gd=0.11567578425019633,-0.48657090182099438 ra=0 Left lim=0 dec=2 Up lim=0 pos=-44,43
+DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
+DEBUG: limit bump weight to 4.4
+DEBUG: MountToCamera -- mountTheta (-0.68) + m_xAngle (0.35) = xAngle (-0.33 = -0.33)
+DEBUG: MountToCamera -- mountX=13.17 mountY=-10.57 hyp=16.89 mountTheta=-0.68 cameraX=15.99, cameraY=-5.44 cameraTheta=-0.33
+DEBUG: incremental bump (15.988, -5.435) isValid = 1
+DEBUG: Scheduling Mount bump of (0.816, -0.231)
+RESULT: 0 pos=-44,43 avg=-43.91244578269982,42.283930683664572 inprog=1 w=4.4454035215952956
+SHOWBUMP: 2.2949095573996035 -1.8857437935028309
+BUMP: 0.81636148261541597 -0.2312701093927568
+GUIDE: 35
+DEBUG: CameraToMount -- cameraTheta (2.80) - m_xAngle (0.35) = xAngle (2.45 = 2.45)
+DEBUG: CameraToMount -- cameraTheta (2.80) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.49 = 2.49)
+DEBUG: CameraToMount -- cameraX=-0.90 cameraY=0.32 hyp=0.96 cameraTheta=2.80 mountX=-0.74 mountY=0.58, mountTheta=2.48
+DEBUG: Moving (-0.90, 0.32) raw xDistance=-0.74 yDistance=0.58
+DEBUG: MoveAxis(R, 2, ABG)
+DEBUG: stepping (-44, 43) + (2, 0)
+DEBUG: stepped: pos (-42, 43)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-42, 43) + (0, -1)
+DEBUG: stepped: pos (-42, 42)
+STEP: opts=13 frame=95 ao=1 cam=-0.90435581942701049,0.31895600174371452 mnt=-0.74108836046475923,0.58181580115693388 gd=-0.45878836219528457,0.33248399160139869 ra=2 Right lim=0 dec=1 Down lim=0 pos=-42,42
+DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
+DEBUG: limit bump weight to 4.4
+DEBUG: MountToCamera -- mountTheta (-0.68) + m_xAngle (0.35) = xAngle (-0.33 = -0.33)
+DEBUG: MountToCamera -- mountX=12.98 mountY=-10.54 hyp=16.72 mountTheta=-0.68 cameraX=15.80, cameraY=-5.48 cameraTheta=-0.33
+DEBUG: incremental bump (15.802, -5.478) isValid = 1
+DEBUG: Scheduling Mount bump of (0.921, -0.266)
+RESULT: 0 pos=-42,42 avg=-43.281338674408879,42.190233558055262 inprog=1 w=4.4454035215952956
+SHOWBUMP: 2.5840086939827636 -2.1476812746925309
+BUMP: 0.92128404895914529 -0.26613545482193668
+GUIDE: 36
+DEBUG: CameraToMount -- cameraTheta (3.07) - m_xAngle (0.35) = xAngle (2.72 = 2.72)
+DEBUG: CameraToMount -- cameraTheta (3.07) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.75 = 2.75)
+DEBUG: CameraToMount -- cameraX=-0.91 cameraY=0.07 hyp=0.91 cameraTheta=3.07 mountX=-0.83 mountY=0.34, mountTheta=2.75
+DEBUG: Moving (-0.91, 0.07) raw xDistance=-0.83 yDistance=0.34
+DEBUG: MoveAxis(R, 2, ABG)
+DEBUG: stepping (-42, 42) + (2, 0)
+DEBUG: stepped: pos (-40, 42)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-40, 42) + (0, -1)
+DEBUG: stepped: pos (-40, 41)
+STEP: opts=13 frame=96 ao=1 cam=-0.9081726475606331,0.068507578919351886 mnt=-0.83019452406955074,0.34469950894318446 gd=-0.55513773551748691,0.24043457004630414 ra=2 Right lim=0 dec=1 Down lim=0 pos=-40,41
+DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
+DEBUG: limit bump weight to 4.4
+DEBUG: MountToCamera -- mountTheta (-0.69) + m_xAngle (0.35) = xAngle (-0.34 = -0.34)
+DEBUG: MountToCamera -- mountX=12.66 mountY=-10.45 hyp=16.41 mountTheta=-0.69 cameraX=15.46, cameraY=-5.50 cameraTheta=-0.34
+DEBUG: incremental bump (15.463, -5.497) isValid = 1
+DEBUG: Scheduling Mount bump of (0.873, -0.259)
+RESULT: 0 pos=-40,41 avg=-42.198496911853951,41.797456483897022 inprog=1 w=4.4454035215952956
+SHOWBUMP: 2.4419909009096474 -2.0600814455969374
+BUMP: 0.87324925371727746 -0.25866307627664786
+GUIDE: 37
+DEBUG: CameraToMount -- cameraTheta (2.50) - m_xAngle (0.35) = xAngle (2.15 = 2.15)
+DEBUG: CameraToMount -- cameraTheta (2.50) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.18 = 2.18)
+DEBUG: CameraToMount -- cameraX=-0.86 cameraY=0.65 hyp=1.08 cameraTheta=2.50 mountX=-0.59 mountY=0.88, mountTheta=2.16
+DEBUG: Moving (-0.86, 0.65) raw xDistance=-0.59 yDistance=0.88
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-40, 41) + (1, 0)
+DEBUG: stepped: pos (-39, 41)
+DEBUG: MoveAxis(D, 2, ABG)
+DEBUG: stepping (-39, 41) + (0, -2)
+DEBUG: stepped: pos (-39, 39)
+STEP: opts=13 frame=97 ao=1 cam=-0.86395468045239454,0.65058677754970518 mnt=-0.58987604226715307,0.8849137313957105 gd=-0.41048154811453047,0.57432607068253894 ra=1 Right lim=0 dec=2 Down lim=0 pos=-39,39
+DEBUG: secondary mount is busy, cannot bump
+RESULT: 0 pos=-39,39 avg=-41.14299293094215,40.874295844211005 inprog=1 w=4.4454035215952956
+GUIDE: 38
+DEBUG: CameraToMount -- cameraTheta (-2.88) - m_xAngle (0.35) = xAngle (-3.22 = 3.06)
+DEBUG: CameraToMount -- cameraTheta (-2.88) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-3.19 = 3.10)
+DEBUG: CameraToMount -- cameraX=-0.73 cameraY=-0.20 hyp=0.76 cameraTheta=-2.88 mountX=-0.76 mountY=0.04, mountTheta=3.09
+DEBUG: Moving (-0.73, -0.20) raw xDistance=-0.76 yDistance=0.04
+DEBUG: MoveAxis(R, 2, ABG)
+DEBUG: stepping (-39, 39) + (2, 0)
+DEBUG: stepped: pos (-37, 39)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=98 ao=1 cam=-0.73474359750866824,-0.20039910673598627 mnt=-0.75901090678648087,0.035468211672488086 gd=-0.50691057964350006,0 ra=2 Right lim=0 dec=0 Up lim=0 pos=-37,39
+DEBUG: outside bump range, increase bump weight 4.45 => 4.61
+DEBUG: limit bump weight to 4.4
+DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
+DEBUG: MountToCamera -- mountX=11.93 mountY=-10.06 hyp=15.61 mountTheta=-0.70 cameraX=14.65, cameraY=-5.38 cameraTheta=-0.35
+DEBUG: incremental bump (14.649, -5.383) isValid = 1
+DEBUG: Scheduling Mount bump of (0.728, -0.223)
+RESULT: 0 pos=-37,39 avg=-39.775805263731243,40.255778215621376 inprog=1 w=4.4454035215952956
+SHOWBUMP: 2.0281224834458569 -1.7456007944325287
+BUMP: 0.7282110122085742 -0.22297236994462977
+GUIDE: 39
+DEBUG: CameraToMount -- cameraTheta (2.41) - m_xAngle (0.35) = xAngle (2.06 = 2.06)
+DEBUG: CameraToMount -- cameraTheta (2.41) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.09 = 2.09)
+DEBUG: CameraToMount -- cameraX=-0.64 cameraY=0.58 hyp=0.86 cameraTheta=2.41 mountX=-0.40 mountY=0.75, mountTheta=2.07
+DEBUG: Moving (-0.64, 0.58) raw xDistance=-0.40 yDistance=0.75
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-37, 39) + (1, 0)
+DEBUG: stepped: pos (-36, 39)
+DEBUG: MoveAxis(D, 2, ABG)
+DEBUG: stepping (-36, 39) + (0, -2)
+DEBUG: stepped: pos (-36, 37)
+STEP: opts=13 frame=99 ao=1 cam=-0.63913903724568399,0.57778534920403501 mnt=-0.40343181120769772,0.74645248623220861 gd=-0.28964578163589455,0.47026506632629139 ra=1 Right lim=0 dec=2 Down lim=0 pos=-36,37
+DEBUG: outside bump range, increase bump weight 4.45 => 4.61
+DEBUG: limit bump weight to 4.4
+DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
+DEBUG: MountToCamera -- mountX=11.56 mountY=-9.79 hyp=15.15 mountTheta=-0.70 cameraX=14.21, cameraY=-5.26 cameraTheta=-0.35
+DEBUG: incremental bump (14.206, -5.258) isValid = 1
+DEBUG: Scheduling Mount bump of (0.823, -0.254)
+RESULT: 0 pos=-36,37 avg=-38.529789526699936,39.181371404466319 inprog=1 w=4.4454035215952956
+SHOWBUMP: 2.2909178094593665 -1.9805707884313521
+BUMP: 0.82331943817313258 -0.25392857541530439
+DEBUG: Dither: starting AO bump
+DEBUG: StepGuider: force bump
+GUIDE: 40
+DEBUG: CameraToMount -- cameraTheta (2.59) - m_xAngle (0.35) = xAngle (2.24 = 2.24)
+DEBUG: CameraToMount -- cameraTheta (2.59) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.28 = 2.28)
+DEBUG: CameraToMount -- cameraX=-1.33 cameraY=0.82 hyp=1.57 cameraTheta=2.59 mountX=-0.97 mountY=1.19, mountTheta=2.26
+DEBUG: Moving (-1.33, 0.82) raw xDistance=-0.97 yDistance=1.19
+DEBUG: MoveAxis(R, 2, ABG)
+DEBUG: stepping (-36, 37) + (2, 0)
+DEBUG: stepped: pos (-34, 37)
+DEBUG: MoveAxis(D, 3, ABG)
+DEBUG: stepping (-34, 37) + (0, -3)
+DEBUG: stepped: pos (-34, 34)
+STEP: opts=13 frame=100 ao=1 cam=-1.3332473924750872,0.82072804033366253 mnt=-0.97286524238626249,1.1912348681010212 gd=-0.63318030741785791,0.78339652154648376 ra=2 Right lim=0 dec=3 Down lim=0 pos=-34,34
+DEBUG: StepGuider::Move: will start forced bump
+DEBUG: back inside bump range: decrease bump weight 4.45 => 2.22
+DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
+DEBUG: MountToCamera -- mountX=11.11 mountY=-9.37 hyp=14.53 mountTheta=-0.70 cameraX=13.64, cameraY=-5.01 cameraTheta=-0.35
+DEBUG: incremental bump (13.638, -5.009) isValid = 1
+DEBUG: Scheduling Mount bump of (0.939, -0.287)
+RESULT: 0 pos=-34,34 avg=-37.034958982888959,37.471518840992431 inprog=1 w=2.2227017607976478
+SHOWBUMP: 2.6144430424229324 -2.249667907116716
+BUMP: 0.93868401142661517 -0.2872968121552964
+GUIDE: 41
+DEBUG: CameraToMount -- cameraTheta (3.03) - m_xAngle (0.35) = xAngle (2.68 = 2.68)
+DEBUG: CameraToMount -- cameraTheta (3.03) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.72 = 2.72)
+DEBUG: CameraToMount -- cameraX=-1.17 cameraY=0.13 hyp=1.17 cameraTheta=3.03 mountX=-1.05 mountY=0.48, mountTheta=2.71
+DEBUG: Moving (-1.17, 0.13) raw xDistance=-1.05 yDistance=0.48
+DEBUG: MoveAxis(R, 2, ABG)
+DEBUG: stepping (-34, 34) + (2, 0)
+DEBUG: stepped: pos (-32, 34)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-32, 34) + (0, -1)
+DEBUG: stepped: pos (-32, 33)
+STEP: opts=13 frame=101 ao=1 cam=-1.1671608863682366,0.12784904755926618 mnt=-1.053353491997052,0.48087181868138845 gd=-0.7079353214773928,0.35778700227752858 ra=2 Right lim=0 dec=1 Down lim=0 pos=-32,33
+DEBUG: back inside bump range: decrease bump weight 2.22 => 1.11
+DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
+DEBUG: MountToCamera -- mountX=10.61 mountY=-9.00 hyp=13.91 mountTheta=-0.70 cameraX=13.04, cameraY=-4.83 cameraTheta=-0.35
+DEBUG: incremental bump (13.044, -4.833) isValid = 1
+DEBUG: Scheduling Mount bump of (0.469, -0.145)
+RESULT: 0 pos=-32,33 avg=-35.373422518535605,35.995917623464926 inprog=1 w=1.1113508803988239
+SHOWBUMP: 1.3044342701192186 -1.1284333462970861
+BUMP: 0.46885346034984932 -0.14475193395460093
+GUIDE: 42
+DEBUG: CameraToMount -- cameraTheta (2.45) - m_xAngle (0.35) = xAngle (2.10 = 2.10)
+DEBUG: CameraToMount -- cameraTheta (2.45) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.14 = 2.14)
+DEBUG: CameraToMount -- cameraX=-0.72 cameraY=0.60 hyp=0.93 cameraTheta=2.45 mountX=-0.47 mountY=0.79, mountTheta=2.11
+DEBUG: Moving (-0.72, 0.60) raw xDistance=-0.47 yDistance=0.79
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-32, 33) + (1, 0)
+DEBUG: stepped: pos (-31, 33)
+DEBUG: MoveAxis(D, 2, ABG)
+DEBUG: stepping (-31, 33) + (0, -2)
+DEBUG: stepped: pos (-31, 31)
+STEP: opts=13 frame=102 ao=1 cam=-0.71854712589257019,0.59601710386756679 mnt=-0.47184164787803784,0.78823945488935576 gd=-0.34681571066658129,0.52163594673972113 ra=1 Right lim=0 dec=2 Down lim=0 pos=-31,31
+DEBUG: back inside bump range: decrease bump weight 1.11 => 1.00
+DEBUG: secondary mount is busy, cannot bump
+RESULT: 0 pos=-31,31 avg=-33.930193087418857,34.347264807721501 inprog=1 w=1
+GUIDE: 43
+DEBUG: CameraToMount -- cameraTheta (-2.73) - m_xAngle (0.35) = xAngle (-3.08 = -3.08)
+DEBUG: CameraToMount -- cameraTheta (-2.73) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-3.05 = -3.05)
+DEBUG: CameraToMount -- cameraX=-0.59 cameraY=-0.25 hyp=0.64 cameraTheta=-2.73 mountX=-0.64 mountY=-0.06, mountTheta=-3.05
+DEBUG: Moving (-0.59, -0.25) raw xDistance=-0.64 yDistance=-0.06
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-31, 31) + (1, 0)
+DEBUG: stepped: pos (-30, 31)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=103 ao=1 cam=-0.58933604294882969,-0.25496878041811044 mnt=-0.64097651239734699,-0.061206064833857272 gd=-0.42809230255698932,-0.0020453045735496006 ra=1 Right lim=0 dec=0 Up lim=0 pos=-30,31
+ALERT: A mount "bump" was needed to bring the AO back to its center position,\nbut the bump did not complete in a reasonable amount of time.\nYou probably need to increase the AO Bump Step setting.
+DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.36 = -0.36)
+DEBUG: MountToCamera -- mountX=9.79 mountY=-8.31 hyp=12.84 mountTheta=-0.70 cameraX=12.04, cameraY=-4.47 cameraTheta=-0.36
+DEBUG: incremental bump (12.037, -4.467) isValid = 1
+DEBUG: Scheduling Mount bump of (0.422, -0.130)
+RESULT: 0 pos=-30,31 avg=-32.633229368570632,33.242667421173408 inprog=1 w=1
+SHOWBUMP: 1.1732727038849655 -1.0159689959817679
+BUMP: 0.42179540848110741 -0.13043215987334425
+GUIDE: 44
+DEBUG: CameraToMount -- cameraTheta (2.53) - m_xAngle (0.35) = xAngle (2.18 = 2.18)
+DEBUG: CameraToMount -- cameraTheta (2.53) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.22 = 2.22)
+DEBUG: CameraToMount -- cameraX=-0.47 cameraY=0.33 hyp=0.57 cameraTheta=2.53 mountX=-0.33 mountY=0.46, mountTheta=2.20
+DEBUG: Moving (-0.47, 0.33) raw xDistance=-0.33 yDistance=0.46
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-30, 31) + (1, 0)
+DEBUG: stepped: pos (-29, 31)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-29, 31) + (0, -1)
+DEBUG: stepped: pos (-29, 30)
+STEP: opts=13 frame=104 ao=1 cam=-0.46922366519414993,0.32806942245292703 mnt=-0.32899775921294755,0.4565618210100007 gd=-0.23723504948314622,0.28749077591615191 ra=1 Right lim=0 dec=1 Down lim=0 pos=-29,30
+DEBUG: MountToCamera -- mountTheta (-0.71) + m_xAngle (0.35) = xAngle (-0.36 = -0.36)
+DEBUG: MountToCamera -- mountX=9.43 mountY=-8.04 hyp=12.39 mountTheta=-0.71 cameraX=11.61, cameraY=-4.34 cameraTheta=-0.36
+DEBUG: incremental bump (11.607, -4.338) isValid = 1
+DEBUG: Scheduling Mount bump of (0.421, -0.131)
+RESULT: 0 pos=-29,30 avg=-31.434263676942322,32.172587172186184 inprog=1 w=1
+SHOWBUMP: 1.1711977614615241 -1.0186302966956255
+BUMP: 0.42143015855312832 -0.13124938490590352
+GUIDE: 45
+DEBUG: StepGuider: deferring bump for deduced move
+RESULT: 0 pos=-29,30 avg=-31.434263676942322,32.172587172186184 inprog=1 w=1
+GUIDE: 46
+DEBUG: CameraToMount -- cameraTheta (2.83) - m_xAngle (0.35) = xAngle (2.48 = 2.48)
+DEBUG: CameraToMount -- cameraTheta (2.83) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.52 = 2.52)
+DEBUG: CameraToMount -- cameraX=-0.60 cameraY=0.19 hyp=0.62 cameraTheta=2.83 mountX=-0.49 mountY=0.36, mountTheta=2.51
+DEBUG: Moving (-0.60, 0.19) raw xDistance=-0.49 yDistance=0.36
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-29, 30) + (1, 0)
+DEBUG: stepped: pos (-28, 30)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-28, 30) + (0, -1)
+DEBUG: stepped: pos (-28, 29)
+STEP: opts=13 frame=106 ao=1 cam=-0.59509438915755197,0.19012888671483097 mnt=-0.49440459365660799,0.3640577631453305 gd=-0.32808134746748324,0.24948074509568885 ra=1 Right lim=0 dec=1 Down lim=0 pos=-28,29
+DEBUG: MountToCamera -- mountTheta (-0.71) + m_xAngle (0.35) = xAngle (-0.36 = -0.36)
+DEBUG: MountToCamera -- mountX=9.09 mountY=-7.78 hyp=11.96 mountTheta=-0.71 cameraX=11.20, cameraY=-4.21 cameraTheta=-0.36
+DEBUG: incremental bump (11.198, -4.208) isValid = 1
+DEBUG: Scheduling Mount bump of (0.421, -0.132)
+RESULT: 0 pos=-28,29 avg=-30.300956663551357,31.125633405364741 inprog=1 w=1
+SHOWBUMP: 1.1695915578563914 -1.0206810679043126
+BUMP: 0.42114662350703497 -0.13187980211752229
+GUIDE: 47
+DEBUG: CameraToMount -- cameraTheta (2.18) - m_xAngle (0.35) = xAngle (1.83 = 1.83)
+DEBUG: CameraToMount -- cameraTheta (2.18) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (1.87 = 1.87)
+DEBUG: CameraToMount -- cameraX=-0.38 cameraY=0.54 hyp=0.66 cameraTheta=2.18 mountX=-0.17 mountY=0.63, mountTheta=1.84
+DEBUG: Moving (-0.38, 0.54) raw xDistance=-0.17 yDistance=0.63
+DEBUG: MoveAxis(R, 0, ABG)
+DEBUG: MoveAxis(D, 2, ABG)
+DEBUG: stepping (-28, 29) + (0, -2)
+DEBUG: stepped: pos (-28, 27)
+STEP: opts=13 frame=107 ao=1 cam=-0.38068157807484226,0.54281876818836849 mnt=-0.17244861057059802,0.63363521008949997 gd=-0.13160831898220057,0.41665383451308324 ra=0 Right lim=0 dec=2 Down lim=0 pos=-28,27
+DEBUG: secondary mount is busy, cannot bump
+RESULT: 0 pos=-28,27 avg=-29.541640964579408,29.764174381594376 inprog=1 w=1
+GUIDE: 48
+DEBUG: CameraToMount -- cameraTheta (-2.49) - m_xAngle (0.35) = xAngle (-2.83 = -2.83)
+DEBUG: CameraToMount -- cameraTheta (-2.49) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-2.80 = -2.80)
+DEBUG: CameraToMount -- cameraX=-0.53 cameraY=-0.41 hyp=0.67 cameraTheta=-2.49 mountX=-0.64 mountY=-0.23, mountTheta=-2.80
+DEBUG: Moving (-0.53, -0.41) raw xDistance=-0.64 yDistance=-0.23
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-28, 27) + (1, 0)
+DEBUG: stepped: pos (-27, 27)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=108 ao=1 cam=-0.53337828136687904,-0.41077315909502943 mnt=-0.64158342227702192,-0.22666999777519348 gd=-0.41341013836327778,-0.11363633018245606 ra=1 Right lim=0 dec=0 Up lim=0 pos=-27,27
+DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
+DEBUG: MountToCamera -- mountX=8.61 mountY=-7.21 hyp=11.23 mountTheta=-0.70 cameraX=10.55, cameraY=-3.84 cameraTheta=-0.35
+DEBUG: incremental bump (10.554, -3.838) isValid = 1
+DEBUG: Scheduling Mount bump of (0.423, -0.128)
+RESULT: 0 pos=-27,27 avg=-28.702899446268201,28.851996835668231 inprog=1 w=1
+SHOWBUMP: 1.1790947083652099 -1.0084281752388533
+BUMP: 0.42281396678633065 -0.12812184392702036
+GUIDE: 49
+DEBUG: CameraToMount -- cameraTheta (2.75) - m_xAngle (0.35) = xAngle (2.40 = 2.40)
+DEBUG: CameraToMount -- cameraTheta (2.75) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.44 = 2.44)
+DEBUG: CameraToMount -- cameraX=-0.41 cameraY=0.17 hyp=0.45 cameraTheta=2.75 mountX=-0.33 mountY=0.29, mountTheta=2.42
+DEBUG: Moving (-0.41, 0.17) raw xDistance=-0.33 yDistance=0.29
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-27, 27) + (1, 0)
+DEBUG: stepped: pos (-26, 27)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-26, 27) + (0, -1)
+DEBUG: stepped: pos (-26, 26)
+STEP: opts=13 frame=109 ao=1 cam=-0.41428446191743262,0.16995472782967624 mnt=-0.33135089361479902,0.28921321254708765 gd=-0.23768977266275279,0.17424978079189329 ra=1 Right lim=0 dec=1 Down lim=0 pos=-26,26
+DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
+DEBUG: MountToCamera -- mountX=8.34 mountY=-6.98 hyp=10.87 mountTheta=-0.70 cameraX=10.22, cameraY=-3.71 cameraTheta=-0.35
+DEBUG: incremental bump (10.222, -3.708) isValid = 1
+DEBUG: Scheduling Mount bump of (0.423, -0.128)
+RESULT: 0 pos=-26,26 avg=-27.810942628999694,27.910837879897716 inprog=1 w=1
+SHOWBUMP: 1.1797877070752913 -1.0075232658013216
+BUMP: 0.42293458178610333 -0.12784512459069264
+GUIDE: 50
+DEBUG: CameraToMount -- cameraTheta (-2.76) - m_xAngle (0.35) = xAngle (-3.11 = -3.11)
+DEBUG: CameraToMount -- cameraTheta (-2.76) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-3.07 = -3.07)
+DEBUG: CameraToMount -- cameraX=-0.80 cameraY=-0.32 hyp=0.86 cameraTheta=-2.76 mountX=-0.86 mountY=-0.06, mountTheta=-3.07
+DEBUG: Moving (-0.80, -0.32) raw xDistance=-0.86 yDistance=-0.06
+DEBUG: MoveAxis(R, 2, ABG)
+DEBUG: stepping (-26, 26) + (2, 0)
+DEBUG: stepped: pos (-24, 26)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=110 ao=1 cam=-0.80165960911376999,-0.32139006822362148 mnt=-0.86321883433354407,-0.059054132840443127 gd=-0.56046614971652542,-0.025006619034046638 ra=2 Right lim=0 dec=0 Up lim=0 pos=-24,26
+DEBUG: MountToCamera -- mountTheta (-0.71) + m_xAngle (0.35) = xAngle (-0.36 = -0.36)
+DEBUG: MountToCamera -- mountX=7.96 mountY=-6.82 hyp=10.48 mountTheta=-0.71 cameraX=9.81, cameraY=-3.69 cameraTheta=-0.36
+DEBUG: incremental bump (9.814, -3.689) isValid = 1
+DEBUG: boost bump step weight to 3.0 for settling
+DEBUG: Scheduling Mount bump of (0.824, -0.258)
+RESULT: 0 pos=-24,26 avg=-26.553331561429793,27.280261379531471 inprog=1 w=1
+SHOWBUMP: 2.2888673975863649 -1.9977420789140279
+BUMP: 0.82420028514231036 -0.25815420741983031
+GUIDE: 51
+DEBUG: CameraToMount -- cameraTheta (2.59) - m_xAngle (0.35) = xAngle (2.24 = 2.24)
+DEBUG: CameraToMount -- cameraTheta (2.59) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.28 = 2.28)
+DEBUG: CameraToMount -- cameraX=-0.80 cameraY=0.49 hyp=0.94 cameraTheta=2.59 mountX=-0.59 mountY=0.71, mountTheta=2.26
+DEBUG: Moving (-0.80, 0.49) raw xDistance=-0.59 yDistance=0.71
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-24, 26) + (1, 0)
+DEBUG: stepped: pos (-23, 26)
+DEBUG: MoveAxis(D, 2, ABG)
+DEBUG: stepping (-23, 26) + (0, -2)
+DEBUG: stepped: pos (-23, 24)
+STEP: opts=13 frame=111 ao=1 cam=-0.80204432178454965,0.4919762251916211 mnt=-0.58584633661069641,0.7149477525392659 gd=-0.40831582254489551,0.4486666207673542 ra=1 Right lim=0 dec=2 Down lim=0 pos=-23,24
+DEBUG: MountToCamera -- mountTheta (-0.71) + m_xAngle (0.35) = xAngle (-0.36 = -0.36)
+DEBUG: MountToCamera -- mountX=7.61 mountY=-6.55 hyp=10.04 mountTheta=-0.71 cameraX=9.39, cameraY=-3.55 cameraTheta=-0.36
+DEBUG: incremental bump (9.391, -3.555) isValid = 1
+DEBUG: boost bump step weight to 3.0 for settling
+DEBUG: Scheduling Mount bump of (0.897, -0.283)
+RESULT: 0 pos=-23,24 avg=-25.38073214615796,26.197775124286085 inprog=1 w=1
+SHOWBUMP: 2.4897164913895349 -2.1825199580221546
+BUMP: 0.89733335141321169 -0.28303455036826924
+GUIDE: 52
+DEBUG: CameraToMount -- cameraTheta (-3.06) - m_xAngle (0.35) = xAngle (-3.41 = 2.87)
+DEBUG: CameraToMount -- cameraTheta (-3.06) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-3.38 = 2.91)
+DEBUG: CameraToMount -- cameraX=-0.97 cameraY=-0.08 hyp=0.97 cameraTheta=-3.06 mountX=-0.94 mountY=0.23, mountTheta=2.90
+DEBUG: Moving (-0.97, -0.08) raw xDistance=-0.94 yDistance=0.23
+DEBUG: MoveAxis(R, 2, ABG)
+DEBUG: stepping (-23, 24) + (2, 0)
+DEBUG: stepped: pos (-21, 24)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-21, 24) + (0, -1)
+DEBUG: stepped: pos (-21, 23)
+STEP: opts=13 frame=112 ao=1 cam=-0.9701665902540384,-0.075975108725799601 mnt=-0.93779776521811187,0.22631087005528938 gd=-0.61939469966555316,0.17398251158854711 ra=2 Right lim=0 dec=1 Down lim=0 pos=-21,23
+DEBUG: secondary mount is busy, cannot bump
+RESULT: 0 pos=-21,23 avg=-23.935090537925834,25.142509333271676 inprog=1 w=1
+GUIDE: 53
+DEBUG: CameraToMount -- cameraTheta (2.78) - m_xAngle (0.35) = xAngle (2.43 = 2.43)
+DEBUG: CameraToMount -- cameraTheta (2.78) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.47 = 2.47)
+DEBUG: CameraToMount -- cameraX=-0.65 cameraY=0.25 hyp=0.70 cameraTheta=2.78 mountX=-0.53 mountY=0.44, mountTheta=2.45
+DEBUG: Moving (-0.65, 0.25) raw xDistance=-0.53 yDistance=0.44
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-21, 23) + (1, 0)
+DEBUG: stepped: pos (-20, 23)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-20, 23) + (0, -1)
+DEBUG: stepped: pos (-20, 22)
+STEP: opts=13 frame=113 ao=1 cam=-0.65269936942851814,0.24744101362789195 mnt=-0.52897730749284866,0.43631748334396314 gd=-0.37661333269708336,0.28705879031789505 ra=1 Right lim=0 dec=1 Down lim=0 pos=-20,22
+DEBUG: MountToCamera -- mountTheta (-0.73) + m_xAngle (0.35) = xAngle (-0.38 = -0.38)
+DEBUG: MountToCamera -- mountX=6.79 mountY=-6.02 hyp=9.08 mountTheta=-0.73 cameraX=8.44, cameraY=-3.34 cameraTheta=-0.38
+DEBUG: incremental bump (8.439, -3.344) isValid = 1
+DEBUG: boost bump step weight to 3.0 for settling
+DEBUG: Scheduling Mount bump of (0.663, -0.219)
+RESULT: 0 pos=-20,22 avg=-22.636510660410309,24.105481253292023 inprog=1 w=1
+SHOWBUMP: 1.8278744093841988 -1.6495068429688966
+BUMP: 0.6628228052023063 -0.21888227653542289
+GUIDE: 54
+DEBUG: CameraToMount -- cameraTheta (2.35) - m_xAngle (0.35) = xAngle (2.00 = 2.00)
+DEBUG: CameraToMount -- cameraTheta (2.35) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.04 = 2.04)
+DEBUG: CameraToMount -- cameraX=-0.68 cameraY=0.69 hyp=0.97 cameraTheta=2.35 mountX=-0.40 mountY=0.86, mountTheta=2.01
+DEBUG: Moving (-0.68, 0.69) raw xDistance=-0.40 yDistance=0.86
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-20, 22) + (1, 0)
+DEBUG: stepped: pos (-19, 22)
+DEBUG: MoveAxis(D, 2, ABG)
+DEBUG: stepping (-19, 22) + (0, -2)
+DEBUG: stepped: pos (-19, 20)
+STEP: opts=13 frame=114 ao=1 cam=-0.67996274004106283,0.68713336951931581 mnt=-0.40446357333651867,0.86305720558971122 gd=-0.28117498449080258,0.56382015484377068 ra=1 Right lim=0 dec=2 Down lim=0 pos=-19,20
+DEBUG: MountToCamera -- mountTheta (-0.72) + m_xAngle (0.35) = xAngle (-0.38 = -0.38)
+DEBUG: MountToCamera -- mountX=6.43 mountY=-5.69 hyp=8.58 mountTheta=-0.72 cameraX=7.98, cameraY=-3.15 cameraTheta=-0.38
+DEBUG: incremental bump (7.985, -3.149) isValid = 1
+DEBUG: Scheduling Mount bump of (0.419, -0.138)
+RESULT: 0 pos=-19,20 avg=-21.436462142474905,22.750672439705657 inprog=1 w=1
+SHOWBUMP: 1.1549623394671591 -1.0389943607877414
+BUMP: 0.41853302963280298 -0.13753580769663246
+GUIDE: 55
+DEBUG: CameraToMount -- cameraTheta (-3.11) - m_xAngle (0.35) = xAngle (-3.46 = 2.82)
+DEBUG: CameraToMount -- cameraTheta (-3.11) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-3.43 = 2.86)
+DEBUG: CameraToMount -- cameraX=-0.97 cameraY=-0.03 hyp=0.97 cameraTheta=-3.11 mountX=-0.92 mountY=0.27, mountTheta=2.85
+DEBUG: Moving (-0.97, -0.03) raw xDistance=-0.92 yDistance=0.27
+DEBUG: MoveAxis(R, 2, ABG)
+DEBUG: stepping (-19, 20) + (2, 0)
+DEBUG: stepped: pos (-17, 20)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-17, 20) + (0, -1)
+DEBUG: stepped: pos (-17, 19)
+STEP: opts=13 frame=115 ao=1 cam=-0.96928468673014834,-0.026316707069739209 mnt=-0.92001238621291448,0.27328729752563874 gd=-0.5992900522284923,0.21163840828021635 ra=2 Right lim=0 dec=1 Down lim=0 pos=-17,19
+DEBUG: MountToCamera -- mountTheta (-0.73) + m_xAngle (0.35) = xAngle (-0.38 = -0.38)
+DEBUG: MountToCamera -- mountX=5.99 mountY=-5.38 hyp=8.05 mountTheta=-0.73 cameraX=7.47, cameraY=-3.01 cameraTheta=-0.38
+DEBUG: incremental bump (7.466, -3.008) isValid = 1
+DEBUG: Scheduling Mount bump of (0.417, -0.140)
+RESULT: 0 pos=-17,19 avg=-19.972429635458187,21.51295053460279 inprog=1 w=1
+SHOWBUMP: 1.1482101544011614 -1.0472321473411035
+BUMP: 0.41730836993328291 -0.14009587352427971
+GUIDE: 56
+DEBUG: CameraToMount -- cameraTheta (2.39) - m_xAngle (0.35) = xAngle (2.04 = 2.04)
+DEBUG: CameraToMount -- cameraTheta (2.39) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.08 = 2.08)
+DEBUG: CameraToMount -- cameraX=-0.47 cameraY=0.44 hyp=0.64 cameraTheta=2.39 mountX=-0.29 mountY=0.56, mountTheta=2.05
+DEBUG: Moving (-0.47, 0.44) raw xDistance=-0.29 yDistance=0.56
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-17, 19) + (1, 0)
+DEBUG: stepped: pos (-16, 19)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-16, 19) + (0, -1)
+DEBUG: stepped: pos (-16, 18)
+STEP: opts=13 frame=116 ao=1 cam=-0.46912583583790024,0.43719528880824043 mnt=-0.29164341878764011,0.56036033753351866 gd=-0.22568565749220773,0.36784170122573184 ra=1 Right lim=0 dec=1 Down lim=0 pos=-16,18
+DEBUG: MountToCamera -- mountTheta (-0.74) + m_xAngle (0.35) = xAngle (-0.39 = -0.39)
+DEBUG: MountToCamera -- mountX=5.60 mountY=-5.09 hyp=7.56 mountTheta=-0.74 cameraX=7.00, cameraY=-2.87 cameraTheta=-0.39
+DEBUG: incremental bump (6.998, -2.870) isValid = 1
+DEBUG: Scheduling Mount bump of (0.416, -0.142)
+RESULT: 0 pos=-16,18 avg=-18.661527855756987,20.353676858183871 inprog=1 w=1
+SHOWBUMP: 1.142452967783582 -1.0541528068077848
+BUMP: 0.41625536164406857 -0.14225442889627948
+GUIDE: 57
+DEBUG: CameraToMount -- cameraTheta (-2.98) - m_xAngle (0.35) = xAngle (-3.33 = 2.95)
+DEBUG: CameraToMount -- cameraTheta (-2.98) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-3.30 = 2.99)
+DEBUG: CameraToMount -- cameraX=-0.25 cameraY=-0.04 hyp=0.25 cameraTheta=-2.98 mountX=-0.25 mountY=0.04, mountTheta=2.99
+DEBUG: Moving (-0.25, -0.04) raw xDistance=-0.25 yDistance=0.04
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-16, 18) + (1, 0)
+DEBUG: stepped: pos (-15, 18)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=117 ao=1 cam=-0.2498217628922248,-0.039740202939455571 mnt=-0.24837611459893974,0.03907904919825482 gd=-0.17227494822178657,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-15,18
+DEBUG: secondary mount is busy, cannot bump
+RESULT: 0 pos=-15,18 avg=-17.453223663357182,19.576963494983193 inprog=1 w=1
+GUIDE: 58
+DEBUG: CameraToMount -- cameraTheta (2.21) - m_xAngle (0.35) = xAngle (1.86 = 1.86)
+DEBUG: CameraToMount -- cameraTheta (2.21) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (1.90 = 1.90)
+DEBUG: CameraToMount -- cameraX=-0.31 cameraY=0.41 hyp=0.52 cameraTheta=2.21 mountX=-0.15 mountY=0.49, mountTheta=1.87
+DEBUG: Moving (-0.31, 0.41) raw xDistance=-0.15 yDistance=0.49
+DEBUG: MoveAxis(R, 0, ABG)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-15, 18) + (0, -1)
+DEBUG: stepped: pos (-15, 17)
+STEP: opts=13 frame=118 ao=1 cam=-0.30791397665645093,0.41286584005823102 mnt=-0.14842872841136845,0.4875941002518131 gd=-0.1055693452746872,0.30718428315864221 ra=0 Right lim=0 dec=1 Down lim=0 pos=-15,17
+DEBUG: MountToCamera -- mountTheta (-0.75) + m_xAngle (0.35) = xAngle (-0.40 = -0.40)
+DEBUG: MountToCamera -- mountX=4.99 mountY=-4.68 hyp=6.84 mountTheta=-0.75 cameraX=6.29, cameraY=-2.69 cameraTheta=-0.40
+DEBUG: incremental bump (6.290, -2.694) isValid = 1
+DEBUG: Scheduling Mount bump of (0.414, -0.148)
+RESULT: 0 pos=-15,17 avg=-16.643659854449311,18.726565541638738 inprog=1 w=1
+SHOWBUMP: 1.1278962515676487 -1.0712424237670723
+BUMP: 0.41355797448269699 -0.14761610381050613
+GUIDE: 59
+DEBUG: CameraToMount -- cameraTheta (-2.73) - m_xAngle (0.35) = xAngle (-3.08 = -3.08)
+DEBUG: CameraToMount -- cameraTheta (-2.73) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-3.04 = -3.04)
+DEBUG: CameraToMount -- cameraX=-0.37 cameraY=-0.16 hyp=0.40 cameraTheta=-2.73 mountX=-0.40 mountY=-0.04, mountTheta=-3.04
+DEBUG: Moving (-0.37, -0.16) raw xDistance=-0.40 yDistance=-0.04
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-15, 17) + (1, 0)
+DEBUG: stepped: pos (-14, 17)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=119 ao=1 cam=-0.36782030278517652,-0.16131401977297344 mnt=-0.40079529871013037,-0.040275672352811161 gd=-0.25989089235661023,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-14,17
+DEBUG: MountToCamera -- mountTheta (-0.76) + m_xAngle (0.35) = xAngle (-0.42 = -0.42)
+DEBUG: MountToCamera -- mountX=4.73 mountY=-4.54 hyp=6.56 mountTheta=-0.76 cameraX=6.00, cameraY=-2.65 cameraTheta=-0.42
+DEBUG: incremental bump (5.996, -2.650) isValid = 1
+DEBUG: Scheduling Mount bump of (0.377, -0.139)
+RESULT: 0 pos=-14,17 avg=-15.771252102481037,18.156798912897955 inprog=1 w=1
+SHOWBUMP: 1.0230226694889368 -0.99255190547152794
+BUMP: 0.37689077684461536 -0.13880680979604887
+GUIDE: 60
+DEBUG: CameraToMount -- cameraTheta (2.65) - m_xAngle (0.35) = xAngle (2.30 = 2.30)
+DEBUG: CameraToMount -- cameraTheta (2.65) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.34 = 2.34)
+DEBUG: CameraToMount -- cameraX=-0.80 cameraY=0.43 hyp=0.91 cameraTheta=2.65 mountX=-0.61 mountY=0.66, mountTheta=2.32
+DEBUG: Moving (-0.80, 0.43) raw xDistance=-0.61 yDistance=0.66
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-14, 17) + (1, 0)
+DEBUG: stepped: pos (-13, 17)
+DEBUG: MoveAxis(D, 2, ABG)
+DEBUG: stepping (-13, 17) + (0, -2)
+DEBUG: stepped: pos (-13, 15)
+STEP: opts=13 frame=120 ao=1 cam=-0.8028032933940068,0.43009883302079288 mnt=-0.60768849951513282,0.6563076386298774 gd=-0.40103611715949639,0.41347381233682273 ra=1 Right lim=0 dec=2 Down lim=0 pos=-13,15
+DEBUG: MountToCamera -- mountTheta (-0.76) + m_xAngle (0.35) = xAngle (-0.42 = -0.42)
+DEBUG: MountToCamera -- mountX=4.46 mountY=-4.28 hyp=6.18 mountTheta=-0.76 cameraX=5.65, cameraY=-2.50 cameraTheta=-0.42
+DEBUG: incremental bump (5.649, -2.499) isValid = 1
+DEBUG: Scheduling Mount bump of (0.411, -0.152)
+RESULT: 0 pos=-13,15 avg=-14.856738908662296,17.11505527164163 inprog=1 w=1
+SHOWBUMP: 1.1166582596774499 -1.0840509015952229
+BUMP: 0.41144268017972718 -0.15166490806153926
+GUIDE: 61
+DEBUG: CameraToMount -- cameraTheta (2.28) - m_xAngle (0.35) = xAngle (1.93 = 1.93)
+DEBUG: CameraToMount -- cameraTheta (2.28) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (1.96 = 1.96)
+DEBUG: CameraToMount -- cameraX=-0.49 cameraY=0.57 hyp=0.75 cameraTheta=2.28 mountX=-0.26 mountY=0.69, mountTheta=1.93
+DEBUG: Moving (-0.49, 0.57) raw xDistance=-0.26 yDistance=0.69
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-13, 15) + (1, 0)
+DEBUG: stepped: pos (-12, 15)
+DEBUG: MoveAxis(D, 2, ABG)
+DEBUG: stepping (-12, 15) + (0, -2)
+DEBUG: stepped: pos (-12, 13)
+STEP: opts=13 frame=121 ao=1 cam=-0.48503489063001837,0.57077785679662441 mnt=-0.26098282866593409,0.69235496701927246 gd=-0.19249171026070322,0.46512679608571927 ra=1 Right lim=0 dec=2 Down lim=0 pos=-12,13
+DEBUG: MountToCamera -- mountTheta (-0.76) + m_xAngle (0.35) = xAngle (-0.41 = -0.41)
+DEBUG: MountToCamera -- mountX=4.17 mountY=-3.94 hyp=5.74 mountTheta=-0.76 cameraX=5.27, cameraY=-2.28 cameraTheta=-0.41
+DEBUG: incremental bump (5.267, -2.276) isValid = 1
+DEBUG: Scheduling Mount bump of (0.413, -0.149)
+RESULT: 0 pos=-12,13 avg=-13.914015068803739,15.757087031999893 inprog=1 w=1
+SHOWBUMP: 1.124826437891612 -1.0747738008644978
+BUMP: 0.4129829332182649 -0.14872974520579588
+GUIDE: 62
+DEBUG: CameraToMount -- cameraTheta (-2.48) - m_xAngle (0.35) = xAngle (-2.83 = -2.83)
+DEBUG: CameraToMount -- cameraTheta (-2.48) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-2.79 = -2.79)
+DEBUG: CameraToMount -- cameraX=-0.17 cameraY=-0.13 hyp=0.21 cameraTheta=-2.48 mountX=-0.20 mountY=-0.07, mountTheta=-2.80
+DEBUG: Moving (-0.17, -0.13) raw xDistance=-0.20 yDistance=-0.07
+DEBUG: MoveAxis(R, 0, ABG)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=122 ao=1 cam=-0.16880674090455727,-0.1314782822832683 mnt=-0.20355558201400417,-0.073140647118345059 gd=-0.14171443638707185,-0.013519731958557038 ra=0 Right lim=0 dec=0 Up lim=0 pos=-12,13
+DEBUG: secondary mount is busy, cannot bump
+RESULT: 0 pos=-12,13 avg=-13.282390096098505,14.847248311439929 inprog=1 w=1
+GUIDE: 63
+DEBUG: CameraToMount -- cameraTheta (2.74) - m_xAngle (0.35) = xAngle (2.39 = 2.39)
+DEBUG: CameraToMount -- cameraTheta (2.74) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.42 = 2.42)
+DEBUG: CameraToMount -- cameraX=-0.51 cameraY=0.22 hyp=0.55 cameraTheta=2.74 mountX=-0.40 mountY=0.36, mountTheta=2.41
+DEBUG: Moving (-0.51, 0.22) raw xDistance=-0.40 yDistance=0.36
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-12, 13) + (1, 0)
+DEBUG: stepped: pos (-11, 13)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-11, 13) + (0, -1)
+DEBUG: stepped: pos (-11, 12)
+STEP: opts=13 frame=123 ao=1 cam=-0.50880674090454647,0.21852171771674023 mnt=-0.40360814301351944,0.36451471579376898 gd=-0.26419314064561228,0.22869788971297544 ra=1 Right lim=0 dec=1 Down lim=0 pos=-11,12
+DEBUG: MountToCamera -- mountTheta (-0.75) + m_xAngle (0.35) = xAngle (-0.40 = -0.40)
+DEBUG: MountToCamera -- mountX=3.76 mountY=-3.48 hyp=5.12 mountTheta=-0.75 cameraX=4.72, cameraY=-1.98 cameraTheta=-0.40
+DEBUG: incremental bump (4.719, -1.984) isValid = 1
+DEBUG: Scheduling Mount bump of (0.415, -0.145)
+RESULT: 0 pos=-11,12 avg=-12.529201364385997,13.907656368664751 inprog=1 w=1
+SHOWBUMP: 1.1342667148538861 -1.0638342921736075
+BUMP: 0.41474447999380898 -0.14528631475258053
+GUIDE: 64
+DEBUG: CameraToMount -- cameraTheta (-2.42) - m_xAngle (0.35) = xAngle (-2.76 = -2.76)
+DEBUG: CameraToMount -- cameraTheta (-2.42) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-2.73 = -2.73)
+DEBUG: CameraToMount -- cameraX=-0.29 cameraY=-0.26 hyp=0.38 cameraTheta=-2.42 mountX=-0.36 mountY=-0.15, mountTheta=-2.73
+DEBUG: Moving (-0.29, -0.26) raw xDistance=-0.36 yDistance=-0.15
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-11, 12) + (1, 0)
+DEBUG: stepped: pos (-10, 12)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=124 ao=1 cam=-0.28799178630860922,-0.25538188817466789 mnt=-0.35788549279082549,-0.15434688122361406 gd=-0.24396138030341291,-0.081229682890968574 ra=1 Right lim=0 dec=0 Up lim=0 pos=-10,12
+DEBUG: MountToCamera -- mountTheta (-0.76) + m_xAngle (0.35) = xAngle (-0.41 = -0.41)
+DEBUG: MountToCamera -- mountX=3.51 mountY=-3.32 hyp=4.83 mountTheta=-0.76 cameraX=4.43, cameraY=-1.92 cameraTheta=-0.41
+DEBUG: incremental bump (4.430, -1.921) isValid = 1
+DEBUG: Scheduling Mount bump of (0.362, -0.131)
+RESULT: 0 pos=-10,12 avg=-11.694564914138619,13.278129767005383 inprog=1 w=1
+SHOWBUMP: 0.98542890537532901 -0.94385515456127789
+BUMP: 0.3619971264522035 -0.13083294015357766
+GUIDE: 65
+DEBUG: CameraToMount -- cameraTheta (2.71) - m_xAngle (0.35) = xAngle (2.36 = 2.36)
+DEBUG: CameraToMount -- cameraTheta (2.71) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.39 = 2.39)
+DEBUG: CameraToMount -- cameraX=-0.71 cameraY=0.33 hyp=0.78 cameraTheta=2.71 mountX=-0.55 mountY=0.53, mountTheta=2.38
+DEBUG: Moving (-0.71, 0.33) raw xDistance=-0.55 yDistance=0.53
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-10, 12) + (1, 0)
+DEBUG: stepped: pos (-9, 12)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-9, 12) + (0, -1)
+DEBUG: stepped: pos (-9, 11)
+STEP: opts=13 frame=125 ao=1 cam=-0.70808112652504462,0.32805709497660018 mnt=-0.55350299757081478,0.53006566247130404 gd=-0.3657841850908522,0.32825528955455374 ra=1 Right lim=0 dec=1 Down lim=0 pos=-9,11
+DEBUG: MountToCamera -- mountTheta (-0.77) + m_xAngle (0.35) = xAngle (-0.42 = -0.42)
+DEBUG: MountToCamera -- mountX=3.24 mountY=-3.13 hyp=4.51 mountTheta=-0.77 cameraX=4.12, cameraY=-1.84 cameraTheta=-0.42
+DEBUG: incremental bump (4.115, -1.836) isValid = 1
+DEBUG: Scheduling Mount bump of (0.411, -0.153)
+RESULT: 0 pos=-9,11 avg=-10.805358492472875,12.526346943893607 inprog=1 w=1
+SHOWBUMP: 1.1136350022063477 -1.0874414231807215
+BUMP: 0.41086890488596167 -0.15274113987829582
+GUIDE: 66
+DEBUG: CameraToMount -- cameraTheta (-2.86) - m_xAngle (0.35) = xAngle (-3.21 = 3.07)
+DEBUG: CameraToMount -- cameraTheta (-2.86) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-3.18 = 3.11)
+DEBUG: CameraToMount -- cameraX=-0.48 cameraY=-0.14 hyp=0.50 cameraTheta=-2.86 mountX=-0.50 mountY=0.02, mountTheta=3.11
+DEBUG: Moving (-0.48, -0.14) raw xDistance=-0.50 yDistance=0.02
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-9, 11) + (1, 0)
+DEBUG: stepped: pos (-8, 11)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=126 ao=1 cam=-0.48339059682125196,-0.13839168578910233 mnt=-0.50159216891547664,0.017104190050487581 gd=-0.34160795937310989,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-8,11
+DEBUG: MountToCamera -- mountTheta (-0.79) + m_xAngle (0.35) = xAngle (-0.44 = -0.44)
+DEBUG: MountToCamera -- mountX=2.96 mountY=-3.00 hyp=4.22 mountTheta=-0.79 cameraX=3.81, cameraY=-1.81 cameraTheta=-0.44
+DEBUG: incremental bump (3.811, -1.812) isValid = 1
+DEBUG: Scheduling Mount bump of (0.406, -0.161)
+RESULT: 0 pos=-8,11 avg=-9.8795901899568257,12.022652452408717 inprog=1 w=1
+SHOWBUMP: 1.0899176376077573 -1.1132633863311063
+BUMP: 0.40630133839155769 -0.16100160647382075
+GUIDE: 67
+DEBUG: CameraToMount -- cameraTheta (2.20) - m_xAngle (0.35) = xAngle (1.85 = 1.85)
+DEBUG: CameraToMount -- cameraTheta (2.20) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (1.89 = 1.89)
+DEBUG: CameraToMount -- cameraX=-0.35 cameraY=0.48 hyp=0.59 cameraTheta=2.20 mountX=-0.16 mountY=0.56, mountTheta=1.86
+DEBUG: Moving (-0.35, 0.48) raw xDistance=-0.16 yDistance=0.56
+DEBUG: MoveAxis(R, 0, ABG)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-8, 11) + (0, -1)
+DEBUG: stepped: pos (-8, 10)
+STEP: opts=13 frame=127 ao=1 cam=-0.34778414897704124,0.47521596368241603 mnt=-0.16461229089963425,0.55918883956361409 gd=-0.12761830042288727,0.35228896892507688 ra=0 Right lim=0 dec=1 Down lim=0 pos=-8,10
+DEBUG: secondary mount is busy, cannot bump
+RESULT: 0 pos=-8,10 avg=-9.2593254272710723,11.35517714311384 inprog=1 w=1
+GUIDE: 68
+DEBUG: CameraToMount -- cameraTheta (2.36) - m_xAngle (0.35) = xAngle (2.01 = 2.01)
+DEBUG: CameraToMount -- cameraTheta (2.36) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.04 = 2.04)
+DEBUG: CameraToMount -- cameraX=-0.59 cameraY=0.59 hyp=0.84 cameraTheta=2.36 mountX=-0.36 mountY=0.75, mountTheta=2.02
+DEBUG: Moving (-0.59, 0.59) raw xDistance=-0.36 yDistance=0.75
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-8, 10) + (1, 0)
+DEBUG: stepped: pos (-7, 10)
+DEBUG: MoveAxis(D, 2, ABG)
+DEBUG: stepping (-7, 10) + (0, -2)
+DEBUG: stepped: pos (-7, 8)
+STEP: opts=13 frame=128 ao=1 cam=-0.59413250062304712,0.59342000004072304 mnt=-0.35579172754855382,0.74747607656937221 gd=-0.23308206938519097,0.49557015606345989 ra=1 Right lim=0 dec=2 Down lim=0 pos=-7,8
+DEBUG: MountToCamera -- mountTheta (-0.79) + m_xAngle (0.35) = xAngle (-0.44 = -0.44)
+DEBUG: MountToCamera -- mountX=2.55 mountY=-2.56 hyp=3.62 mountTheta=-0.79 cameraX=3.27, cameraY=-1.54 cameraTheta=-0.44
+DEBUG: incremental bump (3.275, -1.535) isValid = 1
+DEBUG: Scheduling Mount bump of (0.407, -0.159)
+RESULT: 0 pos=-7,8 avg=-8.5137480362716182,10.247968685886272 inprog=1 w=1
+SHOWBUMP: 1.0953136148572151 -1.1075066714924398
+BUMP: 0.40735059688001141 -0.15915001017155275
+GUIDE: 69
+DEBUG: CameraToMount -- cameraTheta (-2.79) - m_xAngle (0.35) = xAngle (-3.14 = 3.14)
+DEBUG: CameraToMount -- cameraTheta (-2.79) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-3.11 = -3.11)
+DEBUG: CameraToMount -- cameraX=-0.27 cameraY=-0.10 hyp=0.29 cameraTheta=-2.79 mountX=-0.29 mountY=-0.01, mountTheta=-3.11
+DEBUG: Moving (-0.27, -0.10) raw xDistance=-0.29 yDistance=-0.01
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-7, 8) + (1, 0)
+DEBUG: stepped: pos (-6, 8)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=129 ao=1 cam=-0.27227201455933425,-0.098415874073424447 mnt=-0.28951254416661848,-0.0098386190546789452 gd=-0.198708647681933,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-6,8
+DEBUG: MountToCamera -- mountTheta (-0.80) + m_xAngle (0.35) = xAngle (-0.45 = -0.45)
+DEBUG: MountToCamera -- mountX=2.30 mountY=-2.38 hyp=3.31 mountTheta=-0.80 cameraX=2.98, cameraY=-1.45 cameraTheta=-0.45
+DEBUG: incremental bump (2.978, -1.446) isValid = 1
+DEBUG: Scheduling Mount bump of (0.268, -0.109)
+RESULT: 0 pos=-6,8 avg=-7.6842111843019838,9.5061390195438022 inprog=1 w=1
+SHOWBUMP: 0.71733327223576904 -0.74394686695806644
+BUMP: 0.26836928414067562 -0.10860783356487569
+GUIDE: 70
+DEBUG: CameraToMount -- cameraTheta (2.48) - m_xAngle (0.35) = xAngle (2.14 = 2.14)
+DEBUG: CameraToMount -- cameraTheta (2.48) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.17 = 2.17)
+DEBUG: CameraToMount -- cameraX=-0.60 cameraY=0.46 hyp=0.76 cameraTheta=2.48 mountX=-0.40 mountY=0.62, mountTheta=2.15
+DEBUG: Moving (-0.60, 0.46) raw xDistance=-0.40 yDistance=0.62
+DEBUG: MoveAxis(R, 1, ABG)
+DEBUG: stepping (-6, 8) + (1, 0)
+DEBUG: AO: limit reached!
+DEBUG: Error thrown from stepguider.cpp:985->step failed
+STEP: opts=13 frame=130 ao=1 cam=-0.59873351246423567,0.46279800248913716 mnt=-0.40471871115700309,0.62461089421556537 gd=-0.26888239336664727,0.3935048633558062 ra=0 Right lim=0 dec=0 Down lim=0 pos=0,0
+DEBUG: StepGuider::Move: Mount::Move failed! result 3
+DEBUG: Stop bumping, close enough to center -- clearing m_bumpInProgress
+RESULT: 3 pos=0,0 avg=-5.1484214934823296,6.3691131430943475 inprog=0 w=1
+LIMIT: The AO exceeded its travel limit stepping from (-6, 8) to (-5, 8) and has been re-centered. Try reducing the AO Travel setting to 5 or lower.
+GUIDE: 71
+DEBUG: CameraToMount -- cameraTheta (-0.54) - m_xAngle (0.35) = xAngle (-0.89 = -0.89)
+DEBUG: CameraToMount -- cameraTheta (-0.54) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.85 = -0.85)
+DEBUG: CameraToMount -- cameraX=2.10 cameraY=-1.27 hyp=2.45 cameraTheta=-0.54 mountX=1.54 mountY=-1.85, mountTheta=-0.88
+DEBUG: Moving (2.10, -1.27) raw xDistance=1.54 yDistance=-1.85
+DEBUG: MoveAxis(L, 3, ABG)
+DEBUG: stepping (0, 0) + (-3, 0)
+DEBUG: stepped: pos (-3, 0)
+DEBUG: MoveAxis(U, 5, ABG)
+DEBUG: stepping (-3, 0) + (0, 5)
+DEBUG: stepped: pos (-3, 5)
+STEP: opts=13 frame=131 ao=1 cam=2.1019263917822144,-1.2659334486582026 mnt=1.5433221459266797,-1.8514129931979428 gd=0.95347118439814282,-1.1388448452797975 ra=3 Left lim=0 dec=5 Up lim=0 pos=-3,5
+RESULT: 0 pos=-3,5 avg=-4.439442400633161,5.9173058058732124 inprog=0 w=1
+GUIDE: 72
+DEBUG: CameraToMount -- cameraTheta (-0.06) - m_xAngle (0.35) = xAngle (-0.41 = -0.41)
+DEBUG: CameraToMount -- cameraTheta (-0.06) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.37 = -0.37)
+DEBUG: CameraToMount -- cameraX=1.05 cameraY=-0.06 hyp=1.05 cameraTheta=-0.06 mountX=0.96 mountY=-0.38, mountTheta=-0.38
+DEBUG: Moving (1.05, -0.06) raw xDistance=0.96 yDistance=-0.38
+DEBUG: MoveAxis(L, 2, ABG)
+DEBUG: stepping (-3, 5) + (-2, 0)
+DEBUG: stepped: pos (-5, 5)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-5, 5) + (0, 1)
+DEBUG: stepped: pos (-5, 6)
+STEP: opts=13 frame=132 ao=1 cam=1.0479447913049995,-0.064771759442834309 mnt=0.96284136117680497,-0.38416411813801843 gd=0.67333304044925701,-0.32174253359653737 ra=2 Left lim=0 dec=1 Up lim=0 pos=-5,6
+RESULT: 0 pos=-5,6 avg=-4.6244264084242177,5.9445948899350523 inprog=0 w=1
+GUIDE: 73
+DEBUG: CameraToMount -- cameraTheta (-1.48) - m_xAngle (0.35) = xAngle (-1.82 = -1.82)
+DEBUG: CameraToMount -- cameraTheta (-1.48) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-1.79 = -1.79)
+DEBUG: CameraToMount -- cameraX=0.05 cameraY=-0.53 hyp=0.53 cameraTheta=-1.48 mountX=-0.13 mountY=-0.52, mountTheta=-1.82
+DEBUG: Moving (0.05, -0.53) raw xDistance=-0.13 yDistance=-0.52
+DEBUG: MoveAxis(R, 0, ABG)
+DEBUG: MoveAxis(U, 1, ABG)
+DEBUG: stepping (-5, 6) + (0, 1)
+DEBUG: stepped: pos (-5, 7)
+STEP: opts=13 frame=133 ao=1 cam=0.050477570479486644,-0.52818788179654064 mnt=-0.13291271795559903,-0.51808432456658737 gd=-0.036601699480579397,-0.34891510182870766 ra=0 Right lim=0 dec=1 Up lim=0 pos=-5,7
+RESULT: 0 pos=-5,7 avg=-4.7483656936442262,6.2928785762564852 inprog=0 w=1
+GUIDE: 74
+DEBUG: CameraToMount -- cameraTheta (0.24) - m_xAngle (0.35) = xAngle (-0.11 = -0.11)
+DEBUG: CameraToMount -- cameraTheta (0.24) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (-0.07 = -0.07)
+DEBUG: CameraToMount -- cameraX=0.22 cameraY=0.05 hyp=0.22 cameraTheta=0.24 mountX=0.22 mountY=-0.02, mountTheta=-0.07
+DEBUG: Moving (0.22, 0.05) raw xDistance=0.22 yDistance=-0.02
+DEBUG: MoveAxis(L, 0, ABG)
+DEBUG: MoveAxis(U, 0, ABG)
+STEP: opts=13 frame=134 ao=1 cam=0.21682592212552265,0.053608081845169409 mnt=0.22209883625823457,-0.015728888707653283 gd=0.13736014787904721,0 ra=0 Left lim=0 dec=0 Up lim=0 pos=-5,7
+RESULT: 0 pos=-5,7 avg=-4.8314050147416312,6.5262286460918455 inprog=0 w=1
+GUIDE: 75
+DEBUG: CameraToMount -- cameraTheta (1.87) - m_xAngle (0.35) = xAngle (1.52 = 1.52)
+DEBUG: CameraToMount -- cameraTheta (1.87) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (1.55 = 1.55)
+DEBUG: CameraToMount -- cameraX=-0.12 cameraY=0.40 hyp=0.42 cameraTheta=1.87 mountX=0.02 mountY=0.42, mountTheta=1.52
+DEBUG: Moving (-0.12, 0.40) raw xDistance=0.02 yDistance=0.42
+DEBUG: MoveAxis(R, 0, ABG)
+DEBUG: MoveAxis(D, 1, ABG)
+DEBUG: stepping (-5, 7) + (0, -1)
+DEBUG: stepped: pos (-5, 6)
+STEP: opts=13 frame=135 ao=1 cam=-0.12317407787448076,0.40360808184516372 mnt=0.022046275258701214,0.42192647420445151 gd=0,0.26581367874880441 ra=0 Right lim=0 dec=1 Down lim=0 pos=-5,6
+RESULT: 0 pos=-5,6 avg=-4.8870413598768927,6.3525731928815361 inprog=0 w=1
+DEBUG: MoveAxis(D, 6, -)
+DEBUG: stepping (-5, 6) + (0, -6)
+DEBUG: stepped: pos (-5, 0)
+DEBUG: MoveAxis(R, 5, -)
+DEBUG: stepping (-5, 0) + (5, 0)
+DEBUG: stepped: pos (0, 0)
+STOPPED: pos=0,0
+DEBUG: stepguider move axis dir= 2 steps= 50 opts= 0x10
+DEBUG: MoveAxis(R, 50, M)
+DEBUG: stepping (0, 0) + (50, 0)
+DEBUG: StepGuider step would hit limit: truncate move to (0, 0) + (44, 0)
+DEBUG: stepped: pos (44, 0)
+DEBUG: Throw from stepguider.cpp:872->stepsTaken != stepsRequested
+MANUAL: 1
+DEBUG: stepguider move axis dir= 3 steps= 44 opts= 0x10
+DEBUG: MoveAxis(L, 44, M)
+DEBUG: stepping (44, 0) + (-44, 0)
+DEBUG: stepped: pos (0, 0)
+MANUAL: 0
+SUMMARY: Bump percentage = 80, Bump step = 1.50, Timestamp = T\n
+SUMMARY: Calibration steps = 5, Samples to average = 3

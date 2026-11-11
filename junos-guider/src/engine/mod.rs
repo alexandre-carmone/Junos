@@ -18,5 +18,6 @@ pub mod rng;
 pub mod scope;
 pub mod star;
 pub mod stats;
+pub mod stepguider;
 pub mod tools;
 pub mod traits;
