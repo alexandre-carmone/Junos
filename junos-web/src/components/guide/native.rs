@@ -34,6 +34,7 @@ use super::calibration::{calibration_sheet, CalSheet};
 use super::darks::darks_sheet;
 use super::equipment::{equipment_card, equipment_sheet, Equip};
 use super::native_settings::native_settings_sheet;
+use super::pa_tools::pa_tools_sheet;
 use super::frame::{frame_pane, zoom, FramePane};
 use super::protocol::{Reply, Rpc, Settle, CALIBRATING, GUIDING, LOOPING, LOST_LOCK, PAUSED, SELECTED};
 use super::settings::{settings_i64, GuideSettings};
@@ -387,6 +388,7 @@ pub fn NativeGuide(
                                 {tool(Sheet::Darks, |tr| tr.guider_darks_title,
                                       Signal::derive(move || darks.with(|d| !d["build"].is_null())))}
                                 {tool(Sheet::Assistant, |tr| tr.guider_ga_title, busy(|s| s.ga_running))}
+                                {tool(Sheet::PolarTools, |tr| tr.guider_pa_title, busy(|s| s.pa_running))}
                             </div>
                         </div>
                     </div>
@@ -436,6 +438,8 @@ pub fn NativeGuide(
                                                darks_sheet(state, darks, rpc.clone(), lang)).into_any()),
                     Sheet::Assistant => Some(sheet(move || tr().guider_ga_title, close,
                                                    assistant_sheet(state, guider.ga, rpc.clone(), lang)).into_any()),
+                    Sheet::PolarTools => Some(sheet(move || tr().guider_pa_title, close,
+                                                    pa_tools_sheet(guider.pa, guider.settings, rpc.clone(), lang)).into_any()),
                 }
             }}
         </div>

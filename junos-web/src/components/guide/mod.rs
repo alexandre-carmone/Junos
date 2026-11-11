@@ -66,6 +66,7 @@ mod frame;
 mod lock_shift;
 mod native;
 mod native_settings;
+mod pa_tools;
 mod protocol;
 mod pulses;
 mod rows;
@@ -132,6 +133,7 @@ enum Sheet {
     Settings,
     Darks,
     Assistant,
+    PolarTools,
 }
 
 /// Download the accumulated guide log as a text file.

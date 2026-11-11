@@ -284,6 +284,12 @@ translations! {
     guider_ga_applied, guider_ga_measure_backlash, guider_ga_wait, guider_ga_wait_blt, guider_ga_seconds_left,
     guider_ga_wait_cancel, guider_ga_wait_accept, guider_ga_open, guider_ga_start, guider_ga_close,
     guider_ga_review, guider_ga_no_history,
+    // Guide tab — junos-guider polar tools sheet (drift, static, drift align)
+    guider_pa_title, guider_pa_tool, guider_pa_tab_drift, guider_pa_tab_static, guider_pa_tab_drift_align,
+    guider_pa_drift_instructions, guider_pa_hemisphere, guider_pa_north, guider_pa_south, guider_pa_mirror,
+    guider_pa_applies_on_open, guider_pa_elapsed, guider_pa_alpha, guider_pa_offset, guider_pa_error,
+    guider_pa_open, guider_pa_close, guider_pa_static_hint, guider_pa_rotate, guider_pa_mark,
+    guider_pa_drift_align_hint, guider_pa_drift,
     // Rig (optical-train) manager — section in the Profiles tab
     rig_section, rig_add_train, rig_offline_hint, rig_no_trains, rig_train_name,
     rig_role_mount, rig_role_camera, rig_role_scope, rig_role_guider,
