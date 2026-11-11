@@ -1228,3 +1228,27 @@ fn the_bad_pixel_map_is_refined_from_its_master_dark() {
     let pixels = text.lines().filter(|l| !l.starts_with('#')).count() as u64;
     assert_eq!(built["hot"].as_u64().unwrap() + built["cold"].as_u64().unwrap(), pixels);
 }
+
+#[test]
+fn a_setting_applies_to_the_gear_in_place() {
+    let mut r = Rig::guiding(SimParams::new(scale()), false, |_| {});
+    r.cmd(Command::StopCapture).unwrap();
+    while r.e.has_work() {
+        r.step();
+    }
+    assert!(r.e.snapshot().calibrated);
+    // The sticky lock, a global, reaches the guider; the gear stays.
+    r.e.store().global().set_bool("/StickyLockPosition", true);
+    r.cmd(Command::SettingsChanged("/StickyLockPosition".into())).unwrap();
+    assert!(r.e.guider.lock_pos_is_sticky());
+    let snap = r.e.snapshot();
+    assert!(snap.connected && snap.calibrated);
+    // A focal length 5 % off or more changes the image scale:
+    // `MakeImageScaleAdjustments` clears the calibration, the gear stays.
+    let fl = r.e.store().profile().get_i32("/frame/focalLength", 0);
+    r.e.store().profile().set_i32("/frame/focalLength", if fl > 0 { fl * 2 } else { 600 });
+    r.cmd(Command::SettingsChanged("/frame/focalLength".into())).unwrap();
+    let snap = r.e.snapshot();
+    assert!(snap.connected && !snap.calibrated);
+    assert!(r.debug_log().contains("Image scale has changed via AD UI"));
+}

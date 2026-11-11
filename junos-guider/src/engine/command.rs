@@ -281,6 +281,9 @@ pub enum Command {
     /// A profile switch (`set_profile`, the daemon's): the settings read
     /// again.
     ProfileChanged,
+    /// `set_profile_value` wrote this key: the settings applied to the gear
+    /// in place, as the settings dialog's OK does.
+    SettingsChanged(String),
     /// The 1 s tick: the Guiding Assistant's countdown.
     Tick,
     /// The daemon connects the gear off the engine thread (`set_connected
@@ -400,6 +403,7 @@ impl Command {
             Command::Attach(_) => "set_connected",
             Command::Detach => "set_connected",
             Command::ProfileChanged => "set_profile",
+            Command::SettingsChanged(_) => "set_profile_value",
             Command::Tick => "tick",
             Command::Connecting(_) => "set_connected",
             Command::DeviceLost(_) => "device_lost",

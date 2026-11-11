@@ -484,6 +484,34 @@ impl Control {
         self.set_exposure_duration(exposure, profile, ev);
     }
 
+    /// The settings dialog's OK on the frame's settings
+    /// (`MyFrameConfigDialogCtrlSet::UnloadValues`) with the profile as the
+    /// dialog: dither, time lapse, variable delay and auto exposure through
+    /// their setters, then the exposure when it was changed (the frame's
+    /// drop-down). Nothing reset, unlike a profile switch.
+    pub fn apply_settings(&mut self, profile: &mut dyn ProfileAccess, ev: &mut Vec<ControlEvent>) {
+        let mode = if profile.get_i32(keys::DITHER_MODE, 0) == 0 { DitherMode::Random } else { DitherMode::Spiral };
+        self.set_dither_mode(mode, profile, ev);
+        self.set_dither_ra_only(profile.get_bool(keys::DITHER_RA_ONLY, false), profile);
+        self.set_dither_scale_factor(profile.get_f64(keys::DITHER_SCALE_FACTOR, 1.0), profile, ev);
+        self.set_time_lapse(profile.get_i32(keys::TIME_LAPSE, 0), profile, ev);
+        self.set_variable_delay_config(
+            profile.get_bool(keys::VAR_DELAY_ENABLED, false),
+            profile.get_i32(keys::VAR_DELAY_SHORT, 1000),
+            profile.get_i32(keys::VAR_DELAY_LONG, 10000),
+            profile,
+            ev,
+        );
+        let a = self.auto_exp;
+        let (min, max) = (profile.get_i32(keys::AUTO_EXP_MIN, a.min_ms), profile.get_i32(keys::AUTO_EXP_MAX, a.max_ms));
+        self.set_auto_exposure_cfg(min, max, profile.get_f64(keys::AUTO_EXP_SNR, a.target_snr), profile, ev);
+        let current = if self.auto_exp.enabled { -1 } else { self.exposure_ms };
+        let stored = profile.get_i32(keys::EXPOSURE_MS, current);
+        if stored != current {
+            self.set_exposure_duration(stored, profile, ev);
+        }
+    }
+
     // ------------------------------------------------------------ controller
 
     /// `IsSettling`.

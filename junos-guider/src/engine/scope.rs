@@ -605,6 +605,56 @@ impl Scope {
 
     // ------------------------------------------------------------ settings
 
+    /// The settings dialog's OK on the mount page
+    /// (`ScopeConfigDialogCtrlSet::UnloadValues`, scope.cpp:2154) with the
+    /// profile as the dialog: each setting through its setter, a Dec-flip
+    /// change clearing the calibration. Behind an AO (`using_ao`) the page
+    /// has no Dec compensation, max durations or Dec mode, and the
+    /// backlash floor and ceiling are the pulse.
+    pub fn apply_settings(&mut self, using_ao: bool, profile: &mut impl ProfileAccess, events: &mut Vec<MountEvent>) {
+        let v = profile.get_i32("/scope/CalibrationDuration", self.calibration_duration);
+        self.set_calibration_duration(v, profile, events);
+        let v = profile.get_i32("/scope/CalibrationDistance", self.calibration_distance);
+        self.set_calibration_distance(v, profile, events);
+        let old_flip = self.cal_flip_requires_dec_flip;
+        let flip = profile.get_bool("/scope/CalFlipRequiresDecFlip", old_flip);
+        self.set_calibration_flip_requires_dec_flip(flip, profile);
+        if old_flip != flip {
+            self.clear_calibration();
+            debug(
+                events,
+                format!("User changed 'Dec-Flip' setting from {} to {}, calibration cleared", old_flip as i32, flip as i32),
+            );
+        }
+        let stop = profile.get_bool("/scope/StopGuidingWhenSlewing", self.mv.stop_guiding_when_slewing);
+        self.enable_stop_guiding_when_slewing(stop, profile, events);
+        let v = profile.get_bool("/scope/AssumeOrthogonal", self.assume_orthogonal);
+        self.set_assume_orthogonal(v, profile);
+        let cfg = {
+            let p = &*profile;
+            BacklashConfig::from_profile(&|k| p.has(k).then(|| f64::from(p.get_i32(k, 0))))
+        };
+        let (floor, ceiling) = if using_ao { (cfg.pulse, cfg.pulse) } else { (cfg.floor, cfg.ceiling) };
+        self.enable_backlash_comp(cfg.enabled, profile, events);
+        self.set_backlash_pulse_width(cfg.pulse, floor, ceiling, profile, events);
+        let blc_on = self.mv.blc.as_ref().is_some_and(|b| b.is_enabled());
+        if blc_on && self.mv.max_dec_duration < cfg.pulse {
+            self.set_max_dec_duration(cfg.pulse, profile, events);
+        }
+        if !using_ao {
+            let v = profile.get_bool("/scope/UseDecComp", self.use_dec_compensation);
+            self.enable_dec_compensation(v, profile);
+            let v = profile.get_i32("/scope/MaxRaDuration", self.mv.max_ra_duration);
+            self.set_max_ra_duration(v, profile, events);
+            if !blc_on {
+                let v = profile.get_i32("/scope/MaxDecDuration", self.mv.max_dec_duration);
+                self.set_max_dec_duration(v, profile, events);
+            }
+            let v = profile.get_i32("/scope/DecGuideMode", self.mv.dec_guide_mode as i32);
+            self.set_dec_guide_mode(v, profile, events);
+        }
+    }
+
     /// `GetCalibrationDuration`: the calibration step, ms.
     pub fn calibration_duration(&self) -> i32 {
         self.calibration_duration

@@ -478,6 +478,38 @@ impl Mount {
         }
     }
 
+    /// The settings dialog's OK on an axis' algorithm
+    /// (`MountConfigDialogPane::UnloadValues`, mount.cpp:495) with the
+    /// profile as the dialog: the stored kind through
+    /// [`set_guide_algorithm`](Self::set_guide_algorithm); for the same
+    /// kind, an algorithm built on the stored parameters replaces the
+    /// running one when they differ. PHD2 calls each parameter's setter,
+    /// which keeps the history; a rebuild starts it again.
+    pub fn apply_algorithm_settings(
+        &mut self,
+        axis: Axis,
+        profile: &mut impl ProfileAccess,
+        now: f64,
+        events: &mut Vec<MountEvent>,
+    ) {
+        let class = self.class;
+        let stored = profile.get_i32(&algorithm_key(class, axis), self.algo(axis).kind() as i32);
+        if self.algo(axis).kind() as i32 != stored {
+            self.set_guide_algorithm(axis, stored, profile, now, events);
+            return;
+        }
+        let enabled = self.guiding_enabled;
+        let built = {
+            let p = &*profile;
+            let lookup = |k: &str| Some(p.get_f64(k, f64::NAN)).filter(|v| !v.is_nan());
+            algo::make(self.algo(axis).kind(), axis, class, &lookup, now, enabled)
+        };
+        if built.params() != self.algo(axis).params() {
+            *self.slot(axis) = built;
+        }
+        self.save_algorithm(axis, profile);
+    }
+
     /// The Brain's Reset button (`ResetRAGuidingParams` /
     /// `ResetDecGuidingParams`, `mount.cpp:350-398`): the axis' algorithm
     /// back to its defaults, a new one of the same kind. PHD2 deletes the

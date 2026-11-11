@@ -738,7 +738,7 @@ impl Guider {
         };
         // No image yet, so no display to clear (the gamma is unused), and
         // SELECTING, so the multi-star mode never re-selects here.
-        let on = g.load_settings(profile, 0.0, ev);
+        let on = g.load_settings(profile, Some(0.0), ev);
         g.multistar.set_multi_star_mode(on);
         announce_multi_star(on, false, profile, ev);
         g
@@ -755,12 +755,23 @@ impl Guider {
     /// display scaling (`/guider/ScaleImage`, written back) and the
     /// bookmarks are the UI's.
     pub fn load_profile_settings(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) -> GuideUpdate {
-        let on = self.load_settings(cx.profile, cx.gamma, ev);
+        let on = self.load_settings(cx.profile, Some(cx.gamma), ev);
+        self.set_multi_star_mode(on, cx, ev)
+    }
+
+    /// The settings dialog's OK on the guider's page
+    /// (`GuiderMultiStarConfigDialogCtrlSet::UnloadValues`) with the profile
+    /// as the dialog: the same setters as a profile load, the display kept;
+    /// then the sticky lock, PHD2's menu item (`/StickyLockPosition`).
+    pub fn apply_settings(&mut self, sticky_lock: bool, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) -> GuideUpdate {
+        let on = self.load_settings(cx.profile, None, ev);
+        self.set_lock_pos_is_sticky(sticky_lock);
         self.set_multi_star_mode(on, cx, ev)
     }
 
     /// The settings part of `LoadProfileSettings`; the multi-star flag read.
-    fn load_settings(&mut self, profile: &mut dyn ProfileAccess, gamma: f64, ev: &mut Vec<GuiderEvent>) -> bool {
+    /// With `gamma`, a profile load, the display is cleared.
+    fn load_settings(&mut self, profile: &mut dyn ProfileAccess, gamma: Option<f64>, ev: &mut Vec<GuiderEvent>) -> bool {
         let fast = profile.get_bool(FAST_RECENTER_KEY, true);
         self.enable_fast_recenter(fast, profile);
         // `SetScaleImage` writes it back; the display scaling is the UI's.
@@ -776,7 +787,9 @@ impl Guider {
         debug(ev, format!("Setting MaxHFD = {}", fmt_f(cfg.max_star_hfd, 1)));
         debug(ev, format!("Setting StarMinSNR = {}", fmt_f(cfg.min_star_snr, 1)));
         debug(ev, format!("Setting AutoSelDownsample = {}", cfg.auto_sel_downsample));
-        if !self.current_image.data.is_empty() {
+        if let Some(gamma) = gamma
+            && !self.current_image.data.is_empty()
+        {
             self.display_image(Arc::new(UsImage::default()), gamma, ev);
         }
 

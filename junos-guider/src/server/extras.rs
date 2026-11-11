@@ -121,7 +121,7 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
                     _ => return Err(RpcError::invalid_params("expected value param")),
                 }
                 drop(prof);
-                reload(e)
+                e.handle(Command::SettingsChanged(key)).map_err(|e| RpcError::new(e.code, e.message))
             })
             .await
         }
@@ -559,6 +559,48 @@ mod tests {
         assert_eq!(px.await, Ok(10.0));
         assert_eq!(call(&d, "set_image_logger", json!({})).await.unwrap_err().message, "expected enabled param");
         assert_eq!(call(&d, "select_star", json!({"x": 1})).await.unwrap_err().message, "expected y param");
+        d.shutdown().await;
+        d.close();
+    }
+
+    /// Every device of the snapshot connected.
+    fn all_connected(d: &Daemon, ao: bool) -> bool {
+        let s = d.snapshot();
+        let on = |v: &Option<crate::engine::DeviceView>| v.as_ref().is_some_and(|v| v.connected);
+        on(&s.camera) && on(&s.mount) && on(&s.ao) == ao
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn settings_apply_to_the_gear_in_place() {
+        let d = start(&dir("extras-live"), |_| {});
+        assert_eq!(d.set_connected(true).await, Ok(json!(0)));
+        let set = |key: &str, value: Value| call(&d, "set_profile_value", json!({"key": key, "value": value}));
+        // The camera's, the star's, the mount's and its algorithm's pages.
+        assert_eq!(set("/camera/UseSubframes", json!(true)).await, Ok(json!(0)));
+        assert!(d.snapshot().use_subframes);
+        assert_eq!(set("/guider/onestar/SearchRegion", json!(20)).await, Ok(json!(0)));
+        assert_eq!(d.snapshot().search_region, 20);
+        assert_eq!(set("/scope/DecGuideMode", json!(2)).await, Ok(json!(0)));
+        assert_eq!(d.snapshot().dec_guide_mode, Some(crate::engine::scope::DecGuideMode::North));
+        assert_eq!(set("/scope/GuideAlgorithm/X/Hysteresis/minMove", json!(0.42)).await, Ok(json!(0)));
+        let min_move = |d: &Daemon| d.snapshot().algo_x.clone().unwrap().params.iter().find(|(n, _)| n == "minMove").unwrap().1;
+        assert_eq!(min_move(&d), 0.42);
+        assert!(all_connected(&d, false));
+        d.shutdown().await;
+        d.close();
+
+        // The AO's own page and its algorithm.
+        let d = start(&dir("extras-live-ao"), |p| {
+            use crate::engine::calibration::ProfileAccess;
+            p.set_str("/stepguider/LastMenuChoice", "Simulator")
+        });
+        assert_eq!(d.set_connected(true).await, Ok(json!(0)));
+        assert!(all_connected(&d, true));
+        let set = |key: &str, value: Value| call(&d, "set_profile_value", json!({"key": key, "value": value}));
+        assert_eq!(set("/stepguider/BumpPercentage", json!(60)).await, Ok(json!(0)));
+        assert_eq!(set("/stepguider/XGuideAlgorithm", json!(3)).await, Ok(json!(0)));
+        assert_eq!(d.snapshot().algo_x.clone().unwrap().class_name, "Lowpass2");
+        assert!(all_connected(&d, true));
         d.shutdown().await;
         d.close();
     }

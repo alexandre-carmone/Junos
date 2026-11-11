@@ -1237,6 +1237,7 @@ impl Engine {
                 self.refresh_ra_guide_speed();
                 ok()
             }
+            Command::SettingsChanged(key) => self.apply_settings(&key),
             Command::DeviceLost(which) => {
                 if matches!(which, Which::Mount | Which::Both)
                     && let Some(s) = self.scope.as_mut()

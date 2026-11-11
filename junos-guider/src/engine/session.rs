@@ -93,6 +93,27 @@ pub struct EngineConfig {
 }
 
 /// `<dir>/<name>`.
+/// The mount (`true` for the AO) and axis whose algorithm a profile key
+/// sets: `/scope/XGuideAlgorithm`, `/stepguider/GuideAlgorithm/Y/…`.
+fn algorithm_axis(key: &str) -> Option<(bool, Axis)> {
+    let (class, rest) = key.strip_prefix('/')?.split_once('/')?;
+    let ao = match class {
+        "scope" => false,
+        "stepguider" => true,
+        _ => return None,
+    };
+    let letter = match rest {
+        "XGuideAlgorithm" => "X",
+        "YGuideAlgorithm" => "Y",
+        _ => rest.strip_prefix("GuideAlgorithm/")?.split('/').next()?,
+    };
+    match letter {
+        "X" => Some((ao, Axis::X)),
+        "Y" => Some((ao, Axis::Y)),
+        _ => None,
+    }
+}
+
 fn join(dir: &str, name: &str) -> String {
     format!("{dir}/{name}")
 }
@@ -711,6 +732,13 @@ impl Engine {
         self.emit_control(cev);
     }
 
+    /// The controller's page of the settings dialog, applied live.
+    fn load_control_settings_live(&mut self) {
+        let mut cev = Vec::new();
+        self.ctrl.apply_settings(&mut self.store.profile(), &mut cev);
+        self.emit_control(cev);
+    }
+
     /// The controller made anew, its construction logged.
     pub(super) fn new_control(&mut self) {
         let mut cev = Vec::new();
@@ -943,6 +971,72 @@ impl Engine {
     /// profile chose when it was loaded (`m_lastCamera`).
     pub(super) fn load_gear_choices(&mut self) {
         self.last_camera = self.store.profile().get_str("/camera/LastMenuChoice", "None");
+    }
+
+    /// The settings dialog's OK (`AdvancedDialog::UnloadValues`,
+    /// advanced_dialog.cpp:481) after `set_profile_value` wrote `key`: the
+    /// profile stands for the dialog, and each page's settings go through
+    /// the setters of the object that owns them — the frame's (with the
+    /// camera's and the image logger's), the controller's, the guider's,
+    /// the AO's, the scope's, and the algorithm `key` names — on the gear
+    /// in place. A focal length, pixel size or binning change then makes
+    /// `MakeImageScaleAdjustments`. A profile switch is the full reload,
+    /// [`Command::ProfileChanged`](super::Command::ProfileChanged).
+    pub(super) fn apply_settings(&mut self, key: &str) -> Reply {
+        let (fl, px, bin) = (self.focal_length, self.cam.pixel_size, self.binning());
+        self.load_frame_settings();
+        if let Some(c) = self.camera.as_deref_mut() {
+            let b = camera::profile_binning(&self.store.profile());
+            if c.max_binning() > 1 && b != c.binning() {
+                let mut lines = Vec::new();
+                camera::set_binning(c, b as i32, &mut self.store.profile(), &mut lines);
+                for l in lines {
+                    self.debug(&l);
+                }
+            }
+        }
+        self.load_control_settings_live();
+        let sticky = self.store.global().get_bool("/StickyLockPosition", false);
+        let upd = self.call(|c, cx, ev| {
+            let mut gev = Vec::new();
+            let upd = cx.guider.apply_settings(sticky, &mut cx.gcx, &mut gev);
+            c.forward(gev, cx, ev);
+            upd
+        });
+        self.queue_moves(&upd.moves);
+        let now = self.clock.mono();
+        let using_ao = self.ao.is_some();
+        let algo = algorithm_axis(key);
+        if let Some(a) = self.ao.as_mut() {
+            let mut mev = Vec::new();
+            let mut prof = self.store.profile();
+            a.sg.apply_settings(&*a.dev, &mut prof, &mut mev);
+            if let Some((true, axis)) = algo {
+                a.sg.mount_mut().apply_algorithm_settings(axis, &mut prof, now, &mut mev);
+            }
+            drop(prof);
+            self.emit_mount_events(MountRole::Primary, mev);
+        }
+        if let Some(s) = self.scope.as_mut() {
+            let mut mev = Vec::new();
+            let mut prof = self.store.profile();
+            s.scope.apply_settings(using_ao, &mut prof, &mut mev);
+            if let Some((false, axis)) = algo {
+                s.scope.mount.apply_algorithm_settings(axis, &mut prof, now, &mut mev);
+            }
+            drop(prof);
+            let role = self.scope_role();
+            self.emit_mount_events(role, mev);
+        }
+        // `PercentChange`: a change of 5 % or less keeps the calibration.
+        let pct = |old: f64, new: f64| if old.abs() < 0.0001 { 100.0 * new } else { 100.0 * (1.0 - new / old).abs() };
+        let fl_changed = fl != self.focal_length && pct(fl as f64, self.focal_length as f64) > 5.0;
+        let px_changed = px != self.cam.pixel_size && pct(px, self.cam.pixel_size) > 5.0;
+        if fl_changed || px_changed || bin != self.binning() {
+            self.handle_image_scale_change();
+        }
+        self.refresh_ra_guide_speed();
+        Ok(json!(0))
     }
 
     /// `GearDialog::EndModal` (gear_dialog.cpp:543): the calibration

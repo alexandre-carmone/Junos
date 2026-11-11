@@ -437,6 +437,29 @@ impl StepGuider {
         error
     }
 
+    /// The settings dialog's OK on the AO page
+    /// (`AOConfigDialogCtrlSet::UnloadValues`, stepguider.cpp:1522) with
+    /// the profile as the dialog: each setting through its setter, the bump
+    /// zone recomputed on `dev`. The travel is the driver's here, not a
+    /// setting.
+    pub fn apply_settings(
+        &mut self,
+        dev: &dyn StepGuiderDevice,
+        profile: &mut impl ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) {
+        let v = profile.get_i32(KEY_CALIBRATION_STEPS_PER_ITERATION, self.calibration_steps_per_iteration);
+        self.set_calibration_steps_per_iteration(v, profile, events);
+        let v = profile.get_i32(KEY_SAMPLES_TO_AVERAGE, self.samples_to_average);
+        self.set_samples_to_average(v, profile, events);
+        let v = profile.get_i32(KEY_BUMP_PERCENTAGE, self.bump_percentage);
+        self.set_bump_percentage(v, Some(dev), profile, events);
+        let v = profile.get_f64(KEY_BUMP_MAX_STEPS_PER_CYCLE, self.bump_max_steps_per_cycle);
+        self.set_bump_max_steps_per_cycle(v, profile, events);
+        let v = profile.get_bool(KEY_BUMP_ON_DITHER, self.bump_on_dither);
+        self.set_bump_on_dither(v, profile);
+    }
+
     /// `GetBumpPercentage`.
     pub fn bump_percentage(&self) -> i32 {
         self.bump_percentage
