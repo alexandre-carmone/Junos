@@ -1,9 +1,10 @@
 //! The dark library and the bad-pixel (defect) map: building a master dark
-//! from `N` dark frames, keeping one per exposure and picking the one to
-//! subtract, the defect-map builder (a 15 px median-filtered dark, hot and
-//! cold pixels by their deviation from it), the defect map's text file and
-//! the per-pixel repair, and the frame-size check that drops darks and maps
-//! that no longer fit the camera.
+//! from `N` dark frames and the dark dialog's build sequence around it,
+//! keeping one per exposure and picking the one to subtract, the defect-map
+//! builder (a 15 px median-filtered dark, hot and cold pixels by their
+//! deviation from it), the defect map's text file and the per-pixel repair,
+//! and the frame-size check that drops darks and maps that no longer fit
+//! the camera.
 //!
 //! Capture pipeline (cam_indi.cpp:1130, worker_thread.cpp:224): the raw frame
 //! goes through [`DarkLibrary::subtract_dark`] — the defect map when one is
@@ -278,6 +279,235 @@ impl MasterDarkBuilder {
             *p = (s / self.count as u32) as u16;
         }
         Some(img)
+    }
+}
+
+// ---------------------------------------------------------------- build sequence
+
+/// `DarksDialog::OnStart`'s message box before the first frame when the
+/// camera has no shutter (`HasShutter`).
+pub const COVER_GUIDE_SCOPE: &str = "Cover guide scope";
+
+/// Where a [`DarksBuild`] stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DarksBuildState {
+    /// Frames still to take.
+    Running,
+    /// Every master dark built.
+    Done,
+    Cancelled,
+    /// A capture failed.
+    Failed,
+}
+
+/// `DarksDialog::OnStart` (darks_dialog.cpp:259) from the Start button on:
+/// the master darks of a dark library, one per exposure, or the defect
+/// map's single master, a frame at a time, with the dialog's status line
+/// and progress. The caller captures the frames [`DarksBuild::next_capture`]
+/// asks for (`CAPTURE_DARK`, with the camera's `ShutterClosed` set from the
+/// start until a `Done` build ends) and does the file work:
+///
+/// - first, the [`COVER_GUIDE_SCOPE`] box when the camera has no shutter;
+/// - a dark library `Done`: save it ([`DarkLibrary::to_fits`] with the
+///   note), then `LoadDarkHandler(true)`, which also unloads the defect map;
+/// - a dark library `Cancelled` or `Failed`: the masters built so far stay
+///   in the library; when the file is usable (`DarkLibExists`, no alert),
+///   `LoadDarkHandler(true)` loads it on top of them;
+/// - a defect map `Done`: [`build_filtered_dark`] of
+///   [`DarksBuild::take_master`] and save both (`DefectMapDarks::SaveDarks`);
+/// - at any end, `SetDarkMenuState` ([`DarkGeometry::refresh`]); once the
+///   dark-library dialog closes, built or not,
+///   `SelectDark(RequestedExposureDuration())` (myframe_events.cpp:718).
+#[derive(Clone, Debug)]
+pub struct DarksBuild {
+    /// One master per exposure (ms); a single one for the defect map.
+    exposures: Vec<i32>,
+    count: i32,
+    defect_map: bool,
+    /// The master being built is `exposures[idx]`'s.
+    idx: usize,
+    master: MasterDarkBuilder,
+    built: Option<UsImage>,
+    state: DarksBuildState,
+    /// `ShowStatus`'s preamble and the line it shows.
+    preamble: String,
+    status: String,
+    progress_ms: i32,
+    total_ms: i32,
+}
+
+impl DarksBuild {
+    /// A dark library over `exposures` ([`dark_lib_exposures`]), `count`
+    /// frames each (`/camera/darks_num_frames`, held to its spin range).
+    /// `new_library` is "Create entirely new dark library": the darks held
+    /// are cleared first (`ClearDarks`).
+    pub fn dark_library(lib: &mut DarkLibrary, exposures: Vec<i32>, count: i32, new_library: bool) -> Self {
+        if new_library {
+            lib.clear_darks();
+        }
+        Self::new(exposures, count.clamp(DARKS_NUM_FRAMES_RANGE.0, DARKS_NUM_FRAMES_RANGE.1), false)
+    }
+
+    /// The defect map's master dark: `count` frames (`/camera/dmap_num_frames`)
+    /// of `exp_s` seconds (`/camera/dmap_exptime`), each held to its spin
+    /// range.
+    pub fn defect_map(exp_s: i32, count: i32) -> Self {
+        let exp_ms = exp_s.clamp(DMAP_EXPTIME_RANGE.0, DMAP_EXPTIME_RANGE.1) * 1000;
+        Self::new(vec![exp_ms], count.clamp(DMAP_NUM_FRAMES_RANGE.0, DMAP_NUM_FRAMES_RANGE.1), true)
+    }
+
+    fn new(exposures: Vec<i32>, count: i32, defect_map: bool) -> Self {
+        let total_ms = exposures.iter().map(|&e| e * count).sum();
+        let mut b = Self {
+            exposures,
+            count,
+            defect_map,
+            idx: 0,
+            master: MasterDarkBuilder::new(0, count),
+            built: None,
+            state: DarksBuildState::Running,
+            preamble: String::new(),
+            status: String::new(),
+            progress_ms: 0,
+            total_ms,
+        };
+        b.start_master();
+        b
+    }
+
+    /// `ShowStatus(msg, false)`: a new line, which later ones append to.
+    fn show(&mut self, msg: &str) {
+        self.preamble = msg.to_string();
+        self.status = msg.to_string();
+    }
+
+    /// `ShowStatus(msg, true)`: the preamble, a space, `msg`.
+    fn append(&mut self, msg: &str) {
+        self.status = format!("{} {msg}", self.preamble);
+    }
+
+    /// The next master's status line, or the end of the build after the
+    /// last one. An empty library range ends at once and saves the library
+    /// as it is, as PHD2 does.
+    fn start_master(&mut self) {
+        let Some(&exp) = self.exposures.get(self.idx) else {
+            self.state = DarksBuildState::Done;
+            // PHD2 shows "Analyzing master dark..." while the caller
+            // filters and saves the defect map's darks.
+            self.show(if self.defect_map { "Master dark data files built" } else { "dark library built" });
+            return;
+        };
+        self.master = MasterDarkBuilder::new(exp, self.count);
+        if self.defect_map {
+            // The trailing space gives two before each appended line.
+            self.show("Taking darks to compute defect map: ");
+        } else if exp >= 1000 {
+            self.show(&format!("Building master dark at {} sec:", fmt_f(exp as f64 / 1000.0, 1)));
+        } else {
+            self.show(&format!("Building master dark at {exp} mSec:"));
+        }
+        self.append(&format!("Taking dark frame 1/{}", self.count));
+    }
+
+    /// The exposure in ms of the next frame to capture; `None` once the
+    /// build has ended.
+    pub fn next_capture(&self) -> Option<i32> {
+        (self.state == DarksBuildState::Running).then(|| self.exposures[self.idx])
+    }
+
+    /// One captured dark frame. Its exposure's last frame completes the
+    /// master: a dark library's goes into `lib` at once (`AddDark`, so it
+    /// stays there after a later cancel), the defect map's waits for
+    /// [`DarksBuild::take_master`]. A frame of another size fails the build.
+    pub fn add_frame(&mut self, lib: &mut DarkLibrary, frame: UsImage) {
+        if self.state != DarksBuildState::Running {
+            return;
+        }
+        if self.master.add(frame).is_err() {
+            self.capture_failed();
+            return;
+        }
+        self.progress_ms += self.exposures[self.idx];
+        if self.master.needs_more() {
+            self.append(&format!("Taking dark frame {}/{}", self.master.taken() + 1, self.count));
+            return;
+        }
+        self.append("Dark frames complete");
+        let master = std::mem::replace(&mut self.master, MasterDarkBuilder::new(0, 0)).finish();
+        if self.defect_map {
+            self.built = master;
+        } else if let Some(m) = master {
+            lib.add_dark(m);
+        }
+        self.idx += 1;
+        self.start_master();
+    }
+
+    /// The capture failed: "%.1f s dark FAILED" after the preamble, then
+    /// for a dark library "Operation failed - no changes have been made".
+    pub fn capture_failed(&mut self) {
+        if self.state != DarksBuildState::Running {
+            return;
+        }
+        let exp = self.exposures[self.idx];
+        self.append(&format!("{} s dark FAILED", fmt_f(exp as f64 / 1000.0, 1)));
+        if !self.defect_map {
+            self.show("Operation failed - no changes have been made");
+        }
+        self.end(DarksBuildState::Failed);
+    }
+
+    /// Stop pressed (`OnStop`). PHD2 lets the capture in flight finish and
+    /// then drops the master being built; here the build ends at once and
+    /// that frame is not wanted.
+    pub fn cancel(&mut self) {
+        if self.state != DarksBuildState::Running {
+            return;
+        }
+        self.show(if self.defect_map {
+            "Operation cancelled"
+        } else {
+            "Operation cancelled - no changes have been made"
+        });
+        self.end(DarksBuildState::Cancelled);
+    }
+
+    /// A cancel or a failure also resets the dialog's gauge.
+    fn end(&mut self, state: DarksBuildState) {
+        self.state = state;
+        self.progress_ms = 0;
+    }
+
+    pub fn state(&self) -> DarksBuildState {
+        self.state
+    }
+
+    /// The dialog's status line.
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    /// The gauge: the exposure time of the frames taken, out of the sum of
+    /// every exposure × `count`. PHD2 also adds one exposure after each
+    /// master, which runs its gauge past the range; left out.
+    pub fn progress(&self) -> (i32, i32) {
+        (self.progress_ms, self.total_ms)
+    }
+
+    /// The defect map's master dark once `Done` (`DefectMapDarks::masterDark`).
+    pub fn take_master(&mut self) -> Option<UsImage> {
+        self.built.take()
+    }
+
+    /// The message box that ends a `Done` build: "Operation complete: %s",
+    /// "Uncover guide scope" first when the camera has no shutter.
+    pub fn wrapup(&self, has_shutter: bool) -> Option<String> {
+        if self.state != DarksBuildState::Done {
+            return None;
+        }
+        let msg = if self.defect_map { "Master dark data files built" } else { "dark library built" };
+        let msg = if has_shutter { msg.to_string() } else { format!("Uncover guide scope\n\n{msg}") };
+        Some(format!("Operation complete: {msg}"))
     }
 }
 
@@ -1189,6 +1419,83 @@ mod tests {
         short.add(image(2, 1, &[1, 2])).unwrap();
         assert_eq!(short.add(image(1, 1, &[1])), Err("dark frame size changed"));
         assert!(short.finish().is_none());
+    }
+
+    #[test]
+    fn dark_library_build_sequence() {
+        let mut lib = DarkLibrary::default();
+        lib.add_dark(flat(2, 2, 5, 1000));
+        lib.add_dark(flat(2, 2, 5, 9000));
+        let mut b = DarksBuild::dark_library(&mut lib, vec![500, 1500], 2, false);
+        assert_eq!(b.status(), "Building master dark at 500 mSec: Taking dark frame 1/2");
+        assert_eq!((b.next_capture(), b.progress()), (Some(500), (0, 4000)));
+        b.add_frame(&mut lib, flat(2, 2, 10, 500));
+        assert_eq!(b.status(), "Building master dark at 500 mSec: Taking dark frame 2/2");
+        b.add_frame(&mut lib, flat(2, 2, 13, 500));
+        // The 500 ms master is in the library before the next exposure.
+        assert_eq!(lib.darks[&500].data, [11; 4]);
+        assert_eq!(b.status(), "Building master dark at 1.5 sec: Taking dark frame 1/2");
+        assert_eq!((b.next_capture(), b.progress()), (Some(1500), (1000, 4000)));
+        b.add_frame(&mut lib, flat(2, 2, 20, 1500));
+        assert!(b.wrapup(true).is_none());
+        b.add_frame(&mut lib, flat(2, 2, 20, 1500));
+        assert_eq!((b.state(), b.status(), b.next_capture()), (DarksBuildState::Done, "dark library built", None));
+        assert_eq!(b.progress(), (4000, 4000));
+        assert_eq!(lib.darks.keys().copied().collect::<Vec<_>>(), [500, 1000, 1500, 9000]);
+        assert_eq!(b.wrapup(true).unwrap(), "Operation complete: dark library built");
+        assert_eq!(b.wrapup(false).unwrap(), "Operation complete: Uncover guide scope\n\ndark library built");
+
+        // A new library clears the darks; a failure keeps the masters built
+        // so far and resets the gauge.
+        let mut b = DarksBuild::dark_library(&mut lib, vec![1000, 2000], 1, true);
+        assert!(lib.darks.is_empty());
+        b.add_frame(&mut lib, flat(2, 2, 7, 1000));
+        assert_eq!(b.status(), "Building master dark at 2.0 sec: Taking dark frame 1/1");
+        b.capture_failed();
+        assert_eq!((b.state(), b.status()), (DarksBuildState::Failed, "Operation failed - no changes have been made"));
+        assert_eq!((b.progress(), b.next_capture()), ((0, 3000), None));
+        assert_eq!(lib.darks.keys().copied().collect::<Vec<_>>(), [1000]);
+        assert!(b.wrapup(false).is_none());
+
+        // Cancel; a frame of another size fails; an empty range is done at
+        // once; the frame count is held to 1..=20.
+        let mut b = DarksBuild::dark_library(&mut lib, vec![1000], 0, false);
+        assert_eq!(b.status(), "Building master dark at 1.0 sec: Taking dark frame 1/1");
+        b.cancel();
+        assert_eq!(b.state(), DarksBuildState::Cancelled);
+        assert_eq!(b.status(), "Operation cancelled - no changes have been made");
+        let mut b = DarksBuild::dark_library(&mut lib, vec![1000], 2, false);
+        b.add_frame(&mut lib, flat(2, 2, 7, 1000));
+        b.add_frame(&mut lib, flat(3, 2, 7, 1000));
+        assert_eq!(b.state(), DarksBuildState::Failed);
+        let b = DarksBuild::dark_library(&mut lib, vec![], 5, false);
+        assert_eq!((b.state(), b.status()), (DarksBuildState::Done, "dark library built"));
+    }
+
+    #[test]
+    fn defect_map_build_sequence() {
+        let mut lib = DarkLibrary::default();
+        // 30 s and 2 frames are held to the spin ranges: 15 s, 5 frames.
+        let mut b = DarksBuild::defect_map(30, 2);
+        assert_eq!(b.status(), "Taking darks to compute defect map:  Taking dark frame 1/5");
+        assert_eq!((b.next_capture(), b.progress()), (Some(15000), (0, 75000)));
+        for _ in 0..5 {
+            b.add_frame(&mut lib, flat(2, 2, 3, 15000));
+        }
+        assert_eq!((b.state(), b.status()), (DarksBuildState::Done, "Master dark data files built"));
+        assert!(lib.darks.is_empty());
+        let m = b.take_master().unwrap();
+        assert_eq!((m.img_exp_dur, m.img_stack_cnt, m.data[0]), (15000, 5, 3));
+        assert_eq!(b.wrapup(true).unwrap(), "Operation complete: Master dark data files built");
+
+        let mut b = DarksBuild::defect_map(5, 25);
+        b.add_frame(&mut lib, flat(2, 2, 3, 5000));
+        b.capture_failed();
+        assert_eq!(b.status(), "Taking darks to compute defect map:  5.0 s dark FAILED");
+        assert!(b.take_master().is_none());
+        let mut b = DarksBuild::defect_map(10, 10);
+        b.cancel();
+        assert_eq!((b.state(), b.status()), (DarksBuildState::Cancelled, "Operation cancelled"));
     }
 
     #[test]
