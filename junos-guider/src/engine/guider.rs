@@ -501,6 +501,22 @@ impl Lock {
     }
 }
 
+/// The fast recenter after a lock move (`m_ditherRecenterRemaining`,
+/// `m_ditherRecenterStep`, `m_ditherRecenterDir`): mount px still to go
+/// on each axis, the most per frame, and the way to go.
+#[derive(Clone, Copy, Debug)]
+struct Recenter {
+    remaining: Point,
+    step: Point,
+    dir: (i32, i32),
+}
+
+/// `edgeDist`: the distance to the nearest frame edge.
+fn edge_dist(pt: Point, w: f64, h: f64) -> f64 {
+    let min = |a: f64, b: f64| if a < b { a } else { b }; // wxMin
+    min(pt.x, min(w - pt.x, min(pt.y, h - pt.y)))
+}
+
 /// PHD2's `Guider` with `GuiderMultiStar`'s star handling.
 pub struct Guider {
     state: GuiderState,
@@ -517,6 +533,8 @@ pub struct Guider {
     lock_pos_is_sticky: bool,
     ignore_lost_star_looping: bool,
     fast_recenter_enabled: bool,
+    /// `None` when not recentering (`m_ditherRecenterRemaining` invalid).
+    recenter: Option<Recenter>,
     force_full_frame: bool,
     auto_sel_downsample: u32,
     /// `m_pCurrentImage`: the last frame, an empty one at first.
@@ -547,6 +565,7 @@ impl Guider {
             lock_pos_is_sticky: sticky_lock,
             ignore_lost_star_looping: false,
             fast_recenter_enabled: true,
+            recenter: None,
             force_full_frame: false,
             auto_sel_downsample: 0,
             current_image: Arc::new(UsImage::default()),
@@ -745,6 +764,7 @@ impl Guider {
                 }
             }
             Guiding => {
+                self.recenter = None;
                 let (sp, ts) = (cx.scope_pointing, &cx.cal_env.timestamp);
                 for role in [MountRole::Primary, MountRole::Secondary] {
                     if let (Some(m), profile) = cx.split(role) {
@@ -951,6 +971,11 @@ impl Guider {
         }
     }
 
+    /// `IsRecentering`: a lock move is still being caught up with.
+    pub fn is_recentering(&self) -> bool {
+        self.recenter.is_some()
+    }
+
     /// `IsFastRecenterEnabled`.
     pub fn is_fast_recenter_enabled(&self) -> bool {
         self.fast_recenter_enabled
@@ -1140,6 +1165,65 @@ impl Guider {
             self.set_lock_position(p, cx, ev);
         }
         found
+    }
+
+    /// `MoveLockPosition` (guider.cpp:839): move the lock by `mount_delta`
+    /// (mount axes, px), as a dither does. Near the frame edge the move is
+    /// reflected in RA, Dec or both — the first of the four that leaves a
+    /// valid lock position, else the one farthest from the edge. The error
+    /// averages grow by the move at once. With fast recenter on and a move
+    /// of some length, the next guiding frames move the mount there
+    /// themselves, in steps of 0.7 search regions that bypass the
+    /// algorithms. False when it failed: no calibrated mount, or the lock
+    /// refused.
+    pub fn move_lock_position(&mut self, mount_delta: Point, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) -> bool {
+        let Some(m) = cx.primary.as_deref().filter(|m| m.is_calibrated()) else {
+            debug(ev, "Error thrown from guider.cpp:851->No mount");
+            return false;
+        };
+        let lock = self.lock.point();
+        let (w, h) = (self.current_image.w as f64, self.current_image.h as f64);
+        let (mut camera_delta, mut mount_used, mut best) = (Point::default(), Point::default(), 0.0);
+        for q in 0..4 {
+            // (+, +), (−, +), (+, −), (−, −)
+            let sx = (1 - ((q & 1) << 1)) as f64;
+            let sy = (1 - (q & 2)) as f64;
+            let tmp_mount = Point::new(mount_delta.x * sx, mount_delta.y * sy);
+            let mut mev = Vec::new();
+            let tmp_camera = m.mount().mount_to_camera(tmp_mount, true, &mut mev);
+            wrap(ev, MountRole::Primary, mev);
+            let tmp_lock = lock + tmp_camera;
+            if self.is_valid_lock_position(tmp_lock) {
+                (camera_delta, mount_used) = (tmp_camera, tmp_mount);
+                break;
+            }
+            debug(ev, "dither produces an invalid lock position, try a variation");
+            let d = edge_dist(tmp_lock, w, h);
+            if q == 0 || d > best {
+                (camera_delta, mount_used, best) = (tmp_camera, tmp_mount, d);
+            }
+        }
+        if !self.set_lock_position(lock + camera_delta, cx, ev) {
+            debug(ev, "Error thrown from guider.cpp:904->SetLockPosition failed");
+            return false;
+        }
+
+        // So the reported error shows the dither at once.
+        let (dist, dist_ra) = (camera_delta.x.hypot(camera_delta.y), mount_used.x.abs());
+        self.avg_distance += dist;
+        self.avg_distance_long += dist;
+        self.avg_distance_ra += dist_ra;
+        self.avg_distance_long_ra += dist_ra;
+
+        // A zero-length move (a settle without a dither) would divide by 0.
+        if self.fast_recenter_enabled && dist != 0.0 {
+            let remaining = Point::new(mount_used.x.abs(), mount_used.y.abs());
+            let dir = (if mount_used.x < 0.0 { 1 } else { -1 }, if mount_used.y < 0.0 { 1 } else { -1 });
+            // A bit under the search region, so the star is not lost.
+            let f = (self.max_move_pixels() as f64 * 0.7) / remaining.x.hypot(remaining.y);
+            self.recenter = Some(Recenter { remaining, step: Point::new(f * remaining.x, f * remaining.y), dir });
+        }
+        true
     }
 
     /// `GuiderMultiStar::AutoSelect`: pick the best star on the current
@@ -1496,8 +1580,11 @@ impl Guider {
                     self.notify_guiding_started(cx, ev);
                     self.check_calibration_auto_load(cx, ev);
                 }
-                // PHD2's star deflection logger is compiled out.
-                Guiding => schedule(&mut out, ScheduledMove::Offset { ofs, opts: MoveOpts::GUIDE_STEP }, cx, ev),
+                Guiding => match self.recenter {
+                    Some(rc) => self.recenter_step(rc, &mut out, cx, ev),
+                    // PHD2's star deflection logger is compiled out.
+                    None => schedule(&mut out, ScheduledMove::Offset { ofs, opts: MoveOpts::GUIDE_STEP }, cx, ev),
+                },
                 Uninitialized | Stop => {}
             }
             false
@@ -1510,6 +1597,52 @@ impl Guider {
         debug(ev, image_display_line(&self.current_image, cx.gamma));
         debug(ev, format!("UpdateGuideState exits: {status}"));
         out
+    }
+
+    /// A guiding frame of the fast recenter: a step towards the moved lock,
+    /// made straight (`MOVEOPTS_RECOVERY_MOVE`) and told to the algorithms
+    /// as a direct move; under half a pixel left on both axes it is done,
+    /// and the error averages restart on the next star.
+    fn recenter_step(
+        &mut self,
+        mut rc: Recenter,
+        out: &mut GuideUpdate,
+        cx: &mut GuiderCx,
+        ev: &mut Vec<GuiderEvent>,
+    ) {
+        let min = |a: f64, b: f64| if a < b { a } else { b }; // wxMin
+        let step = Point::new(min(rc.remaining.x, rc.step.x), min(rc.remaining.y, rc.step.y));
+        let (dx, dy) = (rc.dir.0 as f64, rc.dir.1 as f64);
+        debug(
+            ev,
+            format!(
+                "dither recenter: remaining=({},{}) step=({},{})",
+                fmt_f(rc.remaining.x * dx, 1),
+                fmt_f(rc.remaining.y * dy, 1),
+                fmt_f(step.x * dx, 1),
+                fmt_f(step.y * dy, 1)
+            ),
+        );
+        rc.remaining = rc.remaining - step;
+        if rc.remaining.x < 0.5 && rc.remaining.y < 0.5 {
+            self.recenter = None;
+            self.avg_distance_need_reset = true;
+        } else {
+            self.recenter = Some(rc);
+        }
+        let mount_ofs = Point::new(step.x * dx, step.y * dy);
+        let mut mev = Vec::new();
+        let camera_ofs =
+            cx.primary.as_deref().map_or(Point::default(), |m| m.mount().mount_to_camera(mount_ofs, true, &mut mev));
+        wrap(ev, MountRole::Primary, mev);
+        let ofs = GuiderOffset { camera_ofs, mount_ofs: Some(mount_ofs) };
+        schedule(out, ScheduledMove::Offset { ofs, opts: MoveOpts::RECOVERY_MOVE }, cx, ev);
+        let algo = cx.algo;
+        if let Some(m) = cx.primary.as_deref_mut() {
+            let mut mev = Vec::new();
+            m.mount_mut().notify_direct_move(mount_ofs, algo, &mut mev);
+            wrap(ev, MountRole::Primary, mev);
+        }
     }
 
     /// `CheckCalibrationAutoLoad`: after a calibration, turn calibration
@@ -2143,6 +2276,108 @@ mod tests {
         assert_eq!((g.current_error_smoothed(false, t0), g.current_error_frame_count()), (0.5, 1));
         let fresh = Guider::new(&mut Profile::default(), false, &mut ev);
         assert_eq!(fresh.current_error(false, t0), 100.0);
+    }
+
+    /// The bench guiding on its stored calibration, the star at `at`.
+    fn guiding_at(at: Point) -> Bench {
+        let mut b = Bench::new();
+        b.star = at;
+        b.calibrate_scope();
+        b.select();
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        b.frame();
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+        b
+    }
+
+    #[test]
+    fn a_dither_is_caught_up_by_the_fast_recenter() {
+        let mut b = guiding_at(Point::new(100.0, 100.0));
+        let lock0 = b.guider.lock_position().unwrap();
+        let err0 = b.call(|g, cx, _| g.current_error(false, cx.now_ms));
+        b.ev.clear();
+        // −20 px of RA: +20 px in x on this camera.
+        assert!(b.call(|g, cx, ev| g.move_lock_position(Point::new(-20.0, 0.0), cx, ev)));
+        let lock = b.guider.lock_position().unwrap();
+        assert!((lock.x - lock0.x - 20.0).abs() < 1e-9 && (lock.y - lock0.y).abs() < 1e-9, "{lock:?}");
+        let set = b.ev.iter().position(|e| *e == GuiderEvent::LockPositionSet(lock)).unwrap();
+        let dithered = MountEvent::Debug("Mount: notify guiding dithered (20.0, 0.0)".into());
+        assert_eq!(b.ev[set + 1], GuiderEvent::Mount(MountRole::Primary, dithered));
+        // The guide log reads the lock before it moved.
+        let info = format!("SET LOCK POSITION, new lock pos = {}, {}", fmt_f(lock0.x, 3), fmt_f(lock0.y, 3));
+        assert_eq!(b.ev[set + 2], GuiderEvent::Info(info));
+        let err = b.call(|g, cx, _| g.current_error(false, cx.now_ms));
+        assert!((err - err0 - 20.0).abs() < 1e-9);
+        assert!(b.guider.is_recentering());
+
+        // Two straight moves of at most 0.7 search regions (10.5 px).
+        b.ev.clear();
+        let upd = b.frame();
+        let [ScheduledMove::Offset { ofs, opts: MoveOpts::RECOVERY_MOVE }] = upd.moves[..] else {
+            panic!("{:?}", upd.moves);
+        };
+        assert_eq!(ofs.mount_ofs.map(|m| m.x), Some(10.5));
+        assert!((ofs.camera_ofs.x + 10.5).abs() < 1e-9 && ofs.camera_ofs.y.abs() < 1e-9);
+        assert!(b.debug("dither recenter: remaining=(20.0,-0.0) step=(10.5,-0.0)"));
+        let direct = MountEvent::Debug("Mount: notify direct move 10.50,-0.00".into());
+        assert!(b.has(&GuiderEvent::Mount(MountRole::Primary, direct)));
+        assert!(b.guider.is_recentering());
+        b.ev.clear();
+        b.frame();
+        assert!(b.debug("dither recenter: remaining=(9.5,-0.0) step=(9.5,-0.0)"));
+        assert!(!b.guider.is_recentering());
+
+        // There: guide steps again, the averages restarted.
+        let upd = b.frame();
+        assert!(matches!(upd.moves[..], [ScheduledMove::Offset { opts: MoveOpts::GUIDE_STEP, .. }]));
+        assert!(b.star.distance(&lock) < 0.5, "{:?} vs {lock:?}", b.star);
+        assert_eq!(b.guider.current_error_frame_count(), 1);
+    }
+
+    #[test]
+    fn a_dither_off_the_frame_is_reflected() {
+        // +20 px would leave the lock 10 px from the right edge: −20 it is.
+        let mut b = guiding_at(Point::new(170.0, 100.0));
+        let lock0 = b.guider.lock_position().unwrap();
+        b.ev.clear();
+        assert!(b.call(|g, cx, ev| g.move_lock_position(Point::new(-20.0, 0.0), cx, ev)));
+        assert!((b.guider.lock_position().unwrap().x - (lock0.x - 20.0)).abs() < 1e-9);
+        let tries = |b: &Bench| {
+            b.ev.iter().filter(|e| matches!(e, GuiderEvent::Debug(s) if s.starts_with("dither produces"))).count()
+        };
+        assert_eq!(tries(&b), 1);
+        // Recentering heads back the reflected way.
+        let upd = b.frame();
+        let [ScheduledMove::Offset { ofs, .. }] = upd.moves[..] else { panic!() };
+        assert_eq!(ofs.mount_ofs.map(|m| m.x), Some(-10.5));
+
+        // No way fits: the one farthest from an edge, here the second.
+        let mut b = guiding_at(Point::new(110.0, 100.0));
+        let lock0 = b.guider.lock_position().unwrap();
+        b.ev.clear();
+        assert!(b.call(|g, cx, ev| g.move_lock_position(Point::new(-95.0, 0.0), cx, ev)));
+        assert!((b.guider.lock_position().unwrap().x - (lock0.x - 95.0)).abs() < 1e-9);
+        assert_eq!(tries(&b), 4);
+    }
+
+    #[test]
+    fn a_lock_move_needs_a_calibrated_mount_and_a_length_to_recenter() {
+        let mut b = Bench::new();
+        b.select();
+        assert!(!b.call(|g, cx, ev| g.move_lock_position(Point::new(5.0, 0.0), cx, ev)));
+        assert!(b.debug("Error thrown from guider.cpp:851->No mount"));
+
+        // A zero move still sets the lock (a settle without a dither).
+        let mut b = guiding_at(Point::new(100.0, 100.0));
+        assert!(b.call(|g, cx, ev| g.move_lock_position(Point::new(0.0, 0.0), cx, ev)));
+        assert!(!b.guider.is_recentering());
+        // Fast recenter off: the algorithms bring the star back.
+        b.call(|g, cx, _| g.enable_fast_recenter(false, cx.profile));
+        assert!(b.call(|g, cx, ev| g.move_lock_position(Point::new(3.0, 0.0), cx, ev)));
+        assert!(!b.guider.is_recentering());
+        assert_eq!(b.profile.get_i32(FAST_RECENTER_KEY, -1), 0);
+        let upd = b.frame();
+        assert!(matches!(upd.moves[..], [ScheduledMove::Offset { opts: MoveOpts::GUIDE_STEP, .. }]));
     }
 
     #[test]
