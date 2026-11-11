@@ -186,13 +186,18 @@ pub type ParamLookup<'a> = &'a dyn Fn(&str) -> Option<f64>;
 
 /// One guide algorithm on one axis: PHD2's `GuideAlgorithm`.
 ///
-/// `set_*` methods return PHD2's error flag: `true` means the value was
-/// refused and the default (or a clamp) was applied instead.
+/// [`GuideAlgorithm::set_min_move`] and the per-algorithm setters return
+/// PHD2's error flag: `true` means the value was refused and the default (or
+/// a clamp) was applied instead. [`GuideAlgorithm::set_param`] is the other
+/// way round, as in PHD2.
 pub trait GuideAlgorithm: Send {
     /// Which algorithm this is.
     fn kind(&self) -> AlgoKind;
 
-    /// The class name in the profile path (see [`AlgoKind::class_name`]).
+    /// `GetGuideAlgorithmClassName`: the last segment of the profile path
+    /// (see [`AlgoKind::class_name`]), and what the event server answers to
+    /// `get_algo_param` for `"algorithmName"` (`event_server.cpp:1884`). Kept
+    /// on the trait so the server can ask the running algorithm.
     fn class_name(&self) -> &'static str {
         self.kind().class_name()
     }
@@ -220,7 +225,10 @@ pub trait GuideAlgorithm: Send {
         true
     }
 
-    /// The parameter names the event server's `get_algo_param_names` lists.
+    /// The algorithm's own parameter names. The event server's
+    /// `get_algo_param_names` puts `"algorithmName"` in front of them
+    /// (`event_server.cpp:1849`), which `get_algo_param` answers with
+    /// [`GuideAlgorithm::class_name`].
     fn param_names(&self) -> &'static [&'static str] {
         &[]
     }
@@ -242,8 +250,9 @@ pub trait GuideAlgorithm: Send {
         Vec::new()
     }
 
-    /// The text the guide log writes after "X guide algorithm = <name>, ".
-    /// Carries PHD2's trailing newline; empty for Identity.
+    /// The text the guide log writes after "X guide algorithm = <name>, "
+    /// (`mount.cpp:1930`), with PHD2's trailing newline. Empty by default,
+    /// like PHD2's base class; Identity's is a lone `"\n"`.
     fn settings_summary(&self) -> String {
         String::new()
     }
@@ -336,15 +345,21 @@ pub fn make_or_default(
     }
 }
 
-/// The algorithms the Brain offers for an axis (`mount.cpp:227-240`):
-/// Predictive PEC is RA-only, Resist Switch is not offered on an AO.
-pub fn allowed(kind: AlgoKind, axis: Axis, mount_class: MountClass) -> bool {
-    match kind {
-        AlgoKind::Hysteresis | AlgoKind::Lowpass | AlgoKind::Lowpass2 | AlgoKind::ZFilter => true,
-        AlgoKind::ResistSwitch => mount_class == MountClass::Scope,
-        AlgoKind::GaussianProcess => mount_class == MountClass::Scope && axis == Axis::X,
-        AlgoKind::None | AlgoKind::Identity => false,
+/// The algorithms the Brain offers for an axis, in PHD2's order
+/// (`mount.cpp:227-240`): Predictive PEC is RA-only, Resist Switch is not
+/// offered on an AO.
+pub fn allowed_kinds(axis: Axis, mount_class: MountClass) -> &'static [AlgoKind] {
+    use AlgoKind::*;
+    match (mount_class, axis) {
+        (MountClass::Scope, Axis::X) => &[Hysteresis, Lowpass, Lowpass2, ResistSwitch, GaussianProcess, ZFilter],
+        (MountClass::Scope, Axis::Y) => &[Hysteresis, Lowpass, Lowpass2, ResistSwitch, ZFilter],
+        (MountClass::StepGuider, _) => &[Hysteresis, Lowpass, Lowpass2, ZFilter],
     }
+}
+
+/// Whether the Brain offers `kind` for an axis (see [`allowed_kinds`]).
+pub fn allowed(kind: AlgoKind, axis: Axis, mount_class: MountClass) -> bool {
+    allowed_kinds(axis, mount_class).contains(&kind)
 }
 
 /// The default per axis: a scope guides RA with Hysteresis and Dec with
@@ -381,6 +396,11 @@ pub fn smart_default_min_move_for(focal_length_mm: i32, pixel_size_um: f64, binn
 /// PHD2's no-argument `SmartDefaultMinMove()` (`guide_algorithm.cpp:71`),
 /// what `ResetParams` applies from the current equipment: 0.2 when the focal
 /// length is 0 (unknown), else [`smart_default_min_move_for`].
+///
+/// `ResetParams` (`guide_algorithm.cpp:56`, the Brain's reset button) is the
+/// caller's: delete the algorithm's [`config_path`] group, [`make`] it again
+/// on an empty lookup, call `set_min_move` with this value when `min_move()`
+/// is not negative, then save its `params()`.
 pub fn smart_default_min_move_current(focal_length_mm: i32, pixel_size_um: f64, binning: u32) -> f64 {
     if focal_length_mm == 0 {
         return 0.2;
@@ -444,6 +464,11 @@ mod tests {
         let dec = [Hysteresis, Lowpass, Lowpass2, ResistSwitch, ZFilter];
         let ao = [Hysteresis, Lowpass, Lowpass2, ZFilter];
         let all = [None, Identity, Hysteresis, Lowpass, Lowpass2, ResistSwitch, GaussianProcess, ZFilter];
+        // The order is the Brain's.
+        assert_eq!(allowed_kinds(Axis::X, MountClass::Scope), ra);
+        assert_eq!(allowed_kinds(Axis::Y, MountClass::Scope), dec);
+        assert_eq!(allowed_kinds(Axis::X, MountClass::StepGuider), ao);
+        assert_eq!(allowed_kinds(Axis::Y, MountClass::StepGuider), ao);
         for k in all {
             assert_eq!(allowed(k, Axis::X, MountClass::Scope), ra.contains(&k), "{k:?} RA");
             assert_eq!(allowed(k, Axis::Y, MountClass::Scope), dec.contains(&k), "{k:?} DEC");
@@ -509,7 +534,8 @@ mod tests {
     #[test]
     fn summaries() {
         let algo = |k| make(k, Axis::X, MountClass::Scope, &no_params).unwrap().settings_summary();
-        assert_eq!(algo(AlgoKind::None), "");
+        // Identity's newline ends the X line: "X guide algorithm = None, \n".
+        assert_eq!(algo(AlgoKind::None), "\n");
         assert_eq!(algo(AlgoKind::Hysteresis), "Hysteresis = 0.100, Aggression = 0.700, Minimum move = 0.200\n");
         assert_eq!(algo(AlgoKind::Lowpass), "Slope weight = 5.000, Minimum move = 0.200\n");
         assert_eq!(algo(AlgoKind::Lowpass2), "Aggressiveness = 80.000, Minimum move = 0.200\n");
@@ -531,14 +557,15 @@ mod tests {
 
     #[test]
     fn trait_defaults_and_hooks() {
-        // Identity has no min-move and no params; the base defaults apply.
+        // Identity has no min-move and no params; the base defaults apply
+        // but for its summary.
         let mut a = make(AlgoKind::Identity, Axis::X, MountClass::Scope, &no_params).unwrap();
         assert_eq!(a.min_move(), -1.0);
         assert!(a.set_min_move(0.3));
         assert!(a.param_names().is_empty());
         assert_eq!(a.get_param("minMove"), None);
         assert!(!a.set_param("minMove", 0.3));
-        assert_eq!(a.settings_summary(), "");
+        assert_eq!(a.settings_summary(), "\n");
         assert_eq!(a.deduce_result(&AlgoCtx::default()), 0.0);
 
         // The hooks that reset drop Hysteresis' last move; the others keep it.

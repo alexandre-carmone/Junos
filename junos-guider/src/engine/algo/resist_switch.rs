@@ -1,8 +1,8 @@
 //! Resist Switch: PHD2's default Dec algorithm. It guides in one direction
 //! only and resists switching to the other: a reversal needs at least three
 //! more large offsets one way than the other in the last 10 frames *and* the
-//! newest three summing to more than the oldest three (the error is getting
-//! worse). A move against the current direction is vetoed — the mount must
+//! newest three summing to more than the oldest three in magnitude (the
+//! error is getting worse). A move against the current direction is vetoed — the mount must
 //! have overshot. With fast switch on, one offset beyond 3 × min-move the
 //! other way switches at once.
 //!

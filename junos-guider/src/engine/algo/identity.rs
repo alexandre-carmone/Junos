@@ -2,7 +2,7 @@
 //! PHD2 builds for `GUIDE_ALGORITHM_NONE` and `GUIDE_ALGORITHM_IDENTITY`.
 //! No parameters, no min-move, no history.
 //!
-//! Ported from PHD2 src/guide_algorithm_identity.cpp — BSD-3-Clause, see THIRD_PARTY.md
+//! Ported from PHD2 src/guide_algorithm_identity.h, src/guide_algorithm_identity.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
 use super::{AlgoCtx, AlgoKind, GuideAlgorithm};
 
@@ -26,6 +26,13 @@ impl GuideAlgorithm for Identity {
     fn result(&mut self, input: f64, _ctx: &AlgoCtx) -> f64 {
         input
     }
+
+    /// A lone newline (`guide_algorithm_identity.h:66`): the guide log's
+    /// "X guide algorithm = None, " line ends there, and the Y line starts
+    /// on its own.
+    fn settings_summary(&self) -> String {
+        "\n".to_string()
+    }
 }
 
 #[cfg(test)]
@@ -42,5 +49,6 @@ mod tests {
         assert_eq!(a.kind(), AlgoKind::Identity);
         assert_eq!(a.class_name(), "Identity");
         assert!(a.params().is_empty());
+        assert_eq!(a.settings_summary(), "\n");
     }
 }
