@@ -64,8 +64,9 @@ async fn handle_message(socket: WebSocket, hub: Hub, stack: StackWatch) {
     publish_message_sender(&hub, cmd_tx).await;
 
     // Fresh session: drop any replay snapshot left over from a previous KStars
-    // attach so a reconnecting browser doesn't recover stale state.
-    hub.reset_replay().await;
+    // attach so a reconnecting browser doesn't recover stale state. The
+    // junos-guider part stays: the daemon is not tied to KStars.
+    hub.reset_kstars().await;
 
     // Prime KStars: tell it a client is ready so it starts emitting responses.
     // Without this, `Node::sendResponse` in KStars silently drops events because

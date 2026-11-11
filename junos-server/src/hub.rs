@@ -3,6 +3,8 @@
 //! In the Ekos Live protocol, KStars is the *client*: it dials our server on
 //! `/message/ekos` (JSON) and `/media/ekos` (binary). Browsers connect to `/ws`
 //! and we fan-out messages between them and the currently connected KStars session.
+//! junos-guider's `guider_*` traffic (`guider.rs`) shares the same fan-out and
+//! replay cache, but outlives a KStars attach.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -19,9 +21,10 @@ const BROADCAST_CAP: usize = 512;
 /// Which Ekos view a preview frame belongs to, from the media uuid prefix
 /// (`kstars/ekos/ekoslive/media.cpp:752-753`, `:587`): `+F` focus, `+A`
 /// align / polar align, `+G` guide, anything else the capture preview — plus
-/// `+S`, the live stack the relay itself publishes (`stack.rs`). The browser
-/// subscribes per kind (`proxy.rs`, `junos_media_filter`) so a phone on the
-/// Profiles tab is not sent every guide frame.
+/// `+S`, the live stack the relay itself publishes (`stack.rs`), and `+J`,
+/// junos-guider's frames (`guider.rs`). The browser subscribes per kind
+/// (`proxy.rs`, `junos_media_filter`) so a phone on the Profiles tab is not
+/// sent every guide frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FrameKind {
     Focus,
@@ -31,10 +34,14 @@ pub enum FrameKind {
     /// The live stack, read from KStars' output folder by `stack.rs` — never
     /// a KStars media frame.
     Stack,
+    /// junos-guider's guide frame with its overlay (`guider.rs`) — never a
+    /// KStars media frame either.
+    Guider,
 }
 
 impl FrameKind {
-    pub const ALL: [FrameKind; 5] = [Self::Focus, Self::Align, Self::Guide, Self::Capture, Self::Stack];
+    pub const ALL: [FrameKind; 6] =
+        [Self::Focus, Self::Align, Self::Guide, Self::Capture, Self::Stack, Self::Guider];
 
     pub fn from_uuid(uuid: &str) -> Self {
         if uuid.starts_with("+F") {
@@ -45,6 +52,8 @@ impl FrameKind {
             Self::Guide
         } else if uuid.starts_with("+S") {
             Self::Stack
+        } else if uuid.starts_with("+J") {
+            Self::Guider
         } else {
             Self::Capture
         }
@@ -57,6 +66,7 @@ impl FrameKind {
             "+A" => Some(Self::Align),
             "+G" => Some(Self::Guide),
             "+S" => Some(Self::Stack),
+            "+J" => Some(Self::Guider),
             "capture" => Some(Self::Capture),
             _ => None,
         }
@@ -112,7 +122,22 @@ const STICKY_TYPES: &[&str] = &[
     // reconnecting browser would otherwise wait for the next run.
     "focus_abins_status",
     "focus_abins_result",
+    // junos-guider (`guider.rs`): its snapshots, each sent whole on every
+    // change. They survive a KStars attach (`reset_kstars`) and go when the
+    // daemon link drops (`remove_prefix`).
+    "guider_state",
+    "guider_settings",
+    "guider_calibration",
+    "guider_profiles",
+    "guider_devices",
+    "guider_darks",
+    "guider_ga",
+    "guider_pa",
+    "guider_history",
 ];
+
+/// Message types that belong to junos-guider rather than KStars.
+pub const GUIDER_PREFIX: &str = "guider_";
 
 /// INDI properties whose last `device_property_{set,get}` reply is kept per
 /// device so a reconnecting browser recovers the FOV inputs (sensor geometry
@@ -128,7 +153,8 @@ const STICKY_PROPS: &[&str] = &["CCD_INFO", "EQUATORIAL_EOD_COORD", "FILTER_SLOT
 /// Server-side snapshot of the most recent KStars state, replayed to every
 /// browser on connect so a dropped/refreshed browser recovers the last preview
 /// image, the recent guiding metrics, and the FOV geometry without waiting for
-/// KStars to push again. Reset on each new KStars attach.
+/// KStars to push again. KStars' part is reset on each new KStars attach;
+/// junos-guider's (the `guider_*` stickies, the `+J` frame) is kept.
 #[derive(Default)]
 struct ReplayCache {
     /// Latest message per sticky type (see `STICKY_TYPES`), keyed by type.
@@ -198,6 +224,21 @@ impl ReplayCache {
             }
             _ => {}
         }
+    }
+
+    /// A new KStars session: forget everything but junos-guider's stickies
+    /// and frame, which a KStars attach says nothing about.
+    fn reset_kstars(&mut self) {
+        let mut latest_by_type = std::mem::take(&mut self.latest_by_type);
+        latest_by_type.retain(|t, _| t.starts_with(GUIDER_PREFIX));
+        let mut last_preview = std::mem::take(&mut self.last_preview);
+        last_preview.retain(|k, _| *k == FrameKind::Guider);
+        *self = Self { latest_by_type, last_preview, ..Self::default() };
+    }
+
+    /// Drop the sticky types starting with `prefix`.
+    fn remove_prefix(&mut self, prefix: &str) {
+        self.latest_by_type.retain(|t, _| !t.starts_with(prefix));
     }
 
     /// Ordered messages to replay to a newly-connected browser. Coord-bearing
@@ -317,10 +358,18 @@ impl Hub {
         self.replay.lock().await.snapshot()
     }
 
-    /// Drop the replay snapshot. Called when a new KStars session attaches so a
-    /// reconnecting browser never sees stale state from a previous profile.
-    pub async fn reset_replay(&self) {
-        *self.replay.lock().await = ReplayCache::default();
+    /// Drop KStars' part of the replay snapshot. Called when a new KStars
+    /// session attaches so a reconnecting browser never sees stale state from
+    /// a previous profile; junos-guider's state is not KStars' and stays.
+    pub async fn reset_kstars(&self) {
+        self.replay.lock().await.reset_kstars();
+    }
+
+    /// Drop the sticky types starting with `prefix` — junos-guider's
+    /// snapshots when the daemon link drops.
+    #[allow(dead_code)] // called by guider.rs, the next commit
+    pub async fn remove_prefix(&self, prefix: &str) {
+        self.replay.lock().await.remove_prefix(prefix);
     }
 
     /// Send a command string to KStars. Returns `false` if no KStars session
@@ -490,6 +539,35 @@ mod tests {
         assert_eq!(FrameKind::from_uuid("fb37-…"), FrameKind::Capture);
         assert_eq!(FrameKind::parse("capture"), Some(FrameKind::Capture));
         assert_eq!(FrameKind::parse("+S"), Some(FrameKind::Stack));
+        assert_eq!(FrameKind::from_uuid("+J-12"), FrameKind::Guider);
+        assert_eq!(FrameKind::parse("+J"), Some(FrameKind::Guider));
+        assert!(FrameKind::ALL.contains(&FrameKind::Guider));
         assert_eq!(FrameKind::parse("+X"), None);
+    }
+
+    #[tokio::test]
+    async fn reset_kstars_keeps_the_guider_state_and_frame() {
+        let hub = Hub::new();
+        hub.capture(r#"{"type":"guider_state","payload":{"attached":true}}"#).await;
+        hub.capture(r#"{"type":"guider_history","payload":{"events":[]}}"#).await;
+        hub.capture(r#"{"type":"new_focus_state","payload":{"status":"Idle"}}"#).await;
+        hub.capture(r#"{"type":"new_guide_state","payload":{"drift_ra":1}}"#).await;
+        hub.capture(r#"{"type":"new_mount_state","payload":{"ra":1.0,"de":2.0}}"#).await;
+        hub.capture(r#"{"type":"device_property_get","payload":{"device":"CCD Simulator","name":"CCD_INFO","state":0,"numbers":[]}}"#).await;
+        let frame = |kind| Arc::new(Outbound::Preview { kind, full: String::new(), lite: None });
+        hub.capture_preview(frame(FrameKind::Guider)).await;
+        hub.capture_preview(frame(FrameKind::Guide)).await;
+
+        hub.reset_kstars().await;
+        let mut snap = types(&hub.replay_snapshot().await);
+        snap.sort();
+        assert_eq!(snap, vec!["guider_history", "guider_state"]);
+        assert!(hub.last_preview(FrameKind::Guider).await.is_some());
+        assert!(hub.last_preview(FrameKind::Guide).await.is_none());
+
+        // The daemon link drops: its stickies go, KStars' stay.
+        hub.capture(r#"{"type":"new_focus_state","payload":{"status":"Idle"}}"#).await;
+        hub.remove_prefix(GUIDER_PREFIX).await;
+        assert_eq!(types(&hub.replay_snapshot().await), vec!["new_focus_state"]);
     }
 }
