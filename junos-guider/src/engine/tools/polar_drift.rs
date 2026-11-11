@@ -17,7 +17,7 @@ use crate::engine::calibration::{ProfileAccess, degrees, norm, radians};
 use crate::engine::log::cfmt::fmt_f;
 use crate::engine::traits::Point;
 
-/// The tool's profile keys (`polardrift_toolwin.cpp:126,134`).
+/// The tool's profile keys (`polardrift_toolwin.cpp:132,141`).
 pub mod keys {
     /// 1 north, -1 south.
     pub const HEMISPHERE: &str = "/PolarDriftTool/Hemisphere";
@@ -25,7 +25,7 @@ pub mod keys {
     pub const MIRROR: &str = "/PolarDriftTool/Mirror";
 }
 
-/// The window's instructions (`c_instr`, `polardrift_toolwin.cpp:150`), one
+/// The window's instructions (`c_instr`, `polardrift_toolwin.cpp:155`), one
 /// step per line.
 pub const INSTRUCTIONS: [&str; 7] = [
     "Slew to near the Celestial Pole.",
@@ -37,8 +37,9 @@ pub const INSTRUCTIONS: [&str; 7] = [
     "Adjust your mount's altitude and azimuth to place the guide star in its target circle.",
 ];
 
-/// Seconds of time per radian of hour angle: `24 * 3600 / 2 / M_PI`, whose
-/// first two divisions are integer ones (exact here).
+/// Seconds of time per radian of hour angle: `24 * 3600 / 2 / M_PI`, an
+/// integer product halved in integers (43200, exact), then one double
+/// division.
 const FACTOR: f64 = 43200.0 / std::f64::consts::PI;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,6 +101,7 @@ pub struct PolarDrift {
     alpha: f64,
     current: Point,
     target: Point,
+    status: [String; 3],
     log: Vec<String>,
 }
 
@@ -126,6 +128,7 @@ impl PolarDrift {
             alpha: 0.0,
             current: Point::default(),
             target: Point::default(),
+            status: Default::default(),
             log: Vec::new(),
         };
         t.fill_panel(site_lat);
@@ -140,8 +143,12 @@ impl PolarDrift {
         }
     }
 
-    /// `OnHemi`: the choice is saved even when the site latitude overrides it.
+    /// `OnHemi`. PHD2 greys the choice out while the site latitude is known,
+    /// so nothing happens then and the profile is left alone.
     pub fn set_hemisphere(&mut self, p: &mut impl ProfileAccess, north: bool, site_lat: Option<f64>) {
+        if site_lat.is_some() {
+            return;
+        }
         let hemi = if north { 1 } else { -1 };
         p.set_i32(keys::HEMISPHERE, hemi);
         self.hemi = hemi;
@@ -169,11 +176,16 @@ impl PolarDrift {
         if self.drifting {
             return Ok(());
         }
-        if calibrating_or_guiding {
-            return Err("Please wait till Calibration is done and/or stop guiding");
-        }
-        if !locked {
-            return Err("Please select a star");
+        let refusal = if calibrating_or_guiding {
+            "Please wait till Calibration is done and/or stop guiding"
+        } else if !locked {
+            "Please select a star"
+        } else {
+            ""
+        };
+        if !refusal.is_empty() {
+            self.status[0] = refusal.to_string();
+            return Err(refusal);
         }
         self.saved = outputs;
         self.num = 0;
@@ -189,6 +201,14 @@ impl PolarDrift {
             return None;
         }
         self.drifting = false;
+        // PHD2 shows "Polar Drift alignment stopped", then at once this, in
+        // the first field. The offset and angle are the last fit's, or a
+        // previous run's when no two samples came in.
+        self.status[0] = format!(
+            "PA err(arcmin): {} Angle (deg): {}",
+            fmt_f(self.offset * self.pixel_scale / 60.0, 1),
+            fmt_f(norm(-self.alpha, -180.0, 180.0), 1)
+        );
         self.log.push("Polar Drift alignment stopped".to_string());
         self.fill_panel(site_lat);
         Some(self.saved)
@@ -202,9 +222,10 @@ impl PolarDrift {
     }
 
     /// One frame in the Selected state (`UpdateState` → `WatchDrift`): `t`
-    /// is the UTC wall time in seconds (PHD2: `wxGetUTCTimeMillis() / 1000`),
-    /// `pos` the guider's current star position. Nothing happens unless
-    /// drifting.
+    /// is the UTC wall time as integer milliseconds over 1000 (PHD2:
+    /// `wxGetUTCTimeMillis().GetValue() / 1000.0`; a finer time changes the
+    /// slopes' last digits), `pos` the guider's current star position.
+    /// Nothing happens unless drifting.
     pub fn add_sample(&mut self, t: f64, pos: Point) {
         if !self.drifting {
             return;
@@ -274,6 +295,12 @@ impl PolarDrift {
             fmt_f(self.target.x, 1),
             fmt_f(self.target.y, 1)
         ));
+        // `%.f` here, `%.1f` at stop.
+        self.status = [
+            format!("Time {}s", fmt_f(tnow, 0)),
+            format!("PA Err: {} min", fmt_f(self.offset * self.pixel_scale / 60.0, 0)),
+            format!("Angle: {} deg", fmt_f(norm(-self.alpha, -180.0, 180.0), 0)),
+        ];
     }
 
     /// The fit, once two samples are in (PHD2 draws nothing before).
@@ -315,6 +342,11 @@ impl PolarDrift {
         self.mirror == -1
     }
 
+    /// The window's three status-bar fields.
+    pub fn status(&self) -> &[String; 3] {
+        &self.status
+    }
+
     /// The debug-log lines written since the last call.
     pub fn take_log(&mut self) -> Vec<String> {
         std::mem::take(&mut self.log)
@@ -324,35 +356,7 @@ impl PolarDrift {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-
-    #[derive(Default)]
-    struct Mem(HashMap<String, i32>);
-
-    impl ProfileAccess for Mem {
-        fn has(&self, key: &str) -> bool {
-            self.0.contains_key(key)
-        }
-        fn get_f64(&self, _: &str, default: f64) -> f64 {
-            default
-        }
-        fn get_i32(&self, key: &str, default: i32) -> i32 {
-            self.0.get(key).copied().unwrap_or(default)
-        }
-        fn get_str(&self, _: &str, default: &str) -> String {
-            default.to_string()
-        }
-        fn set_f64(&mut self, _: &str, _: f64) {}
-        fn set_i32(&mut self, key: &str, value: i32) {
-            self.0.insert(key.to_string(), value);
-        }
-        fn set_str(&mut self, _: &str, _: &str) {}
-    }
-
-    /// FNV-1a 64 of the lines joined by `\n`, as the harness hashes them.
-    fn fnv1a(lines: &[String]) -> u64 {
-        lines.join("\n").bytes().fold(0xcbf29ce484222325, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
-    }
+    use crate::engine::tools::test_util::{Mem, fnv1a};
 
     fn drifting(scale: f64, site_lat: Option<f64>) -> PolarDrift {
         let mut t = PolarDrift::new(&Mem::default(), scale, site_lat);
@@ -394,6 +398,11 @@ mod tests {
                 "Polar Drift: m_target(X,Y) -174.4,338.7",
             ]
         );
+        // The status bar, from the harness too: `%.f` per frame, then the
+        // stop line in the first field.
+        assert_eq!(t.status(), &["Time 58s", "PA Err: 8 min", "Angle: -153 deg"]);
+        t.stop(None).unwrap();
+        assert_eq!(t.status(), &["PA err(arcmin): 7.7 Angle (deg): -153.4", "PA Err: 8 min", "Angle: -153 deg"]);
     }
 
     #[test]
@@ -422,12 +431,14 @@ mod tests {
         assert_eq!(PolarDrift::new(&p, 1.0, None).hemisphere(), -1);
         let mut t = PolarDrift::new(&p, 1.0, Some(45.0));
         assert_eq!(t.hemisphere(), 1);
-        // The choice is saved, then the site wins again.
-        t.set_hemisphere(&mut p, false, Some(45.0));
+        // The choice is greyed out while the site is known: nothing saved.
+        t.set_hemisphere(&mut p, true, Some(45.0));
         assert_eq!(p.get_i32(keys::HEMISPHERE, 0), -1);
         assert_eq!(t.hemisphere(), 1);
+        t.set_hemisphere(&mut p, true, None);
+        assert_eq!(p.get_i32(keys::HEMISPHERE, 0), 1);
         t.set_hemisphere(&mut p, false, None);
-        assert_eq!(t.hemisphere(), -1);
+        assert_eq!((t.hemisphere(), p.get_i32(keys::HEMISPHERE, 0)), (-1, -1));
     }
 
     #[test]
@@ -437,6 +448,7 @@ mod tests {
         let outputs = GuideOutputs { primary: Some(true), secondary: Some(false) };
         assert_eq!(t.start(true, true, outputs, None), Err("Please wait till Calibration is done and/or stop guiding"));
         assert_eq!(t.start(false, false, outputs, None), Err("Please select a star"));
+        assert_eq!(t.status()[0], "Please select a star");
         assert_eq!(t.stop(None), None);
         t.start(false, true, outputs, None).unwrap();
         assert_eq!(t.phase(), Phase::Drift);
