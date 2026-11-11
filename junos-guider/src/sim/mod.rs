@@ -4,38 +4,47 @@
 //! A port of PHD2's camera simulator: 20 stars at fixed random places,
 //! hot pixels, read noise, periodic error, seeing, Dec drift, Dec backlash
 //! and stiction, the camera angle and the pier side, the AO's offset, a
-//! comet and clouds. Guide pulses move the field through the camera's
-//! ST-4 port; the same pulse is the simulated mount's [`GuideOutput`].
+//! comet and clouds, and the cooler. Guide pulses move the field through
+//! the camera's ST-4 port: the mount is PHD2's "On Camera" one,
+//! [`OnCamera`](crate::engine::camera::OnCamera) over the [`SimCamera`].
 //!
 //! Everything shares one state behind the handles [`SimCamera`],
-//! [`SimMount`], [`SimAo`] and [`SimClock`]. Time is simulated: an exposure
-//! advances it by its length plus the 50 ms download, a pulse by its
+//! [`SimMount`], [`SimAo`] and [`SimClock`]. Time runs one of two ways
+//! ([`SimTime`]). On the real clock, for `--sim`, an exposure, a pulse and
+//! an AO step take their time as in PHD2, and a stop interrupts a wait
+//! within 100 ms. Simulated, for the tests, the same waits advance it at
+//! once: an exposure by its length plus the 50 ms download, a pulse by its
 //! length, an AO step by 5 ms, and [`Clock::sleep_ms`] by what it is given,
 //! so a run is fast and the same every time. The star field, the noise and
 //! the seeing come from [`Rng`] seeded with 2, re-seeded on each connect.
 //!
-//! PHD2's mount for the simulator is the "On Camera" ST-4 output with no
-//! position. Here [`SimMount`] also reports a position (RA 0 h, Dec 25°,
-//! the declination PHD2's pulses assume when none is known), the pier side
-//! and the guide rate, so the engine's pointing features have a source.
-//! PHD2's rotator simulator is left out: there is no rotator device yet.
+//! [`SimMount`] is the rig's pointing source. As in PHD2's rig, where it is
+//! the "On Camera" mount, it reports no position, an unknown pier side and
+//! no guide rate, and each frame takes the pier side from it. A deliberate
+//! addition: once [`SimMount::slew_to`] gives it a position it reports that,
+//! the simulator's pier side and its guide rate, so the engine's pointing
+//! features have a source. PHD2's debug-log lines wait in
+//! [`SimCamera::take_debug`]. PHD2's rotator simulator is left out: there is
+//! no rotator device yet.
 //!
 //! Ported from PHD2 src/gear_simulator.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
 use std::f64::consts::PI;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use chrono::{DateTime, Local, TimeDelta};
 
-use crate::engine::calibration::{ProfileAccess, norm, radians};
+use crate::engine::calibration::{ProfileAccess, norm, pier_side_from, radians};
 use crate::engine::camera::{
     CameraSettings, CaptureError, CaptureKind, CoolerStatus, GuideCamera, UNDEFINED_FRAME_SIZE,
 };
 use crate::engine::image::UsImage;
-use crate::engine::mount::{GuideOutput, PointingSource};
+use crate::engine::log::cfmt::fmt_f;
+use crate::engine::mount::PointingSource;
 use crate::engine::rng::Rng;
 use crate::engine::stepguider::{StepGuiderDevice, StepResult};
-use crate::engine::traits::{CancelToken, Clock, Dir, MoveResult, PierSide, Rect, c_int};
+use crate::engine::traits::{CancelToken, Clock, Dir, PierSide, Rect, SystemClock, c_int};
 
 /// The camera's fixed gain and offset in the noise and star formulas
 /// (`CameraSimulator::Capture`).
@@ -54,6 +63,8 @@ const AO_SCALE: f64 = 0.10;
 const AO_ANGLE: f64 = 35.0;
 /// `StepGuiderSimulator::Step`'s latency.
 const AO_MS_PER_STEP: u64 = 5;
+/// The AO's travel in the profile (`SimAoParams::max_position`).
+pub const SIM_AO_MAX_STEPS_KEY: &str = "/SimAo/max_steps";
 /// The star image, `render_star`'s 5×5 kernel.
 const STAR: [[f64; 5]; 5] = [
     [0.0, 0.8, 2.2, 0.8, 0.0],
@@ -67,6 +78,8 @@ const WALL_EPOCH: i64 = 1_767_225_600;
 /// The cooler's range, °C: it cannot warm past the ambient temperature.
 const AMBIENT_TEMP: f64 = 15.0;
 const MIN_COOLER_TEMP: f64 = -15.0;
+/// `WorkerThread::MilliSleep`'s slice: how often a wait checks for a stop.
+const MAX_SLEEP_MS: i64 = 100;
 
 /// `SimCamParams`, in the simulator's internal units: what
 /// `load_sim_params` makes of the `/SimCam/*` keys.
@@ -111,8 +124,10 @@ pub struct SimParams {
     /// Comet motion, px per hour.
     pub comet_rate_x: f64,
     pub comet_rate_y: f64,
+    /// The profile's `int` as PHD2 adds it to an `unsigned` (a negative
+    /// value wraps).
     pub frame_download_ms: u32,
-    /// `/SimAo/max_steps`.
+    /// [`SIM_AO_MAX_STEPS_KEY`].
     pub ao_max_position: i32,
 }
 
@@ -168,18 +183,83 @@ impl SimParams {
             cam_angle: p.get_f64("/SimCam/cam_angle", 15.0),
             clouds_opacity: p.get_f64("/SimCam/clouds_opacity", 0.0),
             guide_rate: range("/SimCam/guide_rate", 15.0, 0.0, 15.0),
-            pier_side: match p.get_i32("/SimCam/pier_side", PierSide::East as i32) {
-                0 => PierSide::East,
-                1 => PierSide::West,
-                _ => PierSide::Unknown,
-            },
+            pier_side: pier_side_from(p.get_i32("/SimCam/pier_side", PierSide::East as i32)),
             reverse_dec_pulse_on_west_side: flag("/SimCam/reverse_dec_pulse_on_west_side", true),
             show_comet: flag("/SimCam/show_comet", false),
             comet_rate_x: p.get_f64("/SimCam/comet_rate_x", 555.0),
             comet_rate_y: p.get_f64("/SimCam/comet_rate_y", -123.4),
             frame_download_ms: p.get_i32("/SimCam/frame_download_ms", 50) as u32,
             image_scale,
-            ao_max_position: p.get_i32("/SimAo/max_steps", 45),
+            ao_max_position: p.get_i32(SIM_AO_MAX_STEPS_KEY, 45),
+        }
+    }
+}
+
+/// How the simulator's time runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimTime {
+    /// The waits advance it at once (the tests).
+    Simulated,
+    /// The real clock: the waits take their time (`--sim`).
+    Real,
+}
+
+/// The simulator's time: the camera's stopwatch, the clock the engine
+/// reads, and the waits. Shared by every handle and read without the
+/// state's lock, so a real wait never holds it.
+struct Timer {
+    /// `Some` on the real clock.
+    real: Option<SystemClock>,
+    /// Simulated ms since the simulator was made.
+    sim_ms: AtomicU64,
+}
+
+impl Timer {
+    fn now_ms(&self) -> i64 {
+        match &self.real {
+            Some(c) => (c.mono() * 1000.0) as i64,
+            None => self.sim_ms.load(Ordering::SeqCst) as i64,
+        }
+    }
+
+    /// `wxMilliSleep`: not interruptible.
+    fn sleep(&self, ms: u64) {
+        match &self.real {
+            Some(c) => c.sleep_ms(ms),
+            None => {
+                self.sim_ms.fetch_add(ms, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// `WorkerThread::MilliSleep(ms, INT_ANY)`: slices of at most 100 ms,
+    /// the stop checked after each; true when stopped.
+    fn milli_sleep(&self, ms: i64, cancel: &CancelToken) -> bool {
+        if ms <= MAX_SLEEP_MS {
+            if ms > 0 {
+                self.sleep(ms as u64);
+            }
+            return cancel.is_cancelled();
+        }
+        let start = self.now_ms();
+        let mut elapsed = 0;
+        while elapsed < ms {
+            self.sleep((ms - elapsed).min(MAX_SLEEP_MS) as u64);
+            if cancel.is_cancelled() {
+                return true;
+            }
+            elapsed = self.now_ms() - start;
+        }
+        false
+    }
+
+    fn wall(&self) -> DateTime<Local> {
+        match &self.real {
+            Some(c) => c.wall(),
+            None => {
+                let epoch: DateTime<Local> = DateTime::from_timestamp(WALL_EPOCH, 0).unwrap_or_default().into();
+                epoch + TimeDelta::milliseconds(self.now_ms())
+            }
         }
     }
 }
@@ -225,16 +305,19 @@ struct StictionSim {
 }
 
 impl StictionSim {
-    fn adjustment(&mut self, dir: Dir, duration: u32, distance: f64) -> f64 {
+    /// `GetAdjustment`, its debug-log lines in `debug`.
+    fn adjustment(&mut self, dir: Dir, duration: u32, distance: f64, debug: &mut Vec<String>) -> f64 {
         let mut rslt = 0.0;
         if let Some(last) = self.last {
             if duration > 300 && dir != last && !self.pending {
                 self.adjustment = distance / 3.0;
                 self.pending = true;
+                debug.push(format!("Stiction: reduced distance by {}", fmt_f(self.adjustment, 2)));
                 rslt = -self.adjustment;
             } else if self.pending {
                 if dir == last {
                     rslt = self.adjustment;
+                    debug.push(format!("Stiction: increased distance by {}", fmt_f(self.adjustment, 2)));
                     self.adjustment = 0.0;
                 }
                 self.pending = false;
@@ -337,8 +420,7 @@ struct SimStar {
 }
 
 /// `SimCamState` plus what PHD2 keeps elsewhere: `FillImage`'s statics, the
-/// camera's binning and connection, the simulated clock, the mount's
-/// position and the AO's.
+/// camera's binning and connection, the mount's position and the AO's.
 struct SimState {
     p: SimParams,
     stars: Vec<SimStar>,
@@ -362,17 +444,19 @@ struct SimState {
     frame_size: (i32, i32),
     /// Kept across reconnects, as in PHD2.
     cooler: Cooler,
-    /// Simulated time, ms since the simulator was made: the clock's
-    /// `mono` and the camera's stopwatch.
-    now_ms: u64,
+    time: Arc<Timer>,
     ra_h: f64,
-    /// `None`: no position (PHD2's `UNKNOWN_DECLINATION`).
+    /// `None`: PHD2's rig, no position (`UNKNOWN_DECLINATION`).
     dec_deg: Option<f64>,
     /// Local sidereal time at time 0, hours.
     lst0_h: f64,
     /// The AO's position in steps (right, up); `None` while it is
     /// disconnected (`s_sim_ao`).
     ao: Option<(i32, i32)>,
+    /// A new AO travel for [`SIM_AO_MAX_STEPS_KEY`], not yet saved.
+    ao_max_steps_to_save: Option<i32>,
+    /// Debug-log lines not yet taken.
+    debug: Vec<String>,
 }
 
 impl SimState {
@@ -404,23 +488,8 @@ impl SimState {
         self.last_exposure_time = 0;
     }
 
-    /// `WorkerThread::MilliSleep(ms, INT_ANY)`: true when interrupted.
-    fn sleep(&mut self, ms: u64, cancel: &CancelToken) -> bool {
-        if cancel.is_cancelled() {
-            return true;
-        }
-        self.now_ms += ms;
-        false
-    }
-
     fn lst(&self) -> f64 {
-        norm(self.lst0_h + self.now_ms as f64 / 1000.0 * 1.002_737_909_35 / 3600.0, 0.0, 24.0)
-    }
-
-    /// The declination a pointing source reports: clamped to ±89° like the
-    /// INDI mount's (`PointingSource::declination_radians`).
-    fn declination_radians(&self) -> Option<f64> {
-        self.dec_deg.map(|d| radians(d.clamp(-89.0, 89.0)))
+        norm(self.lst0_h + self.time.now_ms() as f64 / 1000.0 * 1.002_737_909_35 / 3600.0, 0.0, 24.0)
     }
 
     /// The periodic error at worm time `now` (s), px.
@@ -449,9 +518,9 @@ impl SimState {
         (a * p.cos(), a * p.sin())
     }
 
-    /// `CameraSimulator::ST4PulseGuideScope`: move the field by `ms` of
-    /// guiding, then wait for the pulse.
-    fn pulse(&mut self, dir: Dir, ms: u32, cancel: &CancelToken) {
+    /// `CameraSimulator::ST4PulseGuideScope` but its wait: move the field
+    /// by `ms` of guiding.
+    fn pulse_move(&mut self, dir: Dir, ms: u32) {
         // render_star divides positions by the binning, so the distance is
         // in unbinned px.
         let mut d = self.p.guide_rate * self.binning as f64 * ms as f64 / (1000.0 * self.p.image_scale);
@@ -460,7 +529,7 @@ impl SimState {
             d *= self.declination_radians().unwrap_or(radians(25.0)).cos();
         }
         if self.p.use_stiction && matches!(dir, Dir::North | Dir::South) {
-            d += self.stiction.adjustment(dir, ms, d);
+            d += self.stiction.adjustment(dir, ms, d, &mut self.debug);
         }
         // After a pier flip North and South swap, like an ASCOM mount's.
         let dir = if self.p.pier_side == PierSide::West && self.p.reverse_dec_pulse_on_west_side {
@@ -478,33 +547,11 @@ impl SimState {
             Dir::North => self.dec_ofs.incr(d),
             Dir::South => self.dec_ofs.incr(-d),
         }
-        self.sleep(ms as u64, cancel);
     }
 
-    /// `CameraSimulator::Capture`: wait out the exposure but its last
-    /// 5 ms, render (so a pulse made meanwhile shows), then wait out the
-    /// download. A wait that ends past the exposure plus the camera timeout
-    /// (`CameraWatchdog`) disconnects the camera.
-    fn capture(
-        &mut self,
-        duration: u32,
-        subframe: Option<Rect>,
-        settings: &CameraSettings,
-        cancel: &CancelToken,
-    ) -> Result<UsImage, CaptureError> {
-        let start = self.now_ms as i64;
-        // `Watchdog(unsigned timeout, unsigned grace)`: the sum wraps as an
-        // unsigned int.
-        let limit = duration.wrapping_add(settings.timeout_ms as u32) as i64;
-        if duration > 5 {
-            if self.sleep(duration as u64 - 5, cancel) {
-                return Err(CaptureError::Interrupted);
-            }
-            if self.now_ms as i64 - start > limit {
-                self.connected = false;
-                return Err(CaptureError::Timeout);
-            }
-        }
+    /// The frame of `CameraSimulator::Capture`, between its waits: its size
+    /// becomes `FrameSize`, then the noise and the field.
+    fn render(&mut self, duration: u32, subframe: Option<Rect>, shutter_closed: bool) -> UsImage {
         let bin = self.binning.max(1) as i32;
         let (w, h) = (self.p.width as i32 / bin, self.p.height as i32 / bin);
         self.frame_size = (w, h);
@@ -515,28 +562,9 @@ impl SimState {
         let mut img = UsImage::new(w, h);
         let exptime = duration as i32;
         self.fill_noise(&mut img, area, exptime);
-        self.fill_image(&mut img, area, exptime, settings.shutter_closed);
+        self.fill_image(&mut img, area, exptime, shutter_closed);
         img.subframe = sub;
-        // `unsigned tot_dur = duration + frame_download_ms`: a negative
-        // download time wraps, and the `int` sleep it gives is then ≤ 0.
-        let tot_dur = duration.wrapping_add(self.p.frame_download_ms) as i64;
-        let elapsed = self.now_ms as i64 - start;
-        if elapsed < tot_dur {
-            let ms = (tot_dur - elapsed) as i32;
-            if self.sleep(ms.max(0) as u64, cancel) {
-                return Err(CaptureError::Interrupted);
-            }
-            if self.now_ms as i64 - start > limit {
-                self.connected = false;
-                return Err(CaptureError::Timeout);
-            }
-        }
-        Ok(img)
-    }
-
-    /// Wall-clock seconds on the simulated clock.
-    fn wall_secs(&self) -> i64 {
-        WALL_EPOCH + (self.now_ms / 1000) as i64
+        img
     }
 
     /// `fill_noise`: the background, uniform noise over a dark level.
@@ -557,7 +585,7 @@ impl SimState {
     /// camera, add the AO's offset and render the stars, the comet, the
     /// clouds and the hot pixels.
     fn fill_image(&mut self, img: &mut UsImage, area: Rect, exptime: i32, shutter_closed: bool) {
-        let cur_time = self.now_ms as i64;
+        let cur_time = self.time.now_ms();
         // PHD2 computes `last − cur` (gear_simulator.cpp:1098), which turns
         // the drift against its setting; fixed per the quirk ledger.
         let delta_time_ms = cur_time - self.last_exposure_time;
@@ -583,8 +611,17 @@ impl SimState {
             shift_y += sy * sigma;
         }
 
-        // PHD2 copies the pointing source's pier side here; the simulator's
-        // own mount is the pointing source, so it is already ours.
+        // The pier side comes from the pointing source, the simulator's own
+        // mount: in PHD2's rig it reports none, so the West turn and the
+        // Dec reversal never apply there.
+        let side = self.pier_side();
+        if side != self.p.pier_side {
+            self.debug.push(format!(
+                "Cam simulator: pointing source pier side changed from {} to {}",
+                self.p.pier_side as i32, side as i32
+            ));
+            self.p.pier_side = side;
+        }
         let mut angle = radians(self.p.cam_angle);
         if self.p.pier_side == PierSide::West {
             angle += PI;
@@ -646,6 +683,31 @@ impl SimState {
     }
 }
 
+/// The rig's pointing source (see the module doc).
+impl PointingSource for SimState {
+    fn coordinates(&self) -> Option<(f64, f64, f64)> {
+        self.dec_deg.map(|dec| (self.ra_h, dec, self.lst()))
+    }
+
+    fn pier_side(&self) -> PierSide {
+        if self.dec_deg.is_some() { self.p.pier_side } else { PierSide::Unknown }
+    }
+
+    /// The guide rate on both axes, deg/s.
+    fn guide_rates(&self) -> Option<(f64, f64)> {
+        let rate = self.p.guide_rate / 3600.0;
+        self.dec_deg.map(|_| (rate, rate))
+    }
+
+    fn is_slewing(&self) -> bool {
+        false
+    }
+
+    fn can_report_position(&self) -> bool {
+        self.dec_deg.is_some()
+    }
+}
+
 fn pixel_in(img: &UsImage, x: i32, y: i32) -> bool {
     x >= 0 && x < img.w && y >= 0 && y < img.h
 }
@@ -657,8 +719,8 @@ fn set_pixel(img: &mut UsImage, x: i32, y: i32, val: u16) {
 }
 
 /// `incr_pixel`: add, saturating at 65535. The sum is an `unsigned int`,
-/// so a negative increment cast to it wraps and takes the pixel down when
-/// it is brighter than the increment is negative.
+/// so a negative increment cast to it wraps: it takes a pixel at least as
+/// bright down by its size, and saturates a darker one to 65535.
 fn incr_pixel(img: &mut UsImage, x: i32, y: i32, val: u32) {
     if pixel_in(img, x, y) {
         let p = img.pixel_mut(x, y);
@@ -670,7 +732,8 @@ fn incr_pixel(img: &mut UsImage, x: i32, y: i32, val: u32) {
 /// The star kernel scaled to `inten`, spread over a 6×6 footprint by the
 /// sub-pixel position (bilinear), and the footprint's corner. Positions are
 /// unbinned px. `modf` keeps the fraction's sign, so a star left of or
-/// above the frame gets negative weights.
+/// above the frame gets negative weights. The corner wraps like C's `int`
+/// for a position `(int)` turns into `INT_MIN` (NaN or huge).
 fn star_footprint(binning: i32, x: f64, y: f64, inten: f64) -> ((i32, i32), [[f64; 6]; 6]) {
     let (x, y) = (x / binning as f64, y / binning as f64);
     let (ix, iy) = (x.trunc(), y.trunc());
@@ -692,7 +755,7 @@ fn star_footprint(binning: i32, x: f64, y: f64, inten: f64) -> ((i32, i32), [[f6
             }
         }
     }
-    ((c_int(ix) - 2, c_int(iy) - 2), d)
+    ((c_int(ix).wrapping_sub(2), c_int(iy).wrapping_sub(2)), d)
 }
 
 /// `render_star`: add the star at camera position (`x`, `y`) inside the
@@ -700,12 +763,12 @@ fn star_footprint(binning: i32, x: f64, y: f64, inten: f64) -> ((i32, i32), [[f6
 fn render_star(img: &mut UsImage, binning: i32, sub: Rect, x: f64, y: f64, inten: f64) {
     let ((c_x, c_y), d) = star_footprint(binning, x, y, inten);
     for (i, column) in d.iter().enumerate() {
-        let cx = c_x + i as i32;
+        let cx = c_x.wrapping_add(i as i32);
         if cx < sub.x || cx > sub.right() {
             continue;
         }
         for (j, &v) in column.iter().enumerate() {
-            let cy = c_y + j as i32;
+            let cy = c_y.wrapping_add(j as i32);
             if cy < sub.y || cy > sub.bottom() {
                 continue;
             }
@@ -723,7 +786,7 @@ fn render_comet(img: &mut UsImage, binning: i32, sub: Rect, x: f64, y: f64, inte
     for x_inc in 0..10 {
         for k in 0..5 {
             let slope = -1.0 + 0.5 * k as f64;
-            let cx = c_x + x_inc;
+            let cx = c_x.wrapping_add(x_inc);
             let cy = c_int(c_y as f64 + slope * x_inc as f64);
             if cx < sub.right() && cy < sub.bottom() && cy > sub.y {
                 incr_pixel(img, cx, cy, v);
@@ -738,13 +801,75 @@ fn lock(s: &Shared) -> MutexGuard<'_, SimState> {
     s.lock().unwrap()
 }
 
+/// `CameraSimulator::Capture`: wait out the exposure but its last 5 ms,
+/// render (so a pulse made meanwhile shows), then wait out the download. A
+/// wait that ends past the exposure plus the camera timeout
+/// (`CameraWatchdog`) disconnects the camera. The waits run without the
+/// lock.
+fn capture(
+    sh: &Shared,
+    duration: u32,
+    subframe: Option<Rect>,
+    settings: &CameraSettings,
+    cancel: &CancelToken,
+) -> Result<UsImage, CaptureError> {
+    let time = lock(sh).time.clone();
+    let start = time.now_ms();
+    // `Watchdog(unsigned timeout, unsigned grace)`: the sum wraps as an
+    // unsigned int.
+    let limit = duration.wrapping_add(settings.timeout_ms as u32) as i64;
+    let timed_out = || {
+        let out = time.now_ms() - start > limit;
+        if out {
+            lock(sh).connected = false;
+        }
+        out
+    };
+    if duration > 5 {
+        if time.milli_sleep(duration as i64 - 5, cancel) {
+            return Err(CaptureError::Interrupted);
+        }
+        if timed_out() {
+            return Err(CaptureError::Timeout);
+        }
+    }
+    let (img, download_ms) = {
+        let mut s = lock(sh);
+        (s.render(duration, subframe, settings.shutter_closed), s.p.frame_download_ms)
+    };
+    // `unsigned tot_dur = duration + frame_download_ms`: a negative
+    // download time wraps, and the `int` sleep it gives is then ≤ 0.
+    let tot_dur = duration.wrapping_add(download_ms) as i64;
+    let elapsed = time.now_ms() - start;
+    if elapsed < tot_dur {
+        if time.milli_sleep((tot_dur - elapsed) as i32 as i64, cancel) {
+            return Err(CaptureError::Interrupted);
+        }
+        if timed_out() {
+            return Err(CaptureError::Timeout);
+        }
+    }
+    Ok(img)
+}
+
+/// `CameraSimulator::ST4PulseGuideScope`: move the field, then wait for the
+/// pulse; a stop cuts the wait short, and the pulse still counts as made.
+fn pulse(sh: &Shared, dir: Dir, ms: u32, cancel: &CancelToken) {
+    let time = {
+        let mut s = lock(sh);
+        s.pulse_move(dir, ms);
+        s.time.clone()
+    };
+    time.milli_sleep(ms as i64, cancel);
+}
+
 /// The camera simulator (PHD2's "Simulator" camera). Make one per rig and
 /// take the mount, AO and clock from it.
 #[derive(Clone)]
 pub struct SimCamera(Shared);
 
 impl SimCamera {
-    pub fn new(params: SimParams) -> SimCamera {
+    pub fn new(params: SimParams, time: SimTime) -> SimCamera {
         let state = SimState {
             dec_ofs: BacklashVal::new(params.dec_backlash),
             p: params,
@@ -761,16 +886,21 @@ impl SimCamera {
             binning: 1,
             frame_size: UNDEFINED_FRAME_SIZE,
             cooler: Cooler::new(),
-            now_ms: 0,
+            time: Arc::new(Timer {
+                real: (time == SimTime::Real).then(SystemClock::default),
+                sim_ms: AtomicU64::new(0),
+            }),
             ra_h: 0.0,
-            dec_deg: Some(25.0),
+            dec_deg: None,
             lst0_h: 0.0,
             ao: None,
+            ao_max_steps_to_save: None,
+            debug: Vec::new(),
         };
         SimCamera(Arc::new(Mutex::new(state)))
     }
 
-    /// The mount: its pulses and position.
+    /// The mount: the rig's pointing source.
     pub fn mount(&self) -> SimMount {
         SimMount(self.0.clone())
     }
@@ -780,21 +910,47 @@ impl SimCamera {
     }
 
     pub fn clock(&self) -> SimClock {
-        SimClock(self.0.clone())
+        SimClock(lock(&self.0).time.clone())
     }
 
-    /// New settings (what `load_sim_params` reads at each connect). They
-    /// apply at once; the star field, the hot pixels and the backlash are
-    /// rebuilt at the next connect.
+    /// The settings in use, the pier side as the frames left it.
+    pub fn params(&self) -> SimParams {
+        lock(&self.0).p.clone()
+    }
+
+    /// New settings, as the simulator's settings dialog applies them
+    /// (`ShowPropertyDialog`): a new star or hot-pixel count, backlash or
+    /// camera angle draws a new field at once (`Initialize`), the rest
+    /// shows from the next frame. Start from [`SimCamera::params`] to keep
+    /// the pier side, as the dialog does. The AO's travel is the AO's own
+    /// setting ([`StepGuiderDevice::set_max_position`]) and stays.
     pub fn set_params(&self, params: SimParams) {
-        lock(&self.0).p = params;
+        let mut s = lock(&self.0);
+        let new_field = params.nr_stars != s.p.nr_stars
+            || params.nr_hot_pixels != s.p.nr_hot_pixels
+            || params.dec_backlash != s.p.dec_backlash
+            || params.cam_angle != s.p.cam_angle;
+        s.p = SimParams { ao_max_position: s.p.ao_max_position, ..params };
+        if new_field {
+            s.initialize();
+        }
     }
 
-    /// `CameraSimulator::FlipPierSide` (the settings dialog's Pier Flip):
-    /// the other side, East from Unknown.
+    /// `CameraSimulator::FlipPierSide`, which only the legacy socket server
+    /// calls (`MSG_FLIP_SIM_CAMERA`): the other side, East from Unknown. In
+    /// PHD2's rig the next frame takes Unknown back from the mount. The
+    /// settings dialog's Pier Flip differs: it also turns the camera angle
+    /// by 180° (truncated to a whole degree, mod 360), through
+    /// [`SimCamera::set_params`].
     pub fn flip_pier_side(&self) {
         let mut s = lock(&self.0);
         s.p.pier_side = if s.p.pier_side == PierSide::East { PierSide::West } else { PierSide::East };
+        let line = format!(
+            "CamSimulator FlipPierSide: side = {}  cam_angle = {}",
+            s.p.pier_side as i32,
+            fmt_f(s.p.cam_angle, 1)
+        );
+        s.debug.push(line);
     }
 
     /// `CameraSimulator::Connect`: a new star field (`Initialize`) from
@@ -807,6 +963,12 @@ impl SimCamera {
 
     pub fn disconnect(&self) {
         lock(&self.0).connected = false;
+    }
+
+    /// The debug-log lines of the camera, the mount and the AO since the
+    /// last call, oldest first.
+    pub fn take_debug(&self) -> Vec<String> {
+        std::mem::take(&mut lock(&self.0).debug)
     }
 }
 
@@ -862,7 +1024,7 @@ impl GuideCamera for SimCamera {
 
     fn set_cooler_on(&mut self, on: bool) -> bool {
         let mut s = lock(&self.0);
-        let now = s.wall_secs();
+        let now = s.time.wall().timestamp();
         if on {
             s.cooler.turn_on(now)
         } else {
@@ -877,14 +1039,14 @@ impl GuideCamera for SimCamera {
         if !s.cooler.on {
             return true;
         }
-        let now = s.wall_secs();
+        let now = s.time.wall().timestamp();
         s.cooler.set_temp(celsius, now);
         false
     }
 
     fn cooler_status(&self) -> Option<CoolerStatus> {
         let s = lock(&self.0);
-        Some(s.cooler.status(s.wall_secs()))
+        Some(s.cooler.status(s.time.wall().timestamp()))
     }
 
     fn sensor_temperature(&self) -> Option<f64> {
@@ -896,7 +1058,7 @@ impl GuideCamera for SimCamera {
     }
 
     fn st4_pulse(&mut self, dir: Dir, ms: u32, cancel: &CancelToken) -> Result<(), String> {
-        lock(&self.0).pulse(dir, ms, cancel);
+        pulse(&self.0, dir, ms, cancel);
         Ok(())
     }
 
@@ -910,19 +1072,20 @@ impl GuideCamera for SimCamera {
         settings: &CameraSettings,
         cancel: &CancelToken,
     ) -> Result<UsImage, CaptureError> {
-        lock(&self.0).capture(dur_ms, subframe, settings, cancel)
+        capture(&self.0, dur_ms, subframe, settings, cancel)
     }
 }
 
-/// The simulated mount: the camera's ST-4 pulses as a guide output, and a
-/// pointing source at a set RA/Dec on the simulator's pier side, guiding at
-/// its guide rate on both axes.
+/// The simulated mount: the rig's pointing source (see the module doc). Its
+/// pulses go through the camera ([`crate::engine::camera::OnCamera`]).
 #[derive(Clone)]
 pub struct SimMount(Shared);
 
 impl SimMount {
-    /// Point at `ra_h` hours, `dec_deg` degrees at once (`None`: no
-    /// position). The next frame moves the worm phase by the RA change.
+    /// Point at `ra_h` hours, `dec_deg` degrees at once; `None` goes back
+    /// to PHD2's rig, with no position. The next frame moves the worm phase
+    /// by the RA change. Choose before the first frame: in PHD2's rig that
+    /// frame sets the simulator's pier side to Unknown.
     pub fn slew_to(&self, ra_h: f64, dec_deg: Option<f64>) {
         let mut s = lock(&self.0);
         s.ra_h = ra_h;
@@ -930,27 +1093,17 @@ impl SimMount {
     }
 }
 
-impl GuideOutput for SimMount {
-    fn guide(&mut self, dir: Dir, ms: u32, cancel: &CancelToken) -> MoveResult {
-        lock(&self.0).pulse(dir, ms, cancel);
-        MoveResult::Ok
-    }
-}
-
 impl PointingSource for SimMount {
     fn coordinates(&self) -> Option<(f64, f64, f64)> {
-        let s = lock(&self.0);
-        s.dec_deg.map(|dec| (s.ra_h, dec, s.lst()))
+        lock(&self.0).coordinates()
     }
 
     fn pier_side(&self) -> PierSide {
-        lock(&self.0).p.pier_side
+        lock(&self.0).pier_side()
     }
 
-    /// The guide rate on both axes, deg/s.
     fn guide_rates(&self) -> Option<(f64, f64)> {
-        let rate = lock(&self.0).p.guide_rate / 3600.0;
-        Some((rate, rate))
+        lock(&self.0).guide_rates()
     }
 
     fn is_slewing(&self) -> bool {
@@ -958,7 +1111,7 @@ impl PointingSource for SimMount {
     }
 
     fn can_report_position(&self) -> bool {
-        lock(&self.0).dec_deg.is_some()
+        lock(&self.0).can_report_position()
     }
 }
 
@@ -970,13 +1123,20 @@ impl PointingSource for SimMount {
 pub struct SimAo(Shared);
 
 impl SimAo {
-    /// Connect, centred (`ZeroCurrentPosition`).
+    /// `StepGuiderSimulator::Connect`, centred (`ZeroCurrentPosition`).
+    /// PHD2's alert when the camera is not the simulator cannot happen: the
+    /// AO comes from the [`SimCamera`].
     pub fn connect(&mut self) {
-        lock(&self.0).ao = Some((0, 0));
+        let mut s = lock(&self.0);
+        s.ao = Some((0, 0));
+        s.debug.push("AO Simulator Connected".into());
     }
 
     pub fn disconnect(&mut self) {
-        lock(&self.0).ao = None;
+        let mut s = lock(&self.0);
+        if s.ao.take().is_some() {
+            s.debug.push("AO Simulator Disconnected".into());
+        }
     }
 
     pub fn is_connected(&self) -> bool {
@@ -987,6 +1147,13 @@ impl SimAo {
     pub fn position(&self) -> (i32, i32) {
         lock(&self.0).ao.unwrap_or_default()
     }
+
+    /// The profile write [`StepGuiderDevice::set_max_position`] owes:
+    /// PHD2's simulator stores its travel itself, the device seam has no
+    /// profile, so the caller saves it.
+    pub fn take_profile_write(&self) -> Option<(&'static str, i32)> {
+        lock(&self.0).ao_max_steps_to_save.take().map(|steps| (SIM_AO_MAX_STEPS_KEY, steps))
+    }
 }
 
 impl StepGuiderDevice for SimAo {
@@ -994,36 +1161,40 @@ impl StepGuiderDevice for SimAo {
         "AO-Simulator".into()
     }
 
-    /// `Step`: `steps` steps one way (North = up, East = right), 5 ms
-    /// each. Never fails: the base class keeps the moves inside the travel.
+    /// North is up, East right, 5 ms each, never refused: the step guider
+    /// keeps the moves inside the travel.
     fn step(&mut self, dir: Dir, steps: u32) -> StepResult {
-        let mut s = lock(&self.0);
-        let n = steps as i32;
-        if let Some((x, y)) = s.ao.as_mut() {
-            match dir {
-                Dir::North => *y += n,
-                Dir::South => *y -= n,
-                Dir::East => *x += n,
-                Dir::West => *x -= n,
+        let time = {
+            let mut s = lock(&self.0);
+            let n = steps as i32;
+            if let Some((x, y)) = s.ao.as_mut() {
+                match dir {
+                    Dir::North => *y += n,
+                    Dir::South => *y -= n,
+                    Dir::East => *x += n,
+                    Dir::West => *x -= n,
+                }
             }
-        }
+            s.time.clone()
+        };
         // `wxMilliSleep`: not interruptible.
-        s.now_ms += steps as u64 * AO_MS_PER_STEP;
+        time.sleep(steps as u64 * AO_MS_PER_STEP);
         StepResult::Ok
     }
 
-    /// `MaxPosition`: the same travel every way.
+    /// The same travel every way.
     fn max_position(&self, _dir: Dir) -> i32 {
         lock(&self.0).p.ao_max_position
     }
 
-    /// `SetMaxPosition`: never fails. The caller stores `/SimAo/max_steps`.
+    /// Never fails; the profile write waits in [`SimAo::take_profile_write`].
     fn set_max_position(&mut self, steps: i32) -> bool {
-        lock(&self.0).p.ao_max_position = steps;
+        let mut s = lock(&self.0);
+        s.p.ao_max_position = steps;
+        s.ao_max_steps_to_save = Some(steps);
         false
     }
 
-    /// `Center`: back to the middle of the travel; always succeeds.
     fn center(&mut self) -> bool {
         let mut s = lock(&self.0);
         if s.ao.is_some() {
@@ -1033,38 +1204,40 @@ impl StepGuiderDevice for SimAo {
     }
 }
 
-/// The simulated clock: monotonic time is the simulator's, and the wall
-/// clock runs from 2026-01-01 00:00 UTC.
+/// The simulator's clock: monotonic time is the simulator's, and the wall
+/// clock is the system's on the real clock, else it runs from 2026-01-01
+/// 00:00 UTC.
 #[derive(Clone)]
-pub struct SimClock(Shared);
+pub struct SimClock(Arc<Timer>);
 
 impl Clock for SimClock {
     fn mono(&self) -> f64 {
-        lock(&self.0).now_ms as f64 / 1000.0
+        self.0.now_ms() as f64 / 1000.0
     }
 
     fn wall(&self) -> DateTime<Local> {
-        let ms = lock(&self.0).now_ms as i64;
-        let epoch: DateTime<Local> = DateTime::from_timestamp(WALL_EPOCH, 0).unwrap_or_default().into();
-        epoch + TimeDelta::milliseconds(ms)
+        self.0.wall()
     }
 
     fn sleep_ms(&self, ms: u64) {
-        lock(&self.0).now_ms += ms;
+        self.0.sleep(ms);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::time::{Duration, Instant};
 
     use super::*;
+    use crate::engine::algo::AlgoCtx;
     use crate::engine::calibration::{CALIBRATION_RATE_UNCALIBRATED, CalibrationIssue, degrees, norm_angle};
-    use crate::engine::mount::MountEvent;
+    use crate::engine::camera::OnCamera;
+    use crate::engine::mount::{GuideOutput, GuiderOffset, MountEvent, StepFrame};
     use crate::engine::scope::{CalibrationEnv, CalibrationNext, DecGuideMode, Scope, ScopeIo};
     use crate::engine::star::{FindMode, Star};
-    use crate::engine::stepguider::StepGuider;
-    use crate::engine::traits::{MoveOpts, Point};
+    use crate::engine::stepguider::{BumpEnv, StepGuider};
+    use crate::engine::traits::{MoveOpts, MoveResult, Point};
 
     /// Star 12 of the seed-2 field: bright, alone, well inside the frame.
     const BRIGHT: usize = 12;
@@ -1113,15 +1286,30 @@ mod tests {
         }
     }
 
+    /// A connected camera on simulated time, in PHD2's rig.
     fn connected(p: SimParams) -> SimCamera {
-        let cam = SimCamera::new(p);
+        let cam = SimCamera::new(p, SimTime::Simulated);
         cam.connect();
+        cam
+    }
+
+    /// The same with the mount pointing at RA 0 h, Dec 25° (the
+    /// declination PHD2's pulses assume when none is known).
+    fn pointing(p: SimParams) -> SimCamera {
+        let cam = connected(p);
+        cam.mount().slew_to(0.0, Some(25.0));
         cam
     }
 
     /// PHD2's camera defaults, shutter open.
     fn settings() -> CameraSettings {
         CameraSettings::load(&NoProfile)
+    }
+
+    /// A pulse of the "On Camera" mount.
+    fn guide(cam: &SimCamera, dir: Dir, ms: u32) -> MoveResult {
+        let mut cam = cam.clone();
+        OnCamera(&mut cam, &mut Vec::new()).guide(dir, ms, &CancelToken::new())
     }
 
     /// Where star `i` sits on the camera with the pulses and the drift but
@@ -1260,17 +1448,50 @@ mod tests {
     }
 
     #[test]
+    fn real_time_takes_the_waits_and_a_stop_cuts_them() {
+        let cam = SimCamera::new(quiet(1.0), SimTime::Real);
+        cam.connect();
+        let clock = cam.clock();
+        let mut c = cam.clone();
+        let t = Instant::now();
+        c.capture(120, CaptureKind::Light, None, &settings(), &CancelToken::new()).unwrap();
+        // The exposure and the 50 ms download, in fact and on the clock.
+        assert!(t.elapsed() >= Duration::from_millis(170));
+        assert!(clock.mono() >= 0.17);
+        assert!((clock.wall() - Local::now()).num_seconds().abs() < 5);
+
+        // A stop from another thread ends a 10 s exposure within a slice.
+        let cancel = CancelToken::new();
+        let stop = cancel.clone();
+        let stopper = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            stop.cancel();
+        });
+        let t = Instant::now();
+        let r = c.capture(10_000, CaptureKind::Light, None, &settings(), &cancel);
+        stopper.join().unwrap();
+        assert_eq!(r.unwrap_err(), CaptureError::Interrupted);
+        assert!(t.elapsed() >= Duration::from_millis(150) && t.elapsed() < Duration::from_secs(5));
+
+        // A pulse waits its length, an AO step 5 ms.
+        let t = Instant::now();
+        assert_eq!(guide(&cam, Dir::North, 60), MoveResult::Ok);
+        let mut ao = cam.ao();
+        ao.connect();
+        ao.step(Dir::East, 8);
+        assert!(t.elapsed() >= Duration::from_millis(100));
+    }
+
+    #[test]
     fn a_pulse_moves_the_star_along_the_camera_angle() {
         let p = SimParams { dec_backlash: 0.0, ..quiet(1.0) };
         let mut cam = connected(p);
-        let mut mount = cam.mount();
-        let cancel = CancelToken::new();
         let (ra, dec) = axes();
 
         let a = bright(&mut cam);
         // Star 12 at (319, 109) turned 15° about the frame centre.
         assert!(a.distance(&Point::new(655.919, 477.849)) < 0.001, "{a:?}");
-        assert_eq!(mount.guide(Dir::West, 1000, &cancel), MoveResult::Ok);
+        assert_eq!(guide(&cam, Dir::West, 1000), MoveResult::Ok);
         let b = bright(&mut cam);
         // 15″/s for 1 s at 1″/px, times cos 25° in RA.
         let d = b - a;
@@ -1278,26 +1499,28 @@ mod tests {
         assert!((degrees(d.y.atan2(d.x)) - 15.0).abs() < 0.05, "{d:?}");
         assert!(dot(d, dec).abs() < 0.01);
 
-        mount.guide(Dir::North, 1000, &cancel);
+        guide(&cam, Dir::North, 1000);
         let c = bright(&mut cam);
         let d = c - b;
         assert!((dot(d, dec) - 15.0).abs() < 0.01 && dot(d, ra).abs() < 0.01, "{d:?}");
 
         // Three frames and two pulses of simulated time.
         assert!((cam.clock().mono() - 5.15).abs() < 1e-9);
+
+        // A pulse through a camera that is gone is refused.
+        cam.disconnect();
+        assert_eq!(guide(&cam, Dir::North, 1000), MoveResult::Error);
     }
 
     #[test]
     fn dec_backlash_eats_the_first_reversal() {
         // 5″ at 1″/px, the state of a mount last moved South.
         let mut cam = connected(quiet(1.0));
-        let mut mount = cam.mount();
-        let cancel = CancelToken::new();
         let (_, dec) = axes();
         let mut moves = Vec::new();
         let mut last = bright(&mut cam);
         for (dir, ms) in [(Dir::North, 1000), (Dir::South, 200), (Dir::South, 400)] {
-            mount.guide(dir, ms, &cancel);
+            guide(&cam, dir, ms);
             let p = bright(&mut cam);
             moves.push(dot(p - last, dec));
             last = p;
@@ -1312,14 +1535,23 @@ mod tests {
     #[test]
     fn stiction_takes_a_third_of_a_long_reversal() {
         let mut s = StictionSim::default();
-        assert_eq!(s.adjustment(Dir::North, 500, 9.0), 0.0);
-        assert_eq!(s.adjustment(Dir::South, 600, 9.0), -3.0);
+        let mut debug = Vec::new();
+        assert_eq!(s.adjustment(Dir::North, 500, 9.0, &mut debug), 0.0);
+        assert_eq!(s.adjustment(Dir::South, 600, 9.0, &mut debug), -3.0);
         // Given back when the next pulse keeps the direction.
-        assert_eq!(s.adjustment(Dir::South, 600, 9.0), 3.0);
-        assert_eq!(s.adjustment(Dir::North, 200, 3.0), 0.0);
+        assert_eq!(s.adjustment(Dir::South, 600, 9.0, &mut debug), 3.0);
+        assert_eq!(s.adjustment(Dir::North, 200, 3.0, &mut debug), 0.0);
         // A reversal followed by a reversal gives nothing back.
-        assert_eq!(s.adjustment(Dir::South, 900, 6.0), -2.0);
-        assert_eq!(s.adjustment(Dir::North, 900, 6.0), 0.0);
+        assert_eq!(s.adjustment(Dir::South, 900, 6.0, &mut debug), -2.0);
+        assert_eq!(s.adjustment(Dir::North, 900, 6.0, &mut debug), 0.0);
+        assert_eq!(
+            debug,
+            [
+                "Stiction: reduced distance by 3.00",
+                "Stiction: increased distance by 3.00",
+                "Stiction: reduced distance by 2.00",
+            ]
+        );
     }
 
     #[test]
@@ -1354,11 +1586,35 @@ mod tests {
     }
 
     #[test]
+    fn in_phd2_rig_the_mount_knows_nothing_and_the_pier_side_follows_it() {
+        let mut cam = connected(SimParams { dec_backlash: 0.0, ..quiet(1.0) });
+        let mount = cam.mount();
+        assert_eq!(
+            (mount.coordinates(), mount.pier_side(), mount.guide_rates(), mount.can_report_position()),
+            (None, PierSide::Unknown, None, false)
+        );
+        assert_eq!(mount.declination_radians(), None);
+        let a = bright(&mut cam);
+        // The first frame takes the mount's side over the profile's East.
+        assert_eq!(cam.take_debug(), ["Cam simulator: pointing source pier side changed from 0 to -1"]);
+        // So a flip lasts until the next frame: no turn of the field.
+        cam.flip_pier_side();
+        let b = bright(&mut cam);
+        assert!(b.distance(&a) < 0.01, "{a:?} {b:?}");
+        assert_eq!(
+            cam.take_debug(),
+            [
+                "CamSimulator FlipPierSide: side = 0  cam_angle = 15.0",
+                "Cam simulator: pointing source pier side changed from 0 to -1",
+            ]
+        );
+        assert_eq!(cam.params().pier_side, PierSide::Unknown);
+    }
+
+    #[test]
     fn a_pier_flip_turns_the_field_and_the_dec_pulses() {
-        let p = SimParams { dec_backlash: 0.0, ..quiet(1.0) };
-        let mut cam = connected(p);
-        let mut mount = cam.mount();
-        let cancel = CancelToken::new();
+        let mut cam = pointing(SimParams { dec_backlash: 0.0, ..quiet(1.0) });
+        let mount = cam.mount();
         let a = bright(&mut cam);
         cam.flip_pier_side();
         assert_eq!(mount.pier_side(), PierSide::West);
@@ -1367,18 +1623,36 @@ mod tests {
         // North is reversed on the West side, so a North pulse still moves
         // the star along +Dec on the camera; West now goes the other way.
         let (ra, dec) = axes();
-        mount.guide(Dir::North, 1000, &cancel);
+        guide(&cam, Dir::North, 1000);
         let c = bright(&mut cam);
         assert!((dot(c - b, dec) - 15.0).abs() < 0.01, "{:?}", c - b);
-        mount.guide(Dir::West, 1000, &cancel);
+        guide(&cam, Dir::West, 1000);
         let d = bright(&mut cam);
         assert!((dot(d - c, ra) + 15.0 * radians(25.0).cos()).abs() < 0.01, "{:?}", d - c);
     }
 
+    #[test]
+    fn new_settings_draw_a_new_field_only_when_phd2_does() {
+        let cam = connected(quiet(1.0));
+        guide(&cam, Dir::West, 1000);
+        // The seeing is not part of the field: the pulse stays.
+        cam.set_params(SimParams { seeing_scale: 1.0, ..cam.params() });
+        assert!(lock(&cam.0).ra_ofs > 0.0);
+        // The camera angle is: back to a new field.
+        cam.set_params(SimParams { cam_angle: 20.0, ..cam.params() });
+        assert_eq!(lock(&cam.0).ra_ofs, 0.0);
+        // The AO's travel is the AO's.
+        let mut ao = cam.ao();
+        ao.set_max_position(30);
+        cam.set_params(SimParams { ao_max_position: 99, ..quiet(1.0) });
+        assert_eq!(ao.max_position(Dir::UP), 30);
+    }
+
     /// The engine's calibration loop on the simulator: a frame, the star
     /// found near its last place, the state machine, its move before the
-    /// next frame. Returns the number of backlash-clearing pulses.
-    fn calibrate(scope: &mut Scope, cam: &mut SimCamera, profile: &mut Profile) -> usize {
+    /// next frame. Returns the `Calibrating` events' directions in order,
+    /// once each, and the number of backlash-clearing pulses.
+    fn calibrate(scope: &mut Scope, cam: &mut SimCamera, profile: &mut Profile) -> (Vec<&'static str>, usize) {
         let env = CalibrationEnv {
             binning: 1,
             focal_length: 400,
@@ -1390,11 +1664,13 @@ mod tests {
             can_pulse_guide: false,
             timestamp: "T".into(),
         };
-        let mut output = cam.mount();
+        let mut output = cam.clone();
+        let mut lines = Vec::new();
         let pointing = cam.mount();
         let clock = cam.clock();
         let cancel = CancelToken::new();
         let mut ev = Vec::new();
+        let mut legs = Vec::new();
         let mut clearing = 0;
         let mut pos = bright(cam);
         assert!(scope.begin_calibration(Some(pos), &env, Some(&pointing), profile, &mut ev));
@@ -1402,20 +1678,26 @@ mod tests {
             pos = locate(cam, pos, None);
             let next = scope.update_calibration_state(pos, &env, Some(&pointing), profile, &mut ev);
             for e in ev.drain(..) {
-                if let MountEvent::Calibrating(i) = e
-                    && i.msg.starts_with("Clearing backlash")
-                {
-                    clearing += 1;
+                if let MountEvent::Calibrating(i) = e {
+                    clearing += i.msg.starts_with("Clearing backlash") as usize;
+                    if legs.last() != Some(&i.direction) {
+                        legs.push(i.direction);
+                    }
                 }
             }
-            let CalibrationNext::Moves(moves) = next else { panic!("calibration failed") };
-            for (dir, ms) in moves {
-                let now = clock.mono();
-                let mut io = ScopeIo { output: &mut output, pointing: Some(&pointing), cancel: &cancel, now };
-                assert_eq!(scope.move_axis(dir, ms, MoveOpts::CALIBRATION_MOVE, &mut io, &mut ev), MoveResult::Ok);
+            match next {
+                CalibrationNext::Moves(moves) => {
+                    for (dir, ms) in moves {
+                        let now = clock.mono();
+                        let mut out = OnCamera(&mut output, &mut lines);
+                        let mut io = ScopeIo { output: &mut out, pointing: Some(&pointing), cancel: &cancel, now };
+                        assert_eq!(scope.move_axis(dir, ms, MoveOpts::CALIBRATION_MOVE, &mut io, &mut ev), MoveResult::Ok);
+                    }
+                }
+                CalibrationNext::Failed => panic!("calibration failed"),
             }
             if scope.is_calibrated() {
-                return clearing;
+                return (legs, clearing);
             }
         }
         panic!("calibration did not end");
@@ -1426,12 +1708,15 @@ mod tests {
         // PHD2's defaults at 2″/px (PE, seeing, read noise, Dec backlash)
         // but the Dec drift: its 5″/min over the RA legs tilts the RA axis
         // by about 1° (−164° here), in PHD2 as well.
-        let mut cam = connected(SimParams { dec_drift_rate: 0.0, ..SimParams::new(2.0) });
+        let mut cam = pointing(SimParams { dec_drift_rate: 0.0, ..SimParams::new(2.0) });
         let mut profile = Profile::default();
         let mut scope = Scope::new(&mut profile, false, 0.0, &mut Vec::new());
         scope.mount.connect();
 
-        let clearing = calibrate(&mut scope, &mut cam, &mut profile);
+        let (legs, clearing) = calibrate(&mut scope, &mut cam, &mut profile);
+        // The South leg ends more than 2 px short of the start (2.5 px of
+        // Dec backlash), so PHD2 nudges South back towards it.
+        assert_eq!(legs, ["West", "East", "Backlash", "North", "South", "NudgeSouth"]);
         let c = scope.mount.mount_cal().clone();
         // West moves the stars along the camera angle, and PHD2's RA angle
         // points from the star back to where it started: 15° − 180°.
@@ -1448,8 +1733,8 @@ mod tests {
 
         // Dec guiding off: done after the RA legs, Dec left uncalibrated.
         scope.set_dec_guide_mode(DecGuideMode::None as i32, &mut profile, &mut Vec::new());
-        let clearing = calibrate(&mut scope, &mut cam, &mut profile);
-        assert_eq!(clearing, 0);
+        let (legs, clearing) = calibrate(&mut scope, &mut cam, &mut profile);
+        assert_eq!((legs, clearing), (vec!["West", "East"], 0));
         assert_eq!(scope.mount.y_rate(), CALIBRATION_RATE_UNCALIBRATED);
         assert!(degrees(norm_angle(scope.mount.x_angle() - radians(-165.0))).abs() < 1.0);
     }
@@ -1506,5 +1791,127 @@ mod tests {
         assert!(got.distance(&want) < 0.01, "{got:?} {want:?}");
         assert!(ao.center());
         assert_eq!((ao.position(), ao.max_position(Dir::West)), ((0, 0), 45));
+
+        // The AO Travel setting: PHD2's profile write is the caller's.
+        assert_eq!(ao.take_profile_write(), None);
+        assert!(!ao.set_max_position(30));
+        assert_eq!((ao.max_position(Dir::UP), ao.take_profile_write()), (30, Some(("/SimAo/max_steps", 30))));
+        assert_eq!(ao.take_profile_write(), None);
+        ao.disconnect();
+        ao.disconnect();
+        assert_eq!(
+            cam.take_debug(),
+            [
+                "AO Simulator Connected",
+                "Cam simulator: pointing source pier side changed from 0 to -1",
+                "AO Simulator Disconnected",
+            ]
+        );
+    }
+
+    /// The step guider's calibration on the AO simulator; returns the star.
+    fn calibrate_ao(sg: &mut StepGuider, cam: &mut SimCamera, ao: &mut SimAo, profile: &mut Profile) -> Point {
+        let env = CalibrationEnv {
+            binning: 1,
+            focal_length: 400,
+            image_scale: 2.0,
+            timestamp: "T".into(),
+            ..CalibrationEnv::default()
+        };
+        let mut ev = Vec::new();
+        let mut pos = bright(cam);
+        assert!(sg.begin_calibration(Some(pos), &mut ev));
+        for _ in 0..200 {
+            pos = locate(cam, pos, None);
+            match sg.update_calibration_state(pos, &env, ao, profile, &mut ev) {
+                CalibrationNext::Moves(moves) => {
+                    for (dir, n) in moves {
+                        assert_eq!(sg.move_axis(dir, n, MoveOpts::CALIBRATION_MOVE, ao, &mut ev), MoveResult::Ok);
+                    }
+                }
+                CalibrationNext::Failed => panic!("AO calibration failed"),
+            }
+            if sg.is_calibrated() {
+                return pos;
+            }
+        }
+        panic!("AO calibration did not end");
+    }
+
+    #[test]
+    fn the_step_guider_calibrates_and_bumps_on_the_simulated_ao() {
+        let mut cam = pointing(SimParams { dec_backlash: 0.0, ..quiet(2.0) });
+        let mut profile = Profile::default();
+        let mut scope = Scope::new(&mut profile, false, 0.0, &mut Vec::new());
+        scope.mount.connect();
+        calibrate(&mut scope, &mut cam, &mut profile);
+
+        let mut ao = cam.ao();
+        ao.connect();
+        ao.set_max_position(20);
+        let mut sg = StepGuider::new(&mut profile, 0.0, &mut Vec::new());
+        sg.connect(&ao, &mut Vec::new());
+        let lock_pos = calibrate_ao(&mut sg, &mut cam, &mut ao, &mut profile);
+        // 0.1 px a step, right along 35° and up along 125° on the camera.
+        let c = sg.mount().mount_cal().clone();
+        assert!(degrees(norm_angle(c.x_angle - radians(35.0))).abs() < 1.0, "{}", degrees(c.x_angle));
+        assert!(degrees(norm_angle(c.y_angle - radians(125.0))).abs() < 1.0, "{}", degrees(c.y_angle));
+        assert!((c.x_rate / 0.1 - 1.0).abs() < 0.02 && (c.y_rate / 0.1 - 1.0).abs() < 0.02, "{c:?}");
+        assert_eq!(sg.ao_pos(), ao.position());
+
+        // Guiding on the AO through PHD2's default Dec drift, 5″/min: 0.44
+        // AO steps a frame, until the mount is bumped.
+        cam.set_params(SimParams { dec_drift_rate: 5.0 / (2.0 * 60.0), ..cam.params() });
+        let mut output = cam.clone();
+        let pointing = cam.mount();
+        let clock = cam.clock();
+        let cancel = CancelToken::new();
+        let mut ev = Vec::new();
+        let (mut cycles, mut highest, mut worst) = (0, 0, 0.0f64);
+        let mut pos = lock_pos;
+        for _ in 0..200 {
+            pos = locate(&mut cam, pos, None);
+            let now = clock.mono();
+            let ctx = AlgoCtx { now, ..AlgoCtx::default() };
+            let env = BumpEnv { secondary_connected: true, max_move_pixels: 15, now, ..BumpEnv::default() };
+            let mut ofs = GuiderOffset { camera_ofs: pos - lock_pos, mount_ofs: None };
+            let bumping = sg.is_bump_in_progress();
+            let (r, bump) = sg.move_offset(
+                &mut ofs,
+                MoveOpts::GUIDE_STEP,
+                StepFrame::default,
+                &ctx,
+                &env,
+                &mut ao,
+                &profile,
+                &mut ev,
+            );
+            assert_eq!(r, MoveResult::Ok);
+            if let Some(mut bump) = bump {
+                let mut lines = Vec::new();
+                let mut out = OnCamera(&mut output, &mut lines);
+                let mut io = ScopeIo { output: &mut out, pointing: Some(&pointing), cancel: &cancel, now };
+                scope.move_offset(
+                    &mut bump,
+                    MoveOpts::AO_BUMP,
+                    StepFrame::default,
+                    &ctx,
+                    &mut io,
+                    &mut profile,
+                    &mut ev,
+                );
+            }
+            cycles += (bumping && !sg.is_bump_in_progress()) as i32;
+            let (x, y) = ao.position();
+            highest = highest.max(x.abs()).max(y.abs());
+            worst = worst.max(pos.distance(&lock_pos));
+            ev.clear();
+        }
+        assert_eq!(sg.ao_pos(), ao.position());
+        // Bumps start past 80 % of the 20-step travel and run until the AO
+        // is back within 10 % of the travel from the centre: never at its
+        // end, the star never half a pixel off.
+        assert!(cycles >= 2 && highest >= 16 && highest < 19, "{cycles} {highest}");
+        assert!(worst < 0.5, "{worst}");
     }
 }
