@@ -8,7 +8,7 @@
 //! [`ProfileAccess`] (the key names are in [`keys`]), the debug-log and
 //! alert wording comes back as strings for the caller to write or show.
 //!
-//! Ported from PHD2 `src/mount.h`, `src/mount.cpp`, `src/scope.cpp`, `src/stepguider.cpp`, `src/calstep_dialog.cpp`, `src/image_math.h` — BSD-3-Clause, see THIRD_PARTY.md
+//! Ported from PHD2 `src/mount.h`, `src/mount.cpp`, `src/point.h`, `src/scope.cpp`, `src/stepguider.cpp`, `src/calstep_dialog.cpp`, `src/image_math.h` — BSD-3-Clause, see THIRD_PARTY.md
 
 use std::f64::consts::PI;
 
@@ -511,10 +511,59 @@ pub fn ortho_error_deg(x_angle: f64, y_angle: f64) -> f64 {
 /// not a rotation when they are not.
 pub fn camera_to_mount(offset: Point, cal: &Calibration) -> Point {
     let hyp = offset.x.hypot(offset.y);
-    let camera_theta = offset.y.atan2(offset.x);
+    let camera_theta = point_angle(offset);
     let x_angle = camera_theta - cal.x_angle;
     let y_angle = camera_theta - (cal.x_angle + cal.y_angle_error());
     Point::new(x_angle.cos() * hyp, y_angle.sin() * hyp)
+}
+
+/// `PHD_Point::Angle()` (`point.h:96`): `atan2(y, x)`, but 0 for a zero
+/// vector whatever the signs of its zeros.
+fn point_angle(p: Point) -> f64 {
+    if p.x != 0.0 || p.y != 0.0 { p.y.atan2(p.x) } else { 0.0 }
+}
+
+/// [`camera_to_mount`] as PHD2 calls it by default (`logged = true`,
+/// `mount.h:275`): it writes three `CameraToMount --` debug lines to `log`.
+/// `None` is PHD2's invalid point: the transform throws, logs its
+/// `ERROR_INFO` line and returns `None`. The backlash tool and the guide
+/// moves (`Mount::MoveOffset`) go through this one.
+pub fn camera_to_mount_logged(cam: Option<Point>, cal: &Calibration, log: &mut Vec<String>) -> Option<Point> {
+    let Some(cam) = cam else {
+        log.push("Error thrown from mount.cpp:1144->invalid cameraVectorEndPoint".into());
+        return None;
+    };
+    let mount = camera_to_mount(cam, cal);
+    let camera_theta = point_angle(cam);
+    let x_angle = camera_theta - cal.x_angle;
+    let y_angle = camera_theta - (cal.x_angle + cal.y_angle_error());
+    let f = |v: f64| fmt_f(v, 2);
+    log.push(format!(
+        "CameraToMount -- cameraTheta ({}) - m_xAngle ({}) = xAngle ({} = {})",
+        f(camera_theta),
+        f(cal.x_angle),
+        f(x_angle),
+        f(norm_angle(x_angle))
+    ));
+    log.push(format!(
+        "CameraToMount -- cameraTheta ({}) - (m_xAngle ({}) + m_yAngleError ({})) = yAngle ({} = {})",
+        f(camera_theta),
+        f(cal.x_angle),
+        f(cal.y_angle_error()),
+        f(y_angle),
+        f(norm_angle(y_angle))
+    ));
+    log.push(format!(
+        "CameraToMount -- cameraX={} cameraY={} hyp={} cameraTheta={} mountX={} mountY={}, mountTheta={}",
+        f(cam.x),
+        f(cam.y),
+        f(cam.x.hypot(cam.y)),
+        f(camera_theta),
+        f(mount.x),
+        f(mount.y),
+        f(point_angle(mount))
+    ));
+    Some(mount)
 }
 
 /// `Mount::TransformMountCoordinatesToCameraCoordinates` (`mount.cpp:1181`):
@@ -1404,6 +1453,33 @@ mod tests {
         let back = mount_to_camera(m, &c);
         assert!(near(back.x, 10.545208834752517, 1e-9));
         assert!(near(back.y, -2.0347470720318164, 1e-9));
+    }
+
+    #[test]
+    fn logged_camera_to_mount_writes_phd2_lines() {
+        // Lines and values from PHD2's C++ (mount.cpp:1135, logged = true).
+        let c = Calibration { x_angle: 0.3, y_angle: 2.0, is_valid: true, ..Default::default() };
+        let mut log = Vec::new();
+        let m = camera_to_mount_logged(Some(Point::new(123.4, -56.7)), &c, &mut log).unwrap();
+        assert_eq!((m.x, m.y), (101.13252704040185, -76.848945124235414));
+        // A zero vector has PHD_Point::Angle 0, even with a negative zero x
+        // (atan2 would say π and flip the zeros' signs).
+        let z = camera_to_mount_logged(Some(Point::new(-0.0, 0.0)), &c, &mut log).unwrap();
+        assert!(z.x == 0.0 && z.x.is_sign_positive() && z.y == 0.0 && z.y.is_sign_negative());
+        assert_eq!(
+            log,
+            [
+                "CameraToMount -- cameraTheta (-0.43) - m_xAngle (0.30) = xAngle (-0.73 = -0.73)",
+                "CameraToMount -- cameraTheta (-0.43) - (m_xAngle (0.30) + m_yAngleError (-0.13)) = yAngle (-0.60 = -0.60)",
+                "CameraToMount -- cameraX=123.40 cameraY=-56.70 hyp=135.80 cameraTheta=-0.43 mountX=101.13 mountY=-76.85, mountTheta=-0.65",
+                "CameraToMount -- cameraTheta (0.00) - m_xAngle (0.30) = xAngle (-0.30 = -0.30)",
+                "CameraToMount -- cameraTheta (0.00) - (m_xAngle (0.30) + m_yAngleError (-0.13)) = yAngle (-0.17 = -0.17)",
+                "CameraToMount -- cameraX=-0.00 cameraY=0.00 hyp=0.00 cameraTheta=0.00 mountX=0.00 mountY=-0.00, mountTheta=0.00",
+            ]
+        );
+        let mut log = Vec::new();
+        assert_eq!(camera_to_mount_logged(None, &c, &mut log), None);
+        assert_eq!(log, ["Error thrown from mount.cpp:1144->invalid cameraVectorEndPoint"]);
     }
 
     #[test]

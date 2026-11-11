@@ -14,7 +14,7 @@
 //! Ported from PHD2 `src/backlash_comp.h`, `src/backlash_comp.cpp`, `src/guiding_assistant.cpp` — BSD-3-Clause, see THIRD_PARTY.md
 
 use super::algo::ParamLookup;
-use super::calibration::{Calibration, camera_to_mount};
+use super::calibration::{Calibration, camera_to_mount_logged};
 use super::log::cfmt::fmt_f;
 use super::stats::AxisStats;
 use super::traits::{Dir, MoveOpts, Point, c_int, phd_round};
@@ -430,8 +430,8 @@ impl BacklashComp {
         // C int arithmetic: a floor near INT_MIN wraps, as on x86, and
         // `abs(int) < unsigned` compares as unsigned, so abs(INT_MIN) is not
         // fixed-size.
-        self.fixed_size =
-            (self.adjustment_ceiling.wrapping_sub(self.adjustment_floor).wrapping_abs() as u32) < MIN_COMP_AMOUNT as u32;
+        let spread = self.adjustment_ceiling.wrapping_sub(self.adjustment_floor).wrapping_abs();
+        self.fixed_size = (spread as u32) < MIN_COMP_AMOUNT as u32;
         if self.pulse_width > max_dec_duration && self.comp_active {
             fx.max_dec_duration = Some(self.pulse_width);
         }
@@ -687,11 +687,14 @@ pub struct BltStep {
     pub pulse: Option<(Dir, i32)>,
     /// `Scope::SetGuidingEnabled(true)` then
     /// `Guider::EnableMeasurementMode(true)`: star positions now come to the
-    /// tool.
+    /// tool. PHD2 does it inside the step, so the `MountGuidingEnabled: 1`
+    /// line it may log belongs just before the last line of `log`
+    /// (`BLT: Exiting DecMeasurementStep`).
     pub enable_measurement: bool,
-    /// `CleanUp`: `BacklashComp::reset_blc_state` then
-    /// `EnableMeasurementMode(false)`. PHD2 logs the reset's lines just
-    /// before `BLT: Cleanup completed`, which is already in `log`.
+    /// `CleanUp`'s `Guider::EnableMeasurementMode(false)`, which logs
+    /// nothing. Its `BacklashComp::ResetBLCState` has already run on the
+    /// compensation passed in, its lines in `log` before `BLT: Cleanup
+    /// completed`.
     pub cleanup: bool,
     /// Debug-log lines, without the trailing newline.
     pub log: Vec<String>,
@@ -711,6 +714,14 @@ fn out_of_room(env: &BltEnv, cam: Point) -> bool {
         || cam.y < margin
         || cam.x >= (env.frame_width - env.max_move_px) as f64
         || cam.y >= (env.frame_height - env.max_move_px) as f64
+}
+
+/// `CleanUp` (`backlash_comp.cpp:1282`), the log side: reset the
+/// compensation so normal guiding starts without a stale direction. The
+/// caller turns measurement mode off ([`BltStep::cleanup`]).
+fn clean_up(blc: &mut BacklashComp, log: &mut Vec<String>) {
+    log.extend(blc.reset_blc_state().log);
+    log.push("BLT: Cleanup completed".into());
 }
 
 /// `BacklashTool` (`backlash_comp.h:56`): the Guiding Assistant's Dec
@@ -882,20 +893,27 @@ impl BacklashTool {
 
     /// `StartMeasurement` (`backlash_comp.cpp:767`): `drift_per_min` is the
     /// GA's measured Dec drift, px/min; `cam` the star's current position
-    /// (`None` when the guider has none).
-    pub fn start_measurement(&mut self, drift_per_min: f64, cam: Option<Point>, env: &BltEnv) -> BltStep {
+    /// (`None` when the guider has none); `blc` the scope's compensation,
+    /// which the clean-up resets.
+    pub fn start_measurement(
+        &mut self,
+        drift_per_min: f64,
+        cam: Option<Point>,
+        env: &BltEnv,
+        blc: &mut BacklashComp,
+    ) -> BltStep {
         self.state = BltState::Initialize;
         self.drift_per_sec = drift_per_min / 60.0;
         self.north_bl_steps.clear();
         self.south_bl_steps.clear();
         self.north_stats.clear_all();
-        self.dec_measurement_step(cam, env)
+        self.dec_measurement_step(cam, env, blc)
     }
 
     /// `StopMeasurement`.
-    pub fn stop_measurement(&mut self, cam: Option<Point>, env: &BltEnv) -> BltStep {
+    pub fn stop_measurement(&mut self, cam: Option<Point>, env: &BltEnv, blc: &mut BacklashComp) -> BltStep {
         self.state = BltState::Aborted;
-        self.dec_measurement_step(cam, env)
+        self.dec_measurement_step(cam, env, blc)
     }
 
     /// `ComputeBacklashPx` (`backlash_comp.cpp:791`): the apparent backlash
@@ -903,7 +921,7 @@ impl BacklashTool {
     /// north rate before the mount moved consistently. A seed for the
     /// compensation, not a hardware measurement. Returns
     /// `(result, px, ms, north rate)`.
-    fn compute_backlash_px(&self) -> (MeasurementResult, f64, i32, f64) {
+    fn compute_backlash_px(&self, log: &mut Vec<String>) -> (MeasurementResult, f64, i32, f64) {
         let mut early_south_moves = 0.0;
         let mut bl_px = 0.0;
         let mut n_rate = 0.0;
@@ -916,11 +934,21 @@ impl BacklashTool {
             // The drift-corrected empirical north rate.
             n_rate = ((north_delta - drift_amt_px) / f64::from(step_count.wrapping_mul(self.pulse_width))).abs();
             let drift_px_per_frame = drift_amt_px / f64::from(step_count);
+            log.push(format!(
+                "BLT: Drift correction of {} px applied to total north moves of {} px, {} px/frame",
+                fmt_f(drift_amt_px, 2),
+                fmt_f(north_delta, 2),
+                fmt_f(drift_px_per_frame, 3)
+            ));
+            // PHD2's trailing space kept.
+            log.push(format!("BLT: Empirical north rate = {} px/s ", fmt_f(n_rate * 1000.0, 2)));
             // The expected move is 90 % of the median north move: accepts a
             // south rate that never quite matches the north one.
             let expected_magnitude = (0.9 * self.north_stats.median()).abs();
             let mut good_south_moves = 0;
             let mut last_south_move = 0.0;
+            // Set once, never cleared (as in PHD2).
+            let mut smoothing = false;
             let mut found = None;
             for step in 1..self.south_bl_steps.len() {
                 let south_move = self.south_bl_steps[step] - self.south_bl_steps[step - 1];
@@ -931,9 +959,15 @@ impl BacklashTool {
                     && (south_move.abs() >= expected_magnitude
                         || (south_move + last_south_move / 2.0).abs() > expected_magnitude)
                 {
+                    if south_move.abs() < expected_magnitude {
+                        smoothing = true;
+                    }
                     good_south_moves += 1;
                     // Two consecutive good moves sidestep a "false start" south.
                     if good_south_moves == 2 {
+                        if smoothing {
+                            log.push("BLT: Smoothing applied to south data points".into());
+                        }
                         // bl = expected travel − actual travel − the drift of that period.
                         bl_px = step as f64 * expected_magnitude
                             - (early_south_moves - step as f64 * drift_px_per_frame).abs();
@@ -945,6 +979,7 @@ impl BacklashTool {
                             MeasurementResult::Valid
                         };
                         if bl_px < 0.0 {
+                            log.push(format!("BLT: Negative measurement = {} px, forcing to zero", fmt_f(bl_px, 2)));
                             bl_px = 0.0;
                         }
                         found = Some(r);
@@ -968,15 +1003,16 @@ impl BacklashTool {
     /// is the star's camera position, `None` for PHD2's invalid point (the
     /// camera → mount transform fails and the measurement aborts). The step
     /// says which pulse to issue; the next frame after that pulse drives the
-    /// next step.
-    pub fn dec_measurement_step(&mut self, cam: Option<Point>, env: &BltEnv) -> BltStep {
+    /// next step. `blc` is the scope's compensation, reset by the clean-up
+    /// (PHD2 reaches it through `m_scope->GetBacklashComp()`).
+    pub fn dec_measurement_step(&mut self, cam: Option<Point>, env: &BltEnv, blc: &mut BacklashComp) -> BltStep {
         let mut out = BltStep::default();
-        if self.step_inner(cam, env, &mut out).is_err() {
+        if self.step_inner(cam, env, blc, &mut out).is_err() {
             out.log.push(format!("BLT: Exception thrown in logical state {}", self.state as i32));
             self.state = BltState::Aborted;
             out.log.push(format!("BLT: {}", self.last_status));
             out.cleanup = true;
-            out.log.push("BLT: Cleanup completed".into());
+            clean_up(blc, &mut out.log);
         }
         out.log.push("BLT: Exiting DecMeasurementStep".into());
         out
@@ -984,13 +1020,19 @@ impl BacklashTool {
 
     /// The body of the state switch; `Err` is PHD2's thrown exception, a
     /// `return Ok` its `break`. The cases run in PHD2's fall-through order.
-    fn step_inner(&mut self, cam: Option<Point>, env: &BltEnv, out: &mut BltStep) -> Result<(), ()> {
+    fn step_inner(
+        &mut self,
+        cam: Option<Point>,
+        env: &BltEnv,
+        blc: &mut BacklashComp,
+        out: &mut BltStep,
+    ) -> Result<(), ()> {
         let log = &mut out.log;
-        let Some(cam) = cam else {
-            log.push("BLT: CamToMount xForm failed".into());
+        // The transform fails exactly when the point is invalid.
+        let (Some(cam), Some(curr)) = (cam, camera_to_mount_logged(cam, env.cal, log)) else {
+            log.push("Error thrown from backlash_comp.cpp:891->BLT: CamToMount xForm failed".into());
             return Err(());
         };
-        let curr = camera_to_mount(cam, env.cal);
         let mut dec_delta = 0.0;
         if self.state != BltState::Initialize {
             dec_delta = curr.y - self.marker_point.y;
@@ -1088,6 +1130,15 @@ impl BacklashTool {
                 self.pulse_width = self
                     .pulse_width
                     .min(c_int((0.7 * env.max_move_px as f64 / self.last_dec_guide_rate).floor()));
+                if self.pulse_width <= 0 {
+                    // Deliberate fix: PHD2 divides by this pulse just below
+                    // and dies of SIGFPE on 0, which a Dec-None calibration
+                    // gives (y_rate = CALIBRATION_RATE_UNCALIBRATED, 123e4
+                    // px/ms). A rate under 0.7·max-move/2³¹ gives INT_MIN, a
+                    // negative pulse. Abort instead.
+                    self.last_status = "Backlash measurement cannot be run - Dec guide rate not available".into();
+                    return Err(());
+                }
                 self.step_count = 0;
                 // 50 % more than the cleared backlash or at least 8 s, so the
                 // south leg has room to clear and get moving.
@@ -1181,7 +1232,7 @@ impl BacklashTool {
 
         if self.state == BltState::TestCorrection {
             if self.step_count == 0 {
-                let (rslt, px, ms, n_rate) = self.compute_backlash_px();
+                let (rslt, px, ms, n_rate) = self.compute_backlash_px(log);
                 self.rslt = rslt;
                 self.backlash_result_px = px;
                 self.backlash_result_ms = ms;
@@ -1304,8 +1355,8 @@ impl BacklashTool {
 
         if self.state == BltState::Wrapup {
             self.last_status = "Measurement complete".into();
+            clean_up(blc, log);
             out.cleanup = true;
-            log.push("BLT: Cleanup completed".into());
             self.state = BltState::Completed;
             return Ok(()); // cycles the guider's state machine: normal guiding resumes
         }
@@ -1313,8 +1364,8 @@ impl BacklashTool {
         if self.state == BltState::Aborted {
             self.last_status = "Measurement halted".into();
             log.push("BLT: measurement process halted by user or by error".into());
+            clean_up(blc, log);
             out.cleanup = true;
-            log.push("BLT: Cleanup completed".into());
         }
         // Completed: nothing to do.
         Ok(())
@@ -1674,58 +1725,357 @@ mod tests {
         Calibration { x_angle: 0.0, y_angle, x_rate: y_rate, y_rate, is_valid: true, ..Default::default() }
     }
 
-    fn env(cal: &Calibration) -> BltEnv<'_> {
-        BltEnv {
-            cal,
-            frame_width: 1000,
-            frame_height: 1000,
-            max_move_px: 50,
-            calibration_duration_ms: 500,
-            pixel_scale: 2.0,
-            now_ms: 0,
-        }
-    }
-
-    /// Drive the tool from y = 500 with a mount that answers a north pulse
-    /// by `ms × rate` px and a south pulse by `ms × rate × south_factor` px,
-    /// less the `backlash_px` of slack it takes up first. With this
-    /// calibration the camera y is the mount Dec. Returns the tool, the last
-    /// step and the state after each step.
-    fn run_tool(
-        cal: &Calibration,
+    /// The mount of the C++ harness: a north pulse moves `ms × mount_rate` px
+    /// after giving back the slack, a south one `ms × mount_rate ×
+    /// south_factor` px less the slack it takes up first (up to
+    /// `backlash_px`); then the star drifts by `drift_per_frame`. With this
+    /// calibration the camera y is the mount Dec. One frame a second.
+    #[derive(Clone, Copy)]
+    struct Sim {
+        cal_rate: f64,
         mount_rate: f64,
         backlash_px: f64,
         south_factor: f64,
-    ) -> (BacklashTool, BltStep, Vec<BltState>) {
-        let (mut tool, _) = BacklashTool::new(cal);
-        let mut e = env(cal);
-        let mut y = 500.0;
-        let mut slack: f64 = 0.0; // backlash taken up going south (0 = cleared north)
-        let mut step = tool.start_measurement(0.0, Some(Point::new(500.0, y)), &e);
-        let mut states = vec![tool.blt_state()];
+        drift_per_frame: f64,
+        /// What the GA hands `start_measurement`.
+        drift_per_min: f64,
+        y0: f64,
+        /// A 300 ms compensation, enabled: the clean-up logs its reset.
+        blc: bool,
+        max_move_px: i32,
+        pixel_scale: f64,
+    }
+
+    const SIM: Sim = Sim {
+        cal_rate: 0.01,
+        mount_rate: 0.01,
+        backlash_px: 0.0,
+        south_factor: 1.0,
+        drift_per_frame: 0.0,
+        drift_per_min: 0.0,
+        y0: 500.0,
+        blc: false,
+        max_move_px: 50,
+        pixel_scale: 2.0,
+    };
+
+    struct Run {
+        tool: BacklashTool,
+        /// The last step.
+        last: BltStep,
+        /// Every step's log, in order.
+        log: Vec<String>,
+    }
+
+    fn run_tool(s: Sim) -> Run {
+        let cal = cal(s.cal_rate);
+        let mut blc = BacklashComp::new(BacklashConfig { pulse: 300, enabled: s.blc, ..Default::default() }, 2500).0;
+        let (mut tool, _) = BacklashTool::new(&cal);
+        let mut e = BltEnv {
+            cal: &cal,
+            frame_width: 1000,
+            frame_height: 1000,
+            max_move_px: s.max_move_px,
+            calibration_duration_ms: 500,
+            pixel_scale: s.pixel_scale,
+            now_ms: 0,
+        };
+        let (mut y, mut slack) = (s.y0, 0.0_f64);
+        let mut last = tool.start_measurement(s.drift_per_min, Some(Point::new(500.0, y)), &e, &mut blc);
+        let mut log = last.log.clone();
         for _ in 0..300 {
             if matches!(tool.blt_state(), BltState::Completed | BltState::Aborted) {
                 break;
             }
-            if let Some((dir, ms)) = step.pulse {
-                let travel = ms as f64 * mount_rate;
+            if let Some((dir, ms)) = last.pulse {
+                let travel = ms as f64 * s.mount_rate;
                 if dir == Dir::North {
-                    // Going north gives the slack back first.
                     let given_back = slack.min(travel);
                     slack -= given_back;
                     y += travel - given_back;
                 } else {
-                    let travel = travel * south_factor;
-                    let eaten = travel.min(backlash_px - slack);
+                    let travel = travel * s.south_factor;
+                    let eaten = travel.min(s.backlash_px - slack);
                     slack += eaten;
                     y -= travel - eaten;
                 }
             }
+            y += s.drift_per_frame;
             e.now_ms += 1000;
-            step = tool.dec_measurement_step(Some(Point::new(500.0, y)), &e);
-            states.push(tool.blt_state());
+            last = tool.dec_measurement_step(Some(Point::new(500.0, y)), &e, &mut blc);
+            log.extend(last.log.iter().cloned());
         }
-        (tool, step, states)
+        Run { tool, last, log }
+    }
+
+    /// FNV-1a 64 over each line and its newline, as the harness hashes them.
+    fn fnv(lines: &[String]) -> u64 {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in lines.iter().flat_map(|l| l.bytes().chain([b'\n'])) {
+            h = (h ^ u64::from(b)).wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+
+    /// One run against PHD2: the line count and FNV-1a of its whole debug
+    /// log, the outcome, and lines the log must hold.
+    struct Golden {
+        name: &'static str,
+        sim: Sim,
+        lines: usize,
+        fnv: u64,
+        state: BltState,
+        rslt: MeasurementResult,
+        px: f64,
+        ms: i32,
+        n_rate: f64,
+        status: &'static str,
+        holds: &'static [&'static str],
+    }
+
+    const DONE: &str = "Measurement complete";
+
+    /// From PHD2's C++: backlash_comp.cpp, mount.cpp's transform and
+    /// guiding_stats.cpp built against wx 3.2.11 base, driven by the same
+    /// mount (target/scratch/harness/backlash_review, not committed).
+    const GOLDENS: &[Golden] = &[
+        Golden {
+            name: "valid",
+            sim: Sim { mount_rate: 0.008, backlash_px: 10.0, blc: true, ..SIM },
+            lines: 257,
+            fnv: 0x99e6b6bc958608c0,
+            state: BltState::Completed,
+            rslt: MeasurementResult::Valid,
+            px: 8.0,
+            ms: 1000,
+            n_rate: 0.0080000000000000002,
+            status: DONE,
+            holds: &["BLT: Nominal backlash value under-shot by 1.25 X"],
+        },
+        Golden {
+            name: "drift",
+            sim: Sim { backlash_px: 6.0, drift_per_frame: 0.25, drift_per_min: 15.0, blc: true, ..SIM },
+            lines: 243,
+            fnv: 0xb67c1673735c0f51,
+            state: BltState::Completed,
+            rslt: MeasurementResult::Valid,
+            px: 4.9000000000000021,
+            ms: 489,
+            n_rate: 0.010000000000000014,
+            status: DONE,
+            holds: &[
+                "BLT: Drift correction of 4.00 px applied to total north moves of 84.00 px, 0.250 px/frame",
+                "BLT: Empirical north rate = 10.00 px/s ",
+                "BLT: Trial backlash amount is 4.90 px, 489 ms, sigma = 0.0 px",
+            ],
+        },
+        Golden {
+            name: "exempt",
+            sim: Sim { mount_rate: 0.006, ..SIM },
+            lines: 372,
+            fnv: 0xaf5a66a7b23b5b31,
+            state: BltState::Completed,
+            rslt: MeasurementResult::Valid,
+            px: 0.0,
+            ms: 0,
+            n_rate: 0.0060000000000000001,
+            status: DONE,
+            holds: &[
+                "BLT: Cum backlash of 42.00 px is at least half of expected, continue with backlash measurement",
+                "BLT: Negative measurement = -0.60 px, forcing to zero",
+            ],
+        },
+        Golden {
+            name: "not_cleared",
+            sim: Sim { mount_rate: 0.0, ..SIM },
+            lines: 713,
+            fnv: 0xcf2d2b1a743808dc,
+            state: BltState::Aborted,
+            rslt: MeasurementResult::BlNotCleared,
+            px: 0.0,
+            ms: 0,
+            n_rate: 0.0,
+            status: "Could not clear North backlash - test failed",
+            holds: &["BLT: Exception thrown in logical state 1"],
+        },
+        Golden {
+            name: "too_few_south",
+            sim: Sim { south_factor: 0.5, ..SIM },
+            lines: 231,
+            fnv: 0x48a9cc8fd27e0aa2,
+            state: BltState::Aborted,
+            rslt: MeasurementResult::TooFewSouth,
+            px: 0.0,
+            ms: 0,
+            n_rate: 0.01,
+            status: "Mount never established consistent south moves - test failed",
+            holds: &["BLT: Exception thrown in logical state 5"],
+        },
+        Golden {
+            name: "edge",
+            sim: Sim { y0: 920.0, ..SIM },
+            lines: 54,
+            fnv: 0x59632ea966e4be6c,
+            state: BltState::Aborted,
+            rslt: MeasurementResult::TooFewNorth,
+            px: 0.0,
+            ms: 0,
+            n_rate: 0.0,
+            status: "Star too close to edge for accurate measurement of backlash. Choose a star farther from the edge.",
+            holds: &["BLT: Exception thrown in logical state 2"],
+        },
+        Golden {
+            name: "truncated",
+            sim: Sim { y0: 880.0, ..SIM },
+            lines: 175,
+            fnv: 0x84b3e42e99413270,
+            state: BltState::Completed,
+            rslt: MeasurementResult::Valid,
+            px: 0.0,
+            ms: 0,
+            n_rate: 0.01,
+            status: DONE,
+            holds: &["BLT: North pulses truncated, too close to frame edge"],
+        },
+        Golden {
+            name: "too_few_north",
+            sim: Sim { backlash_px: 70.0, ..SIM },
+            lines: 238,
+            fnv: 0x0f849effba024463,
+            state: BltState::Completed,
+            rslt: MeasurementResult::TooFewNorth,
+            px: 62.0,
+            ms: 6200,
+            n_rate: 0.01,
+            status: DONE,
+            holds: &["BLT: Clearing pulse is very large, issuing max S move of 4000"],
+        },
+        Golden {
+            name: "overshot",
+            sim: Sim { backlash_px: 10.0, south_factor: 1.1, ..SIM },
+            lines: 241,
+            fnv: 0xc2d8c68944466808,
+            state: BltState::Completed,
+            rslt: MeasurementResult::Valid,
+            px: 6.0,
+            ms: 600,
+            n_rate: 0.01,
+            status: DONE,
+            holds: &["BLT: Nominal backlash value over-shot by 0.30 X"],
+        },
+        Golden {
+            // Past the marker on the far side still reads "under-shot": PHD2
+            // tests the sign of (end of south − marker) × DecDelta.
+            name: "past_marker",
+            sim: Sim { backlash_px: 10.0, south_factor: 1.2, pixel_scale: 10.0, ..SIM },
+            lines: 241,
+            fnv: 0xbf7856c6ca38ce42,
+            state: BltState::Completed,
+            rslt: MeasurementResult::Valid,
+            px: 4.0,
+            ms: 400,
+            n_rate: 0.01,
+            status: DONE,
+            holds: &[
+                "BLT: Trial backlash pulse resulted in net DecDelta = -10.80 px, Dec Location 504.20",
+                "BLT: Nominal backlash value under-shot by 1.25 X",
+            ],
+        },
+        Golden {
+            name: "final_delta",
+            sim: Sim { mount_rate: 0.008, backlash_px: 10.0, pixel_scale: 0.5, ..SIM },
+            lines: 255,
+            fnv: 0x7842137ec749c6b5,
+            state: BltState::Completed,
+            rslt: MeasurementResult::Valid,
+            px: 8.0,
+            ms: 1000,
+            n_rate: 0.0080000000000000002,
+            status: DONE,
+            holds: &["BLT: Nominal backlash pulse resulted in final delta of 1.0 a-s"],
+        },
+        Golden {
+            name: "smoothing",
+            sim: Sim { south_factor: 0.8, ..SIM },
+            lines: 242,
+            fnv: 0x39ccac6647e7fc3c,
+            state: BltState::Completed,
+            rslt: MeasurementResult::Valid,
+            px: 1.5,
+            ms: 150,
+            n_rate: 0.01,
+            status: DONE,
+            holds: &["BLT: Smoothing applied to south data points"],
+        },
+        Golden {
+            name: "restore",
+            sim: Sim { mount_rate: 0.008, backlash_px: 10.0, max_move_px: 20, ..SIM },
+            lines: 286,
+            fnv: 0x7ee653c2dcdfcea4,
+            state: BltState::Completed,
+            rslt: MeasurementResult::Valid,
+            px: 8.0,
+            ms: 1000,
+            n_rate: 0.0080000000000000002,
+            status: DONE,
+            holds: &[
+                "BLT: Final restore distance is 22.0 px, approx 5 steps",
+                "BLT: Issuing restore pulse count 5 of 500 ms",
+            ],
+        },
+        Golden {
+            // bl·nRate = −199.91 is not below −200: Valid, bl forced to 0.
+            name: "sanity_ok",
+            sim: Sim { south_factor: 2000.0, ..SIM },
+            lines: 295,
+            fnv: 0xd78ba3fb67514b50,
+            state: BltState::Completed,
+            rslt: MeasurementResult::Valid,
+            px: 0.0,
+            ms: 0,
+            n_rate: 0.01,
+            status: DONE,
+            holds: &["BLT: Negative measurement = -19991.00 px, forcing to zero"],
+        },
+        Golden {
+            // −299.91: Sanity, aborted.
+            name: "sanity",
+            sim: Sim { south_factor: 3000.0, ..SIM },
+            lines: 232,
+            fnv: 0x8e14d3e055ad530b,
+            state: BltState::Aborted,
+            rslt: MeasurementResult::Sanity,
+            px: 0.0,
+            ms: 0,
+            n_rate: 0.01,
+            status: "Dec movements too erratic - test failed",
+            holds: &["BLT: Exception thrown in logical state 5"],
+        },
+    ];
+
+    fn golden(name: &str) -> &'static Golden {
+        GOLDENS.iter().find(|g| g.name == name).unwrap()
+    }
+
+    #[test]
+    fn tool_runs_match_phd2() {
+        for g in GOLDENS {
+            let r = run_tool(g.sim);
+            let t = &r.tool;
+            assert_eq!((r.log.len(), fnv(&r.log)), (g.lines, g.fnv), "{}:\n{}", g.name, r.log.join("\n"));
+            assert_eq!(
+                (t.blt_state(), t.measurement_quality(), t.backlash_result_px(), t.backlash_result_ms(), t.north_rate),
+                (g.state, g.rslt, g.px, g.ms, g.n_rate),
+                "{}",
+                g.name
+            );
+            assert_eq!(t.last_status(), g.status, "{}", g.name);
+            assert_eq!(t.backlash_exempted(), g.name == "exempt", "{}", g.name);
+            assert!(r.last.cleanup, "{}", g.name);
+            for line in g.holds {
+                assert!(r.log.iter().any(|l| l == line), "{}: {line}", g.name);
+            }
+        }
     }
 
     #[test]
@@ -1734,20 +2084,27 @@ mod tests {
         // clearing pulse is 4 × 1.25 / 0.01 = 500 ms → 4 px moves, just
         // enough to count.
         let cal = cal(0.01);
+        let mut blc = BacklashComp::new(BacklashConfig::default(), 2500).0;
         let (mut t, _) = BacklashTool::new(&cal);
-        let e = env(&cal);
+        let e = BltEnv {
+            cal: &cal,
+            frame_width: 1000,
+            frame_height: 1000,
+            max_move_px: 50,
+            calibration_duration_ms: 500,
+            pixel_scale: 2.0,
+            now_ms: 0,
+        };
         // Initialize only hands over to the clearing, which pulses on the
         // next frame.
-        let s0 = t.start_measurement(0.0, Some(Point::new(500.0, 500.0)), &e);
+        let s0 = t.start_measurement(0.0, Some(Point::new(500.0, 500.0)), &e, &mut blc);
         assert!(s0.enable_measurement && s0.pulse.is_none());
         assert_eq!(t.blt_state(), BltState::ClearNorth);
-        let s1 = t.dec_measurement_step(Some(Point::new(500.0, 500.0)), &e);
+        let s1 = t.dec_measurement_step(Some(Point::new(500.0, 500.0)), &e, &mut blc);
         assert_eq!(s1.pulse, Some((Dir::North, 500)));
 
-        let (tool, step, _) = run_tool(&cal, 0.008, 10.0, 1.0);
-        assert_eq!(tool.blt_state(), BltState::Completed);
-        assert!(step.cleanup);
-        assert_eq!(tool.measurement_quality(), MeasurementResult::Valid);
+        let r = run_tool(golden("valid").sim);
+        let tool = &r.tool;
         // North pulse: max(500, 500) capped at floor(0.7 × 50 / 0.01) = 3500
         // → 500 ms, 4 px; count max(⌈8000 / 500⌉, 1.5 × 1500 / 500) = 16.
         assert_eq!(tool.blt_msmt_pulse_size(), 500);
@@ -1757,68 +2114,111 @@ mod tests {
         // bl = 5 × 3.6 − |−10| = 8 px (the 90 % tolerance reads 10 px of
         // backlash as 8 here). nRate is the measured 64 / (16 × 500) =
         // 0.008, so ms = 8 / 0.008 = 1000.
-        assert_eq!(tool.backlash_result_px(), 8.0);
-        assert_eq!(tool.backlash_result_ms(), 1000);
+        assert_eq!((tool.backlash_result_px(), tool.backlash_result_ms()), (8.0, 1000));
         // Identical north moves: zero variance, zero sigma.
         assert_eq!(tool.backlash_sigma(), (0.0, 0.0));
-        assert_eq!(tool.ga_result_text(2.0).unwrap(), "Backlash= 1000  +/-  0 ms (16.0  +/-  0.0 arc-sec)");
         assert!(tool.is_graphable());
-        assert_eq!(tool.last_status(), "Measurement complete");
+        // The last step, as PHD2 logs it: the transform's lines first, and
+        // the compensation's reset inside the clean-up, before "Cleanup
+        // completed" and "Exiting".
+        assert_eq!(
+            r.last.log,
+            [
+                "CameraToMount -- cameraTheta (0.81) - m_xAngle (0.00) = xAngle (0.81 = 0.81)",
+                "CameraToMount -- cameraTheta (0.81) - (m_xAngle (0.00) + m_yAngleError (0.00)) = yAngle (0.81 = 0.81)",
+                "CameraToMount -- cameraX=500.00 cameraY=522.00 hyp=722.83 cameraTheta=0.81 mountX=500.00 mountY=522.00, mountTheta=0.81",
+                "BLT: Entering DecMeasurementStep, state = 5",
+                "BLT: Trial backlash pulse resulted in net DecDelta = 2.00 px, Dec Location 522.00",
+                "BLT: Nominal backlash value under-shot by 1.25 X",
+                "BLT: normal result, moving to state=restore",
+                "BLT: Starting Dec position at 520.00, Ending Dec position at 522.00",
+                "BLT: normal result, moving to state=wrap-up",
+                "BLC: window closed",
+                "BLC: Last direction was reset",
+                "BLT: Cleanup completed",
+                "BLT: Exiting DecMeasurementStep",
+            ]
+        );
     }
 
     #[test]
-    fn tool_sanity_threshold_is_on_bl_times_rate() {
-        // No backlash; each south move is 5 px × factor. The first two are
-        // the good ones: bl = 2 × 4.5 − 2 × 5 × factor, nRate 0.01.
-        // Factor 2000: bl = −19991, × nRate = −199.91, not < −200: Valid,
-        // forced to 0, the test completes.
-        let cal = cal(0.01);
-        let (tool, _, _) = run_tool(&cal, 0.01, 0.0, 2000.0);
-        assert_eq!(tool.blt_state(), BltState::Completed);
-        assert_eq!(tool.measurement_quality(), MeasurementResult::Valid);
-        assert_eq!((tool.backlash_result_px(), tool.backlash_result_ms()), (0.0, 0));
-        // Factor 3000: −29991 × 0.01 = −299.91 → Sanity, aborted.
-        let (tool, step, _) = run_tool(&cal, 0.01, 0.0, 3000.0);
-        assert_eq!(tool.blt_state(), BltState::Aborted);
-        assert_eq!(tool.measurement_quality(), MeasurementResult::Sanity);
-        assert_eq!(tool.last_status(), "Dec movements too erratic - test failed");
-        assert!(step.cleanup);
-        assert!(step.log.contains(&"BLT: Exception thrown in logical state 5".to_string()));
+    fn ga_result_text_by_quality() {
+        let tool = run_tool(golden("valid").sim).tool;
+        assert_eq!(tool.ga_result_text(2.0).unwrap(), "Backlash= 1000  +/-  0 ms (16.0  +/-  0.0 arc-sec)");
+        // TooFewNorth: bl = 16 × 4.5 − |−10| = 62 ≥ 0.7 × 80 = 56, impaired.
+        let tool = run_tool(golden("too_few_north").sim).tool;
+        assert_eq!(tool.ga_result_text(2.0).unwrap(), "Backlash=>= 6200  +/-  ms (test impaired)");
+        let tool = run_tool(golden("sanity").sim).tool;
         assert_eq!(tool.ga_result_text(2.0), None);
     }
 
     #[test]
-    fn tool_too_few_north_when_backlash_eats_most_of_the_leg() {
-        // 16 north steps of 5 px = 80 px; a backlash of 70 px: the south leg
-        // finds its two good moves at steps 15-16, bl = 16 × 4.5 − |−10| = 62
-        // ≥ 0.7 × 80 = 56 → TooFewNorth, test completed, result impaired.
-        let cal = cal(0.01);
-        let (tool, _, _) = run_tool(&cal, 0.01, 70.0, 1.0);
-        assert_eq!(tool.blt_state(), BltState::Completed);
-        assert_eq!(tool.measurement_quality(), MeasurementResult::TooFewNorth);
-        assert!((tool.backlash_result_px() - 62.0).abs() < 1e-9);
-        assert_eq!(tool.ga_result_text(2.0).unwrap(), "Backlash=>= 6200  +/-  ms (test impaired)");
-    }
-
-    #[test]
     fn tool_aborts_on_a_lost_star() {
+        // Lines from PHD2's C++, with the compensation enabled.
         let cal = cal(0.01);
+        let mut blc = BacklashComp::new(BacklashConfig { pulse: 300, enabled: true, ..Default::default() }, 2500).0;
         let (mut t, _) = BacklashTool::new(&cal);
-        let e = env(&cal);
-        t.start_measurement(0.0, Some(Point::new(500.0, 500.0)), &e);
-        let step = t.dec_measurement_step(None, &e);
+        let e = BltEnv {
+            cal: &cal,
+            frame_width: 1000,
+            frame_height: 1000,
+            max_move_px: 50,
+            calibration_duration_ms: 500,
+            pixel_scale: 2.0,
+            now_ms: 0,
+        };
+        let step = t.start_measurement(0.0, Some(Point::new(500.0, 500.0)), &e, &mut blc);
+        assert_eq!(
+            step.log,
+            [
+                "CameraToMount -- cameraTheta (0.79) - m_xAngle (0.00) = xAngle (0.79 = 0.79)",
+                "CameraToMount -- cameraTheta (0.79) - (m_xAngle (0.00) + m_yAngleError (0.00)) = yAngle (0.79 = 0.79)",
+                "CameraToMount -- cameraX=500.00 cameraY=500.00 hyp=707.11 cameraTheta=0.79 mountX=500.00 mountY=500.00, mountTheta=0.79",
+                "BLT: Entering DecMeasurementStep, state = 0",
+                "BLT: Exiting DecMeasurementStep",
+            ]
+        );
+        let step = t.dec_measurement_step(None, &e, &mut blc);
         assert_eq!(t.blt_state(), BltState::Aborted);
         assert!(step.cleanup && step.pulse.is_none());
         assert_eq!(
             step.log,
             [
-                "BLT: CamToMount xForm failed",
+                "Error thrown from mount.cpp:1144->invalid cameraVectorEndPoint",
+                "Error thrown from backlash_comp.cpp:891->BLT: CamToMount xForm failed",
                 "BLT: Exception thrown in logical state 1",
                 "BLT: ",
+                "BLC: window closed",
+                "BLC: Last direction was reset",
                 "BLT: Cleanup completed",
                 "BLT: Exiting DecMeasurementStep",
             ]
         );
+    }
+
+    #[test]
+    fn tool_aborts_on_a_zero_pulse_after_a_dec_none_calibration() {
+        // Deliberate fix, no C++ golden: PHD2 dies of SIGFPE here. A Dec-None
+        // calibration's rate gives a 0 ms clearing pulse; starting out of
+        // room, the clearing hands over at once and the north pulse,
+        // min(500, floor(0.7 × 50 / 123e4)) = 0, aborts the run.
+        use crate::engine::calibration::CALIBRATION_RATE_UNCALIBRATED;
+        let r = run_tool(Sim { cal_rate: CALIBRATION_RATE_UNCALIBRATED, y0: 960.0, ..SIM });
+        assert_eq!(r.tool.blt_state(), BltState::Aborted);
+        assert_eq!(r.tool.last_status(), "Backlash measurement cannot be run - Dec guide rate not available");
+        assert!(r.last.cleanup && r.last.pulse.is_none());
+        assert_eq!(
+            r.last.log[4..],
+            [
+                "BLT backlash clearing move of 0.00 px was not large enough",
+                "BLT: Exception thrown in logical state 2",
+                "BLT: Backlash measurement cannot be run - Dec guide rate not available",
+                "BLT: Cleanup completed",
+                "BLT: Exiting DecMeasurementStep",
+            ]
+        );
+        let first = "BLT starting North backlash clearing using pulse width of 0, looking for moves >= 4 px";
+        assert!(r.log.iter().any(|l| l == first));
     }
 
     #[test]
