@@ -147,9 +147,10 @@ pub(crate) fn summary(e: &Element) -> String {
     s
 }
 
-/// The members of a `newNumberVector`.
+/// The members of a `newNumberVector`; none for another element.
 pub(crate) fn numbers(e: &Element) -> Vec<(String, f64)> {
-    e.children.iter().map(|c| (c.attr("name").unwrap_or_default().to_owned(), c.text_str().parse().unwrap())).collect()
+    let value = |c: &Element| c.text_str().parse().ok().map(|v| (c.attr("name").unwrap_or_default().to_owned(), v));
+    if e.name == "newNumberVector" { e.children.iter().filter_map(value).collect() } else { Vec::new() }
 }
 
 /// `(name, value, min, max)` per member.
@@ -182,6 +183,14 @@ pub(crate) fn def_text(dev: &str, name: &str, members: &[(&str, &str)]) -> Strin
     format!(
         "<defTextVector device='{dev}' name='{name}' label='{name}' group='Main' state='Idle' perm='ro' \
          timeout='60'>{body}</defTextVector>\n"
+    )
+}
+
+pub(crate) fn def_light(dev: &str, name: &str, members: &[(&str, &str)]) -> String {
+    let body: String =
+        members.iter().map(|(n, s)| format!("<defLight name='{n}' label='{n}'>{s}</defLight>")).collect();
+    format!(
+        "<defLightVector device='{dev}' name='{name}' label='{name}' group='Main' state='Idle'>{body}</defLightVector>\n"
     )
 }
 

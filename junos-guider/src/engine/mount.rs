@@ -82,6 +82,11 @@ pub trait PointingSource {
     }
     /// `AbortSlew`.
     fn abort_slew(&mut self) {}
+    /// `GetSiteLatLong`: the site's latitude and longitude, degrees, east
+    /// positive; `None` when the source does not know them.
+    fn site_lat_long(&self) -> Option<(f64, f64)> {
+        None
+    }
 
     /// `GetDeclinationRadians`, as the INDI mount answers it
     /// (`scope_indi.cpp:751`): the reported Dec clamped to ±89° so nothing
