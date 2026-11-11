@@ -9,16 +9,21 @@
 //! Every line is PHD2's to the byte: the headers come from a
 //! [`GuideLogHeader`] the engine fills when a section starts (PHD2 reads the
 //! same values from its frame, guider, camera and mounts at that moment),
-//! the rows from [`GuideStepInfo`] and [`CalibrationStepInfo`]. The writer
-//! appends to a `Write` sink — the file, opened by the caller in append
-//! mode — and flushes after every record; it never reads the clock or the
-//! disk.
+//! the rows from [`GuideStepInfo`] and [`CalibrationStepInfo`], the rest
+//! from the events of the guider, the mounts, the controller and the
+//! Guiding Assistant, one writer per event. The writer appends to a `Write`
+//! sink — the file, opened by the caller in append mode — and flushes after
+//! every record; it never reads the clock or the disk.
 //!
 //! Most `INFO:` lines are written only from the start of a calibration or
 //! of guiding to its end (PHD2's `m_isGuiding`); settling changes, Guiding
 //! Assistant results and star losses during calibration always are. A new
-//! file in which nothing meaningful got logged (no section, lock move or
-//! guiding `INFO:` line) is deleted at close.
+//! file is deleted at close unless something meaningful got logged in it:
+//! a calibration or guiding header, or one of the lock position, lock
+//! shift, server command, manual guide or parameter change lines — not a
+//! dither, settling, star-lost or GA line. The writers of the `INFO:` and
+//! calibration lines hand back what they wrote, without its newline
+//! (`None` when nothing was written), for the relay's `guider_log`.
 //!
 //! Ported from PHD2 src/guidinglog.cpp, src/guidinglog.h and the settings summaries of src/myframe.cpp, src/camera.cpp, src/mount.cpp, src/scope.cpp, src/stepguider.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
@@ -33,6 +38,7 @@ use crate::engine::algo::AlgoKind;
 use crate::engine::calibration::{
     CalibrationDetails, MountCalibration, ROTATOR_POSITION_UNKNOWN, UNKNOWN_DECLINATION, degrees, norm, radians,
 };
+use crate::engine::guider::FrameDroppedInfo;
 use crate::engine::image::NoiseReduction;
 use crate::engine::mount::{CalibrationStepInfo, GuideStepInfo};
 use crate::engine::scope::DecGuideMode;
@@ -199,20 +205,6 @@ pub struct PointingSummary {
     /// `None` without a rotator ("N/A"); [`ROTATOR_POSITION_UNKNOWN`]
     /// prints "Unknown"; else the angle, °.
     pub rotator: Option<f64>,
-}
-
-/// PHD2's `FrameDroppedInfo` (`guidinglog.h:89`): a frame whose star was
-/// not accepted.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct FrameDroppedInfo {
-    pub frame_number: i32,
-    pub time: f64,
-    pub star_mass: f64,
-    pub star_snr: f64,
-    pub star_hfd: f64,
-    pub avg_dist: f64,
-    pub star_error: i32,
-    pub status: String,
 }
 
 /// `GuideLogSummaryInfo` (`guidinglog.h:100`).
@@ -565,11 +557,22 @@ impl<W: Write> GuideLog<W> {
     }
 
     /// One record, flushed. Nothing without a file.
-    fn put(&mut self, s: &str) {
-        if let Some(f) = &mut self.file {
-            let _ = f.write_all(s.as_bytes());
-            let _ = f.flush();
+    fn put(&mut self, s: &str) -> bool {
+        let Some(f) = &mut self.file else { return false };
+        let _ = f.write_all(s.as_bytes());
+        let _ = f.flush();
+        true
+    }
+
+    /// [`put`](Self::put) a line, handed back without its newline.
+    fn put_line(&mut self, mut s: String) -> Option<String> {
+        if !self.put(&s) {
+            return None;
         }
+        if s.ends_with('\n') {
+            s.pop();
+        }
+        Some(s)
     }
 
     /// `EnableLogging` (`guidinglog.cpp:258`). With no file open, opens
@@ -617,7 +620,7 @@ impl<W: Write> GuideLog<W> {
 
     /// `DisableLogging`: the `Log disabled at` line. The file stays open, so
     /// [`enable`](Self::enable) continues it and
-    /// [`guiding_param_always`](Self::guiding_param_always) still writes.
+    /// a forced [`guiding_param`](Self::guiding_param) still writes.
     /// The caller saves `/LoggingMode`.
     pub fn disable(&mut self, now: DateTime<Local>) {
         if !self.enabled {
@@ -693,12 +696,13 @@ impl<W: Write> GuideLog<W> {
         self.put(&format!("{msg}\n"));
     }
 
-    /// `CalibrationStep`: a `Direction,Step,dx,dy,x,y,Dist` row.
-    pub fn calibration_step(&mut self, info: &CalibrationStepInfo) {
+    /// `CalibrationStep`: a `Direction,Step,dx,dy,x,y,Dist` row
+    /// ([`MountEvent::CalibrationRow`](crate::engine::mount::MountEvent::CalibrationRow)).
+    pub fn calibration_step(&mut self, info: &CalibrationStepInfo) -> Option<String> {
         if !self.enabled {
-            return;
+            return None;
         }
-        self.put(&format!(
+        self.put_line(format!(
             "{},{},{},{},{},{},{}\n",
             info.direction,
             info.step,
@@ -707,21 +711,28 @@ impl<W: Write> GuideLog<W> {
             fmt_f(info.pos.x, 3),
             fmt_f(info.pos.y, 3),
             fmt_f(info.dist, 3)
-        ));
+        ))
     }
 
-    /// `CalibrationDirectComplete`: an axis is done. Angle in radians, rate
-    /// in px/ms.
-    pub fn calibration_direct_complete(&mut self, direction: &str, angle: f64, rate: f64, parity: Parity) {
+    /// `CalibrationDirectComplete`: an axis is done
+    /// ([`MountEvent::CalibrationAxisComplete`](crate::engine::mount::MountEvent::CalibrationAxisComplete)).
+    /// Angle in radians, rate in px/ms.
+    pub fn calibration_direct_complete(
+        &mut self,
+        direction: &str,
+        angle: f64,
+        rate: f64,
+        parity: Parity,
+    ) -> Option<String> {
         if !self.enabled {
-            return;
+            return None;
         }
-        self.put(&format!(
+        self.put_line(format!(
             "{direction} calibration complete. Angle = {} deg, Rate = {} px/sec, Parity = {}\n",
             fmt_f(degrees(angle), 1),
             fmt_f(rate * 1000.0, 3),
             parity.label()
-        ));
+        ))
     }
 
     /// `CalibrationComplete`: `mount` is the calibrated mount's name.
@@ -794,160 +805,143 @@ impl<W: Write> GuideLog<W> {
         self.put(&s);
     }
 
-    /// `FrameDropped`: the `"DROP"` row, its status quoted in a 19th column.
+    /// `FrameDropped`: the `"DROP"` row, its status quoted in a 19th column
+    /// ([`GuiderEvent::FrameDropped`](crate::engine::guider::GuiderEvent::FrameDropped)).
     pub fn frame_dropped(&mut self, info: &FrameDroppedInfo) {
         if !self.enabled {
             return;
         }
+        let star = &info.star;
         self.put(&format!(
             "{},{},\"DROP\",,,,,,,,,,,,,{},{},{},\"{}\"\n",
-            info.frame_number,
+            // PHD2's frameNumber is an int.
+            info.frame_number as i32,
             fmt_f(info.time, 3),
-            fmt_f(info.star_mass, 0),
-            fmt_f(info.star_snr, 2),
-            info.star_error,
-            info.status
+            fmt_f(star.star_mass, 0),
+            fmt_f(star.star_snr, 2),
+            star.star_error.error_code(),
+            star.status
         ));
     }
 
-    /// `CalibrationFrameDropped`: the star was lost during a calibration.
-    pub fn calibration_frame_dropped(&mut self, info: &FrameDroppedInfo) {
+    /// `CalibrationFrameDropped`: the star was lost during a calibration
+    /// ([`GuiderEvent::CalibrationFrameDropped`](crate::engine::guider::GuiderEvent::CalibrationFrameDropped)).
+    pub fn calibration_frame_dropped(&mut self, info: &FrameDroppedInfo) -> Option<String> {
         if !self.enabled {
-            return;
+            return None;
         }
-        self.put(&format!(
+        let star = &info.star;
+        self.put_line(format!(
             "INFO: STAR LOST during calibration, Mass= {}, SNR= {}, Error= {}, Status={}\n",
-            fmt_f(info.star_mass, 0),
-            fmt_f(info.star_snr, 2),
-            info.star_error,
-            info.status
-        ));
+            fmt_f(star.star_mass, 0),
+            fmt_f(star.star_snr, 2),
+            star.star_error.error_code(),
+            star.status
+        ))
     }
 
-    /// `NotifyGuidingDithered`: `lock` is the new lock position.
-    pub fn guiding_dithered(&mut self, dx: f64, dy: f64, lock: Point) {
+    /// `NotifyGuidingDithered`: `lock` is the new lock position
+    /// ([`ControlEvent::GuidingDithered`](crate::engine::control::ControlEvent::GuidingDithered)).
+    pub fn guiding_dithered(&mut self, dx: f64, dy: f64, lock: Point) -> Option<String> {
         if !self.enabled || !self.is_guiding {
-            return;
+            return None;
         }
-        self.put(&format!(
+        self.put_line(format!(
             "INFO: DITHER by {}, {}, new lock pos = {}, {}\n",
             fmt_f(dx, 3),
             fmt_f(dy, 3),
             fmt_f(lock.x, 3),
             fmt_f(lock.y, 3)
-        ));
+        ))
     }
 
     /// `NotifySettlingStateChange` (`Settling started`, …): written even
-    /// when not guiding.
-    pub fn settling_state_change(&mut self, msg: &str) {
+    /// when not guiding
+    /// ([`ControlEvent::SettlingStateChange`](crate::engine::control::ControlEvent::SettlingStateChange)).
+    pub fn settling_state_change(&mut self, msg: &str) -> Option<String> {
         if !self.enabled {
-            return;
+            return None;
         }
-        self.put(&format!("INFO: SETTLING STATE CHANGE, {msg}\n"));
+        self.put_line(format!("INFO: SETTLING STATE CHANGE, {msg}\n"))
     }
 
-    /// `NotifyGACompleted`: counted in the summary, no line.
+    /// `NotifyGACompleted`: counted in the summary, no line
+    /// ([`GaEvent::Completed`](crate::engine::assistant::GaEvent::Completed)).
     pub fn ga_completed(&mut self) {
         if self.enabled {
             self.summary.ga_cnt += 1;
         }
     }
 
-    /// `NotifyGAResult`: `msg` brings its own newline.
-    pub fn ga_result(&mut self, msg: &str) {
+    /// `NotifyGAResult`: `msg` brings its own newline
+    /// ([`GaEvent::Result`](crate::engine::assistant::GaEvent::Result)).
+    pub fn ga_result(&mut self, msg: &str) -> Option<String> {
         if !self.enabled {
-            return;
+            return None;
         }
-        self.put(&format!("INFO: GA Result - {msg}"));
+        self.put_line(format!("INFO: GA Result - {msg}"))
     }
 
-    /// `NotifySetLockPosition`: `lock` is the new lock position.
-    pub fn set_lock_position(&mut self, lock: Point) {
+    /// The guider's own `INFO:` lines, `line` without the prefix
+    /// ([`GuiderEvent::Info`](crate::engine::guider::GuiderEvent::Info)):
+    /// `SET LOCK POSITION` (`NotifySetLockPosition`) and `LOCK SHIFT`
+    /// (`NotifyLockShiftParams`), which the guider formats. Both are written
+    /// only while guiding, and both keep the file.
+    pub fn info(&mut self, line: &str) -> Option<String> {
         if !self.enabled || !self.is_guiding {
-            return;
+            return None;
         }
-        self.put(&format!("INFO: SET LOCK POSITION, new lock pos = {}, {}\n", fmt_f(lock.x, 3), fmt_f(lock.y, 3)));
+        let line = self.put_line(format!("INFO: {line}\n"));
         self.keep_file = true;
+        line
     }
 
-    /// `NotifyLockShiftParams`: `rate` per hour along RA/Dec when
-    /// `mount_coords`, else X/Y, in arc-sec when `arcsec`, else pixels
-    /// (`None` when unset); `camera_rate` in px/s (`None` when unknown).
-    pub fn lock_shift_params(
-        &mut self,
-        enabled: bool,
-        rate: Option<Point>,
-        arcsec: bool,
-        mount_coords: bool,
-        camera_rate: Option<Point>,
-    ) {
+    /// `ServerCommand`: `INFO: Server received <cmd>`
+    /// ([`ControlEvent::ServerCommand`](crate::engine::control::ControlEvent::ServerCommand)).
+    pub fn server_command(&mut self, cmd: &str) -> Option<String> {
         if !self.enabled || !self.is_guiding {
-            return;
+            return None;
         }
-        let details = if enabled {
-            let rate = rate.unwrap_or_default();
-            let cam = camera_rate.map_or(Point::default(), |r| Point::new(r.x * 3600.0, r.y * 3600.0));
-            format!(
-                "{} rate ({},{}) {}/hr ({},{}) px/hr",
-                if mount_coords { "RA,Dec" } else { "X,Y" },
-                fmt_f(rate.x, 2),
-                fmt_f(rate.y, 2),
-                if arcsec { "arc-sec" } else { "pixels" },
-                fmt_f(cam.x, 2),
-                fmt_f(cam.y, 2)
-            )
-        } else {
-            String::new()
-        };
-        self.put(&format!("INFO: LOCK SHIFT, enabled = {} {details}\n", i32::from(enabled)));
+        let line = self.put_line(format!("INFO: Server received {cmd}\n"));
         self.keep_file = true;
-    }
-
-    /// `ServerCommand`: `INFO: Server received <cmd>`.
-    pub fn server_command(&mut self, cmd: &str) {
-        if !self.enabled || !self.is_guiding {
-            return;
-        }
-        self.put(&format!("INFO: Server received {cmd}\n"));
-        self.keep_file = true;
+        line
     }
 
     /// `NotifyManualGuide`: ms on a scope, steps on an AO.
-    pub fn manual_guide(&mut self, is_ao: bool, dir: Dir, duration: i32) {
+    pub fn manual_guide(&mut self, is_ao: bool, dir: Dir, duration: i32) -> Option<String> {
         if !self.enabled || !self.is_guiding {
-            return;
+            return None;
         }
         let (who, label, unit) = if is_ao {
             ("AO", dir.ao_label(), if duration != 1 { "steps" } else { "step" })
         } else {
             ("Mount", dir.mount_label(), "ms")
         };
-        self.put(&format!("INFO: Manual guide ({who}) {label} {duration} {unit}\n"));
+        let line = self.put_line(format!("INFO: Manual guide ({who}) {label} {duration} {unit}\n"));
         self.keep_file = true;
+        line
     }
 
-    /// `SetGuidingParam`, the line of a
-    /// [`MountEvent::GuideParamChange`](crate::engine::mount::MountEvent::GuideParamChange).
-    /// The value's JSON type is PHD2's overload: a float prints `%.2f`, an
-    /// integer, a bool or a string as is.
-    pub fn guiding_param(&mut self, name: &str, value: &Value) {
-        if !self.enabled || !self.is_guiding {
-            return;
+    /// `SetGuidingParam`: the line of every parameter change — the
+    /// guider's, the controller's and the Guiding Assistant's `ParamChange`,
+    /// the mounts' `GuideParamChange`. The value's JSON type is PHD2's
+    /// overload: a float prints `%.2f`, an integer, a bool or a string as
+    /// is. `force` is the guider's `force_log`, PHD2's
+    /// `SetGuidingParam(…, AlwaysLog)` (the `MultiStar` change, a string):
+    /// written whenever the file is open, guiding or not.
+    pub fn guiding_param(&mut self, name: &str, value: &Value, force: bool) -> Option<String> {
+        if !force && (!self.enabled || !self.is_guiding) {
+            return None;
         }
         let value = match value {
             Value::Number(n) if n.is_f64() => fmt_f(n.as_f64().unwrap_or_default(), 2),
             Value::String(s) => s.clone(),
             other => other.to_string(),
         };
-        self.guiding_param_always(name, &value);
-    }
-
-    /// `SetGuidingParam(…, AlwaysLog)` (PHD2's forced `MultiStar` change):
-    /// written whenever the file is open, logging on or off, guiding or not.
-    pub fn guiding_param_always(&mut self, name: &str, value: &str) {
-        self.put(&format!("INFO: Guiding parameter change, {name} = {value}\n"));
+        let line = self.put_line(format!("INFO: Guiding parameter change, {name} = {value}\n"));
+        // Set even with the file closed, as in PHD2.
         self.keep_file = true;
+        line
     }
 }
 
@@ -956,6 +950,8 @@ mod tests {
     use super::*;
     use crate::engine::calibration::{Calibration, CalibrationIssue};
     use crate::engine::log::debug_log::tests::{Buf, t};
+    use crate::engine::multistar::FrameErrorInfo;
+    use crate::engine::star::FindResult;
     use crate::engine::traits::MoveOpts;
 
     // The scenario of target/scratch/harness/guide_log (PHD2's own
@@ -1077,15 +1073,19 @@ mod tests {
         }
     }
 
-    fn dropped(frame_number: i32, time: f64, star_mass: f64, star_snr: f64, star_error: i32) -> FrameDroppedInfo {
+    /// A frame dropped for a low SNR, as the guider reports it.
+    fn dropped(frame_number: u32, time: f64, star_mass: f64, star_snr: f64) -> FrameDroppedInfo {
         FrameDroppedInfo {
             frame_number,
             time,
-            star_mass,
-            star_snr,
-            star_error,
-            status: "Star lost - low SNR".into(),
-            ..Default::default()
+            avg_dist: 0.0,
+            star: FrameErrorInfo {
+                star_error: FindResult::LowSnr,
+                star_mass,
+                star_snr,
+                star_hfd: 0.0,
+                status: "Star lost - low SNR",
+            },
         }
     }
 
@@ -1125,17 +1125,24 @@ mod tests {
         let stamp = LogFileStamp { instance: 1, time: t(2026, 11, 11, 21, 58, 3, 0) };
         log.enable(&stamp, None, |n| dir.open(n)).unwrap();
         log.start_calibration(t(2026, 11, 11, 22, 0, 0, 0), &h, &sc);
-        log.calibration_step(&cal_step("West", 0, 0.0, 0.0, 640.5, 512.25, 0.0));
+        // The calibration lines come back for the relay.
+        assert_eq!(
+            log.calibration_step(&cal_step("West", 0, 0.0, 0.0, 640.5, 512.25, 0.0)).as_deref(),
+            Some("West,0,0.000,0.000,640.500,512.250,0.000")
+        );
         log.calibration_step(&cal_step("West", 1, -3.9055, 0.2125, 644.4055, 512.0375, 3.911277));
         log.calibration_step(&cal_step("West", 2, -7.8125, 0.4375, 648.3125, 511.8125, 7.8247));
-        log.calibration_direct_complete("West", 0.0523, 0.0052083, Parity::Even);
+        assert_eq!(
+            log.calibration_direct_complete("West", 0.0523, 0.0052083, Parity::Even).as_deref(),
+            Some("West calibration complete. Angle = 3.0 deg, Rate = 5.208 px/sec, Parity = Even")
+        );
         log.calibration_step(&cal_step("East", 1, 3.9, -0.21, 644.4125, 512.0225, 3.905649));
         log.calibration_step(&cal_step("Backlash", 1, 0.0005, 0.2995, 640.4995, 511.9505, 0.2995));
         log.calibration_step(&cal_step("North", 0, 0.0, 0.0, 640.4995, 511.9505, 0.0));
         log.calibration_step(&cal_step("North", 1, -0.1875, 3.6875, 640.687, 508.263, 3.692264));
         log.calibration_direct_complete("North", -1.5236, 0.0049166, Parity::Odd);
         log.calibration_step(&cal_step("South", 1, 0.125, -3.6, 640.5625, 511.8675, 3.602169));
-        log.calibration_frame_dropped(&dropped(31, 0.0, 1234.5, 3.125, 2));
+        log.calibration_frame_dropped(&dropped(31, 0.0, 1234.5, 3.125));
         log.calibration_complete(&sc.name);
         log.start_calibration(t(2026, 11, 11, 22, 10, 0, 0), &h, &sc);
         log.calibration_step(&cal_step("West", 0, 0.0, 0.0, 640.5, 512.25, 0.0));
@@ -1235,32 +1242,40 @@ mod tests {
         log.guide_step(&row(false, 2, 5.0249999, (-0.05, 0.6), (-0.0712, 0.5958), (0.0, 0.4171), (0, e), (120, n), mass, snr, 0));
         let (mass, snr) = (65535.4999, 112.0);
         log.guide_step(&row(false, 3, 7.5, (-0.3, -1.1), (-0.3567, -1.0824), (-0.2318, -0.9742), (45, e), (200, s), mass, snr, 1));
-        log.frame_dropped(&FrameDroppedInfo { avg_dist: 0.5, ..dropped(4, 10.0005, 0.0, 0.0, 2) });
+        log.frame_dropped(&FrameDroppedInfo { avg_dist: 0.5, ..dropped(4, 10.0005, 0.0, 0.0) });
         log.guiding_dithered(1.234, -2.345, Point::new(321.234, 237.655));
         log.settling_state_change("Settling started");
         log.settling_state_change("Settling complete");
-        log.set_lock_position(Point::new(300.5, 200.25));
-        let tiny = Some(Point::new(0.0001, -0.0002));
-        log.lock_shift_params(true, Some(Point::new(1.5, -2.25)), true, true, tiny);
-        log.lock_shift_params(true, None, false, false, None);
-        log.lock_shift_params(false, None, false, false, tiny);
+        // The guider's lines, as guider.rs formats them (its tests check
+        // the formats against PHD2's).
+        assert_eq!(
+            log.info("SET LOCK POSITION, new lock pos = 300.500, 200.250").as_deref(),
+            Some("INFO: SET LOCK POSITION, new lock pos = 300.500, 200.250")
+        );
+        log.info("LOCK SHIFT, enabled = 1 RA,Dec rate (1.50,-2.25) arc-sec/hr (0.36,-0.72) px/hr");
+        log.info("LOCK SHIFT, enabled = 1 X,Y rate (0.00,0.00) pixels/hr (0.00,0.00) px/hr");
+        log.info("LOCK SHIFT, enabled = 0 ");
         log.server_command("PAUSE");
         log.server_command("RESUME");
         log.manual_guide(false, Dir::North, 500);
-        log.guiding_param("Dither scale", &Value::from(0.755));
-        log.guiding_param("Dec Max Duration", &Value::from(2000));
-        log.guiding_param("MountGuidingEnabled", &Value::from(false));
-        log.guiding_param("Dec Guide Mode", &Value::from("Auto"));
+        assert_eq!(
+            log.guiding_param("Dither scale", &Value::from(0.755), false).as_deref(),
+            Some("INFO: Guiding parameter change, Dither scale = 0.76")
+        );
+        log.guiding_param("Dec Max Duration", &Value::from(2000), false);
+        log.guiding_param("MountGuidingEnabled", &Value::from(false), false);
+        log.guiding_param("Dec Guide Mode", &Value::from("Auto"), false);
         log.ga_result("Polar alignment error = 3.2 arc-min\n");
         log.ga_completed();
         log.guiding_stopped(t(2026, 11, 12, 8, 46, 0, 0), 1800.4);
         // Not guiding any more: these are dropped…
-        log.guiding_dithered(1.0, 1.0, Point::new(300.5, 200.25));
-        log.server_command("PAUSE");
-        log.guiding_param("Exposure", &Value::from("2000 ms"));
+        assert_eq!(log.guiding_dithered(1.0, 1.0, Point::new(300.5, 200.25)), None);
+        assert_eq!(log.info("SET LOCK POSITION, new lock pos = 300.500, 200.250"), None);
+        assert_eq!(log.server_command("PAUSE"), None);
+        assert_eq!(log.guiding_param("Exposure", &Value::from("2000 ms"), false), None);
         // … but not these two.
         log.settling_state_change("Settling failed");
-        log.ga_result("Backlash=120 ms\n");
+        assert_eq!(log.ga_result("Backlash=120 ms\n").as_deref(), Some("INFO: GA Result - Backlash=120 ms"));
         assert_eq!(log.close(t(2026, 11, 12, 9, 0, 0, 0)), None);
         golden(
             "guiding",
@@ -1384,8 +1399,8 @@ mod tests {
         log.manual_guide(true, Dir::LEFT, 3);
         log.guiding_stopped(t(2026, 11, 12, 21, 5, 0, 0), 3600.5);
         log.disable(t(2026, 11, 12, 21, 10, 0, 0));
-        log.guiding_param_always("Dec guide mode", "North"); // the forced form ignores the switch
-        log.guiding_param("Exposure", &Value::from("1500 ms")); // dropped
+        log.guiding_param("Dec guide mode", &Value::from("North"), true); // the forced form ignores the switch
+        log.guiding_param("Exposure", &Value::from("1500 ms"), false); // dropped
         log.enable(&stamp, None, |_| unreachable!("the file is still open")).unwrap();
         assert_eq!(log.close(t(2026, 11, 12, 21, 30, 0, 0)), None);
         golden("ppec", &dir.text("PHD2_GuideLog_2026-11-12_200000.txt"), include_str!("../testdata/guide_log_ppec.txt"));
