@@ -112,7 +112,7 @@ pub enum RecKind {
 }
 
 impl RecKind {
-    const ALL: [RecKind; 10] = [
+    pub const ALL: [RecKind; 10] = [
         RecKind::Exp,
         RecKind::Bin,
         RecKind::Cal,

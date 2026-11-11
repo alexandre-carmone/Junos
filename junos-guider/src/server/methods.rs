@@ -17,6 +17,10 @@
 //!   pixels, as native-endian u16 in base64.
 //! - `shutdown` answers before anything stops.
 //!
+//! The junos UI's own methods (`ws_only`, which the TCP server never looks
+//! up) go to [`super::extras`]: one dispatcher for the event server and the
+//! relay's `guider_rpc`.
+//!
 //! Fixed (a crash in PHD2): `set_algo_param` without `value` answers
 //! "expected param value param" where PHD2 dereferences null.
 //!
@@ -27,12 +31,12 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
-use super::Shared;
 use super::events::mounts;
 use super::rpc::{
     Call, INTERNAL_ERROR, METHOD_NOT_FOUND, Params, RpcError, bool_param, float_param, int_param, num_f, num_g,
     num_point, point_param, rect_param, roi_param, settle_param, string_param,
 };
+use crate::daemon::Daemon;
 use crate::engine::algo::Axis;
 use crate::engine::guider::{GuiderState, PauseType, ShiftUnits};
 use crate::engine::scope::DecGuideMode;
@@ -55,14 +59,16 @@ fn bad(msg: impl Into<String>) -> RpcError {
     RpcError::invalid_params(msg)
 }
 
-async fn command(s: &Shared, cmd: Command) -> Outcome {
-    outcome(s.daemon.command(cmd).await)
+pub(super) async fn command(d: &Daemon, cmd: Command) -> Outcome {
+    outcome(d.command(cmd).await)
 }
 
 /// One call, answered.
-pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
+pub async fn run(d: &Daemon, call: &Call) -> Outcome {
+    if call.method.ws_only {
+        return super::extras::dispatch(d, call).await;
+    }
     let p = call.params();
-    let d = &s.daemon;
     let snap = d.snapshot();
     let camera_connected = snap.camera.as_ref().is_some_and(|c| c.connected);
     match call.method.name {
@@ -72,13 +78,13 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
                 Some(_) => which_mount(p.param("which"))
                     .ok_or_else(|| bad("expected param \"mount\", \"ao\", or \"both\""))?,
             };
-            command(s, Command::ClearCalibration(which)).await
+            command(d, Command::ClearCalibration(which)).await
         }
-        "deselect_star" => command(s, Command::DeselectStar).await,
+        "deselect_star" => command(d, Command::DeselectStar).await,
         "get_exposure" => Ok(json!(snap.exposure_ms)),
         "set_exposure" => {
             let ms = p.param("exposure").and_then(int_param).ok_or_else(|| bad("expected exposure param"))?;
-            command(s, Command::SetExposure(ms)).await
+            command(d, Command::SetExposure(ms)).await
         }
         "get_exposure_durations" => Ok(json!(snap.exposure_durations)),
         "get_profiles" => {
@@ -111,7 +117,7 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
                 // Anything but "full" (exact case) pauses the guiding only.
                 full = string_param(t).ok_or_else(|| bad("expected string param at index 1"))? == "full";
             }
-            command(s, Command::SetPaused { paused, full }).await
+            command(d, Command::SetPaused { paused, full }).await
         }
         "get_lock_position" => Ok(snap.lock_position.map_or(Value::Null, point)),
         "set_lock_position" => {
@@ -123,10 +129,10 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
                 None => true,
                 Some(v) => bool_param(v).ok_or_else(|| bad("expected boolean param at index 2"))?,
             };
-            command(s, Command::SetLockPosition { x, y, exact }).await
+            command(d, Command::SetLockPosition { x, y, exact }).await
         }
-        "loop" => command(s, Command::Loop).await,
-        "stop_capture" => command(s, Command::StopCapture).await,
+        "loop" => command(d, Command::Loop).await,
+        "stop_capture" => command(d, Command::StopCapture).await,
         "guide" => {
             let settle = settle_param(p.param("settle"))?;
             let recalibrate = match p.param("recalibrate") {
@@ -134,7 +140,7 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
                 Some(v) => bool_param(v).ok_or_else(|| bad("expected bool value for recalibrate"))?,
             };
             let roi = roi_param(p.param("roi"))?;
-            command(s, Command::Guide { settle, recalibrate, roi }).await
+            command(d, Command::Guide { settle, recalibrate, roi }).await
         }
         "dither" => {
             let amount = p.param("amount").and_then(float_param).ok_or_else(|| bad("expected dither amount param"))?;
@@ -143,12 +149,12 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
                 Some(v) => bool_param(v).ok_or_else(|| bad("expected dither raOnly param"))?,
             };
             let settle = settle_param(p.param("settle"))?;
-            command(s, Command::Dither { amount, ra_only, settle }).await
+            command(d, Command::Dither { amount, ra_only, settle }).await
         }
         "find_star" => {
             let roi = roi_param(p.param("roi"))?;
             // The lock position, as a `PHD_Point`.
-            let lock = command(s, Command::FindStar { roi }).await?;
+            let lock = command(d, Command::FindStar { roi }).await?;
             match lock.as_array().map(|a| a.iter().map(Value::as_f64).collect::<Vec<_>>()).as_deref() {
                 Some([Some(x), Some(y)]) => Ok(num_point(*x, *y)),
                 _ => Ok(lock),
@@ -156,18 +162,18 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
         }
         "get_pixel_scale" => Ok(if snap.pixel_scale == 1.0 { Value::Null } else { num_g(snap.pixel_scale) }),
         "get_app_state" => Ok(json!(snap.app_state.map_or("Stopped", |a| a.as_str()))),
-        "flip_calibration" => command(s, Command::FlipCalibration).await,
+        "flip_calibration" => command(d, Command::FlipCalibration).await,
         "get_lock_shift_enabled" => Ok(json!(snap.lock_shift.enabled)),
         "set_lock_shift_enabled" => {
             let on = p.param("enabled").and_then(bool_param).ok_or_else(|| bad("expected enabled boolean param"))?;
-            command(s, Command::SetLockShiftEnabled(on)).await
+            command(d, Command::SetLockShiftEnabled(on)).await
         }
         "get_lock_shift_params" => Ok(lock_shift(&snap, p.param("axes"))),
         "set_lock_shift_params" => {
             let (rate, units, mount_coords) = parse_lock_shift(call.params.as_ref())?;
-            command(s, Command::SetLockShiftParams { rate, units, mount_coords }).await
+            command(d, Command::SetLockShiftParams { rate, units, mount_coords }).await
         }
-        "save_image" => command(s, Command::SaveImage).await,
+        "save_image" => command(d, Command::SaveImage).await,
         "get_star_image" => {
             let size = match p.param("size") {
                 None => 15,
@@ -177,8 +183,9 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
         }
         "get_use_subframes" => Ok(json!(snap.camera.is_some() && snap.use_subframes)),
         "get_search_region" => Ok(json!(snap.search_region)),
-        // `TerminateApp` only posts the close: the client's reader runs it
-        // once the reply is out (`Shared::shutdown`).
+        // `TerminateApp` only posts the close: the caller runs it once the
+        // reply is out (the TCP reader's `Shared::shutdown`, the relay
+        // socket's `Daemon::shutdown`).
         "shutdown" => Ok(json!(0)),
         "get_camera_binning" if camera_connected => Ok(json!(snap.binning)),
         "get_camera_frame_size" if camera_connected => Ok(json!([snap.frame_size.0, snap.frame_size.1])),
@@ -205,7 +212,7 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
         },
         "set_guide_output_enabled" => {
             let on = p.param("enabled").and_then(bool_param).ok_or_else(|| bad("expected enabled boolean param"))?;
-            command(s, Command::SetGuideOutputEnabled(on)).await
+            command(d, Command::SetGuideOutputEnabled(on)).await
         }
         "get_algo_param_names" => {
             let Some(axis) = axis_param(p.param("axis")) else { return err(1, "expected axis name param") };
@@ -237,14 +244,14 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
             let Some(value) = p.param("value").and_then(float_param) else {
                 return err(1, "expected param value param");
             };
-            command(s, Command::SetAlgoParam { axis, name: name.to_string(), value }).await
+            command(d, Command::SetAlgoParam { axis, name: name.to_string(), value }).await
         }
         "get_dec_guide_mode" => Ok(json!(snap.dec_guide_mode.unwrap_or(DecGuideMode::None).label())),
         "set_dec_guide_mode" => {
             let Some(mode) = p.param("mode").and_then(string_param) else { return err(1, "expected mode param") };
             let modes = [DecGuideMode::None, DecGuideMode::Auto, DecGuideMode::North, DecGuideMode::South];
             match modes.into_iter().find(|m| m.label().eq_ignore_ascii_case(mode)) {
-                Some(m) => command(s, Command::SetDecGuideMode(m)).await,
+                Some(m) => command(d, Command::SetDecGuideMode(m)).await,
                 None => err(1, "invalid dec guide mode param"),
             }
         }
@@ -256,7 +263,7 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
                 Some(w @ (Which::Mount | Which::Ao)) => w,
                 _ => return err(1, "invalid 'which' param"),
             };
-            command(s, Command::GuidePulse { amount, dir, which }).await
+            command(d, Command::GuidePulse { amount, dir, which }).await
         }
         "get_calibration_data" => {
             let m = match which_mount(p.param("which")) {
@@ -290,7 +297,7 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
                 return err(1, "cannot capture single frame when camera is not connected");
             }
             let req = single_frame(&p, &snap)?;
-            command(s, Command::CaptureSingleFrame(req)).await
+            command(d, Command::CaptureSingleFrame(req)).await
         }
         "get_cooler_status" => {
             if !camera_connected {
@@ -308,7 +315,7 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
         }
         "set_cooler_state" => {
             let on = p.param("enabled").and_then(bool_param).ok_or_else(|| bad("expected enabled boolean param"))?;
-            command(s, Command::SetCoolerState(on)).await
+            command(d, Command::SetCoolerState(on)).await
         }
         "get_ccd_temperature" => {
             if !camera_connected {
@@ -346,7 +353,7 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
             };
             // `(int) shortDelaySec * 1000`: the seconds truncated first.
             let (short_ms, long_ms) = ((short as i32).wrapping_mul(1000), (long as i32).wrapping_mul(1000));
-            command(s, Command::SetVariableDelay { enabled, short_ms, long_ms }).await
+            command(d, Command::SetVariableDelay { enabled, short_ms, long_ms }).await
         }
         // Neither the INDI camera nor the simulator limits frames.
         "get_limit_frame" => Ok(json!({ "roi": null })),
@@ -356,9 +363,9 @@ pub(super) async fn run(s: &Shared, call: &Call) -> Outcome {
                 Some(Value::Null) => None,
                 Some(v) => Some(rect_param(v).ok_or_else(|| bad("invalid ROI param"))?),
             };
-            command(s, Command::SetLimitFrame(roi)).await
+            command(d, Command::SetLimitFrame(roi)).await
         }
-        // The relay's methods are not served on TCP.
+        // Every PHD2 name is above; the UI's went to `extras`.
         _ => err(METHOD_NOT_FOUND, "method not found"),
     }
 }

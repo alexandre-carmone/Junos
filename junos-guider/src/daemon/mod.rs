@@ -42,6 +42,7 @@ use tokio::sync::{broadcast, oneshot, watch};
 use self::gear::{Choices, Rig};
 use crate::engine::traits::{CancelToken, SystemClock};
 use crate::engine::{CmdError, Command, Engine, EngineConfig, EngineEvent, Files, Reply, Snapshot, StopRequest};
+use crate::indi::client::IndiClient;
 use crate::profile::ProfileStore;
 use crate::server::rpc::INTERNAL_ERROR;
 
@@ -108,6 +109,8 @@ struct Inner {
     connecting: AtomicBool,
     /// Cuts the running connect short (shutdown).
     connect_cancel: Mutex<CancelToken>,
+    /// The INDI connection of the gear last connected, for the device list.
+    indi: Mutex<Option<IndiClient>>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -150,6 +153,7 @@ impl Daemon {
             cancel: engine.cancel_token(),
             connecting: AtomicBool::new(false),
             connect_cancel: Mutex::default(),
+            indi: Mutex::default(),
             thread: Mutex::new(None),
         });
         let daemon = Daemon(inner);
@@ -160,6 +164,16 @@ impl Daemon {
             .expect("spawn the engine thread");
         *lock(&daemon.0.thread) = Some(t);
         daemon
+    }
+
+    pub fn options(&self) -> &DaemonOptions {
+        &self.0.opts
+    }
+
+    /// The INDI connection of the gear last connected, `None` before a
+    /// connect, after a disconnect and with `--sim`.
+    pub fn indi_client(&self) -> Option<IndiClient> {
+        lock(&self.0.indi).clone()
     }
 
     /// The events, from now on.
@@ -264,6 +278,7 @@ impl Daemon {
         *lock(&self.0.connect_cancel) = cancel.clone();
         let (rig, gear, notes) = Rig::connect(&choices, client, &cancel);
         let fail = rig.failures();
+        *lock(&self.0.indi) = rig.client();
         self.run_blocking(move |e, old| {
             for n in notes {
                 n.apply(e);
@@ -292,6 +307,7 @@ impl Daemon {
             return Err(CmdError::new(1, "cannot disconnect equipment while capture active"));
         }
         self.0.cancel.cancel();
+        *lock(&self.0.indi) = None;
         self.run(|e, rig| {
             if !rig.any_connected() {
                 // Nothing connected.
@@ -439,4 +455,4 @@ fn persist(engine: &mut Engine) {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

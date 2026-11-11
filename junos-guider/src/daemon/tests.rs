@@ -17,7 +17,7 @@ use crate::engine::{CmdError, Command, EngineConfig, EngineEvent};
 use crate::profile::{ProfileStore, Section};
 
 /// A fresh folder under `target/`.
-fn dir(name: &str) -> PathBuf {
+pub(crate) fn dir(name: &str) -> PathBuf {
     let d = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/test-daemon").join(name);
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(&d).unwrap();
@@ -25,7 +25,7 @@ fn dir(name: &str) -> PathBuf {
 }
 
 /// The daemon on the simulator, `profile` set before it starts.
-fn start(d: &Path, profile: impl FnOnce(&mut Section)) -> Daemon {
+pub(crate) fn start(d: &Path, profile: impl FnOnce(&mut Section)) -> Daemon {
     let mut store = ProfileStore::open(&d.join("config"), 1).unwrap();
     store.initialize_profile();
     {
@@ -55,7 +55,7 @@ fn start(d: &Path, profile: impl FnOnce(&mut Section)) -> Daemon {
 }
 
 /// The events until one matches, within `secs`.
-async fn wait_for(
+pub(crate) async fn wait_for(
     rx: &mut broadcast::Receiver<Arc<EngineEvent>>,
     secs: u64,
     f: impl Fn(&EngineEvent) -> bool,
@@ -79,6 +79,19 @@ async fn wait_for(
     .await;
     assert!(found.is_ok(), "no matching event in {secs} s; saw {:?}", seen.iter().map(|e| name(e)).collect::<Vec<_>>());
     seen
+}
+
+/// `find_star`, tried again on the next frames: under a heavy load (the
+/// whole suite at once) the simulator's first frame can hold no star
+/// AutoFind takes.
+pub(crate) async fn find_star(d: &Daemon, ev: &mut broadcast::Receiver<Arc<EngineEvent>>) -> serde_json::Value {
+    for _ in 0..20 {
+        if let Ok(lock) = d.command(Command::FindStar { roi: None }).await {
+            return lock;
+        }
+        wait_for(ev, 5, |e| matches!(e, EngineEvent::LoopingExposures { .. })).await;
+    }
+    panic!("no star found in 20 frames");
 }
 
 fn name(e: &EngineEvent) -> String {
@@ -122,17 +135,7 @@ async fn connects_loops_guides_and_stops_on_the_simulator() {
     d.command(Command::Loop).await.unwrap();
     wait_for(&mut ev, 5, |e| matches!(e, EngineEvent::LoopingExposures { .. })).await;
     assert_eq!(app_state(&d), "Looping");
-    // Under a heavy load (the whole suite at once) the simulator's first
-    // frame can hold no star AutoFind takes: try again on the next frame.
-    let mut lock = d.command(Command::FindStar { roi: None }).await;
-    for _ in 0..20 {
-        if lock.is_ok() {
-            break;
-        }
-        wait_for(&mut ev, 5, |e| matches!(e, EngineEvent::LoopingExposures { .. })).await;
-        lock = d.command(Command::FindStar { roi: None }).await;
-    }
-    let lock = lock.unwrap();
+    let lock = find_star(&d, &mut ev).await;
     assert_eq!(app_state(&d), "Selected");
     assert!(lock.as_array().is_some_and(|a| a.len() == 2), "{lock}");
 

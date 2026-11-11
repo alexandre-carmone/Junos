@@ -3,8 +3,10 @@
 //!
 //! [`rpc`] holds the protocol itself, free of sockets: the line framing, the
 //! request parsing, the method table, the parameter getters and the replies.
-//! [`events`] writes the events and the catch-up; `methods` answers the 54
-//! methods, from the engine or its snapshot.
+//! [`events`] writes the events and the catch-up; [`methods`] answers the
+//! 54 methods, from the engine or its snapshot, for this server and the
+//! relay's socket alike; [`extras`] are the junos UI's own, reached through
+//! the relay only.
 //!
 //! The server listens on every interface with `SO_REUSEADDR`, as PHD2's
 //! `wxSocketServer` does; a port in use is tried again rather than given up
@@ -36,7 +38,8 @@
 //! Ported from PHD2 src/event_server.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
 pub mod events;
-mod methods;
+pub mod extras;
+pub mod methods;
 pub mod rpc;
 
 use std::io;
@@ -293,7 +296,7 @@ async fn read_loop(mut rd: OwnedReadHalf, tx: mpsc::Sender<Outgoing>, s: &Shared
             let mut guard = ReplyGuard::new(rpc::parse(&input), tx.clone());
             let mut shutdown = false;
             for call in guard.calls() {
-                let outcome = methods::run(s, &call).await;
+                let outcome = methods::run(&s.daemon, &call).await;
                 shutdown |= call.method.name == "shutdown" && outcome.is_ok();
                 guard.outcomes.push(outcome);
             }
