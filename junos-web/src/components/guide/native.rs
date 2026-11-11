@@ -28,6 +28,7 @@ use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
+use super::equipment::{equipment_card, equipment_sheet, Equip};
 use super::frame::{frame_pane, zoom, FramePane};
 use super::protocol::{Reply, Rpc, Settle, CALIBRATING, GUIDING, LOOPING, LOST_LOCK, PAUSED, SELECTED};
 use super::settings::{settings_i64, GuideSettings};
@@ -35,7 +36,7 @@ use super::star_profile::star_profile;
 use super::stats::{compute, stats_tiles};
 use super::target::target_plot;
 use super::timeline::{drift_plot, DriftSeries, WINDOW_MS};
-use super::tone;
+use super::{tone, Sheet};
 
 const CHIP: &str = "chip h-9 md:h-7 px-3 justify-center cursor-pointer";
 
@@ -145,6 +146,30 @@ pub fn NativeGuide(
     let swap = move || {
         let pin = if guiding.get_untracked() { pin_graph_guiding } else { pin_graph_idle };
         pin.update(|v| *v = !*v);
+    };
+
+    // The open sheet; Escape closes it.
+    let open = RwSignal::new(None::<Sheet>);
+    {
+        let cb = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |e: web_sys::KeyboardEvent| {
+            if e.key() == "Escape" {
+                open.try_set(None);
+            }
+        });
+        if let Some(win) = web_sys::window() {
+            use wasm_bindgen::JsCast;
+            let _ = win.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
+        }
+        cb.forget();
+    }
+    let equip = Equip {
+        state,
+        settings: guider.settings,
+        profiles: guider.profiles,
+        devices: guider.devices,
+        rpc: rpc.clone(),
+        lang,
+        sheet: open,
     };
 
     let fp = FramePane {
@@ -289,7 +314,6 @@ pub fn NativeGuide(
     let log = guider.log;
 
     // Ekos' settings sheet stays reachable (its guider choice, PHD2 port).
-    let settings_open = RwSignal::new(false);
     let settings = Memo::new(move |_| snap.with(|g| g.settings.clone()));
     let options = Memo::new(move |_| snap.with(|g| g.options.clone()));
     let status = Memo::new(move |_| snap.with(|g| g.status.clone()));
@@ -318,7 +342,7 @@ pub fn NativeGuide(
                     {badge}
                 </span>
                 <button class="btn-icon shrink-0 text-text-muted" title=move || tr().guide_settings_title
-                        on:click=move |_| settings_open.set(true)>
+                        on:click=move |_| open.set(Some(Sheet::Ekos))>
                     <span class="inline-block w-5 h-5" inner_html=tab_icon(Tab::Profiles)></span>
                 </button>
             </div>
@@ -339,6 +363,7 @@ pub fn NativeGuide(
                                                                 ra_only.get(), tr().guide_no_drift))}
                         </div>
                         {star_profile(guider.frame, rpc.clone(), last, pixel_scale, lang)}
+                        {equipment_card(equip.clone())}
                     </div>
                     {move || pane2(!pin_graph.get(), false)}
                 </div>
@@ -360,12 +385,17 @@ pub fn NativeGuide(
             </div>
 
             {zoom(fp.clone())}
-            <Show when=move || settings_open.get()>
-                {sheet(move || tr().guide_settings_title, move || settings_open.set(false), view! {
-                    <GuideSettings settings=settings options=options status=status
-                                   send=send_settings.clone() lang=lang />
-                })}
-            </Show>
+            {move || {
+                let close = move || open.set(None);
+                match open.get()? {
+                    Sheet::Ekos => Some(sheet(move || tr().guide_settings_title, close, view! {
+                        <GuideSettings settings=settings options=options status=status
+                                       send=send_settings.clone() lang=lang />
+                    }).into_any()),
+                    Sheet::Equipment => Some(sheet(move || tr().guider_equipment_title, close,
+                                                   equipment_sheet(equip.clone())).into_any()),
+                }
+            }}
         </div>
     }
 }

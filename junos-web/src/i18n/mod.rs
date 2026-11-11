@@ -217,6 +217,18 @@ translations! {
     // Guide tab — junos-guider star profile
     guider_profile_title, guider_profile_no_star, guider_profile_hint, guider_btn_deselect, guider_mass,
     guider_fwhm, guider_saturated,
+    // Guide tab — junos-guider equipment and profiles
+    guider_equipment_title, guider_profile, guider_profiles_title, guider_profile_name, guider_profile_new,
+    guider_profile_rename, guider_profile_delete, guider_profile_import, guider_profile_export,
+    guider_tap_to_confirm, guider_role_camera, guider_role_mount, guider_role_aux, guider_role_ao,
+    guider_role_rotator, guider_connect_all, guider_disconnect_all, guider_connecting, guider_scale_unknown,
+    guider_indi_title, guider_indi_host, guider_indi_port, guider_devices_title, guider_gear_locked,
+    guider_camera_title, guider_cam_ccd, guider_cam_ccd_main, guider_cam_ccd_guide, guider_cam_binning,
+    guider_cam_subframes, guider_cam_pixel_size, guider_cam_sat_by_adu, guider_cam_sat_adu,
+    guider_cam_timeout, guider_cam_gain, guider_cam_cooler, guider_cam_force_video, guider_cam_force_exposure,
+    guider_optics_title, guider_focal_length, guider_pixel_scale, guider_manual_pointing_title,
+    guider_manual_pointing_hint, guider_manual_pointing_incomplete, guider_latitude, guider_longitude,
+    guider_ra_hours, guider_dec_deg, guider_pier_side, guider_apply, guider_clear,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
     // Rig (optical-train) manager — section in the Profiles tab

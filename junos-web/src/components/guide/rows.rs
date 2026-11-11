@@ -59,18 +59,40 @@ pub fn bool_row(r: &Rows, key: &'static str, label: LabelFn) -> impl IntoView + 
 /// Number row. A whole `step` sends an integer, else a float; either is
 /// clamped to `min..=max`.
 pub fn num_row(r: &Rows, key: &'static str, label: LabelFn, min: f64, max: f64, step: f64) -> impl IntoView + use<> {
+    num_row_with(r, key, label, Num { min, max, step, scale: 1.0, int: step.fract() == 0.0 })
+}
+
+/// A number field's bounds, in what it shows: the stored value × `scale`
+/// (100 for a fraction shown in %, 0.001 for ms shown in s); `int` sends
+/// the stored value as an integer.
+#[derive(Clone, Copy)]
+pub struct Num {
+    pub min: f64,
+    pub max: f64,
+    pub step: f64,
+    pub scale: f64,
+    pub int: bool,
+}
+
+/// Number row on a stored value shown scaled.
+pub fn num_row_with(r: &Rows, key: &'static str, label: LabelFn, n: Num) -> impl IntoView + use<> {
     let (set, values) = (r.set.clone(), r.values);
-    let int = step.fract() == 0.0;
+    let shown = move |v: f64| {
+        let v = v * n.scale;
+        // Rounded to the field's step, without float noise.
+        let digits = (-n.step.log10()).ceil().max(0.0) as usize;
+        if n.scale == 1.0 { v.to_string() } else { format!("{v:.digits$}") }
+    };
     view! {
         <div class=ROW>
             <span class=format!("{LABEL} flex-1")>{r.label(label)}</span>
             <input type="number" inputmode="decimal" class=NUM
-                   min=min.to_string() max=max.to_string() step=step.to_string()
-                   prop:value=move || values.with(|s| s.get(key).and_then(Value::as_f64).map(|v| v.to_string()).unwrap_or_default())
+                   min=n.min.to_string() max=n.max.to_string() step=n.step.to_string()
+                   prop:value=move || values.with(|s| s.get(key).and_then(Value::as_f64).map(shown).unwrap_or_default())
                    on:change=move |ev| {
                        let Ok(v) = event_target_value(&ev).parse::<f64>() else { return };
-                       let v = v.clamp(min, max);
-                       set(key, if int { Value::from(v.round() as i64) } else { Value::from(v) });
+                       let v = v.clamp(n.min, n.max) / n.scale;
+                       set(key, if n.int { Value::from(v.round() as i64) } else { Value::from(v) });
                    } />
         </div>
     }

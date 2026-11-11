@@ -57,6 +57,7 @@ use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
+mod equipment;
 mod frame;
 mod native;
 mod protocol;
@@ -113,11 +114,24 @@ fn rms_cls(v: Option<f64>, accuracy: f64) -> &'static str {
     }
 }
 
+/// The native mode's sheets (`native.rs`), one open at a time.
+#[derive(Clone, Copy, PartialEq)]
+enum Sheet {
+    /// Ekos' Guide settings (its guider choice, the PHD2 port).
+    Ekos,
+    Equipment,
+}
+
 /// Download the accumulated guide log as a text file.
 fn export_guide_log(log: &str) {
+    download_text(&format!("guide-log-{}.txt", web_sys::js_sys::Date::now() as u64 / 1000), log);
+}
+
+/// Download `text` as a file called `name`.
+fn download_text(name: &str, text: &str) {
     use wasm_bindgen::JsValue;
     let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
-    let parts = web_sys::js_sys::Array::of1(&JsValue::from_str(log));
+    let parts = web_sys::js_sys::Array::of1(&JsValue::from_str(text));
     let opts = web_sys::BlobPropertyBag::new();
     opts.set_type("text/plain;charset=utf-8");
     let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&parts, &opts) else { return };
@@ -126,7 +140,7 @@ fn export_guide_log(log: &str) {
     if let (Ok(a), Some(body)) = (doc.create_element("a"), doc.body()) {
         let a = a.unchecked_into::<web_sys::HtmlAnchorElement>();
         a.set_href(&url);
-        a.set_download(&format!("guide-log-{}.txt", web_sys::js_sys::Date::now() as u64 / 1000));
+        a.set_download(name);
         let _ = body.append_child(&a);
         a.click();
         let _ = body.remove_child(&a);

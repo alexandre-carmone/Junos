@@ -8,12 +8,17 @@
 // settings and algorithms sheets that use them.
 #![allow(dead_code)]
 
+use std::sync::Arc;
+
 use leptos::prelude::*;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::components::sky::persisted;
+use crate::i18n::Lang;
 use crate::ws::{GuiderPending, GuiderReply, SendCmd};
 use crate::ws_helpers::guider_rpc;
+
+use super::rows::Rows;
 
 // ── PHD2 app states (`get_app_state`, `guider_state.app_state`) ──────────
 pub const STOPPED: &str = "Stopped";
@@ -118,6 +123,106 @@ impl Rpc {
     pub fn reset_algo_params(&self, axis: &str) -> Reply {
         self.call("reset_algo_params", json!({ "axis": axis }))
     }
+}
+
+/// Two numbers within rounding, or two equal values.
+fn same(a: &Value, b: &Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) => (x - y).abs() <= 1e-9 * x.abs().max(1.0),
+        _ => a == b,
+    }
+}
+
+/// An edit on its way: shown until the echo carries it.
+#[derive(Clone)]
+struct Edit {
+    key: &'static str,
+    value: Value,
+    reply: Reply,
+    /// The reply was already `Ok` at an earlier look: the next settings
+    /// change ends the edit, matching or not (the daemon may round it).
+    answered: bool,
+}
+
+/// Rows on junos-guider's profile (`guider_settings`, PHD2's keys).
+/// `defaults` stand for the keys the profile never stored (PHD2's
+/// defaults); an edit goes out through `write` and stays shown until the
+/// echo carries it, or its call fails — `err` then takes the message.
+pub fn profile_rows(
+    settings: RwSignal<Value>,
+    defaults: Vec<(&'static str, Value)>,
+    lang: RwSignal<Lang>,
+    err: RwSignal<Option<String>>,
+    write: impl Fn(&'static str, Value) -> Reply + Send + Sync + 'static,
+) -> Rows {
+    let edits = RwSignal::new(Vec::<Edit>::new());
+    Effect::new(move |_| {
+        let s = settings.get();
+        let mut changed = false;
+        let mut next = edits.get();
+        next.retain_mut(|e| match e.reply.get() {
+            Some(Err(x)) => {
+                err.set(Some(x.message));
+                changed = true;
+                false
+            }
+            _ if s.get(e.key).is_some_and(|v| same(v, &e.value)) => {
+                changed = true;
+                false
+            }
+            Some(Ok(_)) if e.answered => {
+                changed = true;
+                false
+            }
+            Some(Ok(_)) => {
+                e.answered = true;
+                true
+            }
+            None => true,
+        });
+        if changed {
+            edits.set(next);
+        } else {
+            // `answered` flags only: no redraw.
+            edits.update_untracked(|e| *e = next);
+        }
+    });
+    let values = Memo::new(move |_| {
+        let mut m: Map<String, Value> = settings.with(|s| s.as_object().cloned().unwrap_or_default());
+        for (k, v) in &defaults {
+            m.entry(k.to_string()).or_insert_with(|| v.clone());
+        }
+        edits.with(|e| {
+            for e in e {
+                m.insert(e.key.to_string(), e.value.clone());
+            }
+        });
+        Value::Object(m)
+    });
+    let set = move |key: &'static str, value: Value| {
+        err.set(None);
+        let reply = write(key, value.clone());
+        edits.update(|e| {
+            e.retain(|e| e.key != key);
+            e.push(Edit { key, value, reply, answered: false });
+        });
+    };
+    Rows { values: values.into(), set: Arc::new(set), lang }
+}
+
+/// A destructive button: the first tap arms it for 4 s, the second (true)
+/// runs it.
+pub fn second_tap(armed: RwSignal<bool>) -> bool {
+    if armed.get_untracked() {
+        armed.set(false);
+        return true;
+    }
+    armed.set(true);
+    gloo_timers::callback::Timeout::new(4000, move || {
+        armed.try_set(false);
+    })
+    .forget();
+    false
 }
 
 /// The settle block the tab's Guide and Dither send, and the dither
