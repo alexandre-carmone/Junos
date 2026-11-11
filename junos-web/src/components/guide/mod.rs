@@ -58,6 +58,7 @@ use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
 mod algorithms;
+mod calibration;
 mod equipment;
 mod frame;
 mod native;
@@ -122,6 +123,7 @@ enum Sheet {
     Ekos,
     Equipment,
     Algorithms,
+    Calibration,
 }
 
 /// Download the accumulated guide log as a text file.

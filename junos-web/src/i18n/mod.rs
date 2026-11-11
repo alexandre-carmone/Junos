@@ -243,6 +243,14 @@ translations! {
     guider_backlash_title, guider_blc_enabled, guider_blc_pulse, guider_blc_floor, guider_blc_ceiling,
     guider_calibration_title, guider_cal_step, guider_cal_distance, guider_smart_min_move,
     guider_smart_min_move_hint,
+    // Guide tab — junos-guider calibration
+    guider_cal_review, guider_cal_none, guider_cal_ra_angle, guider_cal_ra_rate, guider_cal_ra_parity,
+    guider_cal_dec_angle, guider_cal_dec_rate, guider_cal_dec_parity, guider_cal_ortho,
+    guider_cal_declination, guider_cal_image_scale, guider_cal_when, guider_cal_last_issue,
+    guider_cal_clear_which, guider_cal_both, guider_cal_flip, guider_cal_recalibrate, guider_calstep_title,
+    guider_calstep_speed, guider_calstep_steps, guider_calstep_need_fl, guider_calstep_need_px,
+    guider_manual_cal_title, guider_manual_cal_hint, guider_manual_cal_ra_rate, guider_manual_cal_dec_rate,
+    guider_manual_cal_incomplete,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
     // Rig (optical-train) manager — section in the Profiles tab
