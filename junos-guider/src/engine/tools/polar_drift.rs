@@ -15,6 +15,7 @@
 
 use crate::engine::calibration::{ProfileAccess, degrees, norm, radians};
 use crate::engine::log::cfmt::fmt_f;
+use crate::engine::mount::GuideOutputs;
 use crate::engine::traits::Point;
 
 /// The tool's profile keys (`polardrift_toolwin.cpp:132,141`).
@@ -50,15 +51,6 @@ pub enum Phase {
     Drift,
     /// Stopped with a result: the star is to be moved to `target`.
     Adjust,
-}
-
-/// The guide outputs PHD2 turns off while drifting and restores at Stop
-/// (`m_savePrimaryMountEnabled`, `m_saveSecondaryMountEnabled`). `None` when
-/// there is no such mount.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct GuideOutputs {
-    pub primary: Option<bool>,
-    pub secondary: Option<bool>,
 }
 
 /// The fit after the latest sample (`WatchDrift`).

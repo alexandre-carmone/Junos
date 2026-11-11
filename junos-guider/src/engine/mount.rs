@@ -207,6 +207,16 @@ pub struct MoveResultInfo {
     pub limited: bool,
 }
 
+/// The guide outputs a tool turns off while it measures and restores at
+/// Stop (`m_savePrimaryMountEnabled`, `m_saveSecondaryMountEnabled` of the
+/// Guiding Assistant and the polar drift tool): pMount's and
+/// pSecondaryMount's `GetGuidingEnabled`, `None` when there is no such mount.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GuideOutputs {
+    pub primary: Option<bool>,
+    pub secondary: Option<bool>,
+}
+
 /// What the mount tells the outside, in PHD2's order. The engine maps these
 /// onto the PHD2 events, the guide log, the alerts and the debug log.
 #[derive(Clone, Debug, PartialEq)]

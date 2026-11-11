@@ -26,10 +26,9 @@ use crate::engine::calibration::{
     Calibration, CalibrationDetails, CalibrationIssue, ProfileAccess, camera_to_mount_logged,
 };
 use crate::engine::log::cfmt::{fmt_f, fmt_g};
-use crate::engine::mount::{GuideStepInfo, Mount, MountEvent};
+use crate::engine::mount::{GuideOutputs, GuideStepInfo, Mount, MountEvent};
 use crate::engine::scope::{DecGuideMode, Scope};
 use crate::engine::stats::{AxisStats, DescriptiveStats, HighPassFilter, LowPassFilter};
-use crate::engine::tools::polar_drift::GuideOutputs;
 use crate::engine::traits::{MoveOpts, Point};
 
 /// A backlash longer than this (ms) is beyond compensation: guide Dec one
@@ -154,11 +153,14 @@ pub struct Recommendation {
     pub text: String,
     /// Its Apply button is enabled (never without one).
     pub can_apply: bool,
+    /// Its Apply ran, which turned the button off. A BLT advice can also
+    /// come with the button off from the start (no pulse to apply).
+    pub applied: bool,
 }
 
 impl Recommendation {
     fn new(kind: RecKind, text: String) -> Self {
-        Recommendation { kind, text, can_apply: kind.has_apply() }
+        Recommendation { kind, text, can_apply: kind.has_apply(), applied: false }
     }
 }
 
@@ -241,10 +243,10 @@ pub enum GaEvent {
     Result(String),
     /// `GuideLog.NotifyGACompleted`: the guide-log summary counts the run.
     Completed,
-    /// `NotifyGuidingParam`: the `GuideParamChange` event and its guide-log
-    /// line.
-    ParamChange { name: String, value: Value },
-    /// What the scope or a mount said while an Apply ran.
+    /// What the scope or a mount said while an Apply ran or the
+    /// recommendations read the scope. An Apply's own `NotifyGuidingParam`
+    /// comes as [`MountEvent::GuideParamChange`] too, like the scope
+    /// setters' it calls: one shape for the event and its guide-log line.
     Mount(MountEvent),
     /// `SetGuidingEnabled` on pMount / pSecondaryMount; `None` leaves a
     /// mount alone (there is none).
@@ -348,7 +350,7 @@ impl<P: ProfileAccess + ?Sized> GaCx<'_, P> {
 }
 
 /// What an Apply changes: `TheScope()` and pMount.
-pub struct ApplyCx<'a, P: ProfileAccess> {
+pub struct ApplyCx<'a, P: ProfileAccess + ?Sized> {
     pub scope: Option<&'a mut Scope>,
     /// pMount's `Mount` half when pMount is an AO; `None` when it is the
     /// scope.
@@ -392,9 +394,6 @@ pub struct GuidingAssistant {
     last_time: f64,
     max_rate_ra: f64,
     dec_drift_per_min: f64,
-    /// Never assigned by PHD2 (an uninitialised member it saves as
-    /// `dec_corrected_rms`): 0 here.
-    dec_corrected_rms: f64,
     alignment_error: f64,
     backlash_ms: i32,
     backlash_recommended_ms: i32,
@@ -464,7 +463,6 @@ impl GuidingAssistant {
             last_time: 0.0,
             max_rate_ra: 0.0,
             dec_drift_per_min: 0.0,
-            dec_corrected_rms: 0.0,
             alignment_error: 0.0,
             backlash_ms: 0,
             backlash_recommended_ms: 0,
@@ -641,7 +639,11 @@ impl GuidingAssistant {
         self.dlg_state = DialogState::Measuring;
         self.fill_instructions(DialogState::Measuring);
         self.status = "Measuring...".to_string();
-        // The Recommendations box is hidden until the next results.
+        // The Recommendations box is emptied until the next results.
+        // Deliberate deviation: PHD2 only hides it, and DoStop shows it
+        // again, so a run ended without results (a cancelled countdown,
+        // guiding stopped) shows the previous run's advice with live Apply
+        // buttons. That is GUI only: no PHD2 client sees it.
         self.recs.clear();
 
         ev.push(GaEvent::Debug("GuidingAssistant: Disabling guide output".into()));
@@ -781,7 +783,10 @@ impl GuidingAssistant {
         self.stop_continue(true, perform_blt, cx, ev);
     }
 
-    /// The countdown's one-second timer: at zero the sampling is long enough.
+    /// The countdown's one-second timer: at zero the sampling is long
+    /// enough. PHD2's timer starts at Stop: the caller ticks every second
+    /// from the [`stop`](Self::stop) call that opened the countdown, not on
+    /// a free-running clock, which could end it up to a second early.
     pub fn tick<P: ProfileAccess + ?Sized>(&mut self, cx: &mut GaCx<P>, ev: &mut Vec<GaEvent>) {
         let Some(w) = self.wait.as_mut() else { return };
         w.seconds_left -= 1;
@@ -952,9 +957,10 @@ impl GuidingAssistant {
     /// estimate is the Dec sigma, drift-corrected when that is smaller; over
     /// a run longer than 2.4 minutes, the smallest over 2-minute windows
     /// stepped by a minute. The Dec min-move sits at 1.28 σ (scale < 1.5″)
-    /// or 1.65 σ, rounded up to 0.05 px; RA at 65 % of it (100 % with
-    /// encoders). Over 1.25″ PHD2 distrusts it and falls back to the
-    /// profile wizard's default.
+    /// or 1.65 σ, as `round(x / 0.05 + 0.5) · 0.05`: up to the next 0.05 px,
+    /// and a full step up when `x / 0.05` comes out whole (0.5 → 0.55);
+    /// RA at 65 % of it (100 % with encoders). Over 1.25″ PHD2 distrusts it
+    /// and falls back to the profile wizard's default.
     fn get_min_move_recs(&self, rec: &RecEnv, ev: &mut Vec<GaEvent>) -> (f64, f64) {
         let dbg = |ev: &mut Vec<GaEvent>, s: String| ev.push(GaEvent::Debug(s));
         let stats = &self.dec_axis_stats;
@@ -1013,9 +1019,11 @@ impl GuidingAssistant {
                     while entry(inx).delta_time > target_time {
                         inx -= 1;
                     }
-                    // Fix: after a gap of over 36 s in the samples the next
-                    // window is this one again and PHD2 loops for ever; every
-                    // window it would compute has been.
+                    // Fix: with no sample in (window start, window end −
+                    // 60 s] the next window is this one again and PHD2 loops
+                    // for ever — after a gap of over 60 s mid-run, or of
+                    // over 36 s before the last sample, whose window may end
+                    // at 96 s. Every window it would compute has been.
                     if inx == window_start {
                         break;
                     }
@@ -1060,7 +1068,8 @@ impl GuidingAssistant {
             min_move_floor = 0.05;
         }
         let multiplier_ra = if rec.hp_encoders { 1.0 } else { 0.65 };
-        // Up to the next 0.05 px, at least 0.05.
+        // Up to the next 0.05 px (a whole quotient goes one more), at least
+        // 0.05.
         let unit = 0.05;
         let round_up_est = std_max((best_estimate * multiplier_dec / unit + 0.5).round() * unit, 0.05);
         let (rec_ra, rec_dec);
@@ -1301,9 +1310,11 @@ impl GuidingAssistant {
     /// `OnDecBacklash`). Changes pMount's algorithms or `TheScope()`'s
     /// backlash compensation, with PHD2's debug lines and parameter changes;
     /// the button turns off once applied. Returns whether it ran.
-    pub fn apply<P: ProfileAccess>(&mut self, kind: RecKind, cx: ApplyCx<P>, ev: &mut Vec<GaEvent>) -> bool {
+    pub fn apply<P: ProfileAccess + ?Sized>(&mut self, kind: RecKind, cx: ApplyCx<P>, ev: &mut Vec<GaEvent>) -> bool {
         let Some(idx) = self.recs.iter().position(|r| r.kind == kind && r.can_apply) else { return false };
-        let ApplyCx { scope, ao, profile, algo } = cx;
+        // The setters take `&mut impl ProfileAccess`: `&mut profile` goes
+        // through the `&mut P` impl, so an unsized profile serves too.
+        let ApplyCx { scope, ao, mut profile, algo } = cx;
         let is_ao = ao.is_some();
         let mut mev = Vec::new();
         let mut done = false;
@@ -1319,7 +1330,7 @@ impl GuidingAssistant {
                 if a.min_move() >= 0.0 {
                     let err = a.set_min_move(value);
                     let class = a.class_name();
-                    mount.save_algorithm(axis, profile);
+                    mount.save_algorithm(axis, &mut profile);
                     if !err {
                         ev.push(GaEvent::Debug(format!(
                             "GuideAssistant changed {short}_MinMove to {}",
@@ -1327,7 +1338,7 @@ impl GuidingAssistant {
                         )));
                         // PHD2's trailing space kept.
                         let name = format!("{label} {class} MinMove ");
-                        ev.push(GaEvent::ParamChange { name, value: value.into() });
+                        ev.push(GaEvent::Mount(MountEvent::GuideParamChange { name, value: value.into() }));
                         done = true;
                     } else {
                         ev.push(GaEvent::Debug(format!("GuideAssistant could not change {short}_MinMove")));
@@ -1342,7 +1353,7 @@ impl GuidingAssistant {
                 // Never offered for an AO.
                 let Some(scope) = scope.filter(|_| !is_ao) else { return false };
                 scope.set_guiding_enabled(false, algo, &mut mev);
-                scope.mount.set_guide_algorithm(Axis::Y, AlgoKind::Lowpass2 as i32, profile, algo.now, &mut mev);
+                scope.mount.set_guide_algorithm(Axis::Y, AlgoKind::Lowpass2 as i32, &mut profile, algo.now, &mut mev);
                 ev.extend(mev.drain(..).map(GaEvent::Mount));
                 ev.push(GaEvent::Debug("GuideAssistant changed Dec algo to Lowpass2".into()));
                 if scope.mount.algo(Axis::Y).kind() != AlgoKind::Lowpass2 {
@@ -1353,7 +1364,7 @@ impl GuidingAssistant {
                 let a = scope.mount.algo_mut(Axis::Y);
                 a.set_param("aggressiveness", new_aggr);
                 a.set_param("minMove", self.dec_minmove_rec);
-                scope.mount.save_algorithm(Axis::Y, profile);
+                scope.mount.save_algorithm(Axis::Y, &mut profile);
                 ev.push(GaEvent::Debug(format!(
                     "GuideAssistant set Lowpass2 aggressiveness = {}, min-move = {}",
                     fmt_f(new_aggr, 2),
@@ -1367,14 +1378,14 @@ impl GuidingAssistant {
                     ("Declination Lowpass2 aggressivness", new_aggr.into()),
                     ("Declination Lowpass2 MinMove", self.dec_minmove_rec.into()),
                 ] {
-                    ev.push(GaEvent::ParamChange { name: name.into(), value });
+                    ev.push(GaEvent::Mount(MountEvent::GuideParamChange { name: name.into(), value }));
                 }
                 done = true;
             }
             RecKind::Blt => {
                 let Some(scope) = scope else { return false };
-                scope.set_backlash_pulse_width(self.backlash_recommended_ms, 0, 0, profile, &mut mev);
-                scope.enable_backlash_comp(!is_ao, profile, &mut mev);
+                scope.set_backlash_pulse_width(self.backlash_recommended_ms, 0, 0, &mut profile, &mut mev);
+                scope.enable_backlash_comp(!is_ao, &mut profile, &mut mev);
                 ev.extend(mev.drain(..).map(GaEvent::Mount));
                 done = true;
             }
@@ -1382,6 +1393,7 @@ impl GuidingAssistant {
         }
         if done {
             self.recs[idx].can_apply = false;
+            self.recs[idx].applied = true;
         }
         true
     }
@@ -1393,8 +1405,10 @@ impl GuidingAssistant {
     fn save_results<P: ProfileAccess + ?Sized>(&self, all: &str, profile: &mut P, ev: &mut Vec<GaEvent>) {
         let prefix = format!("{HISTORY_GROUP}/{}", self.start_str);
         let mut d = self.details.clone();
-        // `std::to_string(double)`: `%f`.
-        d.dec_corrected_rms = fmt_f(self.dec_corrected_rms, 6);
+        // `std::to_string(double)`: `%f`. PHD2 saves `decCorrectedRMS`, a
+        // member it never assigns (uninitialised): 0 here, as the harness
+        // starts it.
+        d.dec_corrected_rms = "0.000000".to_string();
         d.dec_lf_drift_rate = fmt_f(self.dec_drift_per_min, 6);
         d.rec_ra_min_move = fmt_f(self.ra_minmove_rec, 6);
         d.rec_dec_min_move = fmt_f(self.dec_minmove_rec, 6);
@@ -2479,7 +2493,6 @@ mod tests {
         let changes = |ev: &[GaEvent]| -> Vec<(String, Value)> {
             ev.iter()
                 .filter_map(|e| match e {
-                    GaEvent::ParamChange { name, value } => Some((name.clone(), value.clone())),
                     GaEvent::Mount(MountEvent::GuideParamChange { name, value }) => Some((name.clone(), value.clone())),
                     _ => None,
                 })
@@ -2526,6 +2539,8 @@ mod tests {
             ]
         );
         assert!(ga.recommendations().iter().all(|r| !r.can_apply));
+        let applied: Vec<RecKind> = ga.recommendations().iter().filter(|r| r.applied).map(|r| r.kind).collect();
+        assert_eq!(applied, [RecKind::RaMinMove, RecKind::DecMinMove, RecKind::DecAlgo]);
         let x = scope.mount.algo(Axis::X);
         assert_eq!(x.min_move(), ra_rec);
         let y = scope.mount.algo(Axis::Y);
@@ -2548,12 +2563,14 @@ mod tests {
         let text = "Try starting with a Dec backlash compensation of 1230 ms";
         ga.recs.push(Recommendation::new(RecKind::Blt, text.into()));
         let mut ev = Vec::new();
-        let cx = ApplyCx { scope: Some(&mut scope), ao: None, profile: &mut p, algo: &algo };
+        // An unsized profile serves.
+        let profile: &mut dyn ProfileAccess = &mut p;
+        let cx = ApplyCx { scope: Some(&mut scope), ao: None, profile, algo: &algo };
         assert!(ga.apply(RecKind::Blt, cx, &mut ev));
         let blc = scope.backlash_comp().unwrap();
         assert_eq!((blc.backlash_pulse_width(), blc.is_enabled()), (1230, true));
         assert_eq!(p.get_i32(crate::engine::backlash::KEY_PULSE, 0), 1230);
         assert!(ev.iter().all(|e| matches!(e, GaEvent::Mount(_))));
-        assert!(!ga.recommendations()[0].can_apply);
+        assert!(!ga.recommendations()[0].can_apply && ga.recommendations()[0].applied);
     }
 }
