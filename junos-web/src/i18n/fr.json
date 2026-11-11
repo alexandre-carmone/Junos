@@ -1130,6 +1130,7 @@
   "apps_section": "Applications",
   "apps_kstars": "KStars",
   "apps_phd2": "PHD2",
+  "apps_junos_guider": "junos-guider",
   "apps_launch": "Lancer",
   "apps_stop": "Arrêter",
   "apps_running": "En cours",

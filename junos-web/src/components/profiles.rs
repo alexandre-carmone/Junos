@@ -17,7 +17,9 @@
 //!           `get_profiles`), `scope_{add,update,delete}` (re-sends
 //!           `get_scopes`), `train_{add,update,delete,set}` (no reply, so
 //!           re-fetched here)
-//! HTTP:     `/api/apps/{launch,stop}` — KStars and PHD2 on the server host
+//! HTTP:     `/api/apps/{launch,stop}` — KStars, PHD2 and junos-guider on the
+//!           server host (PHD2 and junos-guider exclude each other: both
+//!           serve :4400, the refusal shows under the row)
 
 use std::time::Duration;
 
@@ -101,6 +103,7 @@ pub fn ProfilesTab(
     connected: RwSignal<bool>,
     kstars_running: RwSignal<bool>,
     phd2_running: RwSignal<bool>,
+    junos_guider_running: RwSignal<bool>,
     devices: RwSignal<Vec<DeviceInfo>>,
     optical_trains: RwSignal<Vec<OpticalTrain>>,
     scopes: RwSignal<Vec<ScopeInfo>>,
@@ -179,6 +182,7 @@ pub fn ProfilesTab(
                             <span class=CARD_TITLE>{move || tr().apps_section}</span>
                             {app_row(move || tr().apps_kstars, "kstars", kstars_running, lang)}
                             {app_row(move || tr().apps_phd2, "phd2", phd2_running, lang)}
+                            {app_row(move || tr().apps_junos_guider, "junos-guider", junos_guider_running, lang)}
                             {power_row(lang)}
                         </div>
 
@@ -282,8 +286,9 @@ pub fn ProfilesTab(
 
 // ── Cards ─────────────────────────────────────────────────────────────────────
 
-/// KStars or PHD2 on the server host: state, then Launch / Stop. The state
-/// comes back over `/ws`; only a failure needs the HTTP reply.
+/// KStars, PHD2 or junos-guider on the server host: state, then Launch /
+/// Stop. The state comes back over `/ws`; only a failure needs the HTTP
+/// reply (e.g. PHD2 and junos-guider refusing each other's :4400).
 fn app_row(
     label: impl Fn() -> &'static str + Send + 'static,
     app: &'static str,

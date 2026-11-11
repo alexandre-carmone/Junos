@@ -206,6 +206,7 @@ pub fn TabContent(
                     connected=store.connected
                     kstars_running=store.kstars_running
                     phd2_running=store.phd2_running
+                    junos_guider_running=store.junos_guider_running
                     devices=store.devices
                     optical_trains=store.optical_trains
                     scopes=store.scopes

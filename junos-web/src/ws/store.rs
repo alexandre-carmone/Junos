@@ -114,6 +114,9 @@ pub struct DeviceStore {
     /// Whether PHD2 process is running on the server host.
     /// Updated by `app_state` messages pushed from junos-server.
     pub phd2_running: RwSignal<bool>,
+    /// Whether junos-guider runs on the server host (or the relay is
+    /// attached to one). Updated by `app_state` messages.
+    pub junos_guider_running: RwSignal<bool>,
     /// Set true on the first `app_state` message — used by the app shell
     /// to make a one-shot startup decision (e.g. default to Profiles tab
     /// when KStars isn't running).
@@ -286,6 +289,7 @@ impl DeviceStore {
             drivers: RwSignal::new(Vec::new()),
             kstars_running: RwSignal::new(false),
             phd2_running: RwSignal::new(false),
+            junos_guider_running: RwSignal::new(false),
             kstars_state_known: RwSignal::new(false),
             indi_properties: RwSignal::new(std::collections::HashMap::new()),
             indi_messages: RwSignal::new(std::collections::HashMap::new()),
@@ -1736,13 +1740,16 @@ impl DeviceStore {
             }
 
             // junos-server app launcher status: {"kstars":"running"|"stopped",
-            // "phd2":"running"|"stopped"}.
+            // "phd2":"running"|"stopped", "junos_guider":"running"|"stopped"}.
             "app_state" => {
                 if let Some(s) = payload["kstars"].as_str() {
                     self.kstars_running.set(s == "running");
                 }
                 if let Some(s) = payload["phd2"].as_str() {
                     self.phd2_running.set(s == "running");
+                }
+                if let Some(s) = payload["junos_guider"].as_str() {
+                    self.junos_guider_running.set(s == "running");
                 }
                 self.kstars_state_known.set(true);
             }
