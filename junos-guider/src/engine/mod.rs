@@ -230,6 +230,12 @@ pub struct Engine {
     cam_changed: bool,
     cam_warning_issued: bool,
     image_scale_ratio: f64,
+    /// A capture timed out and the camera is to be connected again
+    /// (`SetSkipExposeComplete`, then `TryReconnect`).
+    reconnect: bool,
+    /// `m_cameraReconnectAttempts`: when each reconnect of the last minute
+    /// was tried, wall seconds.
+    reconnect_attempts: Vec<i64>,
     /// An exposure was scheduled and the cancel token not yet cleared for it.
     exposure_seen: bool,
     single: Option<SingleState>,
@@ -297,6 +303,8 @@ impl Engine {
             cam_changed: false,
             cam_warning_issued: false,
             image_scale_ratio: 1.0,
+            reconnect: false,
+            reconnect_attempts: Vec::new(),
             exposure_seen: false,
             single: None,
             ga: None,
@@ -389,9 +397,21 @@ impl Engine {
             self.stop_served = true;
             self.call(|c, cx, ev| c.stop_capturing(cx, ev));
         }
+        let reconnect = std::mem::take(&mut self.reconnect);
+        if reconnect {
+            self.debug("worker thread skipping SendWorkerThreadExposeComplete");
+        }
         self.debug("worker thread done servicing request");
         self.exposure_seen = false;
+        if reconnect {
+            self.try_reconnect();
+            return;
+        }
+        self.expose_complete(captured);
+    }
 
+    /// `OnExposeComplete` with the frame, or with the capture error.
+    fn expose_complete(&mut self, captured: Option<UsImage>) {
         let keep = self.call(|c, cx, ev| c.on_expose_complete(cx.guider, ev));
         if !keep {
             return;
@@ -405,6 +425,39 @@ impl Engine {
         self.note_schedule();
     }
 
+    /// `MyFrame::DoTryReconnect` (myframe.cpp:1375), which the worker
+    /// thread hands the main thread after a timeout: at most 3 tries in a
+    /// minute. A camera connected again takes the next exposure, without
+    /// `OnExposeComplete` for the lost one, so guiding goes on; otherwise
+    /// the lost exposure fails as any other.
+    fn try_reconnect(&mut self) {
+        const TIME_WINDOW: i64 = 60;
+        const MAX_ATTEMPTS: usize = 3;
+        let now = self.wall().timestamp();
+        self.debug(&format!("Try camera reconnect, now = {now}"));
+        while self.reconnect_attempts.first().is_some_and(|&t| now - t > TIME_WINDOW) {
+            self.reconnect_attempts.remove(0);
+        }
+        if self.reconnect_attempts.len() + 1 > MAX_ATTEMPTS {
+            self.debug(&format!(
+                "More than {MAX_ATTEMPTS} camera reconnect attempts in less than {TIME_WINDOW} seconds, \
+                 return without reconnect."
+            ));
+            self.expose_complete(None);
+            return;
+        }
+        self.reconnect_attempts.push(now);
+        self.debug("gear_dialog: ReconnectCamera");
+        self.connect_camera(true);
+        if self.camera_connected() {
+            self.debug("Camera Re-connect succeeded, resume exposures");
+            self.call(|c, cx, ev| c.resume_exposures(cx, ev));
+        } else {
+            self.debug("Camera Re-connect failed");
+            self.expose_complete(None);
+        }
+    }
+
     /// The exposure itself and the camera's post-processing; `None` when
     /// it failed (the alert raised).
     fn capture(&mut self, req: ExposureRequest) -> Option<UsImage> {
@@ -413,6 +466,9 @@ impl Engine {
             "Handling exposure in thread, d={} o={:x} r=({},{},{},{})",
             req.duration_ms, 3, r.x, r.y, r.w, r.h
         ));
+        // `DisconnectWithAlert` words a timeout with the exposure setting
+        // before the camera disconnects (camera.cpp:1521).
+        let requested = self.ctrl.requested_exposure_duration(self.camera_connected());
         let sub = (!r.is_empty()).then_some(r);
         let res = match self.camera.as_deref_mut() {
             Some(camera) => capture_frame(
@@ -430,19 +486,36 @@ impl Engine {
         match res {
             Ok(mut img) => {
                 self.debug("Exposure complete");
-                // `SubtractDark` inside the camera's Capture (cam_indi.cpp:1130):
-                // a size mismatch is ignored, as in PHD2.
+                // The camera's own post-processing (cam_indi.cpp:1130-1137):
+                // `SubtractDark` (a size mismatch ignored, as in PHD2), then
+                // a colour sensor's luminance at binning 1, then pixels
+                // made square.
                 let _ = self.darks.subtract_dark(&mut img);
+                if let Some(c) = self.camera.as_deref() {
+                    if c.has_bayer() && c.binning() == 1 {
+                        image::quick_l_recon(&mut img);
+                    }
+                    if let Some((x, y)) = c.pixel_size_xy()
+                        && x != y
+                    {
+                        image::square_pixels(&mut img, x as f32, y as f32);
+                    }
+                }
                 apply_noise_reduction(&mut img, self.nr);
                 img.calc_stats();
                 Some(img)
             }
             Err(e) => {
-                let requested = self.ctrl.requested_exposure_duration(self.camera_connected());
-                if let Some((msg, _reconnect)) = e.alert(requested, &self.cam) {
+                if let Some((msg, reconnect)) = e.alert(requested, &self.cam) {
                     self.alert(msg, mount::AlertKind::Warning);
+                    if reconnect {
+                        // `InitiateReconnect` from the worker thread.
+                        self.debug("worker thread setting skip send exposure complete");
+                        self.debug("worker thread queueing reconnect event to GUI thread");
+                        self.reconnect = true;
+                    }
                 }
-                self.debug("Error thrown from worker_thread.cpp:199->Capture failed");
+                self.debug("Error thrown from worker_thread.cpp:195->Capture failed");
                 None
             }
         }
@@ -708,7 +781,7 @@ impl Engine {
             }
             _ => {}
         }
-        self.debug("Error thrown from myframe_events.cpp:675->Error reported moving");
+        self.debug("Error thrown from myframe_events.cpp:676->Error reported moving");
     }
 
     // --------------------------------------------------------- the borrows

@@ -981,6 +981,12 @@ impl GuideCamera for SimCamera {
         lock(&self.0).connected
     }
 
+    /// `CameraSimulator::Connect` again: never fails.
+    fn reconnect(&mut self, _cancel: &CancelToken) -> Result<(), String> {
+        SimCamera::connect(self);
+        Ok(())
+    }
+
     fn frame_size(&self) -> (i32, i32) {
         lock(&self.0).frame_size
     }

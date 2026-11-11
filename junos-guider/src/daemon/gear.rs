@@ -662,6 +662,9 @@ impl<C: GuideCamera> GuideCamera for Shared<C> {
     fn take_debug(&mut self) -> Vec<String> {
         GuideCamera::take_debug(&mut *self.lock())
     }
+    fn reconnect(&mut self, cancel: &CancelToken) -> Result<(), String> {
+        self.lock().reconnect(cancel)
+    }
     fn capture(
         &mut self,
         dur_ms: u32,

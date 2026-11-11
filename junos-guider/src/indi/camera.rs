@@ -475,6 +475,11 @@ impl GuideCamera for IndiCamera {
         format!("INDI Camera [{}]", self.device)
     }
 
+    /// `Connect` again after a capture timeout let go of the device.
+    fn reconnect(&mut self, cancel: &CancelToken) -> Result<(), String> {
+        IndiCamera::connect(self, cancel)
+    }
+
     fn is_connected(&self) -> bool {
         self.is_connected_in(&self.client.lock())
     }

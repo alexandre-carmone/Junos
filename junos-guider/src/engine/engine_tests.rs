@@ -527,18 +527,23 @@ fn an_ao_calibrates_then_bumps_the_mount() {
 }
 
 
-/// The simulator's camera, failing its captures on demand, under another
-/// name or pixel size when asked.
+/// The simulator's camera, failing its captures on demand — or timing
+/// out, which disconnects it until reconnected — under another name or
+/// pixel size when asked.
 struct Flaky {
     cam: SimCamera,
     fail: Arc<AtomicBool>,
+    timeout: Arc<AtomicBool>,
+    down: bool,
     name: String,
     pixel_um: Option<f64>,
+    pixel_xy: Option<(f64, f64)>,
 }
 
 impl Flaky {
     fn new(cam: &SimCamera) -> Flaky {
-        Flaky { cam: cam.clone(), fail: Arc::default(), name: cam.name(), pixel_um: None }
+        let (fail, timeout) = (Arc::default(), Arc::default());
+        Flaky { cam: cam.clone(), fail, timeout, down: false, name: cam.name(), pixel_um: None, pixel_xy: None }
     }
 }
 
@@ -547,7 +552,11 @@ impl GuideCamera for Flaky {
         self.name.clone()
     }
     fn is_connected(&self) -> bool {
-        self.cam.is_connected()
+        self.cam.is_connected() && !self.down
+    }
+    fn reconnect(&mut self, _cancel: &CancelToken) -> Result<(), String> {
+        self.down = false;
+        Ok(())
     }
     fn frame_size(&self) -> (i32, i32) {
         self.cam.frame_size()
@@ -563,6 +572,9 @@ impl GuideCamera for Flaky {
     }
     fn pixel_size_um(&self) -> Option<f64> {
         self.pixel_um
+    }
+    fn pixel_size_xy(&self) -> Option<(f64, f64)> {
+        self.pixel_xy
     }
     fn bits_per_pixel(&self) -> u8 {
         self.cam.bits_per_pixel()
@@ -586,6 +598,10 @@ impl GuideCamera for Flaky {
     ) -> Result<UsImage, CaptureError> {
         if self.fail.load(Ordering::SeqCst) {
             return Err(CaptureError::Failed(Some("Exposure failed".into())));
+        }
+        if self.timeout.load(Ordering::SeqCst) {
+            self.down = true;
+            return Err(CaptureError::Timeout);
         }
         self.cam.capture(dur_ms, kind, subframe, settings, cancel)
     }
@@ -621,6 +637,77 @@ fn a_capture_error_stops_guiding_and_looping() {
     // The guider is back to looping without a star (`Reset(false)`).
     assert_eq!(snap.guider_state, Some(guider::GuiderState::Selecting));
     assert!(r.debug_log().contains("Error thrown from myframe_events.cpp:557->Error reported capturing image"));
+}
+
+#[test]
+fn a_camera_timeout_reconnects_and_guiding_goes_on() {
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    let flaky = Flaky::new(&r.cam);
+    let timeout = flaky.timeout.clone();
+    let gear = r.gear(Box::new(flaky), false);
+    r.cmd(Command::Attach(gear)).unwrap();
+    r.cmd(Command::Loop).unwrap();
+    r.step();
+    r.cmd(Command::FindStar { roi: None }).unwrap();
+    r.cmd(Command::Guide { settle: settle(1.5, 0, 60), recalibrate: false, roi: None }).unwrap();
+    r.run_until(200, |e| matches!(e, EngineEvent::StartGuiding));
+    let exposure = r.e.snapshot().exposure_ms;
+    r.ev.clear();
+
+    // The camera disconnects itself on a timeout; PHD2 connects it again
+    // and takes the next exposure: clients only see the alert.
+    timeout.store(true, Ordering::SeqCst);
+    r.step();
+    timeout.store(false, Ordering::SeqCst);
+    let words = format!("has not completed a {} sec exposure", log::cfmt::fmt_f(exposure as f64 / 1000.0, 1));
+    let alert = |e: &EngineEvent| {
+        matches!(e, EngineEvent::Alert { msg, .. }
+            if msg.contains(&words) && msg.ends_with("PHD will make several attempts to re-connect the camera."))
+    };
+    assert_eq!(r.count(alert), 1);
+    let stopped = |e: &EngineEvent| matches!(e, EngineEvent::GuidingStopped | EngineEvent::LoopingExposuresStopped);
+    assert_eq!(r.count(stopped), 0);
+    let snap = r.e.snapshot();
+    assert!(snap.capture_active && snap.connected && r.e.has_work());
+    let dbg = r.debug_log();
+    for line in [
+        "worker thread skipping SendWorkerThreadExposeComplete",
+        "gear_dialog: ReconnectCamera",
+        "DoConnectCamera: reconnecting=1",
+        "Camera Re-connect succeeded, resume exposures",
+    ] {
+        assert!(dbg.contains(line), "{line}");
+    }
+    r.run_until(10, |e| matches!(e, EngineEvent::GuideStep { .. }));
+
+    // Three reconnects a minute at most: two more timeouts reconnect, the
+    // next fails the exposure, and capture stops.
+    r.ev.clear();
+    timeout.store(true, Ordering::SeqCst);
+    for _ in 0..2 {
+        r.step();
+    }
+    assert_eq!(r.count(stopped), 0);
+    r.step();
+    assert!(r.debug_log().contains("More than 3 camera reconnect attempts in less than 60 seconds"));
+    assert_eq!(r.count(alert), 3);
+    assert!(r.position(|e| matches!(e, EngineEvent::GuidingStopped)).is_some());
+    assert!(!r.e.has_work() && !r.e.snapshot().capture_active);
+}
+
+#[test]
+fn pixels_twice_as_wide_as_tall_are_made_square() {
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    let mut cam = Flaky::new(&r.cam);
+    cam.pixel_xy = Some((2.0 * PIXEL_UM, PIXEL_UM));
+    let gear = r.gear(Box::new(cam), false);
+    r.cmd(Command::Attach(gear)).unwrap();
+    r.cmd(Command::Loop).unwrap();
+    r.step();
+    let (w, h) = r.cam.frame_size();
+    let img = r.e.snapshot().image.expect("frame");
+    // `SquarePixels` after the capture (cam_indi.cpp:1137).
+    assert_eq!((img.w, img.h), (2 * w, h));
 }
 
 #[test]

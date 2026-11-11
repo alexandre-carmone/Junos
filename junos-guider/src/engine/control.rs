@@ -951,6 +951,14 @@ impl Control {
         self.exposure = Some(req);
     }
 
+    /// `DoTryReconnect` once the camera is back: the lost exposure no
+    /// longer pending (`m_exposurePending = false`), the next one
+    /// scheduled.
+    pub fn resume_exposures(&mut self, cx: &mut ControlCx, ev: &mut Vec<ControlEvent>) {
+        self.exposure = None;
+        self.schedule_exposure(cx, ev);
+    }
+
     /// `MyFrame::StartLooping` (the `loop` method): loop, unless already;
     /// while calibrating or guiding, guiding stops and the loop goes on.
     /// False (PHD2's error) without a camera.
