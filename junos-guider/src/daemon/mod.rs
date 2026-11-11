@@ -284,6 +284,37 @@ impl Daemon {
         .ok_or_else(internal)?
     }
 
+    /// `set_profile`: `GearDialog::SetProfile`, with its error texts. The
+    /// gear choices are read again at the next connect.
+    pub async fn set_profile(&self, id: i32) -> Reply {
+        let connecting = self.0.connecting.load(Ordering::SeqCst);
+        self.run(move |e, rig| {
+            if id == e.store().current_profile_id() {
+                return Ok(json!(0));
+            }
+            if connecting {
+                return Err(CmdError::new(1, "cannot set profile when Connect Equipment dialog is open"));
+            }
+            if rig.any_connected() {
+                return Err(CmdError::new(1, "cannot set profile when equipment is connected"));
+            }
+            if !e.store().profile_exists(id) {
+                return Err(CmdError::new(1, "invalid profile id"));
+            }
+            let name = e.store().profile_name(id);
+            e.store().set_current_profile(&name);
+            e.handle(Command::ProfileChanged)
+        })
+        .await
+        .ok_or_else(internal)?
+    }
+
+    /// PHD2's default file folder (`GetDefaultFileDir`): where
+    /// `export_config_settings` writes.
+    pub fn data_dir(&self) -> &str {
+        &self.0.opts.engine.data_dir
+    }
+
     /// The `shutdown` method without the exit (`MyFrame::OnClose`): capture
     /// stopped, a connect in progress given up, every device disconnected
     /// (`GearDialog::Shutdown`, no capture check left to fail).

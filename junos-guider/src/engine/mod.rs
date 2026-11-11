@@ -1511,6 +1511,7 @@ impl Engine {
             settling: self.ctrl.is_settling(),
             dithering: self.ctrl.is_dithering(),
             lock_shift: self.guider.lock_shift_params(),
+            lock_shift_rate: self.guider.lock_shift_rate(),
             frame_size: self.camera.as_ref().map_or((0, 0), |c| c.frame_size()),
             binning: self.binning(),
             max_binning: self.camera.as_ref().map_or(1, |c| c.max_binning()),

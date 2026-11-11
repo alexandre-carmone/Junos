@@ -211,6 +211,9 @@ pub struct Snapshot {
     pub settling: bool,
     pub dithering: bool,
     pub lock_shift: LockShiftParams,
+    /// `LockPosition().ShiftRate()`: the shift in camera px per second;
+    /// `None` before one was worked out.
+    pub lock_shift_rate: Option<Point>,
     /// The camera's last frame size, px; binning.
     pub frame_size: (i32, i32),
     pub binning: u8,

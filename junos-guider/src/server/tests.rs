@@ -182,3 +182,75 @@ async fn a_line_too_long_is_refused() {
     assert_eq!(c.text().await, r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"too big"},"id":null}"#);
     d.close();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn methods_answer_as_phd2() {
+    let (d, server, dir) = start("methods").await;
+    let mut c = Client::connect(&server).await;
+    c.until("AppState").await;
+    let mut id = 0;
+    let mut call = async |c: &mut Client, method: &str, params: Value| {
+        id += 1;
+        let req = json!({ "method": method, "params": params, "id": id });
+        c.send(&req.to_string()).await;
+        loop {
+            let v = c.line().await;
+            if v.get("jsonrpc").is_some() {
+                assert_eq!(v["id"], id, "{v}");
+                return v.get("result").cloned().unwrap_or_else(|| v["error"].clone());
+            }
+        }
+    };
+
+    // Nothing connected yet.
+    assert_eq!(call(&mut c, "get_profile", json!([])).await, json!({ "id": 1, "name": "My Equipment" }));
+    assert_eq!(call(&mut c, "get_profiles", json!([])).await, json!([{ "id": 1, "name": "My Equipment", "selected": true }]));
+    assert_eq!(call(&mut c, "set_profile", json!([1])).await, 0);
+    assert_eq!(call(&mut c, "set_profile", json!([2])).await["message"], "invalid profile id");
+    assert_eq!(call(&mut c, "set_profile", json!(["1"])).await["code"], -32602);
+    assert_eq!(call(&mut c, "get_camera_binning", json!([])).await["message"], "camera not connected");
+    assert_eq!(call(&mut c, "get_guide_output_enabled", json!([])).await["message"], "mount not defined");
+    assert_eq!(call(&mut c, "get_algo_param_names", json!(["ra"])).await, json!(["algorithmName"]));
+    assert_eq!(call(&mut c, "get_algo_param", json!(["ra", "minMove"])).await["message"], "could not get param");
+    assert_eq!(call(&mut c, "get_algo_param_names", json!(["z"])).await["message"], "expected axis name param");
+    assert_eq!(call(&mut c, "get_lock_position", json!([])).await, Value::Null);
+    assert_eq!(call(&mut c, "get_limit_frame", json!([])).await, json!({ "roi": null }));
+    assert_eq!(call(&mut c, "set_limit_frame", json!({})).await["message"], "missing required param `roi`");
+    let e = call(&mut c, "capture_single_frame", json!({})).await;
+    assert_eq!(e["message"], "cannot capture single frame when camera is not connected");
+
+    d.set_connected(true).await.unwrap();
+    assert_eq!(call(&mut c, "set_profile", json!({ "id": 2 })).await["message"], "cannot set profile when equipment is connected");
+    assert_eq!(call(&mut c, "get_camera_binning", json!([])).await, 1);
+    assert_eq!(call(&mut c, "get_guide_output_enabled", json!([])).await, true);
+    let names = call(&mut c, "get_algo_param_names", json!({ "axis": "RA" })).await;
+    assert_eq!(names, json!(["algorithmName", "minMove", "hysteresis", "aggression"]));
+    assert_eq!(call(&mut c, "get_algo_param", json!(["x", "algorithmName"])).await, "Hysteresis");
+    assert_eq!(call(&mut c, "set_algo_param", json!(["ra", "aggression", 0.5])).await, 0);
+    assert_eq!(call(&mut c, "get_algo_param", json!(["ra", "aggression"])).await, 0.5);
+    assert_eq!(call(&mut c, "set_algo_param", json!(["ra", "aggression"])).await["message"], "expected param value param");
+    assert_eq!(call(&mut c, "get_calibration_data", json!(["mount"])).await, json!({ "calibrated": false }));
+    assert_eq!(call(&mut c, "get_calibration_data", json!(["ao"])).await["message"], "device not connected");
+    assert_eq!(call(&mut c, "get_calibration_data", json!(["both"])).await["message"], "invalid 'which' param");
+    let shift = call(&mut c, "get_lock_shift_params", json!([])).await;
+    assert_eq!(shift, json!({ "enabled": false, "rate": [0.0, 0.0], "units": "arcsec/hr", "axes": "RA/Dec" }));
+    let set = json!([{ "rate": [3.3, 1.1], "units": "pixels/hr", "axes": "X/Y" }]);
+    assert_eq!(call(&mut c, "set_lock_shift_params", set).await, 0);
+    let shift = call(&mut c, "get_lock_shift_params", json!([])).await;
+    assert_eq!(shift, json!({ "enabled": false, "rate": [3.3, 1.1], "units": "pixels/hr", "axes": "X/Y" }));
+    assert_eq!(call(&mut c, "set_variable_delay_settings", json!([true, 5.9, 20])).await, 0);
+    let delay = call(&mut c, "get_variable_delay_settings", json!([])).await;
+    assert_eq!(delay, json!({ "Enabled": true, "ShortDelaySeconds": 5, "LongDelaySeconds": 20 }));
+    let e = call(&mut c, "capture_single_frame", json!({ "exposure": 0 })).await;
+    assert_eq!((e["code"].as_i64(), e["message"].as_str()), (Some(-32602), Some("expected exposure param")));
+    let e = call(&mut c, "capture_single_frame", json!({ "path": "rel.fit" })).await;
+    assert_eq!(e["message"], "path param must be an absolute path");
+    assert_eq!(call(&mut c, "get_star_image", json!([])).await["message"], "no star selected");
+    let file = call(&mut c, "export_config_settings", json!([])).await;
+    let file = file["filename"].as_str().unwrap().to_string();
+    assert_eq!(Path::new(&file), dir.join("phd2_settings.txt"));
+    assert!(fs::read_to_string(&file).unwrap().starts_with("PHD Config 1"));
+
+    d.shutdown().await;
+    d.close();
+}

@@ -1638,6 +1638,7 @@ dependencies = [
  "chrono",
  "clap",
  "flate2",
+ "junos-guider",
  "serde",
  "serde_json",
  "tokio",

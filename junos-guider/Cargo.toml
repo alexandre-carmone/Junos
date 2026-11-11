@@ -35,3 +35,8 @@ flate2             = "1"
 # The daemon's I/O: the reply and event channels around the engine thread,
 # the event server and the relay's socket.
 tokio              = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+# The crate itself with the gear simulator, for the tests under `tests/`
+# (the library is built without `cfg(test)` there).
+junos-guider = { path = ".", features = ["sim"] }

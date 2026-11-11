@@ -3,7 +3,8 @@
 //!
 //! [`rpc`] holds the protocol itself, free of sockets: the line framing, the
 //! request parsing, the method table, the parameter getters and the replies.
-//! [`events`] writes the events and the catch-up.
+//! [`events`] writes the events and the catch-up; `methods` answers the 54
+//! methods, from the engine or its snapshot.
 //!
 //! The server listens on every interface with `SO_REUSEADDR`, as PHD2's
 //! `wxSocketServer` does. Each client gets a task that reads its requests
@@ -34,6 +35,7 @@
 //! Ported from PHD2 src/event_server.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
 pub mod events;
+mod methods;
 pub mod rpc;
 
 use std::io;
@@ -48,7 +50,7 @@ use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{broadcast, mpsc, watch};
 
 use self::events::Origin;
-use self::rpc::{Call, INTERNAL_ERROR, LineReader, Parsed, RpcError};
+use self::rpc::{Call, LineReader, Parsed, RpcError};
 use crate::daemon::Daemon;
 use crate::engine::EngineEvent;
 
@@ -236,18 +238,12 @@ async fn read_loop(mut rd: OwnedReadHalf, tx: mpsc::Sender<Outgoing>, s: &Shared
         for input in lines.feed(&buf[..n]) {
             let mut guard = ReplyGuard::new(rpc::parse(&input), tx.clone());
             for call in guard.calls() {
-                let outcome = run(s, &call).await;
+                let outcome = methods::run(s, &call).await;
                 guard.outcomes.push(outcome);
             }
             guard.send().await;
         }
     }
-}
-
-/// The method behind a call. The methods come with `methods.rs`; until
-/// then every call is answered as one whose handler failed.
-async fn run(_s: &Shared, _call: &Call) -> Result<Value, RpcError> {
-    Err(RpcError::new(INTERNAL_ERROR, "internal error"))
 }
 
 /// One request line's reply, sent however its handlers end: dropped
