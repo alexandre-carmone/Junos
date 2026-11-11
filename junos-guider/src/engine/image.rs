@@ -201,7 +201,7 @@ fn histogram_stats(pixels: &[u16]) -> (u16, u16, u16) {
 /// hand-unrolled sorting networks (image_math.cpp:182-394) that return the
 /// middle element for an odd count and the truncated mean of the two
 /// middle elements for an even one; a sort gives the same numbers.
-fn window_median(win: &mut [u16]) -> u16 {
+pub(crate) fn window_median(win: &mut [u16]) -> u16 {
     win.sort_unstable();
     let n = win.len();
     if n % 2 == 1 {
