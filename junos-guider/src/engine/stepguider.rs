@@ -749,7 +749,33 @@ impl StepGuider {
     /// weight AO steps (at least the `BumpSettlingBoost` weight while
     /// settling), never longer than the star offset. `frame` is read once,
     /// after the AO moves (see [`Mount::move_offset`]).
+    ///
+    /// The step's [`MountEvent::GuideStep`] comes last: PHD2 logs it
+    /// (`LogGuideStepInfo`) when the move completes, on the main thread,
+    /// after everything `MoveOffset` did on the worker thread, so the
+    /// slow-bump alert reaches the event server first.
     pub fn move_offset(
+        &mut self,
+        ofs: &mut GuiderOffset,
+        opts: MoveOpts,
+        frame: impl FnOnce() -> StepFrame,
+        ctx: &AlgoCtx,
+        env: &BumpEnv,
+        dev: &mut dyn StepGuiderDevice,
+        profile: &impl ProfileAccess,
+        events: &mut Vec<MountEvent>,
+    ) -> (MoveResult, Option<GuiderOffset>) {
+        let start = events.len();
+        let out = self.move_and_bump(ofs, opts, frame, ctx, env, dev, profile, events);
+        if let Some(i) = events[start..].iter().position(|e| matches!(e, MountEvent::GuideStep(_))) {
+            let step = events.remove(start + i);
+            events.push(step);
+        }
+        out
+    }
+
+    /// [`move_offset`](Self::move_offset) before the step is logged.
+    fn move_and_bump(
         &mut self,
         ofs: &mut GuiderOffset,
         opts: MoveOpts,
@@ -821,10 +847,11 @@ impl StepGuider {
                     );
                     self.bump_step_weight += 1.0 / 6.0;
                 }
-                // No bump larger than half the search region. `wxMax(a, b)`
-                // is `a < b ? b : a`.
+                // No bump larger than half the search region. wx 3.2's
+                // `wxMax(a, b)` is `a > b ? a : b`: a NaN rate (a 1-step
+                // travel calibrated without moving, 0/0) gives way to the other.
                 let (xr, yr) = (self.calibration.x_rate, self.calibration.y_rate);
-                let move_px = (if xr < yr { yr } else { xr }) * self.bump_max_steps_per_cycle;
+                let move_px = (if xr > yr { xr } else { yr }) * self.bump_max_steps_per_cycle;
                 let max_move_px = env.max_move_pixels as f64 * 0.5;
                 let max_weight = max_move_px / move_px;
                 if self.bump_step_weight > max_weight {
@@ -858,7 +885,8 @@ impl StepGuider {
                     // Quirk kept: PHD2 asks for the information icon, which
                     // its `SuppressibleAlert` drops, so the event says
                     // "warning".
-                    events.push(MountEvent::Alert { msg: msg.into(), kind: AlertKind::Warning });
+                    let dont_show = Some("SlowBumpWarningEnabled");
+                    events.push(MountEvent::Alert { msg: msg.into(), kind: AlertKind::Warning, dont_show });
                 }
                 self.bump_timeout_alert_sent = true;
             }
@@ -888,8 +916,7 @@ impl StepGuider {
             return (result, None);
         }
 
-        // `m_lastStep`, which a deduced move with nothing to do leaves as it
-        // was: the AO move just made, or an earlier one.
+        // `m_lastStep`: the AO move just made (deduced moves returned above).
         let limited = self.mount.last_step().is_some_and(|s| s.dec_limited || s.ra_limited);
         let this_bump = if limited {
             // The AO ran out of travel: skip the gentle bump and correct with
@@ -938,9 +965,10 @@ impl StepGuider {
         (result, Some(GuiderOffset { camera_ofs: this_bump, mount_ofs: None }))
     }
 
-    /// `ForceStartBump`: start a bump on the next guide step.
+    /// `ForceStartBump`: start a bump on the next guide step. Quirk kept:
+    /// PHD2 writes its debug line without a newline.
     pub fn force_start_bump(&mut self, events: &mut Vec<MountEvent>) {
-        debug(events, "StepGuider: force bump");
+        events.push(MountEvent::DebugNoNewline("StepGuider: force bump".into()));
         self.force_start_bump = true;
     }
 
@@ -1105,6 +1133,7 @@ impl StepGuider {
                 msg: "The AO is failing to move and calibration cannot complete. Check the Debug Log for more information."
                     .into(),
                 kind: AlertKind::Warning,
+                dont_show: None,
             });
             debug(
                 events,
@@ -1665,6 +1694,7 @@ mod tests {
         for e in events.drain(..) {
             let line = match e {
                 MountEvent::Debug(s) => format!("DEBUG: {s}"),
+                MountEvent::DebugNoNewline(s) => format!("DEBUG_NO_NL: {s}"),
                 MountEvent::Alert { msg, .. } => format!("ALERT: {msg}"),
                 MountEvent::Status(s) => format!("STATUS: {s}"),
                 MountEvent::CalibrationRow(i) => format!(
@@ -1785,7 +1815,10 @@ mod tests {
         // of the travel, halves back inside — the secondary mount busy every
         // fifth frame, the slow-bump alert, a dither's forced bump, a
         // deduced move, a settling boost, a device limit that recentres,
-        // then the stop's recentring and two manual moves.
+        // then the stop's recentring and two manual moves. Each step is
+        // logged when its move completes, after the bump's lines and alert,
+        // as PHD2's main thread does (harness:
+        // target/scratch/harness/stepguider).
         const GOLDEN: &str = include_str!("testdata/stepguider_phd2.txt");
 
         let mut profile = Profile::default();
@@ -2135,10 +2168,12 @@ mod tests {
         assert!((b.camera_ofs.x - -0.281907786235772).abs() < 1e-12, "{:?}", b);
         assert!((b.camera_ofs.y - -0.0855050358314172).abs() < 1e-12, "{:?}", b);
         assert!(sg.is_bump_in_progress());
+        // The step is logged last, when the move completes.
         let lines = rendered(&mut ev);
-        let tail: Vec<&str> = lines.iter().map(|s| s.as_str()).skip_while(|l| !l.starts_with("STEP")).skip(1).collect();
+        let tail: Vec<&str> =
+            lines.iter().map(|s| s.as_str()).skip_while(|l| *l != "DEBUG: starting a new bump").collect();
         assert_eq!(
-            tail,
+            tail[..5],
             [
                 "DEBUG: starting a new bump",
                 "DEBUG: MountToCamera -- mountTheta (-3.14) + m_xAngle (0.35) = xAngle (-2.79 = -2.79)",
@@ -2147,6 +2182,7 @@ mod tests {
                 "DEBUG: Scheduling Mount bump of (-0.282, -0.086)",
             ]
         );
+        assert!(tail.len() == 6 && tail[5].starts_with("STEP: "), "{tail:?}");
         // Shown on the AO graph in AO steps.
         let shown = sg.shown_bump().unwrap();
         assert!((shown.x - -0.981).abs() < 0.001 && (shown.y - 0.023).abs() < 0.001, "{shown:?}");
@@ -2163,7 +2199,8 @@ mod tests {
         env.secondary_busy = true;
         let (_, bump) = guide(&mut sg, &mut ao, &profile, cam, MoveOpts::GUIDE_STEP, &env, &mut ev);
         assert_eq!(bump, None);
-        assert_eq!(rendered(&mut ev).last().unwrap(), "DEBUG: secondary mount is busy, cannot bump");
+        let lines = rendered(&mut ev);
+        assert_eq!(lines[lines.len() - 2], "DEBUG: secondary mount is busy, cannot bump");
         assert_eq!(sg.bump_step_weight, 1.0 + 1.0 / 6.0);
 
         // A deduced move defers it.
@@ -2179,12 +2216,13 @@ mod tests {
         assert_eq!((r, bump), (MoveResult::Error, None));
         let lines = rendered(&mut ev);
         assert_eq!(
-            lines[lines.len() - 2..],
+            lines[lines.len() - 3..lines.len() - 1],
             [
                 "DEBUG: StepGuider::Move: Mount::Move failed! result 1",
                 "DEBUG: Throw from stepguider.cpp:1041->Guiding disabled",
             ]
         );
+        assert!(lines.last().unwrap().starts_with("STEP: "));
         sg.mount_mut().set_guiding_enabled(true, &AlgoCtx::default(), &mut ev);
 
         // Stopping clears the bump and steps back to the centre.
@@ -2192,6 +2230,9 @@ mod tests {
         assert_eq!((sg.ao_pos(), sg.is_bump_in_progress(), sg.bump_step_weight), ((0, 0), false, 1.0));
     }
 
+    /// The alert comes before the frame's `GuideStep` (PHD2 queues it from
+    /// the worker thread before the move completes), with the key of its
+    /// "Don't show again" button.
     #[test]
     fn a_slow_bump_warns_once_unless_suppressed() {
         const MSG: &str = "A mount \"bump\" was needed to bring the AO back to its center position,\nbut the bump did not complete in a reasonable amount of time.\nYou probably need to increase the AO Bump Step setting.";
@@ -2212,9 +2253,10 @@ mod tests {
             for now in [0.0, 240.9, 241.0, 300.0] {
                 env.now = now;
                 guide(&mut sg, &mut ao, &profile, Point::new(2.0, 1.0), MoveOpts::GUIDE_STEP, &env, &mut ev);
+                assert!(matches!(ev.last(), Some(MountEvent::GuideStep(_))));
                 for e in ev.drain(..) {
                     match e {
-                        MountEvent::Alert { msg, kind } => warned.push((now, msg, Some(kind))),
+                        MountEvent::Alert { msg, kind, dont_show } => warned.push((now, msg, Some((kind, dont_show)))),
                         MountEvent::Debug(l) if l.starts_with("Suppressed") => warned.push((now, l, None)),
                         _ => {}
                     }
@@ -2223,7 +2265,7 @@ mod tests {
             let want = if suppressed {
                 (241.0, format!("Suppressed alert:  {MSG}"), None)
             } else {
-                (241.0, MSG.to_string(), Some(AlertKind::Warning))
+                (241.0, MSG.to_string(), Some((AlertKind::Warning, Some("SlowBumpWarningEnabled"))))
             };
             assert_eq!(warned, [want]);
         }
@@ -2261,7 +2303,33 @@ mod tests {
         assert!(!lines.iter().any(|l| l.contains("large bump")), "{lines:?}");
         assert!(lines.contains(&"DEBUG: FAR outside bump range, increase bump weight 1.00 => 2.00".to_string()));
         assert!(lines.contains(&"DEBUG: boost bump step weight to 3.0 for settling".to_string()));
-        assert_eq!(lines.last().unwrap(), "DEBUG: Scheduling Mount bump of (-0.010, -0.003)");
+        assert_eq!(lines[lines.len() - 2], "DEBUG: Scheduling Mount bump of (-0.010, -0.003)");
+    }
+
+    /// The bump cap takes the larger rate with wx 3.2's `wxMax(a, b)`,
+    /// `a > b ? a : b`: a NaN X rate (a 1-step travel calibrated without
+    /// moving) gives way to the Y rate, a NaN Y rate wins and caps nothing.
+    #[test]
+    fn the_bump_cap_takes_wx_max_of_the_rates() {
+        for (x_rate, y_rate, weight) in [(f64::NAN, 0.5, 1.0), (0.5, f64::NAN, 1.0 + 1.0 / 6.0)] {
+            let mut profile = Profile::default();
+            let mut ao = Ao::new(45);
+            let mut sg = connected(&mut profile, &ao);
+            let (x_angle, y_angle) = (radians(20.0), radians(112.0));
+            let cal = Calibration { x_rate, y_rate, x_angle, y_angle, ..Calibration::default() };
+            sg.set_calibration(&cal, "T", &mut profile, &mut Vec::new());
+            sg.mount_mut().algo_mut(Axis::X).set_min_move(5.0);
+            sg.mount_mut().algo_mut(Axis::Y).set_min_move(5.0);
+            sg.move_axis(Dir::RIGHT, 37, MoveOpts::MANUAL, &mut ao, &mut Vec::new());
+            // Half a 1 px search region over 0.5 px per step: a weight of 1.
+            let env = BumpEnv { secondary_connected: true, max_move_pixels: 1, ..BumpEnv::default() };
+            let mut ev = Vec::new();
+            for _ in 0..2 {
+                guide(&mut sg, &mut ao, &profile, Point::new(0.1, 0.0), MoveOpts::GUIDE_STEP, &env, &mut ev);
+            }
+            let capped = rendered(&mut ev).contains(&"DEBUG: limit bump weight to 1.0".to_string());
+            assert_eq!((sg.bump_step_weight, capped), (weight, weight == 1.0), "{x_rate} {y_rate}");
+        }
     }
 
     #[test]

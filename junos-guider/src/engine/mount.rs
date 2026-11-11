@@ -233,13 +233,20 @@ pub enum MountEvent {
     /// format.
     GuideParamChange { name: String, value: Value },
     /// `pFrame->Alert`. PHD2 also writes `Alert: <msg>` to the debug log.
-    Alert { msg: String, kind: AlertKind },
+    /// `dont_show` is set on a `SuppressibleAlert`: the global key under
+    /// `/Confirm/<profile id>/` that its "Don't show again" button sets to
+    /// false, for the junos UI (the event server's `Alert` carries `msg`
+    /// and `kind` only).
+    Alert { msg: String, kind: AlertKind, dont_show: Option<&'static str> },
     /// `pFrame->StatusMsg`.
     Status(String),
     /// A guide-log `INFO:` line.
     Info(String),
     /// A debug-log line, without its newline.
     Debug(String),
+    /// A debug-log record PHD2 writes without a newline: the next record
+    /// runs on after it on the same line.
+    DebugNoNewline(String),
 }
 
 /// The mount type's half of [`Mount::move_offset`]: PHD2's virtual

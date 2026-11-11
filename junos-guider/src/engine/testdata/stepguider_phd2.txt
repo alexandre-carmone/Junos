@@ -802,12 +802,12 @@ DEBUG: stepped: pos (-38, 33)
 DEBUG: MoveAxis(U, 1, ABG)
 DEBUG: stepping (-38, 33) + (0, 1)
 DEBUG: stepped: pos (-38, 34)
-STEP: opts=13 frame=78 ao=1 cam=0.76305303818990922,-0.18131043031721106 mnt=0.65527932731172545,-0.40736170429250229 gd=0.45658731745564857,-0.3103450754459372 ra=2 Left lim=0 dec=1 Up lim=0 pos=-38,34
 DEBUG: starting a new bump
 DEBUG: MountToCamera -- mountTheta (-0.64) + m_xAngle (0.35) = xAngle (-0.30 = -0.30)
 DEBUG: MountToCamera -- mountX=10.17 mountY=-7.64 hyp=12.72 mountTheta=-0.64 cameraX=12.16, cameraY=-3.71 cameraTheta=-0.30
 DEBUG: incremental bump (12.164, -3.709) isValid = 1
 DEBUG: Scheduling Mount bump of (0.430, -0.109)
+STEP: opts=13 frame=78 ao=1 cam=0.76305303818990922,-0.18131043031721106 mnt=0.65527932731172545,-0.40736170429250229 gd=0.45658731745564857,-0.3103450754459372 ra=2 Left lim=0 dec=1 Up lim=0 pos=-38,34
 RESULT: 0 pos=-38,34 avg=-33.894858469069945,30.56521775129524 inprog=1 w=1
 SHOWBUMP: 1.2240847381666859 -0.946176584976263
 BUMP: 0.4303451495345369 -0.10933332977237642
@@ -820,12 +820,12 @@ DEBUG: MoveAxis(L, 1, ABG)
 DEBUG: stepping (-38, 34) + (-1, 0)
 DEBUG: stepped: pos (-39, 34)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=79 ao=1 cam=0.61524066782986608,0.11460677710145717 mnt=0.61739578968432662,-0.080315346838033 gd=0.42092045972302122,-0.072322823789176385 ra=1 Left lim=0 dec=0 Up lim=0 pos=-39,34
 DEBUG: outside bump range, increase bump weight 1.00 => 1.17
 DEBUG: MountToCamera -- mountTheta (-0.64) + m_xAngle (0.35) = xAngle (-0.29 = -0.29)
 DEBUG: MountToCamera -- mountX=10.67 mountY=-7.92 hyp=13.29 mountTheta=-0.64 cameraX=12.74, cameraY=-3.80 cameraTheta=-0.29
 DEBUG: incremental bump (12.735, -3.802) isValid = 1
 DEBUG: Scheduling Mount bump of (0.503, -0.125)
+STEP: opts=13 frame=79 ao=1 cam=0.61524066782986608,0.11460677710145717 mnt=0.61739578968432662,-0.080315346838033 gd=0.42092045972302122,-0.072322823789176385 ra=1 Left lim=0 dec=0 Up lim=0 pos=-39,34
 RESULT: 0 pos=-39,34 avg=-35.579555174276862,31.698695893367812 inprog=1 w=1.1666666666666667
 SHOWBUMP: 1.4336183207816826 -1.0957117611149152
 BUMP: 0.50294855171250252 -0.12512742342123367
@@ -838,12 +838,12 @@ DEBUG: MoveAxis(R, 0, ABG)
 DEBUG: MoveAxis(U, 1, ABG)
 DEBUG: stepping (-39, 34) + (0, 1)
 DEBUG: stepped: pos (-39, 35)
-STEP: opts=13 frame=80 ao=1 cam=0.17038432988159968,-0.54287184247502296 mnt=-0.02522692836462018,-0.56896040240780299 gd=0,-0.36350765118215816 ra=0 Right lim=0 dec=1 Up lim=0 pos=-39,35
 DEBUG: outside bump range, increase bump weight 1.17 => 1.33
 DEBUG: MountToCamera -- mountTheta (-0.64) + m_xAngle (0.35) = xAngle (-0.29 = -0.29)
 DEBUG: MountToCamera -- mountX=11.01 mountY=-8.19 hyp=13.73 mountTheta=-0.64 cameraX=13.15, cameraY=-3.94 cameraTheta=-0.29
 DEBUG: incremental bump (13.147, -3.943) isValid = 1
 DEBUG: Scheduling Mount bump of (0.552, -0.138)
+STEP: opts=13 frame=80 ao=1 cam=0.17038432988159968,-0.54287184247502296 mnt=-0.02522692836462018,-0.56896040240780299 gd=0,-0.36350765118215816 ra=0 Right lim=0 dec=1 Up lim=0 pos=-39,35
 RESULT: 0 pos=-39,35 avg=-36.708301966765497,32.788126248556438 inprog=1 w=1.3333333333333335
 SHOWBUMP: 1.5727559498495829 -1.2049263709559104
 BUMP: 0.5520067079652754 -0.13794655335588193
@@ -856,12 +856,12 @@ DEBUG: MoveAxis(L, 1, ABG)
 DEBUG: stepping (-39, 35) + (-1, 0)
 DEBUG: stepped: pos (-40, 35)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=81 ao=1 cam=0.4647259735623237,-0.013129325477450493 mnt=0.43231063218240734,-0.15552539665433596 gd=0.27235569827491662,-0.12342653547498271 ra=1 Left lim=0 dec=0 Up lim=0 pos=-40,35
 DEBUG: outside bump range, increase bump weight 1.33 => 1.50
 DEBUG: MountToCamera -- mountTheta (-0.64) + m_xAngle (0.35) = xAngle (-0.29 = -0.29)
 DEBUG: MountToCamera -- mountX=11.34 mountY=-8.38 hyp=14.10 mountTheta=-0.64 cameraX=13.52, cameraY=-4.00 cameraTheta=-0.29
 DEBUG: incremental bump (13.515, -4.003) isValid = 1
 DEBUG: Scheduling Mount bump of (0.451, -0.111)
+STEP: opts=13 frame=81 ao=1 cam=0.4647259735623237,-0.013129325477450493 mnt=0.43231063218240734,-0.15552539665433596 gd=0.27235569827491662,-0.12342653547498271 ra=1 Left lim=0 dec=0 Up lim=0 pos=-40,35
 RESULT: 0 pos=-40,35 avg=-37.794562317732883,33.518044586532817 inprog=1 w=1.5000000000000002
 SHOWBUMP: 1.2876146611872683 -0.97992207786820074
 BUMP: 0.4513682705490481 -0.11139701087777763
@@ -876,8 +876,8 @@ DEBUG: stepped: pos (-41, 35)
 DEBUG: MoveAxis(U, 2, ABG)
 DEBUG: stepping (-41, 35) + (0, 2)
 DEBUG: stepped: pos (-41, 37)
-STEP: opts=13 frame=82 ao=1 cam=0.67144991677750454,-0.68433835759736894 mnt=0.3974168016727021,-0.85777779297543477 gd=0.26943748393304645,-0.54903986705777263 ra=1 Left lim=0 dec=2 Up lim=0 pos=-41,37
 DEBUG: secondary mount is busy, cannot bump
+STEP: opts=13 frame=82 ao=1 cam=0.67144991677750454,-0.68433835759736894 mnt=0.3974168016727021,-0.85777779297543477 gd=0.26943748393304645,-0.54903986705777263 ra=1 Left lim=0 dec=2 Up lim=0 pos=-41,37
 RESULT: 0 pos=-41,37 avg=-38.852356752881029,34.667089872976987 inprog=1 w=1.5000000000000002
 GUIDE: 23
 DEBUG: CameraToMount -- cameraTheta (-0.29) - m_xAngle (0.35) = xAngle (-0.64 = -0.64)
@@ -890,12 +890,12 @@ DEBUG: stepped: pos (-42, 37)
 DEBUG: MoveAxis(U, 1, ABG)
 DEBUG: stepping (-42, 37) + (0, 1)
 DEBUG: stepped: pos (-42, 38)
-STEP: opts=13 frame=83 ao=1 cam=0.54223883383377824,-0.16335247331166158 mnt=0.45386904142457296,-0.3223132557023784 gd=0.30479811997279421,-0.24149014178654249 ra=1 Left lim=0 dec=1 Up lim=0 pos=-42,38
 DEBUG: FAR outside bump range, increase bump weight 1.50 => 2.50
 DEBUG: MountToCamera -- mountTheta (-0.64) + m_xAngle (0.35) = xAngle (-0.29 = -0.29)
 DEBUG: MountToCamera -- mountX=11.96 mountY=-8.94 hyp=14.94 mountTheta=-0.64 cameraX=14.30, cameraY=-4.32 cameraTheta=-0.29
 DEBUG: incremental bump (14.298, -4.316) isValid = 1
 DEBUG: Scheduling Mount bump of (0.549, -0.138)
+STEP: opts=13 frame=83 ao=1 cam=0.54223883383377824,-0.16335247331166158 mnt=0.45386904142457296,-0.3223132557023784 gd=0.30479811997279421,-0.24149014178654249 ra=1 Left lim=0 dec=1 Up lim=0 pos=-42,38
 RESULT: 0 pos=-42,38 avg=-39.89107902443029,35.766950214894578 inprog=1 w=2.5
 SHOWBUMP: 1.5637205909582965 -1.2022656871311301
 BUMP: 0.54919938909768107 -0.13815576162139159
@@ -910,12 +910,12 @@ DEBUG: stepped: pos (-43, 38)
 DEBUG: MoveAxis(U, 2, ABG)
 DEBUG: stepping (-43, 38) + (0, 2)
 DEBUG: stepped: pos (-43, 40)
-STEP: opts=13 frame=84 ao=1 cam=0.55748001014634951,-0.57600679104626806 mnt=0.32728817824159856,-0.71962724112532206 gd=0.22752742069030268,-0.4702694718340108 ra=1 Left lim=0 dec=2 Up lim=0 pos=-43,40
 DEBUG: FAR outside bump range, increase bump weight 2.50 => 3.50
 DEBUG: MountToCamera -- mountTheta (-0.65) + m_xAngle (0.35) = xAngle (-0.30 = -0.30)
 DEBUG: MountToCamera -- mountX=12.27 mountY=-9.29 hyp=15.39 mountTheta=-0.65 cameraX=14.71, cameraY=-4.54 cameraTheta=-0.30
 DEBUG: incremental bump (14.706, -4.539) isValid = 1
 DEBUG: Scheduling Mount bump of (0.776, -0.200)
+STEP: opts=13 frame=84 ao=1 cam=0.55748001014634951,-0.57600679104626806 mnt=0.32728817824159856,-0.71962724112532206 gd=0.22752742069030268,-0.4702694718340108 ra=1 Left lim=0 dec=2 Up lim=0 pos=-43,40
 RESULT: 0 pos=-43,40 avg=-40.917022946368292,37.163856643979365 inprog=1 w=3.5
 SHOWBUMP: 2.2054393880759862 -1.7161989296545368
 BUMP: 0.77633425480511609 -0.19968202187572653
@@ -928,13 +928,13 @@ DEBUG: MoveAxis(R, 1, ABG)
 DEBUG: stepping (-43, 40) + (1, 0)
 DEBUG: stepped: pos (-42, 40)
 DEBUG: MoveAxis(D, 0, ABG)
-STEP: opts=13 frame=85 ao=1 cam=-0.34806532760248388,0.14466111511515578 mnt=-0.27774865414203137,0.24476648345237981 gd=-0.15905473266115858,0.12128402154661852 ra=1 Right lim=0 dec=0 Down lim=0 pos=-42,40
 DEBUG: FAR outside bump range, increase bump weight 3.50 => 4.50
 DEBUG: limit bump weight to 4.4
 DEBUG: MountToCamera -- mountTheta (-0.66) + m_xAngle (0.35) = xAngle (-0.31 = -0.31)
 DEBUG: MountToCamera -- mountX=12.38 mountY=-9.52 hyp=15.62 mountTheta=-0.66 cameraX=14.89, cameraY=-4.72 cameraTheta=-0.31
 DEBUG: incremental bump (14.887, -4.723) isValid = 1
 DEBUG: Scheduling Mount bump of (0.364, -0.096)
+STEP: opts=13 frame=85 ao=1 cam=-0.34806532760248388,0.14466111511515578 mnt=-0.27774865414203137,0.24476648345237981 gd=-0.15905473266115858,0.12128402154661852 ra=1 Right lim=0 dec=0 Down lim=0 pos=-42,40
 RESULT: 0 pos=-42,40 avg=-41.274405374066752,38.099783951466172 inprog=1 w=4.4454035215952956
 SHOWBUMP: 1.0322760211506701 -0.81548711031599963
 BUMP: 0.36441254583387483 -0.096331754599710689
@@ -949,13 +949,13 @@ DEBUG: stepped: pos (-43, 40)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-43, 40) + (0, -1)
 DEBUG: stepped: pos (-43, 39)
-STEP: opts=13 frame=86 ao=1 cam=0.50942991279939065,0.50359891271254753 mnt=0.65077097466955103,0.32236059033492154 gd=0.39885188275553596,0.21157705341926389 ra=1 Left lim=0 dec=1 Down lim=0 pos=-43,39
 DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
 DEBUG: limit bump weight to 4.4
 DEBUG: MountToCamera -- mountTheta (-0.65) + m_xAngle (0.35) = xAngle (-0.30 = -0.30)
 DEBUG: MountToCamera -- mountX=12.55 mountY=-9.60 hyp=15.80 mountTheta=-0.65 cameraX=15.07, cameraY=-4.73 cameraTheta=-0.30
 DEBUG: incremental bump (15.073, -4.734) isValid = 1
 DEBUG: Scheduling Mount bump of (0.693, -0.181)
+STEP: opts=13 frame=86 ao=1 cam=0.50942991279939065,0.50359891271254753 mnt=0.65077097466955103,0.32236059033492154 gd=0.39885188275553596,0.21157705341926389 ra=1 Left lim=0 dec=1 Down lim=0 pos=-43,39
 RESULT: 0 pos=-43,39 avg=-41.843851600624724,38.396855247482335 inprog=1 w=4.4454035215952956
 SHOWBUMP: 1.9651140033475822 -1.543853914887352
 BUMP: 0.69299018167456816 -0.18137063996883254
@@ -970,8 +970,8 @@ DEBUG: stepped: pos (-44, 39)
 DEBUG: MoveAxis(U, 1, ABG)
 DEBUG: stepping (-44, 39) + (0, 1)
 DEBUG: stepped: pos (-44, 40)
-STEP: opts=13 frame=87 ao=1 cam=0.56818359324302037,-0.32943245395800602 mnt=0.42154431615414784,-0.48831658297868391 gd=0.29349255097000065,-0.29282905353722238 ra=1 Left lim=0 dec=1 Up lim=0 pos=-44,40
 DEBUG: secondary mount is busy, cannot bump
+STEP: opts=13 frame=87 ao=1 cam=0.56818359324302037,-0.32943245395800602 mnt=0.42154431615414784,-0.48831658297868391 gd=0.29349255097000065,-0.29282905353722238 ra=1 Left lim=0 dec=1 Up lim=0 pos=-44,40
 RESULT: 0 pos=-44,40 avg=-42.555380572418564,38.925893015813166 inprog=1 w=4.4454035215952956
 GUIDE: 28
 DEBUG: CameraToMount -- cameraTheta (-0.08) - m_xAngle (0.35) = xAngle (-0.42 = -0.42)
@@ -984,11 +984,11 @@ DEBUG: StepGuider step would hit limit: truncate move to (-44, 40) + (0, 0)
 DEBUG: MoveAxis(U, 1, ABG)
 DEBUG: stepping (-44, 40) + (0, 1)
 DEBUG: stepped: pos (-44, 41)
-STEP: opts=13 frame=88 ao=1 cam=0.53262415865327739,-0.040242533314014395 mnt=0.48686968025660965,-0.2022201716119969 gd=0.32727237712956414,-0.14789674186316362 ra=0 Left lim=1 dec=1 Up lim=0 pos=-44,41
 DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
 DEBUG: limit bump weight to 4.4
 DEBUG: AO travel limit exceeded, using large bump correction
 DEBUG: Scheduling Mount bump of (0.373, -0.028)
+STEP: opts=13 frame=88 ao=1 cam=0.53262415865327739,-0.040242533314014395 mnt=0.48686968025660965,-0.2022201716119969 gd=0.32727237712956414,-0.14789674186316362 ra=0 Left lim=1 dec=1 Up lim=0 pos=-44,41
 RESULT: 0 pos=-44,41 avg=-43.032104983520441,39.610348320594824 inprog=1 w=4.4454035215952956
 SHOWBUMP: 1.1362744003646217 -0.56637560847542723
 BUMP: 0.37283691105729416 -0.028169773319810073
@@ -1003,11 +1003,11 @@ DEBUG: StepGuider step would hit limit: truncate move to (-44, 41) + (0, 0)
 DEBUG: MoveAxis(U, 2, ABG)
 DEBUG: stepping (-44, 41) + (0, 2)
 DEBUG: stepped: pos (-44, 43)
-STEP: opts=13 frame=89 ao=1 cam=1.0061355992420147,-0.46027679635250252 mnt=0.78849495552240345,-0.74760232389907066 gd=0.51966088837818369,-0.48134223598683595 ra=0 Left lim=1 dec=2 Up lim=0 pos=-44,43
 DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
 DEBUG: limit bump weight to 4.4
 DEBUG: AO travel limit exceeded, using large bump correction
 DEBUG: Scheduling Mount bump of (0.704, -0.322)
+STEP: opts=13 frame=89 ao=1 cam=1.0061355992420147,-0.46027679635250252 mnt=0.78849495552240345,-0.74760232389907066 gd=0.51966088837818369,-0.48134223598683595 ra=0 Left lim=1 dec=2 Up lim=0 pos=-44,43
 RESULT: 0 pos=-44,43 avg=-43.351510338958697,40.72893337479853 inprog=1 w=4.4454035215952956
 SHOWBUMP: 1.8402185823206947 -2.0938747985458614
 BUMP: 0.70429491946941025 -0.32219375744675172
@@ -1022,11 +1022,11 @@ DEBUG: StepGuider step would hit limit: truncate move to (-44, 43) + (0, 0)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-44, 43) + (0, -1)
 DEBUG: stepped: pos (-44, 42)
-STEP: opts=13 frame=90 ao=1 cam=0.45453738306464686,0.4855088883776375 mnt=0.59300067359568465,0.32204352824478033 gd=0.40996668655175417,0.16919346627513307 ra=0 Left lim=1 dec=1 Down lim=0 pos=-44,42
 DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
 DEBUG: limit bump weight to 4.4
 DEBUG: AO travel limit exceeded, using large bump correction
 DEBUG: Scheduling Mount bump of (0.318, 0.340)
+STEP: opts=13 frame=90 ao=1 cam=0.45453738306464686,0.4855088883776375 mnt=0.59300067359568465,0.32204352824478033 gd=0.40996668655175417,0.16919346627513307 ra=0 Left lim=1 dec=1 Down lim=0 pos=-44,42
 RESULT: 0 pos=-44,42 avg=-43.565511927102328,41.148385361115018 inprog=1 w=4.4454035215952956
 SHOWBUMP: 1.3839668234230855 0.90197529658505116
 BUMP: 0.31817616814525279 0.33985622186434622
@@ -1041,11 +1041,11 @@ DEBUG: StepGuider step would hit limit: truncate move to (-44, 42) + (0, 0)
 DEBUG: MoveAxis(U, 2, ABG)
 DEBUG: stepping (-44, 42) + (0, 2)
 DEBUG: stepped: pos (-44, 44)
-STEP: opts=13 frame=91 ao=1 cam=0.49001286327337823,-0.57614329712841084 mnt=0.26382950558562435,-0.69899207644444339 gd=0.19491025657756614,-0.42852146552074 ra=0 Left lim=1 dec=2 Up lim=0 pos=-44,44
 DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
 DEBUG: limit bump weight to 4.4
 DEBUG: AO travel limit exceeded, using large bump correction
 DEBUG: Scheduling Mount bump of (0.343, -0.403)
+STEP: opts=13 frame=91 ao=1 cam=0.49001286327337823,-0.57614329712841084 mnt=0.26382950558562435,-0.69899207644444339 gd=0.19491025657756614,-0.42852146552074 ra=0 Left lim=1 dec=2 Up lim=0 pos=-44,44
 RESULT: 0 pos=-44,44 avg=-43.708892991158557,42.089418191947061 inprog=1 w=4.4454035215952956
 SHOWBUMP: 0.61573502194631669 -1.9577278540507248
 BUMP: 0.34300900429136472 -0.40330030798988759
@@ -1060,8 +1060,8 @@ DEBUG: StepGuider step would hit limit: truncate move to (-44, 44) + (0, 0)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-44, 44) + (0, -1)
 DEBUG: stepped: pos (-44, 43)
-STEP: opts=13 frame=92 ao=1 cam=0.219700562274042,0.640748938144867 mnt=0.42528728153889506,0.54202593883194383 gd=0.28157470532993351,0.31147983887767278 ra=0 Left lim=1 dec=1 Down lim=0 pos=-44,43
 DEBUG: secondary mount is busy, cannot bump
+STEP: opts=13 frame=92 ao=1 cam=0.219700562274042,0.640748938144867 mnt=0.42528728153889506,0.54202593883194383 gd=0.28157470532993351,0.31147983887767278 ra=0 Left lim=1 dec=1 Down lim=0 pos=-44,43
 RESULT: 0 pos=-44,43 avg=-43.80495830407623,42.389910188604532 inprog=1 w=4.4454035215952956
 GUIDE: 33
 DEBUG: CameraToMount -- cameraTheta (1.61) - m_xAngle (0.35) = xAngle (1.26 = 1.26)
@@ -1074,11 +1074,11 @@ DEBUG: StepGuider step would hit limit: truncate move to (-44, 43) + (0, 0)
 DEBUG: MoveAxis(D, 2, ABG)
 DEBUG: stepping (-44, 43) + (0, -2)
 DEBUG: stepped: pos (-44, 41)
-STEP: opts=13 frame=93 ao=1 cam=-0.026647789371978092,0.758952974503174 mnt=0.23410784488996236,0.73031317583770661 gd=0.16719817165377165,0.48190088949919224 ra=0 Left lim=1 dec=2 Down lim=0 pos=-44,41
 DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
 DEBUG: limit bump weight to 4.4
 DEBUG: AO travel limit exceeded, using large bump correction
 DEBUG: Scheduling Mount bump of (-0.019, 0.531)
+STEP: opts=13 frame=93 ao=1 cam=-0.026647789371978092,0.758952974503174 mnt=0.23410784488996236,0.73031317583770661 gd=0.16719817165377165,0.48190088949919224 ra=0 Left lim=1 dec=2 Down lim=0 pos=-44,41
 RESULT: 0 pos=-44,41 avg=-43.869322063731076,41.931239826365037 inprog=1 w=4.4454035215952956
 SHOWBUMP: 0.54636951500613495 2.0454515790657335
 BUMP: -0.018653452560384663 0.53126708215222174
@@ -1091,13 +1091,13 @@ DEBUG: MoveAxis(L, 0, ABG)
 DEBUG: MoveAxis(U, 2, ABG)
 DEBUG: stepping (-44, 41) + (0, 2)
 DEBUG: stepped: pos (-44, 43)
-STEP: opts=13 frame=94 ao=1 cam=0.43930895989636554,-0.72590603493244998 mnt=0.16503478132449576,-0.82587930807291732 gd=0.11567578425019633,-0.48657090182099438 ra=0 Left lim=0 dec=2 Up lim=0 pos=-44,43
 DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
 DEBUG: limit bump weight to 4.4
 DEBUG: MountToCamera -- mountTheta (-0.68) + m_xAngle (0.35) = xAngle (-0.33 = -0.33)
 DEBUG: MountToCamera -- mountX=13.17 mountY=-10.57 hyp=16.89 mountTheta=-0.68 cameraX=15.99, cameraY=-5.44 cameraTheta=-0.33
 DEBUG: incremental bump (15.988, -5.435) isValid = 1
 DEBUG: Scheduling Mount bump of (0.816, -0.231)
+STEP: opts=13 frame=94 ao=1 cam=0.43930895989636554,-0.72590603493244998 mnt=0.16503478132449576,-0.82587930807291732 gd=0.11567578425019633,-0.48657090182099438 ra=0 Left lim=0 dec=2 Up lim=0 pos=-44,43
 RESULT: 0 pos=-44,43 avg=-43.91244578269982,42.283930683664572 inprog=1 w=4.4454035215952956
 SHOWBUMP: 2.2949095573996035 -1.8857437935028309
 BUMP: 0.81636148261541597 -0.2312701093927568
@@ -1112,13 +1112,13 @@ DEBUG: stepped: pos (-42, 43)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-42, 43) + (0, -1)
 DEBUG: stepped: pos (-42, 42)
-STEP: opts=13 frame=95 ao=1 cam=-0.90435581942701049,0.31895600174371452 mnt=-0.74108836046475923,0.58181580115693388 gd=-0.45878836219528457,0.33248399160139869 ra=2 Right lim=0 dec=1 Down lim=0 pos=-42,42
 DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
 DEBUG: limit bump weight to 4.4
 DEBUG: MountToCamera -- mountTheta (-0.68) + m_xAngle (0.35) = xAngle (-0.33 = -0.33)
 DEBUG: MountToCamera -- mountX=12.98 mountY=-10.54 hyp=16.72 mountTheta=-0.68 cameraX=15.80, cameraY=-5.48 cameraTheta=-0.33
 DEBUG: incremental bump (15.802, -5.478) isValid = 1
 DEBUG: Scheduling Mount bump of (0.921, -0.266)
+STEP: opts=13 frame=95 ao=1 cam=-0.90435581942701049,0.31895600174371452 mnt=-0.74108836046475923,0.58181580115693388 gd=-0.45878836219528457,0.33248399160139869 ra=2 Right lim=0 dec=1 Down lim=0 pos=-42,42
 RESULT: 0 pos=-42,42 avg=-43.281338674408879,42.190233558055262 inprog=1 w=4.4454035215952956
 SHOWBUMP: 2.5840086939827636 -2.1476812746925309
 BUMP: 0.92128404895914529 -0.26613545482193668
@@ -1133,13 +1133,13 @@ DEBUG: stepped: pos (-40, 42)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-40, 42) + (0, -1)
 DEBUG: stepped: pos (-40, 41)
-STEP: opts=13 frame=96 ao=1 cam=-0.9081726475606331,0.068507578919351886 mnt=-0.83019452406955074,0.34469950894318446 gd=-0.55513773551748691,0.24043457004630414 ra=2 Right lim=0 dec=1 Down lim=0 pos=-40,41
 DEBUG: FAR outside bump range, increase bump weight 4.45 => 5.45
 DEBUG: limit bump weight to 4.4
 DEBUG: MountToCamera -- mountTheta (-0.69) + m_xAngle (0.35) = xAngle (-0.34 = -0.34)
 DEBUG: MountToCamera -- mountX=12.66 mountY=-10.45 hyp=16.41 mountTheta=-0.69 cameraX=15.46, cameraY=-5.50 cameraTheta=-0.34
 DEBUG: incremental bump (15.463, -5.497) isValid = 1
 DEBUG: Scheduling Mount bump of (0.873, -0.259)
+STEP: opts=13 frame=96 ao=1 cam=-0.9081726475606331,0.068507578919351886 mnt=-0.83019452406955074,0.34469950894318446 gd=-0.55513773551748691,0.24043457004630414 ra=2 Right lim=0 dec=1 Down lim=0 pos=-40,41
 RESULT: 0 pos=-40,41 avg=-42.198496911853951,41.797456483897022 inprog=1 w=4.4454035215952956
 SHOWBUMP: 2.4419909009096474 -2.0600814455969374
 BUMP: 0.87324925371727746 -0.25866307627664786
@@ -1154,8 +1154,8 @@ DEBUG: stepped: pos (-39, 41)
 DEBUG: MoveAxis(D, 2, ABG)
 DEBUG: stepping (-39, 41) + (0, -2)
 DEBUG: stepped: pos (-39, 39)
-STEP: opts=13 frame=97 ao=1 cam=-0.86395468045239454,0.65058677754970518 mnt=-0.58987604226715307,0.8849137313957105 gd=-0.41048154811453047,0.57432607068253894 ra=1 Right lim=0 dec=2 Down lim=0 pos=-39,39
 DEBUG: secondary mount is busy, cannot bump
+STEP: opts=13 frame=97 ao=1 cam=-0.86395468045239454,0.65058677754970518 mnt=-0.58987604226715307,0.8849137313957105 gd=-0.41048154811453047,0.57432607068253894 ra=1 Right lim=0 dec=2 Down lim=0 pos=-39,39
 RESULT: 0 pos=-39,39 avg=-41.14299293094215,40.874295844211005 inprog=1 w=4.4454035215952956
 GUIDE: 38
 DEBUG: CameraToMount -- cameraTheta (-2.88) - m_xAngle (0.35) = xAngle (-3.22 = 3.06)
@@ -1166,13 +1166,13 @@ DEBUG: MoveAxis(R, 2, ABG)
 DEBUG: stepping (-39, 39) + (2, 0)
 DEBUG: stepped: pos (-37, 39)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=98 ao=1 cam=-0.73474359750866824,-0.20039910673598627 mnt=-0.75901090678648087,0.035468211672488086 gd=-0.50691057964350006,0 ra=2 Right lim=0 dec=0 Up lim=0 pos=-37,39
 DEBUG: outside bump range, increase bump weight 4.45 => 4.61
 DEBUG: limit bump weight to 4.4
 DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
 DEBUG: MountToCamera -- mountX=11.93 mountY=-10.06 hyp=15.61 mountTheta=-0.70 cameraX=14.65, cameraY=-5.38 cameraTheta=-0.35
 DEBUG: incremental bump (14.649, -5.383) isValid = 1
 DEBUG: Scheduling Mount bump of (0.728, -0.223)
+STEP: opts=13 frame=98 ao=1 cam=-0.73474359750866824,-0.20039910673598627 mnt=-0.75901090678648087,0.035468211672488086 gd=-0.50691057964350006,0 ra=2 Right lim=0 dec=0 Up lim=0 pos=-37,39
 RESULT: 0 pos=-37,39 avg=-39.775805263731243,40.255778215621376 inprog=1 w=4.4454035215952956
 SHOWBUMP: 2.0281224834458569 -1.7456007944325287
 BUMP: 0.7282110122085742 -0.22297236994462977
@@ -1187,18 +1187,18 @@ DEBUG: stepped: pos (-36, 39)
 DEBUG: MoveAxis(D, 2, ABG)
 DEBUG: stepping (-36, 39) + (0, -2)
 DEBUG: stepped: pos (-36, 37)
-STEP: opts=13 frame=99 ao=1 cam=-0.63913903724568399,0.57778534920403501 mnt=-0.40343181120769772,0.74645248623220861 gd=-0.28964578163589455,0.47026506632629139 ra=1 Right lim=0 dec=2 Down lim=0 pos=-36,37
 DEBUG: outside bump range, increase bump weight 4.45 => 4.61
 DEBUG: limit bump weight to 4.4
 DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
 DEBUG: MountToCamera -- mountX=11.56 mountY=-9.79 hyp=15.15 mountTheta=-0.70 cameraX=14.21, cameraY=-5.26 cameraTheta=-0.35
 DEBUG: incremental bump (14.206, -5.258) isValid = 1
 DEBUG: Scheduling Mount bump of (0.823, -0.254)
+STEP: opts=13 frame=99 ao=1 cam=-0.63913903724568399,0.57778534920403501 mnt=-0.40343181120769772,0.74645248623220861 gd=-0.28964578163589455,0.47026506632629139 ra=1 Right lim=0 dec=2 Down lim=0 pos=-36,37
 RESULT: 0 pos=-36,37 avg=-38.529789526699936,39.181371404466319 inprog=1 w=4.4454035215952956
 SHOWBUMP: 2.2909178094593665 -1.9805707884313521
 BUMP: 0.82331943817313258 -0.25392857541530439
 DEBUG: Dither: starting AO bump
-DEBUG: StepGuider: force bump
+DEBUG_NO_NL: StepGuider: force bump
 GUIDE: 40
 DEBUG: CameraToMount -- cameraTheta (2.59) - m_xAngle (0.35) = xAngle (2.24 = 2.24)
 DEBUG: CameraToMount -- cameraTheta (2.59) - (m_xAngle (0.35) + m_yAngleError (-0.04)) = yAngle (2.28 = 2.28)
@@ -1210,13 +1210,13 @@ DEBUG: stepped: pos (-34, 37)
 DEBUG: MoveAxis(D, 3, ABG)
 DEBUG: stepping (-34, 37) + (0, -3)
 DEBUG: stepped: pos (-34, 34)
-STEP: opts=13 frame=100 ao=1 cam=-1.3332473924750872,0.82072804033366253 mnt=-0.97286524238626249,1.1912348681010212 gd=-0.63318030741785791,0.78339652154648376 ra=2 Right lim=0 dec=3 Down lim=0 pos=-34,34
 DEBUG: StepGuider::Move: will start forced bump
 DEBUG: back inside bump range: decrease bump weight 4.45 => 2.22
 DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
 DEBUG: MountToCamera -- mountX=11.11 mountY=-9.37 hyp=14.53 mountTheta=-0.70 cameraX=13.64, cameraY=-5.01 cameraTheta=-0.35
 DEBUG: incremental bump (13.638, -5.009) isValid = 1
 DEBUG: Scheduling Mount bump of (0.939, -0.287)
+STEP: opts=13 frame=100 ao=1 cam=-1.3332473924750872,0.82072804033366253 mnt=-0.97286524238626249,1.1912348681010212 gd=-0.63318030741785791,0.78339652154648376 ra=2 Right lim=0 dec=3 Down lim=0 pos=-34,34
 RESULT: 0 pos=-34,34 avg=-37.034958982888959,37.471518840992431 inprog=1 w=2.2227017607976478
 SHOWBUMP: 2.6144430424229324 -2.249667907116716
 BUMP: 0.93868401142661517 -0.2872968121552964
@@ -1231,12 +1231,12 @@ DEBUG: stepped: pos (-32, 34)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-32, 34) + (0, -1)
 DEBUG: stepped: pos (-32, 33)
-STEP: opts=13 frame=101 ao=1 cam=-1.1671608863682366,0.12784904755926618 mnt=-1.053353491997052,0.48087181868138845 gd=-0.7079353214773928,0.35778700227752858 ra=2 Right lim=0 dec=1 Down lim=0 pos=-32,33
 DEBUG: back inside bump range: decrease bump weight 2.22 => 1.11
 DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
 DEBUG: MountToCamera -- mountX=10.61 mountY=-9.00 hyp=13.91 mountTheta=-0.70 cameraX=13.04, cameraY=-4.83 cameraTheta=-0.35
 DEBUG: incremental bump (13.044, -4.833) isValid = 1
 DEBUG: Scheduling Mount bump of (0.469, -0.145)
+STEP: opts=13 frame=101 ao=1 cam=-1.1671608863682366,0.12784904755926618 mnt=-1.053353491997052,0.48087181868138845 gd=-0.7079353214773928,0.35778700227752858 ra=2 Right lim=0 dec=1 Down lim=0 pos=-32,33
 RESULT: 0 pos=-32,33 avg=-35.373422518535605,35.995917623464926 inprog=1 w=1.1113508803988239
 SHOWBUMP: 1.3044342701192186 -1.1284333462970861
 BUMP: 0.46885346034984932 -0.14475193395460093
@@ -1251,9 +1251,9 @@ DEBUG: stepped: pos (-31, 33)
 DEBUG: MoveAxis(D, 2, ABG)
 DEBUG: stepping (-31, 33) + (0, -2)
 DEBUG: stepped: pos (-31, 31)
-STEP: opts=13 frame=102 ao=1 cam=-0.71854712589257019,0.59601710386756679 mnt=-0.47184164787803784,0.78823945488935576 gd=-0.34681571066658129,0.52163594673972113 ra=1 Right lim=0 dec=2 Down lim=0 pos=-31,31
 DEBUG: back inside bump range: decrease bump weight 1.11 => 1.00
 DEBUG: secondary mount is busy, cannot bump
+STEP: opts=13 frame=102 ao=1 cam=-0.71854712589257019,0.59601710386756679 mnt=-0.47184164787803784,0.78823945488935576 gd=-0.34681571066658129,0.52163594673972113 ra=1 Right lim=0 dec=2 Down lim=0 pos=-31,31
 RESULT: 0 pos=-31,31 avg=-33.930193087418857,34.347264807721501 inprog=1 w=1
 GUIDE: 43
 DEBUG: CameraToMount -- cameraTheta (-2.73) - m_xAngle (0.35) = xAngle (-3.08 = -3.08)
@@ -1264,12 +1264,12 @@ DEBUG: MoveAxis(R, 1, ABG)
 DEBUG: stepping (-31, 31) + (1, 0)
 DEBUG: stepped: pos (-30, 31)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=103 ao=1 cam=-0.58933604294882969,-0.25496878041811044 mnt=-0.64097651239734699,-0.061206064833857272 gd=-0.42809230255698932,-0.0020453045735496006 ra=1 Right lim=0 dec=0 Up lim=0 pos=-30,31
 ALERT: A mount "bump" was needed to bring the AO back to its center position,\nbut the bump did not complete in a reasonable amount of time.\nYou probably need to increase the AO Bump Step setting.
 DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.36 = -0.36)
 DEBUG: MountToCamera -- mountX=9.79 mountY=-8.31 hyp=12.84 mountTheta=-0.70 cameraX=12.04, cameraY=-4.47 cameraTheta=-0.36
 DEBUG: incremental bump (12.037, -4.467) isValid = 1
 DEBUG: Scheduling Mount bump of (0.422, -0.130)
+STEP: opts=13 frame=103 ao=1 cam=-0.58933604294882969,-0.25496878041811044 mnt=-0.64097651239734699,-0.061206064833857272 gd=-0.42809230255698932,-0.0020453045735496006 ra=1 Right lim=0 dec=0 Up lim=0 pos=-30,31
 RESULT: 0 pos=-30,31 avg=-32.633229368570632,33.242667421173408 inprog=1 w=1
 SHOWBUMP: 1.1732727038849655 -1.0159689959817679
 BUMP: 0.42179540848110741 -0.13043215987334425
@@ -1284,11 +1284,11 @@ DEBUG: stepped: pos (-29, 31)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-29, 31) + (0, -1)
 DEBUG: stepped: pos (-29, 30)
-STEP: opts=13 frame=104 ao=1 cam=-0.46922366519414993,0.32806942245292703 mnt=-0.32899775921294755,0.4565618210100007 gd=-0.23723504948314622,0.28749077591615191 ra=1 Right lim=0 dec=1 Down lim=0 pos=-29,30
 DEBUG: MountToCamera -- mountTheta (-0.71) + m_xAngle (0.35) = xAngle (-0.36 = -0.36)
 DEBUG: MountToCamera -- mountX=9.43 mountY=-8.04 hyp=12.39 mountTheta=-0.71 cameraX=11.61, cameraY=-4.34 cameraTheta=-0.36
 DEBUG: incremental bump (11.607, -4.338) isValid = 1
 DEBUG: Scheduling Mount bump of (0.421, -0.131)
+STEP: opts=13 frame=104 ao=1 cam=-0.46922366519414993,0.32806942245292703 mnt=-0.32899775921294755,0.4565618210100007 gd=-0.23723504948314622,0.28749077591615191 ra=1 Right lim=0 dec=1 Down lim=0 pos=-29,30
 RESULT: 0 pos=-29,30 avg=-31.434263676942322,32.172587172186184 inprog=1 w=1
 SHOWBUMP: 1.1711977614615241 -1.0186302966956255
 BUMP: 0.42143015855312832 -0.13124938490590352
@@ -1306,11 +1306,11 @@ DEBUG: stepped: pos (-28, 30)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-28, 30) + (0, -1)
 DEBUG: stepped: pos (-28, 29)
-STEP: opts=13 frame=106 ao=1 cam=-0.59509438915755197,0.19012888671483097 mnt=-0.49440459365660799,0.3640577631453305 gd=-0.32808134746748324,0.24948074509568885 ra=1 Right lim=0 dec=1 Down lim=0 pos=-28,29
 DEBUG: MountToCamera -- mountTheta (-0.71) + m_xAngle (0.35) = xAngle (-0.36 = -0.36)
 DEBUG: MountToCamera -- mountX=9.09 mountY=-7.78 hyp=11.96 mountTheta=-0.71 cameraX=11.20, cameraY=-4.21 cameraTheta=-0.36
 DEBUG: incremental bump (11.198, -4.208) isValid = 1
 DEBUG: Scheduling Mount bump of (0.421, -0.132)
+STEP: opts=13 frame=106 ao=1 cam=-0.59509438915755197,0.19012888671483097 mnt=-0.49440459365660799,0.3640577631453305 gd=-0.32808134746748324,0.24948074509568885 ra=1 Right lim=0 dec=1 Down lim=0 pos=-28,29
 RESULT: 0 pos=-28,29 avg=-30.300956663551357,31.125633405364741 inprog=1 w=1
 SHOWBUMP: 1.1695915578563914 -1.0206810679043126
 BUMP: 0.42114662350703497 -0.13187980211752229
@@ -1323,8 +1323,8 @@ DEBUG: MoveAxis(R, 0, ABG)
 DEBUG: MoveAxis(D, 2, ABG)
 DEBUG: stepping (-28, 29) + (0, -2)
 DEBUG: stepped: pos (-28, 27)
-STEP: opts=13 frame=107 ao=1 cam=-0.38068157807484226,0.54281876818836849 mnt=-0.17244861057059802,0.63363521008949997 gd=-0.13160831898220057,0.41665383451308324 ra=0 Right lim=0 dec=2 Down lim=0 pos=-28,27
 DEBUG: secondary mount is busy, cannot bump
+STEP: opts=13 frame=107 ao=1 cam=-0.38068157807484226,0.54281876818836849 mnt=-0.17244861057059802,0.63363521008949997 gd=-0.13160831898220057,0.41665383451308324 ra=0 Right lim=0 dec=2 Down lim=0 pos=-28,27
 RESULT: 0 pos=-28,27 avg=-29.541640964579408,29.764174381594376 inprog=1 w=1
 GUIDE: 48
 DEBUG: CameraToMount -- cameraTheta (-2.49) - m_xAngle (0.35) = xAngle (-2.83 = -2.83)
@@ -1335,11 +1335,11 @@ DEBUG: MoveAxis(R, 1, ABG)
 DEBUG: stepping (-28, 27) + (1, 0)
 DEBUG: stepped: pos (-27, 27)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=108 ao=1 cam=-0.53337828136687904,-0.41077315909502943 mnt=-0.64158342227702192,-0.22666999777519348 gd=-0.41341013836327778,-0.11363633018245606 ra=1 Right lim=0 dec=0 Up lim=0 pos=-27,27
 DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
 DEBUG: MountToCamera -- mountX=8.61 mountY=-7.21 hyp=11.23 mountTheta=-0.70 cameraX=10.55, cameraY=-3.84 cameraTheta=-0.35
 DEBUG: incremental bump (10.554, -3.838) isValid = 1
 DEBUG: Scheduling Mount bump of (0.423, -0.128)
+STEP: opts=13 frame=108 ao=1 cam=-0.53337828136687904,-0.41077315909502943 mnt=-0.64158342227702192,-0.22666999777519348 gd=-0.41341013836327778,-0.11363633018245606 ra=1 Right lim=0 dec=0 Up lim=0 pos=-27,27
 RESULT: 0 pos=-27,27 avg=-28.702899446268201,28.851996835668231 inprog=1 w=1
 SHOWBUMP: 1.1790947083652099 -1.0084281752388533
 BUMP: 0.42281396678633065 -0.12812184392702036
@@ -1354,11 +1354,11 @@ DEBUG: stepped: pos (-26, 27)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-26, 27) + (0, -1)
 DEBUG: stepped: pos (-26, 26)
-STEP: opts=13 frame=109 ao=1 cam=-0.41428446191743262,0.16995472782967624 mnt=-0.33135089361479902,0.28921321254708765 gd=-0.23768977266275279,0.17424978079189329 ra=1 Right lim=0 dec=1 Down lim=0 pos=-26,26
 DEBUG: MountToCamera -- mountTheta (-0.70) + m_xAngle (0.35) = xAngle (-0.35 = -0.35)
 DEBUG: MountToCamera -- mountX=8.34 mountY=-6.98 hyp=10.87 mountTheta=-0.70 cameraX=10.22, cameraY=-3.71 cameraTheta=-0.35
 DEBUG: incremental bump (10.222, -3.708) isValid = 1
 DEBUG: Scheduling Mount bump of (0.423, -0.128)
+STEP: opts=13 frame=109 ao=1 cam=-0.41428446191743262,0.16995472782967624 mnt=-0.33135089361479902,0.28921321254708765 gd=-0.23768977266275279,0.17424978079189329 ra=1 Right lim=0 dec=1 Down lim=0 pos=-26,26
 RESULT: 0 pos=-26,26 avg=-27.810942628999694,27.910837879897716 inprog=1 w=1
 SHOWBUMP: 1.1797877070752913 -1.0075232658013216
 BUMP: 0.42293458178610333 -0.12784512459069264
@@ -1371,12 +1371,12 @@ DEBUG: MoveAxis(R, 2, ABG)
 DEBUG: stepping (-26, 26) + (2, 0)
 DEBUG: stepped: pos (-24, 26)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=110 ao=1 cam=-0.80165960911376999,-0.32139006822362148 mnt=-0.86321883433354407,-0.059054132840443127 gd=-0.56046614971652542,-0.025006619034046638 ra=2 Right lim=0 dec=0 Up lim=0 pos=-24,26
 DEBUG: MountToCamera -- mountTheta (-0.71) + m_xAngle (0.35) = xAngle (-0.36 = -0.36)
 DEBUG: MountToCamera -- mountX=7.96 mountY=-6.82 hyp=10.48 mountTheta=-0.71 cameraX=9.81, cameraY=-3.69 cameraTheta=-0.36
 DEBUG: incremental bump (9.814, -3.689) isValid = 1
 DEBUG: boost bump step weight to 3.0 for settling
 DEBUG: Scheduling Mount bump of (0.824, -0.258)
+STEP: opts=13 frame=110 ao=1 cam=-0.80165960911376999,-0.32139006822362148 mnt=-0.86321883433354407,-0.059054132840443127 gd=-0.56046614971652542,-0.025006619034046638 ra=2 Right lim=0 dec=0 Up lim=0 pos=-24,26
 RESULT: 0 pos=-24,26 avg=-26.553331561429793,27.280261379531471 inprog=1 w=1
 SHOWBUMP: 2.2888673975863649 -1.9977420789140279
 BUMP: 0.82420028514231036 -0.25815420741983031
@@ -1391,12 +1391,12 @@ DEBUG: stepped: pos (-23, 26)
 DEBUG: MoveAxis(D, 2, ABG)
 DEBUG: stepping (-23, 26) + (0, -2)
 DEBUG: stepped: pos (-23, 24)
-STEP: opts=13 frame=111 ao=1 cam=-0.80204432178454965,0.4919762251916211 mnt=-0.58584633661069641,0.7149477525392659 gd=-0.40831582254489551,0.4486666207673542 ra=1 Right lim=0 dec=2 Down lim=0 pos=-23,24
 DEBUG: MountToCamera -- mountTheta (-0.71) + m_xAngle (0.35) = xAngle (-0.36 = -0.36)
 DEBUG: MountToCamera -- mountX=7.61 mountY=-6.55 hyp=10.04 mountTheta=-0.71 cameraX=9.39, cameraY=-3.55 cameraTheta=-0.36
 DEBUG: incremental bump (9.391, -3.555) isValid = 1
 DEBUG: boost bump step weight to 3.0 for settling
 DEBUG: Scheduling Mount bump of (0.897, -0.283)
+STEP: opts=13 frame=111 ao=1 cam=-0.80204432178454965,0.4919762251916211 mnt=-0.58584633661069641,0.7149477525392659 gd=-0.40831582254489551,0.4486666207673542 ra=1 Right lim=0 dec=2 Down lim=0 pos=-23,24
 RESULT: 0 pos=-23,24 avg=-25.38073214615796,26.197775124286085 inprog=1 w=1
 SHOWBUMP: 2.4897164913895349 -2.1825199580221546
 BUMP: 0.89733335141321169 -0.28303455036826924
@@ -1411,8 +1411,8 @@ DEBUG: stepped: pos (-21, 24)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-21, 24) + (0, -1)
 DEBUG: stepped: pos (-21, 23)
-STEP: opts=13 frame=112 ao=1 cam=-0.9701665902540384,-0.075975108725799601 mnt=-0.93779776521811187,0.22631087005528938 gd=-0.61939469966555316,0.17398251158854711 ra=2 Right lim=0 dec=1 Down lim=0 pos=-21,23
 DEBUG: secondary mount is busy, cannot bump
+STEP: opts=13 frame=112 ao=1 cam=-0.9701665902540384,-0.075975108725799601 mnt=-0.93779776521811187,0.22631087005528938 gd=-0.61939469966555316,0.17398251158854711 ra=2 Right lim=0 dec=1 Down lim=0 pos=-21,23
 RESULT: 0 pos=-21,23 avg=-23.935090537925834,25.142509333271676 inprog=1 w=1
 GUIDE: 53
 DEBUG: CameraToMount -- cameraTheta (2.78) - m_xAngle (0.35) = xAngle (2.43 = 2.43)
@@ -1425,12 +1425,12 @@ DEBUG: stepped: pos (-20, 23)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-20, 23) + (0, -1)
 DEBUG: stepped: pos (-20, 22)
-STEP: opts=13 frame=113 ao=1 cam=-0.65269936942851814,0.24744101362789195 mnt=-0.52897730749284866,0.43631748334396314 gd=-0.37661333269708336,0.28705879031789505 ra=1 Right lim=0 dec=1 Down lim=0 pos=-20,22
 DEBUG: MountToCamera -- mountTheta (-0.73) + m_xAngle (0.35) = xAngle (-0.38 = -0.38)
 DEBUG: MountToCamera -- mountX=6.79 mountY=-6.02 hyp=9.08 mountTheta=-0.73 cameraX=8.44, cameraY=-3.34 cameraTheta=-0.38
 DEBUG: incremental bump (8.439, -3.344) isValid = 1
 DEBUG: boost bump step weight to 3.0 for settling
 DEBUG: Scheduling Mount bump of (0.663, -0.219)
+STEP: opts=13 frame=113 ao=1 cam=-0.65269936942851814,0.24744101362789195 mnt=-0.52897730749284866,0.43631748334396314 gd=-0.37661333269708336,0.28705879031789505 ra=1 Right lim=0 dec=1 Down lim=0 pos=-20,22
 RESULT: 0 pos=-20,22 avg=-22.636510660410309,24.105481253292023 inprog=1 w=1
 SHOWBUMP: 1.8278744093841988 -1.6495068429688966
 BUMP: 0.6628228052023063 -0.21888227653542289
@@ -1445,11 +1445,11 @@ DEBUG: stepped: pos (-19, 22)
 DEBUG: MoveAxis(D, 2, ABG)
 DEBUG: stepping (-19, 22) + (0, -2)
 DEBUG: stepped: pos (-19, 20)
-STEP: opts=13 frame=114 ao=1 cam=-0.67996274004106283,0.68713336951931581 mnt=-0.40446357333651867,0.86305720558971122 gd=-0.28117498449080258,0.56382015484377068 ra=1 Right lim=0 dec=2 Down lim=0 pos=-19,20
 DEBUG: MountToCamera -- mountTheta (-0.72) + m_xAngle (0.35) = xAngle (-0.38 = -0.38)
 DEBUG: MountToCamera -- mountX=6.43 mountY=-5.69 hyp=8.58 mountTheta=-0.72 cameraX=7.98, cameraY=-3.15 cameraTheta=-0.38
 DEBUG: incremental bump (7.985, -3.149) isValid = 1
 DEBUG: Scheduling Mount bump of (0.419, -0.138)
+STEP: opts=13 frame=114 ao=1 cam=-0.67996274004106283,0.68713336951931581 mnt=-0.40446357333651867,0.86305720558971122 gd=-0.28117498449080258,0.56382015484377068 ra=1 Right lim=0 dec=2 Down lim=0 pos=-19,20
 RESULT: 0 pos=-19,20 avg=-21.436462142474905,22.750672439705657 inprog=1 w=1
 SHOWBUMP: 1.1549623394671591 -1.0389943607877414
 BUMP: 0.41853302963280298 -0.13753580769663246
@@ -1464,11 +1464,11 @@ DEBUG: stepped: pos (-17, 20)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-17, 20) + (0, -1)
 DEBUG: stepped: pos (-17, 19)
-STEP: opts=13 frame=115 ao=1 cam=-0.96928468673014834,-0.026316707069739209 mnt=-0.92001238621291448,0.27328729752563874 gd=-0.5992900522284923,0.21163840828021635 ra=2 Right lim=0 dec=1 Down lim=0 pos=-17,19
 DEBUG: MountToCamera -- mountTheta (-0.73) + m_xAngle (0.35) = xAngle (-0.38 = -0.38)
 DEBUG: MountToCamera -- mountX=5.99 mountY=-5.38 hyp=8.05 mountTheta=-0.73 cameraX=7.47, cameraY=-3.01 cameraTheta=-0.38
 DEBUG: incremental bump (7.466, -3.008) isValid = 1
 DEBUG: Scheduling Mount bump of (0.417, -0.140)
+STEP: opts=13 frame=115 ao=1 cam=-0.96928468673014834,-0.026316707069739209 mnt=-0.92001238621291448,0.27328729752563874 gd=-0.5992900522284923,0.21163840828021635 ra=2 Right lim=0 dec=1 Down lim=0 pos=-17,19
 RESULT: 0 pos=-17,19 avg=-19.972429635458187,21.51295053460279 inprog=1 w=1
 SHOWBUMP: 1.1482101544011614 -1.0472321473411035
 BUMP: 0.41730836993328291 -0.14009587352427971
@@ -1483,11 +1483,11 @@ DEBUG: stepped: pos (-16, 19)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-16, 19) + (0, -1)
 DEBUG: stepped: pos (-16, 18)
-STEP: opts=13 frame=116 ao=1 cam=-0.46912583583790024,0.43719528880824043 mnt=-0.29164341878764011,0.56036033753351866 gd=-0.22568565749220773,0.36784170122573184 ra=1 Right lim=0 dec=1 Down lim=0 pos=-16,18
 DEBUG: MountToCamera -- mountTheta (-0.74) + m_xAngle (0.35) = xAngle (-0.39 = -0.39)
 DEBUG: MountToCamera -- mountX=5.60 mountY=-5.09 hyp=7.56 mountTheta=-0.74 cameraX=7.00, cameraY=-2.87 cameraTheta=-0.39
 DEBUG: incremental bump (6.998, -2.870) isValid = 1
 DEBUG: Scheduling Mount bump of (0.416, -0.142)
+STEP: opts=13 frame=116 ao=1 cam=-0.46912583583790024,0.43719528880824043 mnt=-0.29164341878764011,0.56036033753351866 gd=-0.22568565749220773,0.36784170122573184 ra=1 Right lim=0 dec=1 Down lim=0 pos=-16,18
 RESULT: 0 pos=-16,18 avg=-18.661527855756987,20.353676858183871 inprog=1 w=1
 SHOWBUMP: 1.142452967783582 -1.0541528068077848
 BUMP: 0.41625536164406857 -0.14225442889627948
@@ -1500,8 +1500,8 @@ DEBUG: MoveAxis(R, 1, ABG)
 DEBUG: stepping (-16, 18) + (1, 0)
 DEBUG: stepped: pos (-15, 18)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=117 ao=1 cam=-0.2498217628922248,-0.039740202939455571 mnt=-0.24837611459893974,0.03907904919825482 gd=-0.17227494822178657,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-15,18
 DEBUG: secondary mount is busy, cannot bump
+STEP: opts=13 frame=117 ao=1 cam=-0.2498217628922248,-0.039740202939455571 mnt=-0.24837611459893974,0.03907904919825482 gd=-0.17227494822178657,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-15,18
 RESULT: 0 pos=-15,18 avg=-17.453223663357182,19.576963494983193 inprog=1 w=1
 GUIDE: 58
 DEBUG: CameraToMount -- cameraTheta (2.21) - m_xAngle (0.35) = xAngle (1.86 = 1.86)
@@ -1512,11 +1512,11 @@ DEBUG: MoveAxis(R, 0, ABG)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-15, 18) + (0, -1)
 DEBUG: stepped: pos (-15, 17)
-STEP: opts=13 frame=118 ao=1 cam=-0.30791397665645093,0.41286584005823102 mnt=-0.14842872841136845,0.4875941002518131 gd=-0.1055693452746872,0.30718428315864221 ra=0 Right lim=0 dec=1 Down lim=0 pos=-15,17
 DEBUG: MountToCamera -- mountTheta (-0.75) + m_xAngle (0.35) = xAngle (-0.40 = -0.40)
 DEBUG: MountToCamera -- mountX=4.99 mountY=-4.68 hyp=6.84 mountTheta=-0.75 cameraX=6.29, cameraY=-2.69 cameraTheta=-0.40
 DEBUG: incremental bump (6.290, -2.694) isValid = 1
 DEBUG: Scheduling Mount bump of (0.414, -0.148)
+STEP: opts=13 frame=118 ao=1 cam=-0.30791397665645093,0.41286584005823102 mnt=-0.14842872841136845,0.4875941002518131 gd=-0.1055693452746872,0.30718428315864221 ra=0 Right lim=0 dec=1 Down lim=0 pos=-15,17
 RESULT: 0 pos=-15,17 avg=-16.643659854449311,18.726565541638738 inprog=1 w=1
 SHOWBUMP: 1.1278962515676487 -1.0712424237670723
 BUMP: 0.41355797448269699 -0.14761610381050613
@@ -1529,11 +1529,11 @@ DEBUG: MoveAxis(R, 1, ABG)
 DEBUG: stepping (-15, 17) + (1, 0)
 DEBUG: stepped: pos (-14, 17)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=119 ao=1 cam=-0.36782030278517652,-0.16131401977297344 mnt=-0.40079529871013037,-0.040275672352811161 gd=-0.25989089235661023,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-14,17
 DEBUG: MountToCamera -- mountTheta (-0.76) + m_xAngle (0.35) = xAngle (-0.42 = -0.42)
 DEBUG: MountToCamera -- mountX=4.73 mountY=-4.54 hyp=6.56 mountTheta=-0.76 cameraX=6.00, cameraY=-2.65 cameraTheta=-0.42
 DEBUG: incremental bump (5.996, -2.650) isValid = 1
 DEBUG: Scheduling Mount bump of (0.377, -0.139)
+STEP: opts=13 frame=119 ao=1 cam=-0.36782030278517652,-0.16131401977297344 mnt=-0.40079529871013037,-0.040275672352811161 gd=-0.25989089235661023,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-14,17
 RESULT: 0 pos=-14,17 avg=-15.771252102481037,18.156798912897955 inprog=1 w=1
 SHOWBUMP: 1.0230226694889368 -0.99255190547152794
 BUMP: 0.37689077684461536 -0.13880680979604887
@@ -1548,11 +1548,11 @@ DEBUG: stepped: pos (-13, 17)
 DEBUG: MoveAxis(D, 2, ABG)
 DEBUG: stepping (-13, 17) + (0, -2)
 DEBUG: stepped: pos (-13, 15)
-STEP: opts=13 frame=120 ao=1 cam=-0.8028032933940068,0.43009883302079288 mnt=-0.60768849951513282,0.6563076386298774 gd=-0.40103611715949639,0.41347381233682273 ra=1 Right lim=0 dec=2 Down lim=0 pos=-13,15
 DEBUG: MountToCamera -- mountTheta (-0.76) + m_xAngle (0.35) = xAngle (-0.42 = -0.42)
 DEBUG: MountToCamera -- mountX=4.46 mountY=-4.28 hyp=6.18 mountTheta=-0.76 cameraX=5.65, cameraY=-2.50 cameraTheta=-0.42
 DEBUG: incremental bump (5.649, -2.499) isValid = 1
 DEBUG: Scheduling Mount bump of (0.411, -0.152)
+STEP: opts=13 frame=120 ao=1 cam=-0.8028032933940068,0.43009883302079288 mnt=-0.60768849951513282,0.6563076386298774 gd=-0.40103611715949639,0.41347381233682273 ra=1 Right lim=0 dec=2 Down lim=0 pos=-13,15
 RESULT: 0 pos=-13,15 avg=-14.856738908662296,17.11505527164163 inprog=1 w=1
 SHOWBUMP: 1.1166582596774499 -1.0840509015952229
 BUMP: 0.41144268017972718 -0.15166490806153926
@@ -1567,11 +1567,11 @@ DEBUG: stepped: pos (-12, 15)
 DEBUG: MoveAxis(D, 2, ABG)
 DEBUG: stepping (-12, 15) + (0, -2)
 DEBUG: stepped: pos (-12, 13)
-STEP: opts=13 frame=121 ao=1 cam=-0.48503489063001837,0.57077785679662441 mnt=-0.26098282866593409,0.69235496701927246 gd=-0.19249171026070322,0.46512679608571927 ra=1 Right lim=0 dec=2 Down lim=0 pos=-12,13
 DEBUG: MountToCamera -- mountTheta (-0.76) + m_xAngle (0.35) = xAngle (-0.41 = -0.41)
 DEBUG: MountToCamera -- mountX=4.17 mountY=-3.94 hyp=5.74 mountTheta=-0.76 cameraX=5.27, cameraY=-2.28 cameraTheta=-0.41
 DEBUG: incremental bump (5.267, -2.276) isValid = 1
 DEBUG: Scheduling Mount bump of (0.413, -0.149)
+STEP: opts=13 frame=121 ao=1 cam=-0.48503489063001837,0.57077785679662441 mnt=-0.26098282866593409,0.69235496701927246 gd=-0.19249171026070322,0.46512679608571927 ra=1 Right lim=0 dec=2 Down lim=0 pos=-12,13
 RESULT: 0 pos=-12,13 avg=-13.914015068803739,15.757087031999893 inprog=1 w=1
 SHOWBUMP: 1.124826437891612 -1.0747738008644978
 BUMP: 0.4129829332182649 -0.14872974520579588
@@ -1582,8 +1582,8 @@ DEBUG: CameraToMount -- cameraX=-0.17 cameraY=-0.13 hyp=0.21 cameraTheta=-2.48 m
 DEBUG: Moving (-0.17, -0.13) raw xDistance=-0.20 yDistance=-0.07
 DEBUG: MoveAxis(R, 0, ABG)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=122 ao=1 cam=-0.16880674090455727,-0.1314782822832683 mnt=-0.20355558201400417,-0.073140647118345059 gd=-0.14171443638707185,-0.013519731958557038 ra=0 Right lim=0 dec=0 Up lim=0 pos=-12,13
 DEBUG: secondary mount is busy, cannot bump
+STEP: opts=13 frame=122 ao=1 cam=-0.16880674090455727,-0.1314782822832683 mnt=-0.20355558201400417,-0.073140647118345059 gd=-0.14171443638707185,-0.013519731958557038 ra=0 Right lim=0 dec=0 Up lim=0 pos=-12,13
 RESULT: 0 pos=-12,13 avg=-13.282390096098505,14.847248311439929 inprog=1 w=1
 GUIDE: 63
 DEBUG: CameraToMount -- cameraTheta (2.74) - m_xAngle (0.35) = xAngle (2.39 = 2.39)
@@ -1596,11 +1596,11 @@ DEBUG: stepped: pos (-11, 13)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-11, 13) + (0, -1)
 DEBUG: stepped: pos (-11, 12)
-STEP: opts=13 frame=123 ao=1 cam=-0.50880674090454647,0.21852171771674023 mnt=-0.40360814301351944,0.36451471579376898 gd=-0.26419314064561228,0.22869788971297544 ra=1 Right lim=0 dec=1 Down lim=0 pos=-11,12
 DEBUG: MountToCamera -- mountTheta (-0.75) + m_xAngle (0.35) = xAngle (-0.40 = -0.40)
 DEBUG: MountToCamera -- mountX=3.76 mountY=-3.48 hyp=5.12 mountTheta=-0.75 cameraX=4.72, cameraY=-1.98 cameraTheta=-0.40
 DEBUG: incremental bump (4.719, -1.984) isValid = 1
 DEBUG: Scheduling Mount bump of (0.415, -0.145)
+STEP: opts=13 frame=123 ao=1 cam=-0.50880674090454647,0.21852171771674023 mnt=-0.40360814301351944,0.36451471579376898 gd=-0.26419314064561228,0.22869788971297544 ra=1 Right lim=0 dec=1 Down lim=0 pos=-11,12
 RESULT: 0 pos=-11,12 avg=-12.529201364385997,13.907656368664751 inprog=1 w=1
 SHOWBUMP: 1.1342667148538861 -1.0638342921736075
 BUMP: 0.41474447999380898 -0.14528631475258053
@@ -1613,11 +1613,11 @@ DEBUG: MoveAxis(R, 1, ABG)
 DEBUG: stepping (-11, 12) + (1, 0)
 DEBUG: stepped: pos (-10, 12)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=124 ao=1 cam=-0.28799178630860922,-0.25538188817466789 mnt=-0.35788549279082549,-0.15434688122361406 gd=-0.24396138030341291,-0.081229682890968574 ra=1 Right lim=0 dec=0 Up lim=0 pos=-10,12
 DEBUG: MountToCamera -- mountTheta (-0.76) + m_xAngle (0.35) = xAngle (-0.41 = -0.41)
 DEBUG: MountToCamera -- mountX=3.51 mountY=-3.32 hyp=4.83 mountTheta=-0.76 cameraX=4.43, cameraY=-1.92 cameraTheta=-0.41
 DEBUG: incremental bump (4.430, -1.921) isValid = 1
 DEBUG: Scheduling Mount bump of (0.362, -0.131)
+STEP: opts=13 frame=124 ao=1 cam=-0.28799178630860922,-0.25538188817466789 mnt=-0.35788549279082549,-0.15434688122361406 gd=-0.24396138030341291,-0.081229682890968574 ra=1 Right lim=0 dec=0 Up lim=0 pos=-10,12
 RESULT: 0 pos=-10,12 avg=-11.694564914138619,13.278129767005383 inprog=1 w=1
 SHOWBUMP: 0.98542890537532901 -0.94385515456127789
 BUMP: 0.3619971264522035 -0.13083294015357766
@@ -1632,11 +1632,11 @@ DEBUG: stepped: pos (-9, 12)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-9, 12) + (0, -1)
 DEBUG: stepped: pos (-9, 11)
-STEP: opts=13 frame=125 ao=1 cam=-0.70808112652504462,0.32805709497660018 mnt=-0.55350299757081478,0.53006566247130404 gd=-0.3657841850908522,0.32825528955455374 ra=1 Right lim=0 dec=1 Down lim=0 pos=-9,11
 DEBUG: MountToCamera -- mountTheta (-0.77) + m_xAngle (0.35) = xAngle (-0.42 = -0.42)
 DEBUG: MountToCamera -- mountX=3.24 mountY=-3.13 hyp=4.51 mountTheta=-0.77 cameraX=4.12, cameraY=-1.84 cameraTheta=-0.42
 DEBUG: incremental bump (4.115, -1.836) isValid = 1
 DEBUG: Scheduling Mount bump of (0.411, -0.153)
+STEP: opts=13 frame=125 ao=1 cam=-0.70808112652504462,0.32805709497660018 mnt=-0.55350299757081478,0.53006566247130404 gd=-0.3657841850908522,0.32825528955455374 ra=1 Right lim=0 dec=1 Down lim=0 pos=-9,11
 RESULT: 0 pos=-9,11 avg=-10.805358492472875,12.526346943893607 inprog=1 w=1
 SHOWBUMP: 1.1136350022063477 -1.0874414231807215
 BUMP: 0.41086890488596167 -0.15274113987829582
@@ -1649,11 +1649,11 @@ DEBUG: MoveAxis(R, 1, ABG)
 DEBUG: stepping (-9, 11) + (1, 0)
 DEBUG: stepped: pos (-8, 11)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=126 ao=1 cam=-0.48339059682125196,-0.13839168578910233 mnt=-0.50159216891547664,0.017104190050487581 gd=-0.34160795937310989,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-8,11
 DEBUG: MountToCamera -- mountTheta (-0.79) + m_xAngle (0.35) = xAngle (-0.44 = -0.44)
 DEBUG: MountToCamera -- mountX=2.96 mountY=-3.00 hyp=4.22 mountTheta=-0.79 cameraX=3.81, cameraY=-1.81 cameraTheta=-0.44
 DEBUG: incremental bump (3.811, -1.812) isValid = 1
 DEBUG: Scheduling Mount bump of (0.406, -0.161)
+STEP: opts=13 frame=126 ao=1 cam=-0.48339059682125196,-0.13839168578910233 mnt=-0.50159216891547664,0.017104190050487581 gd=-0.34160795937310989,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-8,11
 RESULT: 0 pos=-8,11 avg=-9.8795901899568257,12.022652452408717 inprog=1 w=1
 SHOWBUMP: 1.0899176376077573 -1.1132633863311063
 BUMP: 0.40630133839155769 -0.16100160647382075
@@ -1666,8 +1666,8 @@ DEBUG: MoveAxis(R, 0, ABG)
 DEBUG: MoveAxis(D, 1, ABG)
 DEBUG: stepping (-8, 11) + (0, -1)
 DEBUG: stepped: pos (-8, 10)
-STEP: opts=13 frame=127 ao=1 cam=-0.34778414897704124,0.47521596368241603 mnt=-0.16461229089963425,0.55918883956361409 gd=-0.12761830042288727,0.35228896892507688 ra=0 Right lim=0 dec=1 Down lim=0 pos=-8,10
 DEBUG: secondary mount is busy, cannot bump
+STEP: opts=13 frame=127 ao=1 cam=-0.34778414897704124,0.47521596368241603 mnt=-0.16461229089963425,0.55918883956361409 gd=-0.12761830042288727,0.35228896892507688 ra=0 Right lim=0 dec=1 Down lim=0 pos=-8,10
 RESULT: 0 pos=-8,10 avg=-9.2593254272710723,11.35517714311384 inprog=1 w=1
 GUIDE: 68
 DEBUG: CameraToMount -- cameraTheta (2.36) - m_xAngle (0.35) = xAngle (2.01 = 2.01)
@@ -1680,11 +1680,11 @@ DEBUG: stepped: pos (-7, 10)
 DEBUG: MoveAxis(D, 2, ABG)
 DEBUG: stepping (-7, 10) + (0, -2)
 DEBUG: stepped: pos (-7, 8)
-STEP: opts=13 frame=128 ao=1 cam=-0.59413250062304712,0.59342000004072304 mnt=-0.35579172754855382,0.74747607656937221 gd=-0.23308206938519097,0.49557015606345989 ra=1 Right lim=0 dec=2 Down lim=0 pos=-7,8
 DEBUG: MountToCamera -- mountTheta (-0.79) + m_xAngle (0.35) = xAngle (-0.44 = -0.44)
 DEBUG: MountToCamera -- mountX=2.55 mountY=-2.56 hyp=3.62 mountTheta=-0.79 cameraX=3.27, cameraY=-1.54 cameraTheta=-0.44
 DEBUG: incremental bump (3.275, -1.535) isValid = 1
 DEBUG: Scheduling Mount bump of (0.407, -0.159)
+STEP: opts=13 frame=128 ao=1 cam=-0.59413250062304712,0.59342000004072304 mnt=-0.35579172754855382,0.74747607656937221 gd=-0.23308206938519097,0.49557015606345989 ra=1 Right lim=0 dec=2 Down lim=0 pos=-7,8
 RESULT: 0 pos=-7,8 avg=-8.5137480362716182,10.247968685886272 inprog=1 w=1
 SHOWBUMP: 1.0953136148572151 -1.1075066714924398
 BUMP: 0.40735059688001141 -0.15915001017155275
@@ -1697,11 +1697,11 @@ DEBUG: MoveAxis(R, 1, ABG)
 DEBUG: stepping (-7, 8) + (1, 0)
 DEBUG: stepped: pos (-6, 8)
 DEBUG: MoveAxis(U, 0, ABG)
-STEP: opts=13 frame=129 ao=1 cam=-0.27227201455933425,-0.098415874073424447 mnt=-0.28951254416661848,-0.0098386190546789452 gd=-0.198708647681933,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-6,8
 DEBUG: MountToCamera -- mountTheta (-0.80) + m_xAngle (0.35) = xAngle (-0.45 = -0.45)
 DEBUG: MountToCamera -- mountX=2.30 mountY=-2.38 hyp=3.31 mountTheta=-0.80 cameraX=2.98, cameraY=-1.45 cameraTheta=-0.45
 DEBUG: incremental bump (2.978, -1.446) isValid = 1
 DEBUG: Scheduling Mount bump of (0.268, -0.109)
+STEP: opts=13 frame=129 ao=1 cam=-0.27227201455933425,-0.098415874073424447 mnt=-0.28951254416661848,-0.0098386190546789452 gd=-0.198708647681933,0 ra=1 Right lim=0 dec=0 Up lim=0 pos=-6,8
 RESULT: 0 pos=-6,8 avg=-7.6842111843019838,9.5061390195438022 inprog=1 w=1
 SHOWBUMP: 0.71733327223576904 -0.74394686695806644
 BUMP: 0.26836928414067562 -0.10860783356487569
@@ -1714,9 +1714,9 @@ DEBUG: MoveAxis(R, 1, ABG)
 DEBUG: stepping (-6, 8) + (1, 0)
 DEBUG: AO: limit reached!
 DEBUG: Error thrown from stepguider.cpp:985->step failed
-STEP: opts=13 frame=130 ao=1 cam=-0.59873351246423567,0.46279800248913716 mnt=-0.40471871115700309,0.62461089421556537 gd=-0.26888239336664727,0.3935048633558062 ra=0 Right lim=0 dec=0 Down lim=0 pos=0,0
 DEBUG: StepGuider::Move: Mount::Move failed! result 3
 DEBUG: Stop bumping, close enough to center -- clearing m_bumpInProgress
+STEP: opts=13 frame=130 ao=1 cam=-0.59873351246423567,0.46279800248913716 mnt=-0.40471871115700309,0.62461089421556537 gd=-0.26888239336664727,0.3935048633558062 ra=0 Right lim=0 dec=0 Down lim=0 pos=0,0
 RESULT: 3 pos=0,0 avg=-5.1484214934823296,6.3691131430943475 inprog=0 w=1
 LIMIT: The AO exceeded its travel limit stepping from (-6, 8) to (-5, 8) and has been re-centered. Try reducing the AO Travel setting to 5 or lower.
 GUIDE: 71

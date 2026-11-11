@@ -373,7 +373,9 @@ impl MoveState {
         if suppressed {
             debug(events, format!("Suppressed alert:  {msg}"));
         } else {
-            events.push(MountEvent::Alert { msg, kind: AlertKind::Warning });
+            // `LimitReachedWarningKey`.
+            let key = if ra { "MaxRALimitWarningEnabled" } else { "MaxDecLimitWarningEnabled" };
+            events.push(MountEvent::Alert { msg, kind: AlertKind::Warning, dont_show: Some(key) });
         }
     }
 }
@@ -1324,7 +1326,8 @@ impl Scope {
                             || norm_angle(east_angle - (self.calibration.x_angle + PI)).abs() > radians(30.0)
                         {
                             let msg = "Advisory: Little or no east movement was measured, so guiding will probably be impaired. Check the guide cable and use the Manual Guide tool to confirm basic operation of the mount.";
-                            events.push(MountEvent::Alert { msg: msg.into(), kind: AlertKind::Warning });
+                            let kind = AlertKind::Warning;
+                            events.push(MountEvent::Alert { msg: msg.into(), kind, dont_show: None });
                             debug(events, format!("Calibration alert: {msg}"));
                             self.cw.east_alert_shown = true;
                         }
@@ -1721,7 +1724,7 @@ impl Scope {
     /// A leg gave up: the alert, `CalibrationFailed` (event and guide log),
     /// the thrown error's debug line, then the calibration is cleared.
     fn fail(&mut self, reason: &str, thrown: &str, events: &mut Vec<MountEvent>) -> CalibrationNext {
-        events.push(MountEvent::Alert { msg: reason.into(), kind: AlertKind::Warning });
+        events.push(MountEvent::Alert { msg: reason.into(), kind: AlertKind::Warning, dont_show: None });
         events.push(MountEvent::CalibrationFailed { reason: reason.into() });
         debug(events, thrown);
         self.clear_calibration();
@@ -1783,7 +1786,7 @@ impl Scope {
                 format!("Alert detected in scope calibration but not shown to user - suppressed message was: {msg}"),
             );
         } else {
-            events.push(MountEvent::Alert { msg: msg.into(), kind: AlertKind::Warning });
+            events.push(MountEvent::Alert { msg: msg.into(), kind: AlertKind::Warning, dont_show: None });
         }
         debug(events, format!("Calibration alert details: {}", res.detail));
     }
@@ -2026,6 +2029,7 @@ mod tests {
         for e in events.drain(..) {
             out.push(match e {
                 MountEvent::Debug(s) => format!("DEBUG: {s}"),
+                MountEvent::DebugNoNewline(s) => format!("DEBUG_NO_NL: {s}"),
                 MountEvent::Alert { msg, .. } => format!("ALERT: {msg}"),
                 MountEvent::Status(s) => format!("STATUS: {s}"),
                 MountEvent::Info(s) => format!("INFO: {s}"),
@@ -2576,7 +2580,12 @@ mod tests {
         west(&mut scope, 10.0, &mut ev);
         let lowered = "Your Max RA Duration setting is preventing PHD from making adequate corrections to keep the guide star locked. Try restoring Max RA Duration setting to its default value to allow PHD2 to make larger corrections.";
         assert_eq!(alerts(&ev), [lowered]);
-        assert!(matches!(ev.iter().find(|e| matches!(e, MountEvent::Alert { .. })), Some(MountEvent::Alert { kind: AlertKind::Warning, .. })));
+        // A warning, its "Don't show again" key with it.
+        let alert = ev.iter().find_map(|e| match e {
+            MountEvent::Alert { kind, dont_show, .. } => Some((*kind, *dont_show)),
+            _ => None,
+        });
+        assert_eq!(alert, Some((AlertKind::Warning, Some("MaxRALimitWarningEnabled"))));
         ev.clear();
         // 30 s between alerts, both axes together.
         west(&mut scope, 39.0, &mut ev);
