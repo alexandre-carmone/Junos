@@ -250,8 +250,9 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
         }
         "bpm_build" => {
             let (exp_ms, count) = (int(p, "exposure_ms")?, int(p, "count")?);
-            command(d, Command::DarksBuild(DarksBuildKind::DefectMap { exp_s: exp_ms / 1000, count, note: String::new() }))
-                .await
+            // The Darks dialog's note goes into the defect map's master dark too.
+            let note = p.param("note").and_then(Value::as_str).unwrap_or("").to_string();
+            command(d, Command::DarksBuild(DarksBuildKind::DefectMap { exp_s: exp_ms / 1000, count, note })).await
         }
         "pa_drift_open" => command(d, Command::PolarDriftOpen).await,
         "pa_drift_start" => command(d, Command::PolarDriftStart).await,

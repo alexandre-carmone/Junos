@@ -65,7 +65,7 @@ use crate::engine::star::FindResult;
 use crate::engine::traits::Parity;
 use crate::engine::{AlgoView, CalibrationView, Engine, EngineEvent, Snapshot};
 use crate::server::events::{self, Origin};
-use crate::server::rpc::{self, Call, INVALID_REQUEST, METHOD_NOT_FOUND, RpcError};
+use crate::server::rpc::{self, Call, RpcError};
 use crate::server::{extras, methods};
 
 /// How far back `guider_history` reaches, and how much it holds.
@@ -704,18 +704,14 @@ fn on_text(text: &str, d: &Daemon, sh: &Arc<Shared>, replies: &mpsc::Sender<Stri
         return;
     }
     let Some(Value::Object(mut p)) = msg.remove("payload") else { return };
-    let id = p.remove("id").unwrap_or(Value::Null);
-    let params = p.remove("params").filter(|v| !v.is_null());
-    let call = match p.get("method").and_then(Value::as_str) {
-        _ if params.as_ref().is_some_and(|v| !v.is_array() && !v.is_object()) => {
-            Err(RpcError::new(INVALID_REQUEST, "invalid request - params must be an array or object"))
-        }
-        None => Err(RpcError::new(INVALID_REQUEST, "invalid request - missing method")),
-        Some(name) => match rpc::method(name, true) {
-            Some(method) => Ok(Call { method, params, id: Some(id.clone()) }),
-            None => Err(RpcError::new(METHOD_NOT_FOUND, "method not found")),
-        },
-    };
+    // Every call is answered, its errors too, under the id it came with.
+    let id = p.get("id").cloned().unwrap_or(Value::Null);
+    // A null `params` is none here, where PHD2 refuses it: the UI's helper
+    // sends one for a method without parameters.
+    if p.get("params").is_some_and(Value::is_null) {
+        p.remove("params");
+    }
+    let call = rpc::call(Value::Object(p), true);
     let name = call.as_ref().ok().map(|c| c.method.name);
     let (d, sh, replies) = (d.clone(), sh.clone(), replies.clone());
     tokio::spawn(async move {
@@ -910,7 +906,7 @@ mod tests {
 
         // PHD2's methods, the UI's and this socket's, through one envelope.
         assert_eq!(rpc(&mut ws, 7, "get_app_state", Value::Null).await, json!({"id": 7, "result": "Stopped"}));
-        assert_eq!(rpc(&mut ws, 8, "no_such_method", json!([])).await["error"]["code"], METHOD_NOT_FOUND);
+        assert_eq!(rpc(&mut ws, 8, "no_such_method", json!([])).await["error"]["code"], rpc::METHOD_NOT_FOUND);
         let r = rpc(&mut ws, 9, "export_profile", json!({})).await;
         assert_eq!(r["result"]["name"], "My Equipment");
         // The new state and the reply race: wait for both.

@@ -176,9 +176,9 @@ pub static METHODS: &[Method] = &[
     phd2("get_limit_frame", &[]),
     phd2("set_limit_frame", &["roi"]),
     // The junos-web Guide tab's extras, reached through the relay's
-    // `guider_rpc` only. The browser names its parameters; the lists follow
-    // the plan's shapes and are refined with each feature. The tool families
-    // start with start/stop.
+    // `guider_rpc` only: one row per engine command the UI asks for
+    // (`Command::name`), and the names each handler in `extras.rs` reads.
+    // The tools the engine does not have yet start with start/stop.
     ws("select_star", &["x", "y"]),
     ws("set_profile_value", &["key", "value"]),
     ws("new_profile", &["name"]),
@@ -187,7 +187,23 @@ pub static METHODS: &[Method] = &[
     ws("import_profile", &["text", "name"]),
     ws("export_profile", &["id"]),
     ws("export_settings", &[]),
-    ws("set_equipment", &["camera", "camera_ccd", "mount", "aux_mount", "ao", "rotator", "indi_host", "indi_port"]),
+    ws(
+        "set_equipment",
+        &[
+            "camera",
+            "mount",
+            "aux_mount",
+            "ao",
+            "rotator",
+            "camera_device",
+            "camera_ccd",
+            "mount_device",
+            "ao_device",
+            "rotator_device",
+            "indi_host",
+            "indi_port",
+        ],
+    ),
     ws("connect_device", &["role", "connected"]),
     ws("list_devices", &[]),
     ws("set_algorithm", &["axis", "algorithm"]),
@@ -197,7 +213,7 @@ pub static METHODS: &[Method] = &[
     ws("darks_build", &["min_ms", "max_ms", "count", "new_library", "note"]),
     ws("darks_stop", &[]),
     ws("darks_use", &["dark", "defect"]),
-    ws("bpm_build", &["exposure_ms", "count"]),
+    ws("bpm_build", &["exposure_ms", "count", "note"]),
     ws("bpm_set", &["hot", "cold"]),
     ws("bpm_save", &[]),
     ws("ga_open", &[]),
@@ -370,23 +386,37 @@ fn answered(text: String) -> Parsed {
     Parsed { batch: false, items: vec![Item::Reply(Some(text))] }
 }
 
-/// One request (`parse_request`, `handle_request`). Its errors carry a null
-/// id whatever the request's own.
+/// One request of a line (`handle_request`): a `-32600` is answered with a
+/// null id whatever the request's own, a `-32601` with its id, and not at
+/// all for a notification.
 fn request(req: Value) -> Item {
-    let invalid = |msg: &str| Item::Reply(Some(reply(&Err(RpcError::new(INVALID_REQUEST, msg)), &Value::Null)));
+    let id = req.get("id").cloned();
+    match call(req, false) {
+        Ok(c) => Item::Call(c),
+        Err(e) => {
+            let id = if e.code == METHOD_NOT_FOUND { id } else { Some(Value::Null) };
+            Item::Reply(id.map(|id| reply(&Err(e), &id)))
+        }
+    }
+}
+
+/// A request object as PHD2 checks it (`parse_request`, `handle_request`):
+/// a string `method` first, then `params` an array or an object, then a
+/// known method — `ws`, a relay call, knows the junos UI's methods too.
+pub fn call(req: Value, ws: bool) -> Result<Call, RpcError> {
     let (name, params, id) = match req {
         Value::Object(mut m) => (m.remove("method"), m.remove("params"), m.remove("id")),
         _ => (None, None, None),
     };
     let Some(Value::String(name)) = name else {
-        return invalid("invalid request - missing method");
+        return Err(RpcError::new(INVALID_REQUEST, "invalid request - missing method"));
     };
     if params.as_ref().is_some_and(|p| !p.is_array() && !p.is_object()) {
-        return invalid("invalid request - params must be an array or object");
+        return Err(RpcError::new(INVALID_REQUEST, "invalid request - params must be an array or object"));
     }
-    match method(&name, false) {
-        Some(method) => Item::Call(Call { method, params, id }),
-        None => Item::Reply(id.map(|id| reply(&Err(RpcError::new(METHOD_NOT_FOUND, "method not found")), &id))),
+    match method(&name, ws) {
+        Some(method) => Ok(Call { method, params, id }),
+        None => Err(RpcError::new(METHOD_NOT_FOUND, "method not found")),
     }
 }
 
@@ -1046,6 +1076,99 @@ mod tests {
         assert_eq!(params("capture_single_frame"), ["exposure", "binning", "gain", "subframe", "path", "save"]);
         assert_eq!(params("set_variable_delay_settings"), ["Enabled", "ShortDelaySeconds", "LongDelaySeconds"]);
         assert_eq!(params("get_ccd_temperature"), [] as [&str; 0]);
+    }
+
+    /// The UI reaches the engine through this table only: each command it
+    /// can ask for has its method, a PHD2 one or the UI's own.
+    #[test]
+    fn every_command_has_a_method() {
+        use crate::engine::algo::{AlgoKind, Axis};
+        use crate::engine::assistant::RecKind;
+        use crate::engine::calibration::Calibration;
+        use crate::engine::control::DitherMode;
+        use crate::engine::guider::ShiftUnits;
+        use crate::engine::log::image_log::ImageLoggerSettings;
+        use crate::engine::scope::DecGuideMode;
+        use crate::engine::traits::Dir;
+        use crate::engine::{Command as C, DarksBuildKind, Gear, SingleFrame, Which};
+        let settle = SettleParams::default();
+        let commands = [
+            C::Loop,
+            C::StopCapture,
+            C::Guide { settle, recalibrate: false, roi: None },
+            C::Dither { amount: 1.0, ra_only: false, settle },
+            C::SetPaused { paused: true, full: false },
+            C::FindStar { roi: None },
+            C::DeselectStar,
+            C::SetLockPosition { x: 1.0, y: 1.0, exact: true },
+            C::ClearCalibration(Which::Both),
+            C::FlipCalibration,
+            C::SetExposure(1000),
+            C::SetDecGuideMode(DecGuideMode::Auto),
+            C::SetGuideOutputEnabled(true),
+            C::SetAlgoParam { axis: Axis::X, name: String::new(), value: 0.0 },
+            C::GuidePulse { amount: 100, dir: Dir::North, which: Which::Mount },
+            C::CaptureSingleFrame(SingleFrame::default()),
+            C::SetLockShiftEnabled(true),
+            C::SetLockShiftParams { rate: Point::default(), units: ShiftUnits::Pixels, mount_coords: false },
+            C::SetVariableDelay { enabled: false, short_ms: 0, long_ms: 0 },
+            C::SetLimitFrame(None),
+            C::SetCoolerState(true),
+            C::SaveImage,
+            C::Attach(Gear::default()),
+            C::Detach,
+            C::ProfileChanged,
+            C::Connecting(true),
+            C::SelectStar { x: 1.0, y: 1.0 },
+            C::SetCalibrationData { which: Which::Mount, cal: Calibration::default() },
+            C::NudgeLock { dx: 1.0, dy: 0.0 },
+            C::SetAlgorithm { axis: Axis::Y, kind: AlgoKind::Identity },
+            C::ResetAlgoParams { axis: Axis::Y },
+            C::SetDitherMode { mode: DitherMode::Random, ra_only: false, scale: 1.0 },
+            C::SetAutoExposure { min_ms: 100, max_ms: 5000, target_snr: 6.0 },
+            C::SetImageLogger(ImageLoggerSettings::default()),
+            C::SetManualPointing(None),
+            C::GaOpen,
+            C::GaStart,
+            C::GaStop,
+            C::GaEndWait { accept: false },
+            C::GaSetMeasureBacklash(true),
+            C::GaApply(RecKind::Exp),
+            C::GaReview(String::new()),
+            C::GaClose,
+            C::DarksBuild(DarksBuildKind::DefectMap { exp_s: 15, count: 10, note: String::new() }),
+            C::DarksStop,
+            C::DarksUse(true),
+            C::DefectMapUse(true),
+            C::PolarDriftOpen,
+            C::PolarDriftStart,
+            C::PolarDriftStop,
+            C::PolarDriftClose,
+        ];
+        for c in &commands {
+            assert!(method(c.name(), true).is_some(), "no method for {}", c.name());
+        }
+        // The daemon's own, no client's: the 1 s tick and a device gone.
+        assert_eq!((C::Tick.name(), C::DeviceLost(Which::Mount).name()), ("tick", "device_lost"));
+        assert_eq!(method("ga_backlash_start", true), None);
+    }
+
+    #[test]
+    fn relay_calls() {
+        let c = call(json!({"method": "select_star", "params": [1, 2], "id": 3}), true).unwrap();
+        assert_eq!((c.method.name, c.params, c.id), ("select_star", Some(json!([1, 2])), Some(json!(3))));
+        assert_eq!(call(json!({"method": "loop"}), true).map(|c| c.id), Ok(None));
+        let missing = Err(RpcError::new(INVALID_REQUEST, "invalid request - missing method"));
+        assert_eq!(call(json!({"params": [], "id": 1}), true), missing);
+        // The method is checked before the params.
+        assert_eq!(call(json!({"method": 5, "params": 3}), true), missing);
+        assert_eq!(
+            call(json!({"method": "loop", "params": "x"}), true),
+            Err(RpcError::new(INVALID_REQUEST, "invalid request - params must be an array or object"))
+        );
+        let not_found = Err(RpcError::new(METHOD_NOT_FOUND, "method not found"));
+        assert_eq!(call(json!({"method": "select_star", "id": 1}), false), not_found);
+        assert_eq!(call(json!({"method": "nope"}), true), not_found);
     }
 
     /// The lines Ekos writes (`phd2.cpp` `sendRpcCall`: a compact

@@ -340,7 +340,8 @@ impl Command {
             Command::DarksBuild(_) => "darks_build",
             Command::DarksStop => "darks_stop",
             Command::DarksUse(_) => "darks_use",
-            Command::DefectMapUse(_) => "bpm_use",
+            // `darks_use {dark, defect}` carries both menu items.
+            Command::DefectMapUse(_) => "darks_use",
             Command::PolarDriftOpen => "pa_drift_open",
             Command::PolarDriftStart => "pa_drift_start",
             Command::PolarDriftStop => "pa_drift_stop",
