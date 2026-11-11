@@ -13,22 +13,25 @@
 //! reads three positions; the CoR is the circle through them.
 //!
 //! The engine drives it in the guider's Selected state through
-//! [`StaticPa::update_state`], which reaches the mount and the guider through
-//! [`StaticPaGear`]; the overlay comes from [`StaticPa::calc_adjustments`]
-//! and the getters. PHD2's window state that only drew things (the star-map
-//! panel's pan, the instructions toggle, "Show Orbits", the notes box) stays
-//! in the UI.
+//! [`StaticPa::update_state`], which reaches the guider through
+//! [`StaticPaGear`] and the mount through the [`PointingSource`] it extends;
+//! the overlay comes from [`StaticPa::calc_adjustments`] and the getters.
+//! PHD2's window state that only drew things (the star-map panel's pan, the
+//! instructions toggle, "Show Orbits", the notes box) stays in the UI.
 //!
 //! Ported from PHD2 `src/staticpa_tool.h`, `src/staticpa_toolwin.h`, `src/staticpa_toolwin.cpp` — BSD-3-Clause, see THIRD_PARTY.md
 
 use std::f64::consts::PI;
 
-use crate::engine::algo::MountClass;
-use crate::engine::calibration::{ProfileAccess, degrees, keys as cal_keys, norm, norm_angle, radians};
-use crate::engine::log::cfmt::fmt_f;
-use crate::engine::traits::{PierSide, Point};
+use chrono::TimeZone;
 
-/// The tool's profile keys (`staticpa_toolwin.cpp:247-248`).
+use crate::engine::algo::MountClass;
+use crate::engine::calibration::{ProfileAccess, degrees, keys as cal_keys, norm, norm_angle, pier_side_from, radians};
+use crate::engine::log::cfmt::fmt_f;
+use crate::engine::mount::PointingSource;
+use crate::engine::traits::{PierSide, Point, c_int};
+
+/// The tool's profile keys (`staticpa_toolwin.cpp:236-237`).
 pub mod keys {
     /// Index into the hemisphere's [`super::NORTH_STARS`] / [`super::SOUTH_STARS`].
     pub const REF_STAR: &str = "/StaticPaTool/RefStar";
@@ -52,7 +55,7 @@ const fn star(name: &'static str, ra2000: f64, dec2000: f64, mag: f64) -> PoleSt
     PoleStar { name, ra2000, dec2000, mag }
 }
 
-/// `c_SthStars` (`staticpa_toolwin.cpp:220`), verbatim.
+/// `c_SthStars` (`staticpa_toolwin.cpp:209`), verbatim.
 pub const SOUTH_STARS: [PoleStar; 8] = [
     star("A: sigma Oct", 317.19908, -88.9564, 4.3),
     star("B: HD99828", 165.91797, -89.2392, 7.5),
@@ -64,7 +67,7 @@ pub const SOUTH_STARS: [PoleStar; 8] = [
     star("H: HD98784", 134.64254, -89.8312, 8.9),
 ];
 
-/// `c_NthStars` (`staticpa_toolwin.cpp:233`), verbatim.
+/// `c_NthStars` (`staticpa_toolwin.cpp:222`), verbatim.
 pub const NORTH_STARS: [PoleStar; 8] = [
     star("A: HD5914", 23.48114, 89.0155, 6.45),
     star("B: HD14369", 55.20640, 89.1048, 8.05),
@@ -76,7 +79,7 @@ pub const NORTH_STARS: [PoleStar; 8] = [
     star("H: TYC-4629-37-1", 70.70722, 89.6301, 9.15),
 ];
 
-/// `c_autoInstr` (`staticpa_toolwin.cpp:262`), one step per line (PHD2
+/// `c_autoInstr` (`staticpa_toolwin.cpp:253`), one step per line (PHD2
 /// separates them with `<br/>` for its HTML box).
 pub const AUTO_INSTRUCTIONS: [&str; 8] = [
     "Slew to near the Celestial Pole.",
@@ -89,7 +92,7 @@ pub const AUTO_INSTRUCTIONS: [&str; 8] = [
     "Red=Altitude; Blue=Azimuth",
 ];
 
-/// `c_manualInstr` (`staticpa_toolwin.cpp:270`), one step per line.
+/// `c_manualInstr` (`staticpa_toolwin.cpp:261`), one step per line.
 pub const MANUAL_INSTRUCTIONS: [&str; 11] = [
     "Slew to near the Celestial Pole.",
     "Choose a Reference Star from the list.",
@@ -108,17 +111,10 @@ pub const MANUAL_INSTRUCTIONS: [&str; 11] = [
 /// Dec degrees, local sidereal time hours.
 pub type Coords = (f64, f64, f64);
 
-/// What the tool reaches of the mount (`pPointingSource`) and the guider
-/// (`pFrame->pGuider`) while it rotates.
-pub trait StaticPaGear {
-    /// `GetCoordinates`; `None` on error.
-    fn coordinates(&self) -> Option<Coords>;
-    /// `Slewing`.
-    fn slewing(&self) -> bool;
-    /// `SlewToCoordinatesAsync`; `true` when the slew started.
-    fn slew_to(&mut self, ra_hours: f64, dec_deg: f64) -> bool;
-    /// `AbortSlew`.
-    fn abort_slew(&mut self);
+/// What the tool reaches of the guider (`pFrame->pGuider`) while it
+/// rotates, on top of the mount (`pPointingSource`): `coordinates`,
+/// `is_slewing`, `slew_to_async` and `abort_slew`.
+pub trait StaticPaGear: PointingSource {
     /// `Guider::CurrentPosition`, `None` when invalid.
     fn current_position(&self) -> Option<Point>;
     /// `SetLockPosToStarAtPosition(CurrentPosition())`, run right after a
@@ -144,22 +140,52 @@ pub struct StaticPaOpen {
     pub pier_side: PierSide,
     /// The pointing source's site latitude, when it knows one.
     pub site_lat: Option<f64>,
-    /// `pPointingSource && pPointingSource->CanSlewAsync()`.
+    /// `pPointingSource && pPointingSource->CanSlewAsync()`
+    /// ([`PointingSource::can_slew_async`]).
     pub can_slew: bool,
     /// [`days_since_j2000`] now: the pole stars are precessed once, here.
     pub days: f64,
+    /// `m_camWidth` (`staticpa_toolwin.cpp:184`): the camera's `FrameSize`
+    /// width, or when that is 0 the displayed image's width over the zoom.
+    /// The star map is drawn at `320 / cam_width` of the image's scale.
+    pub cam_width: f64,
+}
+
+/// 2000-01-01 12:00:00 UTC, in seconds since the epoch.
+const J2000_NOON_UTC: i64 = 946_728_000;
+
+/// `mktime` of 2000-01-01 12:00:00 with `tm_isdst = 0`
+/// (`staticpa_toolwin.cpp:843-851, 879-887`): noon in the local zone's
+/// *standard* time, the `j2000_local` of [`days_since_j2000`]. It reads the
+/// local time zone. Where daylight time was in force that day (a southern
+/// summer) it is an hour after the naive local noon, which would turn the
+/// no-coordinates sky of [`StaticPa::radec_to_px`] by about 15°.
+pub fn j2000_local() -> i64 {
+    j2000_standard_noon(|t| {
+        chrono::Local.timestamp_opt(t, 0).single().map_or(0, |d| d.offset().local_minus_utc() as i64)
+    })
+}
+
+/// [`j2000_local`] for a zone given by its offset east of UTC (seconds) at
+/// a UTC time. Its standard offset is the smaller of January's and July's in
+/// 2000, since daylight time adds to it. Deviation: a zone whose tz data
+/// counts winter as the daylight time (Europe/Dublin's negative DST) gets
+/// its winter offset here, where glibc's `mktime` takes the summer one.
+fn j2000_standard_noon(offset_at: impl Fn(i64) -> i64) -> i64 {
+    let july = J2000_NOON_UTC + 182 * 86_400;
+    J2000_NOON_UTC - offset_at(J2000_NOON_UTC).min(offset_at(july))
 }
 
 /// `difftime(now, j2000) / 86400`, the time both `J2000Now` and `Radec2Px`
-/// use: `now_utc` is `time(NULL)` and `j2000_local` is `mktime` of
-/// 2000-01-01 12:00:00 with `tm_isdst = 0`, i.e. noon *local standard* time.
+/// use: `now_utc` is `time(NULL)` and `j2000_local` is [`j2000_local`], noon
+/// *local standard* time.
 /// The result is off by the time zone's offset (PHD2 parity); in `Radec2Px`
 /// that offset turns its Greenwich sidereal time into a rough local one.
 pub fn days_since_j2000(now_utc: i64, j2000_local: i64) -> f64 {
     (now_utc - j2000_local) as f64 / 86400.0
 }
 
-/// `J2000Now` (`staticpa_toolwin.cpp:876`): precess J2000 RA/Dec (degrees)
+/// `J2000Now` (`staticpa_toolwin.cpp:877`): precess J2000 RA/Dec (degrees)
 /// to `days` after J2000 (IAU 2006 angles, Capitaine et al. 2005, to t³).
 pub fn j2000_now(ra: f64, dec: f64, days: f64) -> (f64, f64) {
     let tnow = days / 36525.0;
@@ -237,12 +263,6 @@ pub fn centre_from_two(p1: Point, p2: Point, ra1_hours: f64, ra2_hours: f64, hem
     (Point::new(cx, cy), cr, radiff, slopebase)
 }
 
-/// A C `(int)` cast of a double on x86-64: NaN and out-of-range values become
-/// `INT_MIN` (`cvttsd2si`), where Rust's `as` would give 0 or saturate.
-fn c_int(x: f64) -> i32 {
-    if x.is_nan() || x >= 2147483648.0 || x < -2147483648.0 { i32::MIN } else { x as i32 }
-}
-
 /// One pole star as the tool shows it: position precessed to the date the
 /// window opened, and where it sits relative to the pole in the image.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -282,6 +302,7 @@ pub struct Adjustment {
 pub struct StaticPa {
     can_slew: bool,
     pixel_scale: f64,
+    cam_width: f64,
     /// Camera angle to RA, degrees.
     cam_angle: f64,
     /// Pixels the star must move for an arc to be measurable.
@@ -322,11 +343,7 @@ impl StaticPa {
         if let Some((x_angle, class)) = open.mount {
             log.push(format!("StaticPA: Camera angle {}", fmt_f(degrees(x_angle), 1)));
             let key = format!("{}{}", cal_keys::prefix(class.class_name()), cal_keys::PIER_SIDE);
-            let cal_pier_side = match p.get_i32(&key, PierSide::Unknown as i32) {
-                0 => PierSide::East,
-                1 => PierSide::West,
-                _ => PierSide::Unknown,
-            };
+            let cal_pier_side = pier_side_from(p.get_i32(&key, PierSide::Unknown as i32));
             log.push(format!(
                 "StaticPA: calPierSide {}; currPierSide {}",
                 cal_pier_side.label(),
@@ -348,6 +365,7 @@ impl StaticPa {
         Self {
             can_slew: open.can_slew,
             pixel_scale: open.pixel_scale,
+            cam_width: open.cam_width,
             cam_angle,
             dev_px: 5.0,
             ref_star,
@@ -383,9 +401,13 @@ impl StaticPa {
         }
     }
 
-    /// `OnHemi` (PHD2 enables the choice in manual mode only): a change
-    /// resets the reference star to the first of the list, without saving it.
+    /// `OnHemi`: a change resets the reference star to the first of the
+    /// list, without saving it. PHD2 enables the choice in manual mode only,
+    /// so in auto mode nothing happens.
     pub fn set_hemisphere(&mut self, p: &mut impl ProfileAccess, north: bool) {
+        if self.auto {
+            return;
+        }
         let hemi = if north { 1 } else { -1 };
         p.set_i32(keys::HEMISPHERE, hemi);
         if hemi != self.hemi {
@@ -443,16 +465,22 @@ impl StaticPa {
         self.aligning = true;
     }
 
-    /// "Get second position" (`OnStar2`, manual mode); read at the next frame.
+    /// "Get second position" (`OnStar2`); read at the next frame. PHD2 shows
+    /// the button in manual mode only: in auto mode nothing happens (it
+    /// would run the auto Pos#2 branch with no rotation sized and loop).
     pub fn second_position(&mut self) {
-        self.num_pos = 2;
-        self.aligning = true;
+        if !self.auto {
+            self.num_pos = 2;
+            self.aligning = true;
+        }
     }
 
-    /// "Get third position" (`OnStar3`, manual mode).
+    /// "Get third position" (`OnStar3`), manual mode only like the second.
     pub fn third_position(&mut self) {
-        self.num_pos = 3;
-        self.aligning = true;
+        if !self.auto {
+            self.num_pos = 3;
+            self.aligning = true;
+        }
     }
 
     /// `OnClear`: only once a CoR is shown.
@@ -536,7 +564,7 @@ impl StaticPa {
                 fmt_f(self.tot_rot, 1),
                 fmt_f(self.req_rot, 1)
             ));
-            if gear.slewing() {
+            if gear.is_slewing() {
                 return true;
             }
             if self.tot_rot < self.req_rot {
@@ -729,7 +757,7 @@ impl StaticPa {
             fmt_f(cur_ra, 3),
             fmt_f(slew_ra, 3)
         ));
-        if !gear.slew_to(slew_ra, cur_dec) {
+        if !gear.slew_to_async(slew_ra, cur_dec) {
             self.log.push("StaticPA: MoveWestBy: async slew failed".to_string());
             return false;
         }
@@ -959,7 +987,15 @@ impl StaticPa {
         self.pixel_scale
     }
 
-    /// The position being read next (1..=3; 4 when done).
+    /// `m_camWidth`, px: the star map's scale is `320 / cam_width`.
+    pub fn cam_width(&self) -> f64 {
+        self.cam_width
+    }
+
+    /// The position being read next (1..=3). Once the CoR is computed it is
+    /// 4 in manual mode but 3 in auto mode: PHD2's `numPos == 3` auto branch
+    /// is never reached, `aligning` being false by then. 0 after a stop, a
+    /// failure or a clear.
     pub fn num_pos(&self) -> i32 {
         self.num_pos
     }
@@ -1002,36 +1038,13 @@ impl StaticPa {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::tools::test_util::{Mem, fnv1a};
     use std::cell::Cell;
-    use std::collections::HashMap;
 
     // Every golden below comes from PHD2's C++ (staticpa_toolwin.cpp's
     // methods copied into a harness driving the same fakes).
 
     const DAYS: f64 = 9446.25;
-
-    #[derive(Default)]
-    struct Mem(HashMap<String, i32>);
-
-    impl ProfileAccess for Mem {
-        fn has(&self, key: &str) -> bool {
-            self.0.contains_key(key)
-        }
-        fn get_f64(&self, _: &str, default: f64) -> f64 {
-            default
-        }
-        fn get_i32(&self, key: &str, default: i32) -> i32 {
-            self.0.get(key).copied().unwrap_or(default)
-        }
-        fn get_str(&self, _: &str, default: &str) -> String {
-            default.to_string()
-        }
-        fn set_f64(&mut self, _: &str, _: f64) {}
-        fn set_i32(&mut self, key: &str, value: i32) {
-            self.0.insert(key.to_string(), value);
-        }
-        fn set_str(&mut self, _: &str, _: &str) {}
-    }
 
     /// A mount at RA `ra` and a star turning round (cx, cy) at radius `r`:
     /// `a0` degrees at RA `ra0`, clockwise on screen going west in the north.
@@ -1044,6 +1057,12 @@ mod tests {
         aborts: i32,
         /// Slews are accepted but the mount stays put.
         frozen: bool,
+        /// `coordinates` calls that succeed before it fails.
+        coords_ok: Cell<i32>,
+        slew_fails: bool,
+        /// No valid star position; the lock move refused.
+        invalid: bool,
+        lock_fails: bool,
         cx: f64,
         cy: f64,
         r: f64,
@@ -1055,22 +1074,56 @@ mod tests {
     impl Fake {
         fn new(cx: f64, cy: f64, r: f64, a0: f64, hemi: i32) -> Self {
             let dec = if hemi > 0 { 89.0 } else { -89.0 };
-            let slew_left = Cell::new(0);
-            Self { ra: 6.0, dec, st: 8.5, slew_left, slews: 0, aborts: 0, frozen: false, cx, cy, r, a0, ra0: 6.0, hemi }
+            Self {
+                ra: 6.0,
+                dec,
+                st: 8.5,
+                slew_left: Cell::new(0),
+                slews: 0,
+                aborts: 0,
+                frozen: false,
+                coords_ok: Cell::new(i32::MAX),
+                slew_fails: false,
+                invalid: false,
+                lock_fails: false,
+                cx,
+                cy,
+                r,
+                a0,
+                ra0: 6.0,
+                hemi,
+            }
         }
     }
 
-    impl StaticPaGear for Fake {
+    impl PointingSource for Fake {
         fn coordinates(&self) -> Option<Coords> {
-            Some((self.ra, self.dec, self.st))
+            let n = self.coords_ok.get();
+            self.coords_ok.set(n - 1);
+            (n > 0).then_some((self.ra, self.dec, self.st))
+        }
+        fn pier_side(&self) -> PierSide {
+            PierSide::Unknown
+        }
+        fn guide_rates(&self) -> Option<(f64, f64)> {
+            None
         }
         /// Busy for one frame after each slew.
-        fn slewing(&self) -> bool {
+        fn is_slewing(&self) -> bool {
             let n = self.slew_left.get();
             self.slew_left.set((n - 1).max(0));
             n > 0
         }
-        fn slew_to(&mut self, ra_hours: f64, dec_deg: f64) -> bool {
+        fn can_report_position(&self) -> bool {
+            true
+        }
+        fn can_slew_async(&self) -> bool {
+            true
+        }
+        fn slew_to_async(&mut self, ra_hours: f64, dec_deg: f64) -> bool {
+            if self.slew_fails {
+                return false;
+            }
             if !self.frozen {
                 self.ra = ra_hours;
                 self.dec = dec_deg;
@@ -1082,12 +1135,18 @@ mod tests {
         fn abort_slew(&mut self) {
             self.aborts += 1;
         }
+    }
+
+    impl StaticPaGear for Fake {
         fn current_position(&self) -> Option<Point> {
+            if self.invalid {
+                return None;
+            }
             let a = radians(self.a0 + (self.ra0 - self.ra) * 15.0 * self.hemi as f64);
             Some(Point::new(self.cx + self.r * a.cos(), self.cy + self.r * a.sin()))
         }
         fn lock_on_current_star(&mut self) -> bool {
-            true
+            !self.lock_fails
         }
         fn search_region(&self) -> i32 {
             15
@@ -1109,15 +1168,11 @@ mod tests {
             site_lat: None,
             can_slew,
             days: DAYS,
+            cam_width: 752.0,
         };
         let mut t = StaticPa::new(&p, &open);
         t.cam_angle = cam_angle;
         t
-    }
-
-    /// FNV-1a 64 of the lines joined by `\n`, as the harness hashes them.
-    fn fnv1a(lines: &[String]) -> u64 {
-        lines.join("\n").bytes().fold(0xcbf29ce484222325, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
     }
 
     /// Target, alt / az / total px, alt and az vectors.
@@ -1173,6 +1228,20 @@ mod tests {
         assert!((map[2].radius_px - 356.0 * (-0.3f64 * 1.95).exp() / 2.0).abs() < 1e-12);
         assert_eq!(tool(2.0, 15.0, -1, true).star_map(None, DAYS)[0].name, "A: sigma Oct");
         assert_eq!(days_since_j2000(946_728_000 + 86_400 * 3, 946_728_000), 3.0);
+    }
+
+    #[test]
+    fn j2000_noon_in_standard_time() {
+        // Sydney: +11 h in January (daylight time), +10 h in July. mktime's
+        // tm_isdst = 0 takes the +10 h, 02:00 UTC, not the naive 01:00.
+        let sydney = |t: i64| if t < J2000_NOON_UTC + 86_400 { 11 * 3600 } else { 10 * 3600 };
+        assert_eq!(j2000_standard_noon(sydney), 946_692_000);
+        // Paris: +1 h of standard time in January; UTC.
+        assert_eq!(j2000_standard_noon(|t| if t < J2000_NOON_UTC + 86_400 { 3600 } else { 7200 }), 946_724_400);
+        assert_eq!(j2000_standard_noon(|_| 0), J2000_NOON_UTC);
+        // The machine's own zone: whole quarter hours off noon UTC.
+        let off = J2000_NOON_UTC - j2000_local();
+        assert!(off % 900 == 0 && off.abs() <= 14 * 3600);
     }
 
     #[test]
@@ -1397,6 +1466,110 @@ mod tests {
     }
 
     #[test]
+    fn auto_failures_stop_and_reset() {
+        // From the harness: each failure's last log lines, status and
+        // counters, on a star 2700 px round (0, 0).
+        let check = |g: &mut Fake, frames: usize, status: &str, tail: &[&str]| {
+            let mut t = tool(2.0, 15.0, 1, true);
+            let results = run_auto(&mut t, g);
+            assert_eq!(results.len(), frames, "{status}");
+            assert!(!results[frames - 1] && results[..frames - 1].iter().all(|&ok| ok));
+            assert_eq!(t.status(), status);
+            assert_eq!((t.num_pos(), t.positions(), t.is_aligning()), (0, [None; 3], false));
+            let log = t.take_log();
+            assert_eq!(&log[log.len() - tail.len()..], tail);
+            assert_eq!(g.aborts, 1);
+            t
+        };
+        let pos1 = [
+            "StaticPA: Reading Star Pos#1",
+            "StaticPA:SetParams(newoffset=5.0) m_pxScale=2.0 m_offsetpx=9000.0 m_devpx=5.0",
+            "StaticPA: SetParams() m_reqRot=1.9 m_rotpx=299.6 m_reqStep=20 region=15",
+            "StaticPA: Pos#1 m_reqRot=1.9 m_reqStep=20",
+        ];
+        let fake = || Fake::new(0.0, 0.0, 2700.0, 70.0, 1);
+
+        // No star at position #1.
+        let mut g = fake();
+        g.invalid = true;
+        let tail = [&pos1[..], &["StaticPA: Error from SetStar 1"]].concat();
+        let t = check(&mut g, 1, "Error reading star position #1: Stopping", &tail);
+        assert_eq!(t.rotation(), (0, 20, 0.0, 1.9099477475697859));
+
+        // No mount coordinates at position #1, then at the first step.
+        let mut g = fake();
+        g.coords_ok.set(0);
+        let tail = ["StaticPA: SetStar failed to get scope coordinates", "StaticPA: Error from SetStar 1"];
+        check(&mut g, 1, "Error reading star position #1: Stopping", &tail);
+        let step0 = "StaticPA: Star Pos#2 m_nStep=0 / 20 m_totRot=0.0 / 1.9 deg";
+        let mut g = fake();
+        g.coords_ok.set(1);
+        let tail =
+            [step0, "StaticPA: MoveWestBy failed to get scope coordinates", "StaticPA: Error from MoveWestBy at step 0"];
+        check(&mut g, 2, "Error moving west step 0: Stopping", &tail);
+        assert_eq!(g.slews, 0);
+
+        // The slew refused; the slew started but the lock move refused: the
+        // step was already counted.
+        let slewing = "StaticPA: Slewing from RA hrs: 6.000 to:5.994";
+        let mut g = fake();
+        g.slew_fails = true;
+        let tail =
+            [step0, slewing, "StaticPA: MoveWestBy: async slew failed", "StaticPA: Error from MoveWestBy at step 0"];
+        check(&mut g, 2, "Error moving west step 0: Stopping", &tail);
+        assert_eq!(g.slews, 0);
+        let mut g = fake();
+        g.lock_fails = true;
+        let tail =
+            [slewing, "StaticPA: MoveWestBy: Failed to lock star position", "StaticPA: Error from MoveWestBy at step 1"];
+        let t = check(&mut g, 2, "Error moving west step 1: Stopping", &tail);
+        assert_eq!((g.slews, t.rotation().0), (1, 1));
+
+        // A star 9 px from the CoR: the rotation it needs is over 45°.
+        let mut g = Fake::new(300.0 - 9.0 * radians(70.0).cos(), 250.0 - 9.0 * radians(70.0).sin(), 9.0, 70.0, 1);
+        let tail = [
+            "StaticPA: Star Pos#2 actpix=0.3 actsec=0.6 m_pxScale=2.0",
+            "StaticPA:SetParams(newoffset=0.0) m_pxScale=2.0 m_offsetpx=9.0 m_devpx=5.0",
+            "StaticPA: SetParams() m_reqRot=63.6 m_rotpx=10.0 m_reqStep=1 region=15",
+            "StaticPA: Pos#2 Too close to CoR actoffsetdeg=0.0 m_reqRot=63.6",
+        ];
+        let t = check(&mut g, 42, "Star is too close to CoR (0.0 deg) - try another reference star", &tail);
+        assert_eq!(g.slews, 20);
+        assert_eq!(t.rotation(), (20, 1, 1.9099477475697859, 63.613845249416272));
+    }
+
+    #[test]
+    fn an_arc_too_long_for_any_star_loops_on_nan() {
+        // At 100"/px a star 3000 px round its CoR moves farther than acos
+        // allows: the offset is NaN, SetParams takes it, m_nStep becomes
+        // INT_MIN and every later frame reads position #2 again (PHD2 never
+        // leaves this). The harness's first 12 frames.
+        let (cx, cy) = (300.0 - 3000.0 * radians(70.0).cos(), 250.0 - 3000.0 * radians(70.0).sin());
+        let mut g = Fake::new(cx, cy, 3000.0, 70.0, 1);
+        let mut t = tool(100.0, 15.0, 1, true);
+        t.rotate(false, true, &mut g);
+        assert!((0..12).all(|_| t.update_state(&mut g)));
+        assert!(t.is_aligning());
+        assert_eq!((t.num_pos(), g.slews, g.aborts), (2, 3, 0));
+        let (n_step, req_step, tot_rot, req_rot) = t.rotation();
+        assert_eq!((n_step, req_step, tot_rot), (i32::MIN, 1, 13.536202737381158));
+        assert!(req_rot.is_nan());
+        let log = t.take_log();
+        assert_eq!(log.len(), 55);
+        assert_eq!(fnv1a(&log), 0x6ab00ead28f29591);
+        assert_eq!(
+            &log[50..],
+            [
+                "StaticPA: Setstar #2 -388, 412",
+                "StaticPA: Star Pos#2 actpix=707.1 actsec=70710.7 m_pxScale=100.0",
+                "StaticPA:SetParams(newoffset=nan) m_pxScale=100.0 m_offsetpx=nan m_devpx=5.0",
+                "StaticPA: SetParams() m_reqRot=nan m_rotpx=nan m_reqStep=1 region=15",
+                "StaticPA: Star Pos#2 m_nStep=-2147483648 / 1 m_totRot=13.5 / nan",
+            ]
+        );
+    }
+
+    #[test]
     fn manual_mode_reads_three_positions() {
         let mut g = Fake::new(350.0, 260.0, 180.0, 40.0, 1);
         let mut t = tool(2.0, 15.0, 1, false);
@@ -1484,6 +1657,18 @@ mod tests {
     }
 
     #[test]
+    fn position_buttons_are_manual_only() {
+        // Hidden in auto mode: a press reads nothing and starts nothing.
+        let mut g = Fake::new(0.0, 0.0, 2700.0, 70.0, 1);
+        let mut t = tool(2.0, 15.0, 1, true);
+        t.second_position();
+        t.third_position();
+        assert_eq!((t.num_pos(), t.is_aligning()), (0, false));
+        assert!(t.update_state(&mut g));
+        assert!(t.take_log().is_empty());
+    }
+
+    #[test]
     fn rotate_refusals_stop_and_star_lost() {
         let mut g = Fake::new(0.0, 0.0, 100.0, 0.0, 1);
         let mut t = tool(2.0, 15.0, 1, true);
@@ -1531,9 +1716,11 @@ mod tests {
             site_lat: Some(-30.0),
             can_slew: true,
             days: DAYS,
+            cam_width: 1280.0,
         };
         let mut t = StaticPa::new(&p, &open);
         assert!(t.flip());
+        assert_eq!(t.cam_width(), 1280.0);
         assert_eq!((t.hemisphere(), t.ref_star()), (-1, 0));
         assert!((t.cam_angle() - 30.0).abs() < 1e-12);
         assert_eq!(
@@ -1556,8 +1743,12 @@ mod tests {
         let mut t = StaticPa::new(&p, &StaticPaOpen { can_slew: false, ..open });
         t.set_manual(false);
         assert!(!t.is_auto());
-        // A hemisphere change picks the first star again, unsaved.
+        // A hemisphere change picks the first star again, unsaved; the
+        // choice is greyed out in auto mode.
         let mut t = StaticPa::new(&p, &open);
+        t.set_hemisphere(&mut p, false);
+        assert_eq!((t.hemisphere(), p.get_i32(keys::HEMISPHERE, 0)), (1, 1));
+        t.set_manual(true);
         t.set_ref_star(&mut p, 2);
         t.set_hemisphere(&mut p, true);
         assert_eq!(t.ref_star(), 2);

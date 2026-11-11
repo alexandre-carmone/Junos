@@ -71,6 +71,17 @@ pub trait PointingSource {
     fn is_slewing(&self) -> bool;
     /// `CanReportPosition`.
     fn can_report_position(&self) -> bool;
+    /// `CanSlewAsync`; the static PA tool's auto mode needs it.
+    fn can_slew_async(&self) -> bool {
+        false
+    }
+    /// `SlewToCoordinatesAsync` to RA hours, Dec degrees: `true` when the
+    /// slew started (PHD2 returns true on error). Without slewing, refused.
+    fn slew_to_async(&mut self, _ra_hours: f64, _dec_deg: f64) -> bool {
+        false
+    }
+    /// `AbortSlew`.
+    fn abort_slew(&mut self) {}
 
     /// `GetDeclinationRadians`, as the INDI mount answers it
     /// (`scope_indi.cpp:751`): the reported Dec clamped to ±89° so nothing

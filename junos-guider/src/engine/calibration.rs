@@ -314,7 +314,7 @@ pub trait ProfileAccess {
 
 /// `pier_side` (`mount.cpp:1648`): a stored side back; anything but East
 /// (0) and West (1) is Unknown.
-fn pier_side_from(v: i32) -> PierSide {
+pub(crate) fn pier_side_from(v: i32) -> PierSide {
     match v {
         0 => PierSide::East,
         1 => PierSide::West,
