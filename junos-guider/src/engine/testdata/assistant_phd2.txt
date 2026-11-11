@@ -1,0 +1,360 @@
+== pa
+dbg0 GuidingAssistant: Disabling guide output
+cell timestamp=[2026-11-11 21:00:00]
+cell exposure=[2s]
+cell snr=[25.0]
+cell mass=[12002.1]
+cell elapsed=[140s]
+cell count=[71]
+cell ra_rms=[  0.07 px (  0.14 arc-sec )]
+cell dec_rms=[  0.01 px (  0.03 arc-sec )]
+cell total_rms=[  0.07 px (  0.15 arc-sec )]
+cell ra_peak=[  0.26 px (  0.51 arc-sec )]
+cell dec_peak=[  0.05 px (  0.11 arc-sec )]
+cell ra_pkpk=[  0.71 px (  1.42 arc-sec )]
+cell ra_drift=[  0.38 px/min (  0.75 arc-sec/min )]
+cell ra_peak_drift=[  0.05 px/sec (  0.10 arc-sec/sec )]
+cell ra_drift_exp=[   2.0 s ]
+cell dec_drift=[  1.00 px/min (  2.00 arc-sec/min )]
+cell pae=[ 7.6 arc-min]
+num ra_mm=0.10000000000000001 dec_mm=0.10000000000000001 min_exp=1.5 max_exp=3.5 pae=7.6405047925050251 drift=1.0001446177062367 maxRateRA=0.049138175249099733
+rec [Use exposure times in the range of 1.5s to 3.5s] btn=0 en=0
+rec [Polar alignment error > 5 arc-min; that could probably be improved.] btn=0 en=0
+rec [Try setting RA min-move to 0.10] btn=1 en=1
+rec [Try setting Dec min-move to 0.10] btn=1 en=1
+dbg Uncorrected Dec RMS=0.689px, Dec drift=1.000 px/min, Best seeing estimate=0.034px, R-sq=0.998
+dbg GA Min-Move recommendations are seeing-based: Dec=0.100, RA=0.100
+dbg Guiding Assistant results follow:
+dbg SNR=25.0, Samples=71, Elapsed Time=140s, RA HPF-RMS=  0.07 px (  0.14 arc-sec ), Dec HPF-RMS=  0.01 px (  0.03 arc-sec ), Total HPF-RMS=  0.07 px (  0.15 arc-sec )
+dbg RA Peak=  0.26 px (  0.51 arc-sec ), RA Peak-Peak   0.71 px (  1.42 arc-sec ), RA Drift Rate=  0.38 px/min (  0.75 arc-sec/min ), Max RA Drift Rate=  0.05 px/sec (  0.10 arc-sec/sec ), Drift-Limiting Exp=   2.0 s 
+dbg Dec Drift Rate=  1.00 px/min (  2.00 arc-sec/min ), Dec Peak=  0.05 px (  0.11 arc-sec ), PA Error= 7.6 arc-min
+dbg Recommendation: Use exposure times in the range of 1.5s to 3.5s
+dbg Recommendation: Polar alignment error > 5 arc-min; that could probably be improved.
+dbg Recommendation: Try setting RA min-move to 0.10
+dbg Recommendation: Try setting Dec min-move to 0.10
+dbg End of Guiding Assistant output....
+glog SNR=25.0, Samples=71, Elapsed Time=140s, RA HPF-RMS=  0.07 px (  0.14 arc-sec ), Dec HPF-RMS=  0.01 px (  0.03 arc-sec ), Total HPF-RMS=  0.07 px (  0.15 arc-sec )
+glog RA Peak=  0.26 px (  0.51 arc-sec ), RA Peak-Peak   0.71 px (  1.42 arc-sec ), RA Drift Rate=  0.38 px/min (  0.75 arc-sec/min ), Max RA Drift Rate=  0.05 px/sec (  0.10 arc-sec/sec ), Drift-Limiting Exp=   2.0 s 
+glog Dec Drift Rate=  1.00 px/min (  2.00 arc-sec/min ), Dec Peak=  0.05 px (  0.11 arc-sec ), PA Error= 7.6 arc-min
+glog Recommendation: Polar alignment error > 5 arc-min; that could probably be improved.
+glog Recommendation: Try setting RA min-move to 0.10
+glog Recommendation: Try setting Dec min-move to 0.10
+completed 1
+prof /GA/2026-11-11 21:00:00/backlash_info=[]
+prof /GA/2026-11-11 21:00:00/dec_corrected_rms=[0.000000]
+prof /GA/2026-11-11 21:00:00/dec_drift_rate=[  1.00 px/min (  2.00 arc-sec/min )]
+prof /GA/2026-11-11 21:00:00/dec_hpf_rms=[  0.01 px (  0.03 arc-sec )]
+prof /GA/2026-11-11 21:00:00/dec_lf_drift_rate=[1.000145]
+prof /GA/2026-11-11 21:00:00/dec_peak=[  0.05 px (  0.11 arc-sec )]
+prof /GA/2026-11-11 21:00:00/elapsed_time=[140s]
+prof /GA/2026-11-11 21:00:00/exposure_time=[2s]
+prof /GA/2026-11-11 21:00:00/pa_error=[ 7.6 arc-min]
+prof /GA/2026-11-11 21:00:00/ra_drift_exposure=[   2.0 s ]
+prof /GA/2026-11-11 21:00:00/ra_drift_rate=[  0.38 px/min (  0.75 arc-sec/min )]
+prof /GA/2026-11-11 21:00:00/ra_hpf_rms=[  0.07 px (  0.14 arc-sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak=[  0.26 px (  0.51 arc-sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak_drift_rate=[  0.05 px/sec (  0.10 arc-sec/sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak_peak=[  0.71 px (  1.42 arc-sec )]
+prof /GA/2026-11-11 21:00:00/rec_dec_minmove=[0.100000]
+prof /GA/2026-11-11 21:00:00/rec_ra_minmove=[0.100000]
+prof /GA/2026-11-11 21:00:00/recommendations=[Exp:Use exposure times in the range of 1.5s to 3.5s
+PA:Polar alignment error > 5 arc-min; that could probably be improved.
+RAMinMove:Try setting RA min-move to 0.10
+DecMinMove:Try setting Dec min-move to 0.10
+]
+prof /GA/2026-11-11 21:00:00/sample_count=[71]
+prof /GA/2026-11-11 21:00:00/snr=[25.0]
+prof /GA/2026-11-11 21:00:00/star_mass=[12002.1]
+prof /GA/2026-11-11 21:00:00/timestamp=[2026-11-11 21:00:00]
+prof /GA/2026-11-11 21:00:00/total_hpf_rms=[  0.07 px (  0.15 arc-sec )]
+== sigma
+dbg0 GuidingAssistant: Disabling guide output
+cell timestamp=[2026-11-11 21:00:00]
+cell exposure=[1s]
+cell snr=[8.0]
+cell mass=[12000.6]
+cell elapsed=[130s]
+cell count=[131]
+cell ra_rms=[  0.13 px (  0.13 arc-sec )]
+cell dec_rms=[  0.20 px (  0.20 arc-sec )]
+cell total_rms=[  0.24 px (  0.24 arc-sec )]
+cell ra_peak=[  0.40 px (  0.40 arc-sec )]
+cell dec_peak=[  0.60 px (  0.60 arc-sec )]
+cell ra_pkpk=[  0.22 px (  0.22 arc-sec )]
+cell ra_drift=[  0.00 px/min (  0.00 arc-sec/min )]
+cell ra_peak_drift=[  0.06 px/sec (  0.06 arc-sec/sec )]
+cell ra_drift_exp=[   4.5 s ]
+cell dec_drift=[  0.00 px/min (  0.00 arc-sec/min )]
+cell pae=[>  0.0 arc-min]
+num ra_mm=0.26000000000000001 dec_mm=0.40000000000000002 min_exp=2 max_exp=4 pae=0 drift=0 maxRateRA=0.057142857142857162
+rec [Use exposure times in the range of 2.0s to 4.0s] btn=0 en=0
+rec [Consider using a brighter star for the test or increasing the exposure time] btn=0 en=0
+rec [Try setting RA min-move to 0.26] btn=1 en=1
+rec [Try setting Dec min-move to 0.40] btn=1 en=1
+dbg Uncorrected Dec RMS=0.301px, Dec drift=0.000 px/min, Best seeing estimate=0.301px, R-sq=0.000
+dbg GA Min-Move recommendations are seeing-based: Dec=0.400, RA=0.260
+dbg Guiding Assistant results follow:
+dbg SNR=8.0, Samples=131, Elapsed Time=130s, RA HPF-RMS=  0.13 px (  0.13 arc-sec ), Dec HPF-RMS=  0.20 px (  0.20 arc-sec ), Total HPF-RMS=  0.24 px (  0.24 arc-sec )
+dbg RA Peak=  0.40 px (  0.40 arc-sec ), RA Peak-Peak   0.22 px (  0.22 arc-sec ), RA Drift Rate=  0.00 px/min (  0.00 arc-sec/min ), Max RA Drift Rate=  0.06 px/sec (  0.06 arc-sec/sec ), Drift-Limiting Exp=   4.5 s 
+dbg Dec Drift Rate=  0.00 px/min (  0.00 arc-sec/min ), Dec Peak=  0.60 px (  0.60 arc-sec ), PA Error=>  0.0 arc-min
+dbg Recommendation: Use exposure times in the range of 2.0s to 4.0s
+dbg Recommendation: Consider using a brighter star for the test or increasing the exposure time
+dbg Recommendation: Try setting RA min-move to 0.26
+dbg Recommendation: Try setting Dec min-move to 0.40
+dbg End of Guiding Assistant output....
+glog SNR=8.0, Samples=131, Elapsed Time=130s, RA HPF-RMS=  0.13 px (  0.13 arc-sec ), Dec HPF-RMS=  0.20 px (  0.20 arc-sec ), Total HPF-RMS=  0.24 px (  0.24 arc-sec )
+glog RA Peak=  0.40 px (  0.40 arc-sec ), RA Peak-Peak   0.22 px (  0.22 arc-sec ), RA Drift Rate=  0.00 px/min (  0.00 arc-sec/min ), Max RA Drift Rate=  0.06 px/sec (  0.06 arc-sec/sec ), Drift-Limiting Exp=   4.5 s 
+glog Dec Drift Rate=  0.00 px/min (  0.00 arc-sec/min ), Dec Peak=  0.60 px (  0.60 arc-sec ), PA Error=>  0.0 arc-min
+glog Recommendation: Consider using a brighter star for the test or increasing the exposure time
+glog Recommendation: Try setting RA min-move to 0.26
+glog Recommendation: Try setting Dec min-move to 0.40
+completed 1
+prof /GA/2026-11-11 21:00:00/backlash_info=[]
+prof /GA/2026-11-11 21:00:00/dec_corrected_rms=[0.000000]
+prof /GA/2026-11-11 21:00:00/dec_drift_rate=[  0.00 px/min (  0.00 arc-sec/min )]
+prof /GA/2026-11-11 21:00:00/dec_hpf_rms=[  0.20 px (  0.20 arc-sec )]
+prof /GA/2026-11-11 21:00:00/dec_lf_drift_rate=[0.000000]
+prof /GA/2026-11-11 21:00:00/dec_peak=[  0.60 px (  0.60 arc-sec )]
+prof /GA/2026-11-11 21:00:00/elapsed_time=[130s]
+prof /GA/2026-11-11 21:00:00/exposure_time=[1s]
+prof /GA/2026-11-11 21:00:00/pa_error=[>  0.0 arc-min]
+prof /GA/2026-11-11 21:00:00/ra_drift_exposure=[   4.5 s ]
+prof /GA/2026-11-11 21:00:00/ra_drift_rate=[  0.00 px/min (  0.00 arc-sec/min )]
+prof /GA/2026-11-11 21:00:00/ra_hpf_rms=[  0.13 px (  0.13 arc-sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak=[  0.40 px (  0.40 arc-sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak_drift_rate=[  0.06 px/sec (  0.06 arc-sec/sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak_peak=[  0.22 px (  0.22 arc-sec )]
+prof /GA/2026-11-11 21:00:00/rec_dec_minmove=[0.400000]
+prof /GA/2026-11-11 21:00:00/rec_ra_minmove=[0.260000]
+prof /GA/2026-11-11 21:00:00/recommendations=[Exp:Use exposure times in the range of 2.0s to 4.0s
+Star:Consider using a brighter star for the test or increasing the exposure time
+RAMinMove:Try setting RA min-move to 0.26
+DecMinMove:Try setting Dec min-move to 0.40
+]
+prof /GA/2026-11-11 21:00:00/sample_count=[131]
+prof /GA/2026-11-11 21:00:00/snr=[8.0]
+prof /GA/2026-11-11 21:00:00/star_mass=[12000.6]
+prof /GA/2026-11-11 21:00:00/timestamp=[2026-11-11 21:00:00]
+prof /GA/2026-11-11 21:00:00/total_hpf_rms=[  0.24 px (  0.24 arc-sec )]
+== long
+dbg0 GuidingAssistant: Disabling guide output
+cell timestamp=[2026-11-11 21:00:00]
+cell exposure=[2s]
+cell snr=[30.0]
+cell mass=[12000.9]
+cell elapsed=[400s]
+cell count=[201]
+cell ra_rms=[  0.12 px (  0.20 arc-sec )]
+cell dec_rms=[  0.10 px (  0.16 arc-sec )]
+cell total_rms=[  0.16 px (  0.26 arc-sec )]
+cell ra_peak=[  0.45 px (  0.72 arc-sec )]
+cell dec_peak=[  0.68 px (  1.09 arc-sec )]
+cell ra_pkpk=[  2.71 px (  4.34 arc-sec )]
+cell ra_drift=[  0.26 px/min (  0.41 arc-sec/min )]
+cell ra_peak_drift=[  0.08 px/sec (  0.13 arc-sec/sec )]
+cell ra_drift_exp=[   4.9 s ]
+cell dec_drift=[  0.50 px/min (  0.80 arc-sec/min )]
+cell pae=[ 3.5 arc-min]
+num ra_mm=0.40000000000000002 dec_mm=0.40000000000000002 min_exp=2 max_exp=4 pae=3.4960982944086321 drift=0.50202157529185698 maxRateRA=0.080972536737113021
+rec [Use exposure times from 4.0s to 8.0s and variable delay feature to control guide cadence] btn=0 en=0
+rec [Consider trying to improve focus on the guide camera] btn=0 en=0
+rec [Try setting RA min-move to 0.40] btn=1 en=1
+rec [Try setting Dec min-move to 0.40] btn=1 en=1
+rec [Try using Lowpass2 for Dec guiding] btn=1 en=1
+dbg GA long series, window start=0, window end=120, Uncorrected RMS=0.381, Drift=0.488, Corrected RMS=0.269, R-sq=0.573
+dbg GA long series, window start=60, window end=180, Uncorrected RMS=0.381, Drift=0.489, Corrected RMS=0.363, R-sq=0.578
+dbg GA long series, window start=120, window end=240, Uncorrected RMS=0.392, Drift=0.519, Corrected RMS=0.276, R-sq=0.615
+dbg GA long series, window start=180, window end=300, Uncorrected RMS=0.383, Drift=0.493, Corrected RMS=0.252, R-sq=0.580
+dbg GA long series, window start=240, window end=360, Uncorrected RMS=0.383, Drift=0.493, Corrected RMS=0.321, R-sq=0.580
+dbg GA long series, window start=300, window end=400, Uncorrected RMS=0.371, Drift=0.562, Corrected RMS=0.298, R-sq=0.563
+dbg Full uncorrected RMS=1.004px, Selected Dec drift=0.493 px/min, Best seeing estimate=0.252px, R-sq=0.580
+dbg GA Min-Move recommendations are seeing-based: Dec=0.400, RA=0.400
+dbg Guiding Assistant results follow:
+dbg SNR=30.0, Samples=201, Elapsed Time=400s, RA HPF-RMS=  0.12 px (  0.20 arc-sec ), Dec HPF-RMS=  0.10 px (  0.16 arc-sec ), Total HPF-RMS=  0.16 px (  0.26 arc-sec )
+dbg RA Peak=  0.45 px (  0.72 arc-sec ), RA Peak-Peak   2.71 px (  4.34 arc-sec ), RA Drift Rate=  0.26 px/min (  0.41 arc-sec/min ), Max RA Drift Rate=  0.08 px/sec (  0.13 arc-sec/sec ), Drift-Limiting Exp=   4.9 s 
+dbg Dec Drift Rate=  0.50 px/min (  0.80 arc-sec/min ), Dec Peak=  0.68 px (  1.09 arc-sec ), PA Error= 3.5 arc-min
+dbg Recommendation: Use exposure times from 4.0s to 8.0s and variable delay feature to control guide cadence
+dbg Recommendation: Consider trying to improve focus on the guide camera
+dbg Recommendation: Try setting RA min-move to 0.40
+dbg Recommendation: Try setting Dec min-move to 0.40
+dbg Recommendation: Try using Lowpass2 for Dec guiding
+dbg End of Guiding Assistant output....
+glog SNR=30.0, Samples=201, Elapsed Time=400s, RA HPF-RMS=  0.12 px (  0.20 arc-sec ), Dec HPF-RMS=  0.10 px (  0.16 arc-sec ), Total HPF-RMS=  0.16 px (  0.26 arc-sec )
+glog RA Peak=  0.45 px (  0.72 arc-sec ), RA Peak-Peak   2.71 px (  4.34 arc-sec ), RA Drift Rate=  0.26 px/min (  0.41 arc-sec/min ), Max RA Drift Rate=  0.08 px/sec (  0.13 arc-sec/sec ), Drift-Limiting Exp=   4.9 s 
+glog Dec Drift Rate=  0.50 px/min (  0.80 arc-sec/min ), Dec Peak=  0.68 px (  1.09 arc-sec ), PA Error= 3.5 arc-min
+glog Recommendation: Consider trying to improve focus on the guide camera
+glog Recommendation: Try setting RA min-move to 0.40
+glog Recommendation: Try setting Dec min-move to 0.40
+glog Recommendation: Try using Lowpass2 for Dec guiding
+completed 1
+prof /GA/2026-11-11 21:00:00/backlash_info=[]
+prof /GA/2026-11-11 21:00:00/dec_corrected_rms=[0.000000]
+prof /GA/2026-11-11 21:00:00/dec_drift_rate=[  0.50 px/min (  0.80 arc-sec/min )]
+prof /GA/2026-11-11 21:00:00/dec_hpf_rms=[  0.10 px (  0.16 arc-sec )]
+prof /GA/2026-11-11 21:00:00/dec_lf_drift_rate=[0.502022]
+prof /GA/2026-11-11 21:00:00/dec_peak=[  0.68 px (  1.09 arc-sec )]
+prof /GA/2026-11-11 21:00:00/elapsed_time=[400s]
+prof /GA/2026-11-11 21:00:00/exposure_time=[2s]
+prof /GA/2026-11-11 21:00:00/pa_error=[ 3.5 arc-min]
+prof /GA/2026-11-11 21:00:00/ra_drift_exposure=[   4.9 s ]
+prof /GA/2026-11-11 21:00:00/ra_drift_rate=[  0.26 px/min (  0.41 arc-sec/min )]
+prof /GA/2026-11-11 21:00:00/ra_hpf_rms=[  0.12 px (  0.20 arc-sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak=[  0.45 px (  0.72 arc-sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak_drift_rate=[  0.08 px/sec (  0.13 arc-sec/sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak_peak=[  2.71 px (  4.34 arc-sec )]
+prof /GA/2026-11-11 21:00:00/rec_dec_minmove=[0.400000]
+prof /GA/2026-11-11 21:00:00/rec_ra_minmove=[0.400000]
+prof /GA/2026-11-11 21:00:00/recommendations=[Exp:Use exposure times from 4.0s to 8.0s and variable delay feature to control guide cadence
+StarHFD:Consider trying to improve focus on the guide camera
+RAMinMove:Try setting RA min-move to 0.40
+DecMinMove:Try setting Dec min-move to 0.40
+DecAlgo:Try using Lowpass2 for Dec guiding
+]
+prof /GA/2026-11-11 21:00:00/sample_count=[201]
+prof /GA/2026-11-11 21:00:00/snr=[30.0]
+prof /GA/2026-11-11 21:00:00/star_mass=[12000.9]
+prof /GA/2026-11-11 21:00:00/timestamp=[2026-11-11 21:00:00]
+prof /GA/2026-11-11 21:00:00/total_hpf_rms=[  0.16 px (  0.26 arc-sec )]
+== sanity
+dbg0 GuidingAssistant: Disabling guide output
+cell timestamp=[2026-11-11 21:00:00]
+cell exposure=[3s]
+cell snr=[50.0]
+cell mass=[12000.0]
+cell elapsed=[150s]
+cell count=[51]
+cell ra_rms=[  0.12 px (  0.35 arc-sec )]
+cell dec_rms=[  0.40 px (  1.21 arc-sec )]
+cell total_rms=[  0.42 px (  1.26 arc-sec )]
+cell ra_peak=[  0.88 px (  2.62 arc-sec )]
+cell dec_peak=[  3.40 px ( 10.20 arc-sec )]
+cell ra_pkpk=[  0.67 px (  2.01 arc-sec )]
+cell ra_drift=[  0.35 px/min (  1.05 arc-sec/min )]
+cell ra_peak_drift=[  0.05 px/sec (  0.15 arc-sec/sec )]
+cell ra_drift_exp=[   2.6 s ]
+cell dec_drift=[  2.00 px/min (  6.00 arc-sec/min )]
+cell pae=[ 23.4 arc-min]
+num ra_mm=0.1321176943244253 dec_mm=0.20325799126834662 min_exp=2 max_exp=4 pae=23.384329716131241 drift=2 maxRateRA=0.051647734435464117
+rec [Use exposure times in the range of 2.0s to 4.0s] btn=0 en=0
+rec [Consider re-doing your calibration (Prior alert)] btn=0 en=0
+rec [Polar alignment error > 10 arc-min; try using the Drift Align tool to improve alignment.] btn=0 en=0
+rec [Try setting RA min-move to 0.13] btn=1 en=1
+rec [Try setting Dec min-move to 0.20] btn=1 en=1
+dbg GA long series, window start=0, window end=120, Uncorrected RMS=1.712, Drift=1.984, Corrected RMS=1.342, R-sq=0.482
+dbg Full uncorrected RMS=1.934px, Selected Dec drift=1.984 px/min, Best seeing estimate=1.342px, R-sq=0.482
+dbg GA Min-Move calcs failed sanity-check, DecEst=2.250, Dec-HPF-Sigma=0.403
+dbg GA Min-Move recs reverting to smart defaults, RA=0.132, Dec=0.203
+dbg Guiding Assistant results follow:
+dbg SNR=50.0, Samples=51, Elapsed Time=150s, RA HPF-RMS=  0.12 px (  0.35 arc-sec ), Dec HPF-RMS=  0.40 px (  1.21 arc-sec ), Total HPF-RMS=  0.42 px (  1.26 arc-sec )
+dbg RA Peak=  0.88 px (  2.62 arc-sec ), RA Peak-Peak   0.67 px (  2.01 arc-sec ), RA Drift Rate=  0.35 px/min (  1.05 arc-sec/min ), Max RA Drift Rate=  0.05 px/sec (  0.15 arc-sec/sec ), Drift-Limiting Exp=   2.6 s 
+dbg Dec Drift Rate=  2.00 px/min (  6.00 arc-sec/min ), Dec Peak=  3.40 px ( 10.20 arc-sec ), PA Error= 23.4 arc-min
+dbg Recommendation: Use exposure times in the range of 2.0s to 4.0s
+dbg Recommendation: Consider re-doing your calibration (Prior alert)
+dbg Recommendation: Polar alignment error > 10 arc-min; try using the Drift Align tool to improve alignment.
+dbg Recommendation: Try setting RA min-move to 0.13
+dbg Recommendation: Try setting Dec min-move to 0.20
+dbg End of Guiding Assistant output....
+glog SNR=50.0, Samples=51, Elapsed Time=150s, RA HPF-RMS=  0.12 px (  0.35 arc-sec ), Dec HPF-RMS=  0.40 px (  1.21 arc-sec ), Total HPF-RMS=  0.42 px (  1.26 arc-sec )
+glog RA Peak=  0.88 px (  2.62 arc-sec ), RA Peak-Peak   0.67 px (  2.01 arc-sec ), RA Drift Rate=  0.35 px/min (  1.05 arc-sec/min ), Max RA Drift Rate=  0.05 px/sec (  0.15 arc-sec/sec ), Drift-Limiting Exp=   2.6 s 
+glog Dec Drift Rate=  2.00 px/min (  6.00 arc-sec/min ), Dec Peak=  3.40 px ( 10.20 arc-sec ), PA Error= 23.4 arc-min
+glog Recommendation: Consider re-doing your calibration (Prior alert)
+glog Recommendation: Polar alignment error > 10 arc-min; try using the Drift Align tool to improve alignment.
+glog Recommendation: Try setting RA min-move to 0.13
+glog Recommendation: Try setting Dec min-move to 0.20
+completed 1
+prof /GA/2026-11-11 21:00:00/backlash_info=[]
+prof /GA/2026-11-11 21:00:00/dec_corrected_rms=[0.000000]
+prof /GA/2026-11-11 21:00:00/dec_drift_rate=[  2.00 px/min (  6.00 arc-sec/min )]
+prof /GA/2026-11-11 21:00:00/dec_hpf_rms=[  0.40 px (  1.21 arc-sec )]
+prof /GA/2026-11-11 21:00:00/dec_lf_drift_rate=[2.000000]
+prof /GA/2026-11-11 21:00:00/dec_peak=[  3.40 px ( 10.20 arc-sec )]
+prof /GA/2026-11-11 21:00:00/elapsed_time=[150s]
+prof /GA/2026-11-11 21:00:00/exposure_time=[3s]
+prof /GA/2026-11-11 21:00:00/pa_error=[ 23.4 arc-min]
+prof /GA/2026-11-11 21:00:00/ra_drift_exposure=[   2.6 s ]
+prof /GA/2026-11-11 21:00:00/ra_drift_rate=[  0.35 px/min (  1.05 arc-sec/min )]
+prof /GA/2026-11-11 21:00:00/ra_hpf_rms=[  0.12 px (  0.35 arc-sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak=[  0.88 px (  2.62 arc-sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak_drift_rate=[  0.05 px/sec (  0.15 arc-sec/sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak_peak=[  0.67 px (  2.01 arc-sec )]
+prof /GA/2026-11-11 21:00:00/rec_dec_minmove=[0.203258]
+prof /GA/2026-11-11 21:00:00/rec_ra_minmove=[0.132118]
+prof /GA/2026-11-11 21:00:00/recommendations=[Exp:Use exposure times in the range of 2.0s to 4.0s
+Cal:Consider re-doing your calibration (Prior alert)
+PA:Polar alignment error > 10 arc-min; try using the Drift Align tool to improve alignment.
+RAMinMove:Try setting RA min-move to 0.13
+DecMinMove:Try setting Dec min-move to 0.20
+]
+prof /GA/2026-11-11 21:00:00/sample_count=[51]
+prof /GA/2026-11-11 21:00:00/snr=[50.0]
+prof /GA/2026-11-11 21:00:00/star_mass=[12000.0]
+prof /GA/2026-11-11 21:00:00/timestamp=[2026-11-11 21:00:00]
+prof /GA/2026-11-11 21:00:00/total_hpf_rms=[  0.42 px (  1.26 arc-sec )]
+== bin
+dbg0 GuidingAssistant: Disabling guide output
+cell timestamp=[2026-11-11 21:00:00]
+cell exposure=[0.5s]
+cell snr=[40.0]
+cell mass=[12000.2]
+cell elapsed=[125s]
+cell count=[126]
+cell ra_rms=[  0.58 px (  0.23 arc-sec )]
+cell dec_rms=[  0.04 px (  0.01 arc-sec )]
+cell total_rms=[  0.58 px (  0.23 arc-sec )]
+cell ra_peak=[  0.69 px (  0.28 arc-sec )]
+cell dec_peak=[  0.11 px (  0.04 arc-sec )]
+cell ra_pkpk=[  4.05 px (  1.62 arc-sec )]
+cell ra_drift=[  1.44 px/min (  0.58 arc-sec/min )]
+cell ra_peak_drift=[  0.47 px/sec (  0.19 arc-sec/sec )]
+cell ra_drift_exp=[   0.2 s ]
+cell dec_drift=[  4.00 px/min (  1.60 arc-sec/min )]
+cell pae=[ 6.4 arc-min]
+num ra_mm=0.10000000000000001 dec_mm=0.10000000000000001 min_exp=1.5 max_exp=3.5 pae=6.3968079898764278 drift=3.9997277840269989 maxRateRA=0.47072742838346887
+rec [Use exposure times in the range of 1.5s to 3.5s] btn=0 en=0
+rec [Try binning your guide camera] btn=0 en=0
+rec [Try setting RA min-move to 0.10] btn=1 en=1
+rec [Try setting Dec min-move to 0.10] btn=1 en=1
+dbg Uncorrected Dec RMS=2.435px, Dec drift=4.000 px/min, Best seeing estimate=0.066px, R-sq=0.999
+dbg GA Min-Move recommendations are seeing-based: Dec=0.100, RA=0.100
+dbg Guiding Assistant results follow:
+dbg SNR=40.0, Samples=126, Elapsed Time=125s, RA HPF-RMS=  0.58 px (  0.23 arc-sec ), Dec HPF-RMS=  0.04 px (  0.01 arc-sec ), Total HPF-RMS=  0.58 px (  0.23 arc-sec )
+dbg RA Peak=  0.69 px (  0.28 arc-sec ), RA Peak-Peak   4.05 px (  1.62 arc-sec ), RA Drift Rate=  1.44 px/min (  0.58 arc-sec/min ), Max RA Drift Rate=  0.47 px/sec (  0.19 arc-sec/sec ), Drift-Limiting Exp=   0.2 s 
+dbg Dec Drift Rate=  4.00 px/min (  1.60 arc-sec/min ), Dec Peak=  0.11 px (  0.04 arc-sec ), PA Error= 6.4 arc-min
+dbg Recommendation: Use exposure times in the range of 1.5s to 3.5s
+dbg Recommendation: Try binning your guide camera
+dbg Recommendation: Try setting RA min-move to 0.10
+dbg Recommendation: Try setting Dec min-move to 0.10
+dbg End of Guiding Assistant output....
+glog SNR=40.0, Samples=126, Elapsed Time=125s, RA HPF-RMS=  0.58 px (  0.23 arc-sec ), Dec HPF-RMS=  0.04 px (  0.01 arc-sec ), Total HPF-RMS=  0.58 px (  0.23 arc-sec )
+glog RA Peak=  0.69 px (  0.28 arc-sec ), RA Peak-Peak   4.05 px (  1.62 arc-sec ), RA Drift Rate=  1.44 px/min (  0.58 arc-sec/min ), Max RA Drift Rate=  0.47 px/sec (  0.19 arc-sec/sec ), Drift-Limiting Exp=   0.2 s 
+glog Dec Drift Rate=  4.00 px/min (  1.60 arc-sec/min ), Dec Peak=  0.11 px (  0.04 arc-sec ), PA Error= 6.4 arc-min
+glog Recommendation: Try setting RA min-move to 0.10
+glog Recommendation: Try setting Dec min-move to 0.10
+completed 1
+prof /GA/2026-11-11 21:00:00/backlash_info=[]
+prof /GA/2026-11-11 21:00:00/dec_corrected_rms=[0.000000]
+prof /GA/2026-11-11 21:00:00/dec_drift_rate=[  4.00 px/min (  1.60 arc-sec/min )]
+prof /GA/2026-11-11 21:00:00/dec_hpf_rms=[  0.04 px (  0.01 arc-sec )]
+prof /GA/2026-11-11 21:00:00/dec_lf_drift_rate=[3.999728]
+prof /GA/2026-11-11 21:00:00/dec_peak=[  0.11 px (  0.04 arc-sec )]
+prof /GA/2026-11-11 21:00:00/elapsed_time=[125s]
+prof /GA/2026-11-11 21:00:00/exposure_time=[0.5s]
+prof /GA/2026-11-11 21:00:00/pa_error=[ 6.4 arc-min]
+prof /GA/2026-11-11 21:00:00/ra_drift_exposure=[   0.2 s ]
+prof /GA/2026-11-11 21:00:00/ra_drift_rate=[  1.44 px/min (  0.58 arc-sec/min )]
+prof /GA/2026-11-11 21:00:00/ra_hpf_rms=[  0.58 px (  0.23 arc-sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak=[  0.69 px (  0.28 arc-sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak_drift_rate=[  0.47 px/sec (  0.19 arc-sec/sec )]
+prof /GA/2026-11-11 21:00:00/ra_peak_peak=[  4.05 px (  1.62 arc-sec )]
+prof /GA/2026-11-11 21:00:00/rec_dec_minmove=[0.100000]
+prof /GA/2026-11-11 21:00:00/rec_ra_minmove=[0.100000]
+prof /GA/2026-11-11 21:00:00/recommendations=[Exp:Use exposure times in the range of 1.5s to 3.5s
+Bin:Try binning your guide camera
+RAMinMove:Try setting RA min-move to 0.10
+DecMinMove:Try setting Dec min-move to 0.10
+]
+prof /GA/2026-11-11 21:00:00/sample_count=[126]
+prof /GA/2026-11-11 21:00:00/snr=[40.0]
+prof /GA/2026-11-11 21:00:00/star_mass=[12000.2]
+prof /GA/2026-11-11 21:00:00/timestamp=[2026-11-11 21:00:00]
+prof /GA/2026-11-11 21:00:00/total_hpf_rms=[  0.58 px (  0.23 arc-sec )]
