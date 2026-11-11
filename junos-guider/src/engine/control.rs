@@ -1,8 +1,9 @@
 //! The guide / dither / settle controller: PHD2's `PhdController`, which a
 //! client drives through `guide` and `dither`, with the parts of `MyFrame`
-//! it works through — the capture loop's flags (`StartCapturing`,
-//! `StopCapturing`, `FinishStop` and the bookkeeping of
-//! `OnExposeComplete`), the pause (`SetPaused`), the dither itself (random
+//! it works through — the capture loop's flags (`StartLooping`,
+//! `StartCapturing`, `StopCapturing`, `FinishStop` and the bookkeeping of
+//! `OnExposeComplete`), the single exposure's part in them, the pause
+//! (`SetPaused`), the dither itself (random
 //! or on a spiral), the exposure duration with auto exposure, and the delay
 //! between exposures (time lapse or the variable delay).
 //!
@@ -26,10 +27,18 @@
 //! PHD2 queues them to the worker thread, so the controller sees the frame
 //! before they are made.
 //!
+//! Two rules of PHD2's worker thread are the engine's too. Scheduling an
+//! exposure (a new [`Control::exposure_request`]) clears a stop asked for
+//! before it (worker_thread.cpp:88), so a stop that came too late to cut
+//! the last exposure short does not cancel the next loop's first. And a
+//! stop cuts the delay before an exposure short: that is a capture error
+//! ([`Control::on_capture_error`]), after the debug line `Error thrown from
+//! worker_thread.cpp:184->Time lapse interrupted`.
+//!
 //! The guider and the mounts come in through a [`ControlCx`]; what PHD2
 //! tells the outside comes back as [`ControlEvent`]s, in PHD2's order.
 //!
-//! Ported from PHD2 src/phdcontrol.h, src/phdcontrol.cpp, src/myframe.cpp (the exposure durations and auto exposure, the exposure delay, StartCapturing, StopCapturing, SetPaused, StartGuiding, AutoSelectStar, DitherSpiral, Dither and their settings), src/myframe_events.cpp (OnExposeComplete, FinishStop, OnExposureDurationSelected, NotifyExposureChanged) — BSD-3-Clause, see THIRD_PARTY.md
+//! Ported from PHD2 src/phdcontrol.h, src/phdcontrol.cpp, src/myframe.cpp (the exposure durations and auto exposure, the exposure delay, ScheduleExposure, StartSingleExposure, StartCapturing, StopCapturing, SetPaused, StartLooping, StartGuiding, AutoSelectStar, DitherSpiral, Dither and their settings), src/myframe_events.cpp (OnExposeComplete, FinishStop, OnExposureDurationSelected, NotifyExposureChanged, RequestedExposureDuration) — BSD-3-Clause, see THIRD_PARTY.md
 
 use serde_json::Value;
 
@@ -147,6 +156,15 @@ pub struct ExposureRequest {
     pub subframe: Rect,
 }
 
+/// A single exposure (`capture_single_frame`) as the capture loop sees
+/// PHD2's `m_singleExposure`: its duration, ms, and subframe (empty: the
+/// full frame). Its binning, gain and saving are the engine's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SingleExposure {
+    pub duration_ms: i32,
+    pub subframe: Rect,
+}
+
 /// PHD2's `DitherSpiral` (myframe.cpp:2012): the next point of a square
 /// spiral around the start on each dither. RA-only dithers walk the RA axis
 /// out and back (0, 1, −1, −2, 2, 3, −3, …); switching between the two
@@ -238,10 +256,17 @@ pub enum ControlEvent {
     ParamChange { name: &'static str, value: Value },
     /// The `LoopingExposuresStopped` event.
     LoopingStopped,
-    /// `StartCapturing` began a loop: the frame counter restarts, the dark
-    /// library and defect map are checked against the frame size
-    /// (`CheckDarkFrameGeometry`) and the camera's `InitCapture` runs,
-    /// before the first exposure. The engine's.
+    /// `SingleExposure::Complete`: the single exposure ended, with this
+    /// error when it failed. The engine's: the image saved when asked (a
+    /// failure there fails it), the debug line, the `SingleFrameComplete`
+    /// event, then the camera's binning and gain put back.
+    SingleFrameComplete { error: Option<&'static str> },
+    /// `StartCapturing` began a loop: the frame counter restarts and the
+    /// dark library and defect map are checked against the frame size
+    /// (`CheckDarkFrameGeometry`). The engine's, which then runs the
+    /// camera's `InitCapture` before the first exposure — PHD2 skips it
+    /// while an exposure is out, which never happens when a loop starts
+    /// (CaptureActive is cleared only once none is).
     CaptureStarted,
     /// `StartGuiding`'s `CheckLogRollover`: the logs move to a new file at
     /// the start of a new imaging day. The engine's.
@@ -365,6 +390,8 @@ pub struct Control {
     continue_capturing: bool,
     /// `m_exposurePending`, with what was asked for.
     exposure: Option<ExposureRequest>,
+    /// `m_singleExposure`, while enabled.
+    single: Option<SingleExposure>,
     exposure_ms: i32,
     durations: [i32; 22],
     auto_exp: AutoExposureCfg,
@@ -407,6 +434,7 @@ impl Control {
             capture_active: false,
             continue_capturing: false,
             exposure: None,
+            single: None,
             exposure_ms: DEFAULT_EXPOSURE_MS,
             durations: DEFAULT_DURATIONS,
             auto_exp: AutoExposureCfg { enabled: false, min_ms: 0, max_ms: 0, target_snr: 0.0 },
@@ -885,12 +913,16 @@ impl Control {
     }
 
     /// `ScheduleExposure`: the next exposure, at the current duration, on
-    /// the guider's bounding box. PHD2's raw-image mode (the bad-pixel map
-    /// refinement) is not ported, so it is always a light frame.
+    /// the guider's bounding box — or the single exposure's. PHD2's
+    /// raw-image mode (the bad-pixel map refinement) is not ported, so it
+    /// is always a light frame.
     fn schedule_exposure(&mut self, cx: &ControlCx, ev: &mut Vec<ControlEvent>) {
         let req = ExposureRequest {
             duration_ms: self.requested_exposure_duration(cx.camera_connected),
-            subframe: cx.guider.bounding_box(cx.frame_size),
+            subframe: match self.single {
+                Some(s) => s.subframe,
+                None => cx.guider.bounding_box(cx.frame_size),
+            },
         };
         debug(
             ev,
@@ -905,8 +937,42 @@ impl Control {
         self.exposure = Some(req);
     }
 
-    /// `StartCapturing`: start looping, unless already. PHD2's single
-    /// exposure (`capture_single_frame`) is not ported here.
+    /// `MyFrame::StartLooping` (the `loop` method): loop, unless already;
+    /// while calibrating or guiding, guiding stops and the loop goes on.
+    /// False (PHD2's error) without a camera.
+    pub fn start_looping(&mut self, cx: &mut ControlCx, ev: &mut Vec<ControlEvent>) -> bool {
+        if !cx.camera_connected {
+            debug(ev, "Error thrown from myframe.cpp:1958->Camera not connected");
+            return false;
+        }
+        if self.capture_active {
+            if !cx.guider.is_calibrating_or_guiding() {
+                return true;
+            }
+            // No `UpdateImageDisplay` here, unlike `StopCapturing`.
+            let mut gev = Vec::new();
+            cx.guider.stop_guiding(&mut cx.gcx, &mut gev);
+            self.forward(gev, cx, ev);
+        }
+        ev.push(ControlEvent::Status("Looping".into()));
+        self.start_capturing(cx, ev);
+        true
+    }
+
+    /// The capture loop's part of `MyFrame::StartSingleExposure`, once the
+    /// engine has checked the camera, shown "Capturing single exposure" and
+    /// set its binning and gain (`SingleExposure::Activate`): `StartCapturing`
+    /// for that one exposure, which [`ControlEvent::SingleFrameComplete`]
+    /// ends. Only while capture is not active (the event server refuses it
+    /// otherwise). Quirk kept: a `loop` during it does nothing, capture
+    /// being active, so capture stops after its frame.
+    pub fn start_single_exposure(&mut self, single: SingleExposure, cx: &mut ControlCx, ev: &mut Vec<ControlEvent>) {
+        self.single = Some(single);
+        self.start_capturing(cx, ev);
+    }
+
+    /// `StartCapturing`: start looping, unless already; a single exposure
+    /// takes one frame and stops.
     pub fn start_capturing(&mut self, cx: &mut ControlCx, ev: &mut Vec<ControlEvent>) {
         debug(
             ev,
@@ -918,7 +984,9 @@ impl Control {
             ),
         );
         if !self.capture_active {
-            self.continue_capturing = true;
+            if self.single.is_none() {
+                self.continue_capturing = true;
+            }
             self.capture_active = true;
             ev.push(ControlEvent::CaptureStarted);
             if self.exposure.is_none() {
@@ -974,10 +1042,13 @@ impl Control {
         }
     }
 
-    /// `FinishStop`: the loop ended. The next one starts on a full frame (a
-    /// client can auto-select a star then) at the longest auto exposure;
-    /// a guide or dither in progress fails.
+    /// `FinishStop`: the loop ended, and a single exposure with it. The next
+    /// one starts on a full frame (a client can auto-select a star then) at
+    /// the longest auto exposure; a guide or dither in progress fails.
     fn finish_stop(&mut self, cx: &mut ControlCx, ev: &mut Vec<ControlEvent>) {
+        if self.single.take().is_some() {
+            ev.push(ControlEvent::SingleFrameComplete { error: None });
+        }
         ev.push(ControlEvent::LoopingStopped);
         let mut gev = Vec::new();
         cx.guider.force_full_frame(&mut gev);
@@ -1001,15 +1072,19 @@ impl Control {
     }
 
     /// `OnExposeComplete` for a failed exposure, an interrupted one
-    /// included: capture and guiding stop, and a guide or dither in
-    /// progress fails ("Image capture stopped" when a stop interrupted it).
-    /// Quirk kept: when the loop was still running, `FinishStop` has
-    /// already sent `LoopingExposuresStopped`, and it is sent again.
+    /// included: capture and guiding stop, a single exposure fails, and a
+    /// guide or dither in progress fails ("Image capture stopped" when a
+    /// stop interrupted it). Quirk kept: when the loop was still running,
+    /// `FinishStop` has already sent `LoopingExposuresStopped`, and it is
+    /// sent again.
     pub fn on_capture_error(&mut self, cx: &mut ControlCx, ev: &mut Vec<ControlEvent>) {
         debug(ev, "OnExposeComplete: Capture Error reported");
         let stopping = !self.continue_capturing;
         self.stop_capturing(cx, ev);
         self.stop_guiding(cx, ev);
+        if self.single.take().is_some() {
+            ev.push(ControlEvent::SingleFrameComplete { error: Some("camera error -- see debug log") });
+        }
         ev.push(ControlEvent::LoopingStopped);
         let mut gev = Vec::new();
         cx.guider.reset(false, &mut cx.gcx, &mut gev);
@@ -1231,9 +1306,14 @@ impl Control {
         if camera_connected { (self.exposure_ms, self.auto_exp.enabled) } else { (0, false) }
     }
 
-    /// `RequestedExposureDuration` (`get_exposure`): 0 without a camera.
+    /// `RequestedExposureDuration` (`get_exposure`): the single exposure's
+    /// during one; 0 without a camera.
     pub fn requested_exposure_duration(&self, camera_connected: bool) -> i32 {
-        if camera_connected { self.exposure_ms } else { 0 }
+        match self.single {
+            _ if !camera_connected => 0,
+            Some(s) => s.duration_ms,
+            None => self.exposure_ms,
+        }
     }
 
     pub fn auto_exposure(&self) -> AutoExposureCfg {
@@ -2281,6 +2361,90 @@ mod tests {
         assert_eq!(b.count(|e| *e == ControlEvent::LoopingStopped), 2);
         assert!(!b.ctl.capture_active());
         assert!(b.settle_done().is_none());
+    }
+
+    #[test]
+    fn a_single_exposure_takes_one_frame_on_its_subframe() {
+        let mut b = Bench::new();
+        let single = SingleExposure { duration_ms: 2500, subframe: Rect::new(10, 20, 64, 48) };
+        b.call(|c, cx, ev| c.start_single_exposure(single, cx, ev));
+        assert_eq!(b.ctl.exposure_request(), Some(ExposureRequest { duration_ms: 2500, subframe: single.subframe }));
+        assert!(b.debug("ScheduleExposure(2500,3,1) exposurePending=0"));
+        assert!(b.ctl.capture_active());
+        assert!(!b.ctl.continue_capturing());
+        assert_eq!(b.call(|c, cx, _| c.requested_exposure_duration(cx.camera_connected)), 2500);
+        // A loop asked for meanwhile does nothing.
+        assert!(b.call(|c, cx, ev| c.start_looping(cx, ev)));
+        assert!(!b.ctl.continue_capturing());
+
+        // The frame ends it, then the loop.
+        b.ev.clear();
+        assert!(b.step());
+        let done = ControlEvent::SingleFrameComplete { error: None };
+        let i = b.ev.iter().position(|e| *e == done).unwrap();
+        assert_eq!(b.ev[i + 1], ControlEvent::LoopingStopped);
+        assert_eq!(b.count(|e| *e == done), 1);
+        assert!(!b.ctl.capture_active());
+        assert!(!b.step());
+        assert_eq!(b.call(|c, cx, _| c.requested_exposure_duration(cx.camera_connected)), 1000);
+
+        // A camera error fails it, once.
+        b.call(|c, cx, ev| c.start_single_exposure(single, cx, ev));
+        b.ev.clear();
+        b.call(|c, cx, ev| {
+            assert!(c.on_expose_complete(cx.guider, ev));
+            c.on_capture_error(cx, ev);
+        });
+        let failed = ControlEvent::SingleFrameComplete { error: Some("camera error -- see debug log") };
+        let i = b.ev.iter().position(|e| *e == failed).unwrap();
+        assert_eq!(b.ev[i + 1], ControlEvent::LoopingStopped);
+        assert_eq!(b.count(|e| matches!(e, ControlEvent::SingleFrameComplete { .. })), 1);
+        assert!(!b.ctl.capture_active());
+
+        // Looping again is on the guider's own frame and duration.
+        b.ev.clear();
+        assert!(b.call(|c, cx, ev| c.start_looping(cx, ev)));
+        assert!(b.debug("ScheduleExposure(1000,3,0) exposurePending=0"));
+        assert!(b.ctl.continue_capturing());
+    }
+
+    #[test]
+    fn loop_starts_looping_and_stops_guiding() {
+        let mut b = Bench::new();
+        b.camera = false;
+        assert!(!b.call(|c, cx, ev| c.start_looping(cx, ev)));
+        assert!(b.debug("Error thrown from myframe.cpp:1958->Camera not connected"));
+        assert!(!b.ctl.capture_active());
+
+        b.camera = true;
+        b.ev.clear();
+        assert!(b.call(|c, cx, ev| c.start_looping(cx, ev)));
+        assert_eq!(b.ev[0], ControlEvent::Status("Looping".into()));
+        assert!(b.ev.contains(&ControlEvent::CaptureStarted));
+        assert!(b.ctl.continue_capturing());
+        // Already looping: nothing at all.
+        b.ev.clear();
+        assert!(b.call(|c, cx, ev| c.start_looping(cx, ev)));
+        assert!(b.ev.is_empty());
+
+        // Guiding: guiding stops (the controller with it), looping goes on
+        // with the exposure already out.
+        let mut b = Bench::guiding();
+        let settle = SettleParams { tolerance_px: 1.5, settle_time_s: 10, timeout_s: 60, frames: 99999 };
+        b.call(|c, cx, ev| c.dither(3.0, false, settle, cx, ev)).unwrap();
+        b.ev.clear();
+        assert!(b.call(|c, cx, ev| c.start_looping(cx, ev)));
+        assert!(!b.guider.is_calibrating_or_guiding());
+        assert_eq!(b.settle_done(), Some((Some("Guiding stopped".into()), 0, 0)));
+        let stopped = b.ev.iter().position(|e| *e == ControlEvent::Guider(GuiderEvent::GuidingStopped)).unwrap();
+        let looping = b.ev.iter().position(|e| *e == ControlEvent::Status("Looping".into())).unwrap();
+        assert!(stopped < looping);
+        let display = |l: &String| l.starts_with("UpdateImageDisplay");
+        assert!(!b.ev.iter().any(|e| matches!(e, ControlEvent::Guider(GuiderEvent::Debug(l)) if display(l))));
+        assert!(b.debug("StartCapturing CaptureActive=1 continueCapturing=1 exposurePending=1"));
+        assert!(b.step());
+        assert!(b.ctl.capture_active());
+        assert!(b.ctl.exposure_request().is_some());
     }
 
     #[test]
