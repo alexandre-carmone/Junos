@@ -8,9 +8,10 @@
 //! moved less than `noreset_max_pct_period` % of a period, it is kept with
 //! gear time shifted by the RA change, like a dither.
 //!
-//! The clock is the `now` of the last [`AlgoCtx`] handed in: the hooks
-//! without one (`reset`, `guiding_stopped`) use that reading where PHD2
-//! reads `steady_clock`, so the stop time is the last frame's.
+//! Where PHD2 reads `steady_clock` this reads the engine clock: the time
+//! [`crate::engine::algo::make`] passes when it builds the algorithm, and
+//! the `now` of the [`AlgoCtx`] each frame and hook carries (the stop time
+//! is the stop's).
 //!
 //! Ported from PHD2 src/guide_algorithm_gaussian_process.h, src/guide_algorithm_gaussian_process.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
@@ -62,8 +63,12 @@ pub struct GaussianProcess {
     /// RA (hours) when guiding last started; NaN when unknown.
     guiding_ra: f64,
     guiding_pier_side: PierSide,
+    /// The clock reading guiding last stopped at (0 before the first stop,
+    /// as PHD2's default-constructed time point).
     guiding_stopped_time: f64,
-    /// The clock reading of the last [`AlgoCtx`] handed in.
+    /// The latest clock reading: construction, or the last frame, start,
+    /// stop or dither. Only a direct [`GuideAlgorithm::reset`] uses it; PHD2
+    /// resets the model only when built and at a start, which carry a time.
     now: f64,
     /// `noreset_max_pct_period`, which PHD2 reads at each start.
     retain_model_pct: f64,
@@ -74,14 +79,17 @@ pub struct GaussianProcess {
 
 impl GaussianProcess {
     /// Read the `gp_*` keys and `noreset_max_pct_period` through `params`,
-    /// each validated by its setter, then reset. Guiding output is taken as
-    /// enabled: when it is off, call [`GuideAlgorithm::guiding_disabled`]
-    /// next (PHD2 reads the mount's flag here).
+    /// each validated by its setter, then reset at clock reading `now`: gear
+    /// time counts from there, and keeps doing so when the star is lost
+    /// before the first measurement (which otherwise restarts it). Guiding
+    /// output is taken as enabled: when it is off, call
+    /// [`GuideAlgorithm::guiding_disabled`] next (PHD2 reads the mount's flag
+    /// here).
     ///
     /// The approximation size is read from `gp_points_for_approximation`,
     /// falling back to `gp_points_approximation`: PHD2 reads the first and
     /// writes the second, so an edited PHD2 profile only has the latter.
-    pub fn new(params: ParamLookup) -> Self {
+    pub fn new(params: ParamLookup, now: f64) -> Self {
         let parameters = GuideParameters {
             control_gain: DEFAULT_CONTROL_GAIN,
             min_move: DEFAULT_MIN_MOVE,
@@ -93,12 +101,12 @@ impl GaussianProcess {
             hyperparameters: HYPERPARAMETERS.map(|(default, _, _)| default),
         };
         let mut a = GaussianProcess {
-            gpg: GaussianProcessGuider::new(parameters, 0.0),
+            gpg: GaussianProcessGuider::new(parameters, now),
             block_updates: false,
             guiding_ra: f64::NAN,
             guiding_pier_side: PierSide::Unknown,
             guiding_stopped_time: 0.0,
-            now: 0.0,
+            now,
             retain_model_pct: params("noreset_max_pct_period").unwrap_or(DEFAULT_NORESET_MAX_PCT_PERIOD),
             stored_hyperparameters: HYPERPARAMETERS.map(|(default, _, _)| default),
         };
@@ -411,14 +419,15 @@ impl GuideAlgorithm for GaussianProcess {
 
     /// No reset: the learned period goes to the profile and the stop time
     /// is noted for the next start.
-    fn guiding_stopped(&mut self) {
+    fn guiding_stopped(&mut self, ctx: &AlgoCtx) {
+        self.now = ctx.now;
         self.stored_hyperparameters[PK_PERIOD_LENGTH] = self.gpg.gp_hyperparameters()[PK_PERIOD_LENGTH];
-        self.guiding_stopped_time = self.now;
+        self.guiding_stopped_time = ctx.now;
     }
 
-    fn guiding_paused(&mut self) {}
+    fn guiding_paused(&mut self, _ctx: &AlgoCtx) {}
 
-    fn guiding_resumed(&mut self) {}
+    fn guiding_resumed(&mut self, _ctx: &AlgoCtx) {}
 
     /// Gear time moves by the dither over the RA guide rate; no reset.
     fn guiding_dithered(&mut self, amt: f64, ctx: &AlgoCtx) {
@@ -426,21 +435,21 @@ impl GuideAlgorithm for GaussianProcess {
         self.gpg.guiding_dithered(amt, ra_guide_rate(ctx));
     }
 
-    fn dither_settle_done(&mut self, success: bool) {
+    fn dither_settle_done(&mut self, success: bool, _ctx: &AlgoCtx) {
         self.gpg.guiding_dither_settle_done(success);
     }
 
     // `direct_move_applied`: PHD2 forwards it to the guider, whose handler
     // is a no-op; the trait's default no-op stands.
 
-    /// Stop feeding the model, keeping it (as a stop).
-    fn guiding_disabled(&mut self) {
+    /// Stop feeding the model, keeping it (as a stop, at this time).
+    fn guiding_disabled(&mut self, ctx: &AlgoCtx) {
         self.block_updates = true;
-        self.guiding_stopped();
+        self.guiding_stopped(ctx);
     }
 
     /// Resume feeding the model, without a reset.
-    fn guiding_enabled(&mut self) {
+    fn guiding_enabled(&mut self, _ctx: &AlgoCtx) {
         self.block_updates = false;
     }
 }
@@ -463,7 +472,7 @@ mod tests {
 
     #[test]
     fn defaults_and_summary() {
-        let a = GaussianProcess::new(&no_params);
+        let a = GaussianProcess::new(&no_params, 0.0);
         assert_eq!(a.kind(), AlgoKind::GaussianProcess);
         assert_eq!(a.class_name(), "Predictive PEC");
         assert_eq!(a.param_names(), ["minMove", "predictiveWeight", "reactiveWeight", "periodLength"]);
@@ -503,7 +512,7 @@ mod tests {
             "noreset_max_pct_period" => Some(25.0),
             _ => None,
         };
-        let a = GaussianProcess::new(&profile);
+        let a = GaussianProcess::new(&profile, 0.0);
         // PHD2's written key is read when the read key is absent …
         assert_eq!(a.num_points_for_approximation(), 250);
         let p = a.params();
@@ -525,7 +534,7 @@ mod tests {
             "gp_points_approximation" => Some(250.0),
             _ => None,
         };
-        assert_eq!(GaussianProcess::new(&both).num_points_for_approximation(), 60);
+        assert_eq!(GaussianProcess::new(&both, 0.0).num_points_for_approximation(), 60);
     }
 
     #[test]
@@ -537,7 +546,7 @@ mod tests {
             "gp_sigvar_per_kern" => Some(-2.0),
             _ => None,
         };
-        let mut a = GaussianProcess::new(&profile);
+        let mut a = GaussianProcess::new(&profile, 0.0);
         assert_eq!(a.control_gain(), 0.6);
         assert_eq!(a.num_points_for_approximation(), 100);
         let p = a.params();
@@ -556,7 +565,7 @@ mod tests {
 
     #[test]
     fn period_length_param_quirk() {
-        let mut a = GaussianProcess::new(&no_params);
+        let mut a = GaussianProcess::new(&no_params, 0.0);
         // Applied, yet reported as refused; the variances are zeroed.
         assert!(!a.set_param("periodLength", 300.0));
         assert!((a.get_param("periodLength").unwrap() - 300.0).abs() < 1e-9);
@@ -569,14 +578,14 @@ mod tests {
 
     #[test]
     fn blocked_while_disabled() {
-        let mut a = GaussianProcess::new(&no_params);
+        let mut a = GaussianProcess::new(&no_params, 0.0);
         a.guiding_started(&ctx(0.0));
         assert_eq!(a.result(1.0, &ctx(0.0)), 0.6);
-        a.guiding_disabled();
+        a.guiding_disabled(&ctx(1.0));
         assert_eq!(a.result(1.0, &ctx(2.0)), 0.0);
         // Dead reckoning still runs (no model yet: no move).
         assert_eq!(a.deduce_result(&ctx(4.0)), 0.0);
-        a.guiding_enabled();
+        a.guiding_enabled(&ctx(5.0));
         // Not reset: two points (measured, dark) plus the open one.
         assert_eq!(a.gpg.len(), 3);
         assert_eq!(a.result(1.0, &ctx(6.0)), 0.6);
@@ -584,13 +593,13 @@ mod tests {
 
     #[test]
     fn hooks_keep_the_model() {
-        let mut a = GaussianProcess::new(&no_params);
+        let mut a = GaussianProcess::new(&no_params, 0.0);
         a.guiding_started(&ctx(0.0));
         a.result(1.0, &ctx(0.0));
-        a.guiding_paused();
-        a.guiding_resumed();
-        a.guiding_stopped();
-        a.direct_move_applied(1.0);
+        a.guiding_paused(&ctx(1.0));
+        a.guiding_resumed(&ctx(2.0));
+        a.guiding_stopped(&ctx(3.0));
+        a.direct_move_applied(1.0, &ctx(4.0));
         assert_eq!(a.gpg.len(), 2);
         a.reset();
         assert_eq!(a.gpg.len(), 1);
@@ -605,14 +614,14 @@ mod tests {
         // Unknown guide speed: sidereal.
         assert_eq!(ra_guide_rate(&AlgoCtx { ra_guide_speed: -1.0, ..c }), 5.0);
 
-        let mut a = GaussianProcess::new(&no_params);
+        let mut a = GaussianProcess::new(&no_params, 0.0);
         a.guiding_started(&ctx(0.0));
         a.result(1.0, &ctx(0.0));
         a.guiding_dithered(3.0, &AlgoCtx { ra_guide_speed: -1.0, ..c });
         // Proportional, min-move ignored, while dithering.
         assert_eq!(a.result(0.1, &ctx(2.0)), 0.6 * 0.1);
         assert_eq!(a.gpg.len(), 3);
-        a.dither_settle_done(true);
+        a.dither_settle_done(true, &ctx(3.0));
         assert_eq!(a.result(0.1, &ctx(4.0)), 0.6 * 0.1);
         assert_eq!(a.result(0.1, &ctx(6.0)), 0.0);
     }
@@ -623,32 +632,32 @@ mod tests {
 
     #[test]
     fn restart_retains_or_resets_the_model() {
-        let mut a = GaussianProcess::new(&no_params);
+        let mut a = GaussianProcess::new(&no_params, 0.0);
         // First start: no previous RA, reset.
         a.guiding_started(&pointing(0.0, 5.0, PierSide::West));
         a.result(1.0, &ctx(0.0));
         a.result(1.0, &ctx(2.0));
-        a.guiding_stopped();
+        a.guiding_stopped(&ctx(2.0));
         // 30 s later, RA unchanged: 30 s of a 200 s period (< 40 %), kept
         // with no gear time shift.
         a.guiding_started(&pointing(32.0, 5.0, PierSide::West));
         assert_eq!(a.gpg.len(), 3);
         // A dither of 0 s: the next frame runs the dither branch.
         assert_eq!(a.result(0.1, &ctx(34.0)), 0.6 * 0.1);
-        a.guiding_stopped();
+        a.guiding_stopped(&ctx(34.0));
 
         // RA moved 20 s of time east (−20 s of gear time) after 30 s: a
         // 10 s worm offset, kept.
         let ra = 5.0 + 20.0 * 0.9973 / 3600.0;
         a.guiding_started(&pointing(64.0, ra, PierSide::West));
         assert_eq!(a.gpg.len(), 4);
-        a.guiding_stopped();
+        a.guiding_stopped(&ctx(64.0));
 
         // Backwards (RA moved more than the time elapsed): reset.
         a.guiding_started(&pointing(66.0, ra + 60.0 / 3600.0, PierSide::West));
         assert_eq!(a.gpg.len(), 1);
         a.result(1.0, &ctx(68.0));
-        a.guiding_stopped();
+        a.guiding_stopped(&ctx(68.0));
 
         // Too long a stop (90 s > 80 s), another pier side, an unknown RA:
         // reset each time.
@@ -656,22 +665,85 @@ mod tests {
         a.guiding_started(&pointing(158.0, ra, PierSide::West));
         assert_eq!(a.gpg.len(), 1);
         a.result(1.0, &ctx(160.0));
-        a.guiding_stopped();
+        a.guiding_stopped(&ctx(160.0));
         a.guiding_started(&pointing(162.0, ra, PierSide::East));
         assert_eq!(a.gpg.len(), 1);
         a.result(1.0, &ctx(164.0));
-        a.guiding_stopped();
+        a.guiding_stopped(&ctx(164.0));
         a.guiding_started(&AlgoCtx { pier: PierSide::East, ..ctx(166.0) });
         assert_eq!(a.gpg.len(), 1);
     }
 
     #[test]
+    fn the_stop_time_is_the_stops() {
+        // Last frame at 2 s, stop at 50 s, restart at 120 s: stopped 70 s,
+        // under the 80 s limit, so the model is kept. Timed from the last
+        // frame it would be 118 s and a reset.
+        let mut a = GaussianProcess::new(&no_params, 0.0);
+        a.guiding_started(&pointing(0.0, 5.0, PierSide::West));
+        a.result(1.0, &ctx(0.0));
+        a.result(1.0, &ctx(2.0));
+        a.guiding_stopped(&ctx(50.0));
+        a.guiding_started(&pointing(120.0, 5.0, PierSide::West));
+        assert_eq!(a.gpg.len(), 3);
+
+        // Disabling the output stops at its own time too: 79 s before the
+        // restart, kept (81 s from the last frame would reset).
+        a.result(1.0, &ctx(122.0));
+        a.guiding_disabled(&ctx(124.0));
+        a.guiding_enabled(&ctx(150.0));
+        a.guiding_started(&pointing(203.0, 5.0, PierSide::West));
+        assert_eq!(a.gpg.len(), 4);
+    }
+
+    /// PHD2's C++ for [`gear_time_starts_at_construction`]: its
+    /// gaussian_process_guider.cpp (with the other GP sources, Eigen 3.4.1)
+    /// on a settable clock, built and reset at 100 s, `deduceResult(2)` at
+    /// 104 s, then `result(sin(t/10), 20, 2)` every 2 s from 106 s.
+    #[rustfmt::skip]
+    const CPP_CTOR_CONTROLS: [f64; 31] = [
+        0.0,
+        -0.55366525296768387, -0.58856173803989487, -0.59999412393042206,
+        -0.58750663749079046, -0.5515971153988054, -0.49369715698122529,
+        -0.41611505086627343, -0.32194375080026094, -0.21493756934209721,
+        -0.023289211552096692, -0.02531780475943891, 0.12979745115360886,
+        0.23480461221989934, 0.33873027415654561, 0.432600035267658,
+        0.50358232924542279, 0.56518367586440021, 0.59420851551227993,
+        0.59992225927561971, 0.5948309244708766, 0.55407393930975091,
+        0.4873041165320498, 0.40501144911546888, 0.30676121920701049,
+        0.21722712343969708, 0.026794446224196109, -0.012566792184050667,
+        -0.17631441903011483, -0.28567598089187485, -0.38840641839814932,
+    ];
+
+    #[test]
+    fn gear_time_starts_at_construction() {
+        // The star is lost before the first measurement, so gear time runs
+        // from the construction time, as in PHD2.
+        let close = |r: f64, c: f64| (r - c).abs() <= 1e-6 * c.abs() || (r - c).abs() <= 1e-9;
+        let mut a = GaussianProcess::new(&no_params, 100.0);
+        let mut b = GaussianProcess::new(&no_params, 0.0);
+        assert_eq!(a.deduce_result(&ctx(104.0)), CPP_CTOR_CONTROLS[0]);
+        b.deduce_result(&ctx(104.0));
+        let mut differs = false;
+        for k in 0..30 {
+            let now = 106.0 + 2.0 * k as f64;
+            let input = (now / 10.0).sin();
+            let u = a.result(input, &ctx(now));
+            let c = CPP_CTOR_CONTROLS[k + 1];
+            assert!(close(u, c), "frame {k}: rust {u}, C++ {c}");
+            differs |= !close(b.result(input, &ctx(now)), c);
+        }
+        // Built at 0 s instead, the blend into the prediction moves.
+        assert!(differs);
+    }
+
+    #[test]
     fn stop_persists_the_learned_period() {
-        let mut a = GaussianProcess::new(&no_params);
+        let mut a = GaussianProcess::new(&no_params, 0.0);
         a.gpg.set_gp_hyperparameters(&[700.0, 20.0, 10.0, 20.0, 25.0, 10.0, 230.0]);
         // Learned but not yet stored …
         assert_eq!(get(&a.params(), "gp_period_per_kern"), 200.0);
-        a.guiding_stopped();
+        a.guiding_stopped(&ctx(0.0));
         // … until guiding stops (or is disabled).
         assert!((get(&a.params(), "gp_period_per_kern") - 230.0).abs() < 1e-9);
     }
