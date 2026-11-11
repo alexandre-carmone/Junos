@@ -205,7 +205,7 @@ pub struct GaDetails {
 impl GaDetails {
     /// The string keys under `/GA/<time>/`, in `SaveGAResults`' order (the
     /// `BLT_*` keys are handled apart).
-    fn string_fields(&mut self) -> [(&'static str, &mut String); 22] {
+    pub fn string_fields(&mut self) -> [(&'static str, &mut String); 22] {
         [
             ("timestamp", &mut self.timestamp),
             ("snr", &mut self.snr),

@@ -1540,6 +1540,10 @@ impl Engine {
             connecting: self.connecting,
             port: None,
             port_error: None,
+            dither_mode: self.ctrl.dither_mode(),
+            has_gain_control: self.camera.as_ref().is_some_and(|c| c.has_gain_control()),
+            dark_exposures: self.darks.darks.keys().copied().collect(),
+            dark_exp_ms: self.darks.current_dark().map(|d| d.img_exp_dur),
         }
     }
 }

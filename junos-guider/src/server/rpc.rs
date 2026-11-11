@@ -233,7 +233,7 @@ pub static METHODS: &[Method] = &[
     ws("set_dither_mode", &["mode", "scale", "ra_only"]),
     ws("set_auto_exposure", &["min", "max", "target_snr"]),
     ws("set_image_logger", &[]),
-    ws("set_frame_filter", &["kinds", "max_width", "quality"]),
+    ws("set_frame_filter", &["frames", "profile", "kinds", "max_width", "quality"]),
     ws("get_history", &[]),
     ws("list_logs", &[]),
     ws("read_log", &["name", "tail"]),

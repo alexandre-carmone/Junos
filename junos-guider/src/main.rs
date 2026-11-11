@@ -97,6 +97,12 @@ fn main() {
     };
     rt.block_on(async {
         let daemon = Daemon::start(opts, store, Box::new(DiskFiles));
+        // Guiding goes on without the relay's socket (Ekos and NINA use the
+        // event server): a bind failure is only logged.
+        match junos_guider::ws::spawn(daemon.clone(), &cfg.ws_addr).await {
+            Ok(addr) => tracing::info!(%addr, "relay socket listening"),
+            Err(e) => tracing::error!(addr = %cfg.ws_addr, "cannot listen for the relay: {e}"),
+        }
         let server = server_mode.then(|| {
             let port = cfg.event_server_port();
             let opts = ServerOptions { port, instance: cfg.instance, shutdown_exits: cfg.shutdown_exits };

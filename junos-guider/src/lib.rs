@@ -17,3 +17,4 @@ pub mod profile;
 pub mod server;
 #[cfg(any(test, feature = "sim"))]
 pub mod sim;
+pub mod ws;

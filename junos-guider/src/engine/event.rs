@@ -13,8 +13,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::assistant::{DialogState, Recommendation};
+use super::assistant::{DialogState, GaDetails, Recommendation};
 use super::camera::CoolerStatus;
+use super::control::DitherMode;
 use super::guider::{AlertButton, AppState, FrameDroppedInfo, GuiderState, LockShiftParams, PauseType};
 use super::image::UsImage;
 use super::mount::{AlertKind, CalibrationStepInfo, GuideStepInfo};
@@ -149,6 +150,8 @@ pub struct GaView {
     /// The countdown Stop opened: seconds left, the backlash test to follow.
     pub wait: Option<(i64, bool)>,
     pub recommendations: Vec<Recommendation>,
+    /// The result grid as shown.
+    pub details: GaDetails,
 }
 
 /// A dark build under way: the dialog's status line and gauge (ms taken,
@@ -251,4 +254,10 @@ pub struct Snapshot {
     /// it retries; the daemon's, the engine leaves them empty.
     pub port: Option<u16>,
     pub port_error: Option<String>,
+    pub dither_mode: DitherMode,
+    /// The camera takes a gain.
+    pub has_gain_control: bool,
+    /// The exposures of the dark library's frames, ms, and the one in use.
+    pub dark_exposures: Vec<i32>,
+    pub dark_exp_ms: Option<i32>,
 }

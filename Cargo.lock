@@ -1638,10 +1638,12 @@ dependencies = [
  "chrono",
  "clap",
  "flate2",
+ "futures-util",
  "junos-guider",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
 ]

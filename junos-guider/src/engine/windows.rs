@@ -346,6 +346,7 @@ impl Engine {
             measuring_backlash: g.is_measuring_backlash(),
             wait: g.wait(),
             recommendations: g.recommendations().to_vec(),
+            details: g.details().clone(),
         })
     }
 

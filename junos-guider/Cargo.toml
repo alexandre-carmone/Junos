@@ -35,6 +35,10 @@ flate2             = "1"
 # The daemon's I/O: the reply and event channels around the engine thread,
 # the event server and the relay's socket.
 tokio              = { version = "1", features = ["full"] }
+# The relay's local WebSocket (the version junos-server's axum already pulls
+# in), and the stream/sink traits its socket is driven through.
+tokio-tungstenite  = "0.24"
+futures-util       = "0.3"
 
 [dev-dependencies]
 # The crate itself with the gear simulator, for the tests under `tests/`
