@@ -29,13 +29,14 @@
 //! (the dither bump), src/myframe_events.cpp (the AO limit alert) —
 //! BSD-3-Clause, see THIRD_PARTY.md
 
-use super::algo::{AlgoCtx, MountClass};
+use super::algo::{AlgoCtx, Axis, MountClass};
 use super::calibration::{
     self, Adjustment, Calibration, CalibrationDetails, CalibrationIssue, ProfileAccess, ROTATOR_POSITION_UNKNOWN,
     ScopePointing, UNKNOWN_DECLINATION, degrees, point_angle,
 };
 use super::guider::GuiderMount;
 use super::log::cfmt::fmt_f;
+use super::log::guide_log::{AoSummary, MountKind, MountSummary};
 use super::mount::{
     AlertKind, AxisMover, CalibrationStepInfo, GuiderOffset, Mount, MountEvent, MoveResultInfo, PointingSource,
     StepFrame, dump_move_option_bits,
@@ -533,35 +534,41 @@ impl StepGuider {
         AO_CALIBRATION_PIXELS_NEEDED
     }
 
-    /// `StepGuider::GetSettingsSummary` (`stepguider.cpp:1288`): the mount
-    /// block ([`Mount::settings_summary`], `aux_mount` as there), then the
-    /// bump settings and the stored calibration details' time stamp. The
-    /// details are loaded first, then again by the mount block when
-    /// calibrated; `validated` is the pointing source's once-per-session
-    /// guide-speed flag, which both loads share.
+    /// `StepGuider::GetSettingsSummary` (`stepguider.cpp:1288`) and
+    /// `CalibrationSettingsSummary`: what the guide log's headers print for
+    /// the AO. `aux_mount` is the pointing source's name when it is an aux
+    /// mount, connected and reporting its position. The stored details are
+    /// loaded first, with the pointing source's guide-speed check
+    /// (`validated`, its once-per-session flag); PHD2 loads them again in
+    /// `Mount::GetSettingsSummary` when calibrated, which reads what the
+    /// first load left and has nothing left to check.
     pub fn settings_summary(
         &self,
         aux_mount: Option<&str>,
         profile: &mut impl ProfileAccess,
-        mut validated: Option<&mut bool>,
+        validated: Option<&mut bool>,
         events: &mut Vec<MountEvent>,
-    ) -> String {
-        let details = self.mount.load_calibration_details(profile, validated.as_deref_mut(), events);
-        let summary = self.mount.settings_summary(self.is_calibrated(), aux_mount, None, profile, validated, events);
-        format!(
-            "{summary}Bump percentage = {}, Bump step = {}, Timestamp = {}\n",
-            self.bump_percentage,
-            fmt_f(self.bump_max_steps_per_cycle, 2),
-            details.orig_timestamp
-        )
-    }
-
-    /// `CalibrationSettingsSummary`, the calibration header's AO line.
-    pub fn calibration_settings_summary(&self) -> String {
-        format!(
-            "Calibration steps = {}, Samples to average = {}",
-            self.calibration_steps_per_iteration, self.samples_to_average
-        )
+    ) -> MountSummary {
+        let m = &self.mount;
+        MountSummary {
+            details: m.load_calibration_details(profile, validated, events),
+            name: m.name().to_string(),
+            connected: m.is_connected(),
+            guiding_enabled: m.guiding_enabled(),
+            aux_mount: aux_mount.map(str::to_string),
+            calibrated: self.is_calibrated(),
+            cal: m.calibration().clone(),
+            x_algo: m.guide_algorithm_selection(Axis::X),
+            x_algo_summary: m.algo(Axis::X).settings_summary(),
+            y_algo: m.guide_algorithm_selection(Axis::Y),
+            y_algo_summary: m.algo(Axis::Y).settings_summary(),
+            kind: MountKind::Ao(AoSummary {
+                bump_percentage: self.bump_percentage,
+                bump_step: self.bump_max_steps_per_cycle,
+                calibration_steps: self.calibration_steps_per_iteration,
+                samples_to_average: self.samples_to_average,
+            }),
+        }
     }
 
     // ------------------------------------------------- connection, position
@@ -1583,6 +1590,7 @@ mod tests {
     use crate::engine::algo::{AlgoKind, Axis};
     use crate::engine::calibration::{AdjustStep, radians};
     use crate::engine::log::cfmt::fmt_gp;
+    use crate::engine::log::guide_log::{calibration_settings, mount_summary};
 
     #[derive(Default)]
     struct Profile {
@@ -1939,9 +1947,10 @@ mod tests {
             render(&mut ev, &mut out);
             out.push(format!("MANUAL: {}", r as i32));
         }
+        // The AO's lines of the guide log's headers.
         let summary = sg.settings_summary(None, &mut profile, None, &mut ev);
-        out.push(format!("SUMMARY: {}\\n", summary.lines().last().unwrap()));
-        out.push(format!("SUMMARY: {}", sg.calibration_settings_summary()));
+        out.push(format!("SUMMARY: {}\\n", mount_summary(&summary).lines().last().unwrap()));
+        out.push(format!("SUMMARY: {}", calibration_settings(&summary)));
         assert!(ev.is_empty());
 
         let golden: Vec<&str> = GOLDEN.lines().collect();
@@ -2004,7 +2013,8 @@ mod tests {
         assert_eq!(sg.bump_limits(), (22, 22));
         assert!(!sg.set_bump_percentage(90, None, &mut profile, &mut ev));
         assert!(ev.is_empty());
-        assert_eq!(sg.calibration_settings_summary(), "Calibration steps = 4, Samples to average = 3");
+        let summary = sg.settings_summary(None, &mut profile, None, &mut ev);
+        assert_eq!(calibration_settings(&summary), "Calibration steps = 4, Samples to average = 3");
     }
 
     #[test]
@@ -2354,15 +2364,21 @@ mod tests {
     }
 
     #[test]
-    fn settings_summary_appends_the_bump_line_to_the_mount_block() {
+    fn settings_summary_feeds_the_guide_log_header() {
         let mut profile = Profile::default();
         let mut ao = Ao::new(45);
         profile.set_f64(KEY_BUMP_MAX_STEPS_PER_CYCLE, 0.125);
         let mut sg = connected(&mut profile, &ao);
         sg.mount_mut().set_name("AO-Simulator");
         let mut ev = Vec::new();
+        let summary = sg.settings_summary(None, &mut profile, None, &mut ev);
+        let MountKind::Ao(ao_part) = &summary.kind else { panic!("not an AO") };
         assert_eq!(
-            sg.settings_summary(None, &mut profile, None, &mut ev),
+            *ao_part,
+            AoSummary { bump_percentage: 80, bump_step: 0.125, calibration_steps: 4, samples_to_average: 3 }
+        );
+        assert_eq!(
+            mount_summary(&summary),
             "AO = AO-Simulator, connected, guiding enabled, not calibrated\n\
              X guide algorithm = Hysteresis, Hysteresis = 0.100, Aggression = 0.700, Minimum move = 0.200\n\
              Y guide algorithm = Hysteresis, Hysteresis = 0.100, Aggression = 0.700, Minimum move = 0.200\n\
@@ -2388,7 +2404,7 @@ mod tests {
         profile.set_f64("/stepguider/calibration/dec_guide_rate", 0.5);
         ev.clear();
         let mut validated = false;
-        let s = sg.settings_summary(Some("EQMod Mount"), &mut profile, Some(&mut validated), &mut ev);
+        let s = mount_summary(&sg.settings_summary(Some("EQMod Mount"), &mut profile, Some(&mut validated), &mut ev));
         assert!(
             s.starts_with("AO = AO-Simulator, connected, guiding enabled, AuxMount=EQMod Mount, xAngle = 20.0, "),
             "{s}"

@@ -333,7 +333,7 @@ fn camera_summary(c: &CameraSummary) -> String {
 /// `Mount::GetSettingsSummary` (`mount.cpp:1878`) followed by
 /// `Scope::GetSettingsSummary`'s (`scope.cpp:1904`) or
 /// `StepGuider::GetSettingsSummary`'s (`stepguider.cpp:1288`) lines.
-fn mount_summary(m: &MountSummary) -> String {
+pub(crate) fn mount_summary(m: &MountSummary) -> String {
     let ao = matches!(m.kind, MountKind::Ao(_));
     let mut s = format!(
         "{} = {},{} connected, guiding {}, ",
@@ -419,7 +419,7 @@ fn mount_summary(m: &MountSummary) -> String {
 
 /// `CalibrationSettingsSummary` of the scope (`scope.cpp:1925`) or the AO
 /// (`stepguider.cpp:1298`).
-fn calibration_settings(m: &MountSummary) -> String {
+pub(crate) fn calibration_settings(m: &MountSummary) -> String {
     match &m.kind {
         MountKind::Scope(sc) => format!(
             "Calibration Step = {} ms, Calibration Distance = {} px, Assume orthogonal axes = {}\n{}",
