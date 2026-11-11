@@ -61,6 +61,8 @@ pub struct IndiMount {
     aux: bool,
     /// The link generation the mount connected in.
     attached: Option<u64>,
+    /// The store's sequence number when it connected.
+    attach_seq: u64,
     pulse: TimedGuide,
     /// Interior: `SideOfPier` logs from a `&self` call.
     debug: RefCell<Vec<String>>,
@@ -73,6 +75,7 @@ impl IndiMount {
             device: opts.device.clone(),
             aux,
             attached: None,
+            attach_seq: 0,
             pulse: TimedGuide::new(opts.pulse_min_wait),
             debug: RefCell::default(),
         }
@@ -89,6 +92,8 @@ impl IndiMount {
 
     /// `Connect`: waits up to 30 s for the device to connect.
     pub fn connect(&mut self, cancel: &CancelToken) -> Result<(), String> {
+        // A drop not looked at yet: PHD2 let go of the device when it came.
+        self.check_connection();
         if self.attached.is_some() {
             return Ok(());
         }
@@ -97,7 +102,9 @@ impl IndiMount {
         }
         self.log(format!("INDI Mount connecting to device [{}]", self.device));
         self.log(format!("Waiting for 30s for [{}] to connect...", self.device));
-        self.attached = Some(client::connect_device(&self.client, &self.device, cancel)?);
+        let (generation, seq) = client::connect_device(&self.client, &self.device, cancel)?;
+        self.attached = Some(generation);
+        self.attach_seq = seq;
         // The guide properties come right after `CONNECT` (see the camera).
         if self.client.wait(client::READY_GRACE, Some(cancel), |l| self.ready(l).then_some(())).is_ok() {
             let link = self.client.lock();
@@ -165,13 +172,18 @@ impl IndiMount {
 
     /// `CheckState`'s `m_ready`.
     fn ready(&self, link: &Link) -> bool {
+        self.ready_with(&|name, kind| self.has(link, name, kind))
+    }
+
+    /// `m_ready` over the properties `has` says are defined.
+    fn ready_with(&self, has: &dyn Fn(&str, Kind) -> bool) -> bool {
         if self.aux {
-            return coord(link, &self.device).is_some();
+            return has("EQUATORIAL_EOD_COORD", Kind::Number) || has("EQUATORIAL_COORD", Kind::Number);
         }
-        let motion = self.has(link, "TELESCOPE_MOTION_RATE", Kind::Number)
-            && self.has(link, "TELESCOPE_MOTION_NS", Kind::Switch)
-            && self.has(link, "TELESCOPE_MOTION_WE", Kind::Switch);
-        motion || (self.has(link, TIMED_GUIDE_NS, Kind::Number) && self.has(link, TIMED_GUIDE_WE, Kind::Number))
+        let motion = has("TELESCOPE_MOTION_RATE", Kind::Number)
+            && has("TELESCOPE_MOTION_NS", Kind::Switch)
+            && has("TELESCOPE_MOTION_WE", Kind::Switch);
+        motion || (has(TIMED_GUIDE_NS, Kind::Number) && has(TIMED_GUIDE_WE, Kind::Number))
     }
 
     /// Whether the mount dropped, and the alert PHD2 raises for it.
@@ -184,8 +196,8 @@ impl IndiMount {
         if link.store.device(&self.device).is_none() {
             return Some(None);
         }
-        (self.ready(link) && link.device_connected(&self.device) == Some(false))
-            .then_some(Some("INDI mount was disconnected"))
+        let off = link.switched_off(&self.device, self.attach_seq)?;
+        self.ready_with(&|name, kind| off.had(name, kind)).then_some(Some("INDI mount was disconnected"))
     }
 
     fn is_connected_in(&self, link: &Link) -> bool {
@@ -771,15 +783,18 @@ mod tests {
         assert!(!mount.is_connected());
         assert_eq!(mount.coordinates(), None);
         assert_eq!(mount.guide(Dir::North, 10, &CancelToken::new()), MoveResult::Error);
-        assert_eq!(mount.check_connection().as_deref(), Some("INDI server disconnected"));
+        // A connect before anything looked: the stale attachment goes first.
         mount.connect(&CancelToken::new()).unwrap();
         assert!(mount.is_connected());
-        // The driver switches off.
-        fake.push(&fake::set_switch(DEV, "CONNECTION", "Ok", &[("CONNECT", false), ("DISCONNECT", true)]));
-        mount
-            .client
-            .wait(Duration::from_secs(2), None, |l| (l.device_connected(DEV) == Some(false)).then_some(()))
-            .unwrap();
+        assert!(mount.take_debug().contains(&"INDI Mount: serverDisconnected".to_string()));
+        // The driver switches off, then deletes what it defined on connecting.
+        let mut off = fake::set_switch(DEV, "CONNECTION", "Ok", &[("CONNECT", false), ("DISCONNECT", true)]);
+        for p in ["EQUATORIAL_EOD_COORD", TIMED_GUIDE_NS, TIMED_GUIDE_WE] {
+            off += &format!("<delProperty device='{DEV}' name='{p}'/>\n");
+        }
+        fake.push(&off);
+        let gone = |l: &mut Link| l.store.property(DEV, TIMED_GUIDE_WE).is_none().then_some(());
+        mount.client.wait(Duration::from_secs(5), None, gone).unwrap();
         assert_eq!(mount.check_connection().as_deref(), Some("INDI mount was disconnected"));
         // The device goes: no alert.
         mount.connect(&CancelToken::new()).unwrap();

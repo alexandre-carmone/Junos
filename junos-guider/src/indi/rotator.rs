@@ -28,10 +28,10 @@ pub struct IndiRotator {
     /// The device was seen since the rotator connected: a later absence is
     /// `removeDevice`.
     seen: Cell<bool>,
-    /// The sequence number of `CONNECTION` when the rotator first saw it:
-    /// only a later update turning it Off drops the rotator, as only
+    /// The store's sequence number when the rotator connected: only an
+    /// update after it turning `CONNECT` Off drops the rotator, as only
     /// `updateProperty` looks at it.
-    conn_seq: Cell<Option<u64>>,
+    attach_seq: u64,
     debug: Vec<String>,
 }
 
@@ -42,7 +42,7 @@ impl IndiRotator {
             device: device.to_owned(),
             attached: None,
             seen: Cell::new(false),
-            conn_seq: Cell::new(None),
+            attach_seq: 0,
             debug: Vec::new(),
         }
     }
@@ -58,6 +58,8 @@ impl IndiRotator {
 
     /// `Connect`: connected once the server is.
     pub fn connect(&mut self, cancel: &CancelToken) -> Result<(), String> {
+        // A drop not looked at yet: PHD2 let go of the device when it came.
+        self.check_connection();
         if self.attached.is_some() {
             return Ok(());
         }
@@ -71,8 +73,8 @@ impl IndiRotator {
         self.client.watch(&self.device);
         self.debug.push("INDI Rotator connection succeeded".into());
         self.attached = Some(generation);
+        self.attach_seq = self.client.lock().store.seq();
         self.seen.set(false);
-        self.conn_seq.set(None);
         Ok(())
     }
 
@@ -120,17 +122,13 @@ impl IndiRotator {
         if !link.is_up() || link.generation() != generation {
             return Some(Some("INDI server disconnected"));
         }
-        let Some(device) = link.store.device(&self.device) else {
+        if link.store.device(&self.device).is_none() {
             return self.seen.get().then_some(None);
-        };
+        }
         self.seen.set(true);
-        let conn = device.property("CONNECTION").filter(|p| p.kind == Kind::Switch);
-        let first = *self.conn_seq.get().get_or_insert(conn.map_or(u64::MAX, |p| p.updated));
-        self.conn_seq.set(conn.map(|_| first));
-        let updated_off = conn.is_some_and(|p| p.updated > first && p.switch("CONNECT") == Some(false));
-        // `m_ready`: the angle property.
-        let ready = device.property("ABS_ROTATOR_ANGLE").is_some_and(|p| p.kind == Kind::Number);
-        (ready && updated_off).then_some(Some("INDI rotator was disconnected"))
+        // `m_ready`: the angle property, as the device had it then.
+        let off = link.switched_off(&self.device, self.attach_seq)?;
+        off.had("ABS_ROTATOR_ANGLE", Kind::Number).then_some(Some("INDI rotator was disconnected"))
     }
 }
 
@@ -174,10 +172,11 @@ mod tests {
             ["Waiting for 30s for [Rotator Simulator] to connect...", "INDI Rotator connection succeeded"]
         );
 
-        // The driver switches off once the angle is known.
-        fake.push(&fake::set_switch(DEV, "CONNECTION", "Ok", &[("CONNECT", false), ("DISCONNECT", true)]));
-        let off = |l: &mut Link| (l.device_connected(DEV) == Some(false)).then_some(());
-        rot.client.wait(Duration::from_secs(2), None, off).unwrap();
+        // The driver switches off once the angle is known, and deletes it.
+        let off = fake::set_switch(DEV, "CONNECTION", "Ok", &[("CONNECT", false), ("DISCONNECT", true)]);
+        fake.push(&(off + &format!("<delProperty device='{DEV}' name='ABS_ROTATOR_ANGLE'/>\n")));
+        let gone = |l: &mut Link| l.store.property(DEV, "ABS_ROTATOR_ANGLE").is_none().then_some(());
+        rot.client.wait(Duration::from_secs(5), None, gone).unwrap();
         assert_eq!(rot.position(), ROTATOR_POSITION_UNKNOWN);
         assert_eq!(rot.check_connection().as_deref(), Some("INDI rotator was disconnected"));
         assert_eq!(rot.check_connection(), None);
@@ -186,14 +185,21 @@ mod tests {
         // to Off drops it). Then the device goes: no alert.
         rot.connect(&CancelToken::new()).unwrap();
         assert!(rot.is_connected());
-        assert_eq!(rot.position(), 123.456787109375);
         fake.push(&format!("<delProperty device='{DEV}'/>\n"));
         rot.client.wait(Duration::from_secs(2), None, |l| l.store.device(DEV).is_none().then_some(())).unwrap();
         assert_eq!(rot.check_connection(), None);
         assert!(!rot.is_connected());
         rot.connect(&CancelToken::new()).unwrap();
+        // A connect before anything looked at a server drop: the stale
+        // attachment goes first.
         fake.drop_conns();
-        rot.client.wait(Duration::from_secs(3), None, |l| (l.generation() == 2).then_some(())).unwrap();
+        rot.client.wait(Duration::from_secs(5), None, |l| (l.is_up() && l.generation() == 2).then_some(())).unwrap();
+        rot.connect(&CancelToken::new()).unwrap();
+        assert!(rot.is_connected());
+        // The fake has the new connection once it read its hello.
+        assert!(fake.wait_for(|r| r.len() == 2));
+        fake.drop_conns();
+        rot.client.wait(Duration::from_secs(5), None, |l| (l.generation() == 3).then_some(())).unwrap();
         assert_eq!(rot.check_connection().as_deref(), Some("INDI server disconnected"));
         rot.client.shutdown();
     }

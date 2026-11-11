@@ -86,6 +86,8 @@ impl IndiAo {
     /// `Connect`: connected when `CONNECTION` is On as the AO first sees it
     /// (see the module's quirks).
     pub fn connect(&mut self, cancel: &CancelToken) -> Result<(), String> {
+        // A drop not looked at yet: PHD2 let go of the device when it came.
+        self.check_connection();
         if self.attached.is_some() {
             return Ok(());
         }
@@ -189,10 +191,18 @@ impl IndiAo {
             .is_some_and(|g| link.is_up() && link.generation() == g && link.store.device(&self.device).is_some())
     }
 
-    /// A server or device drop disconnects the AO, without an alert.
+    /// A server or device drop disconnects the AO, without an alert; a
+    /// server drop logs one more line (`serverDisconnected`, :481).
     pub fn check_connection(&mut self) {
         if self.attached.is_some() && !self.is_connected() {
+            let server = {
+                let link = self.client.lock();
+                !link.is_up() || Some(link.generation()) != self.attached
+            };
             self.disconnect();
+            if server {
+                self.debug.push("StepGuiderSxAoINDI::serverDisconnected disconnecting StepGuider".into());
+            }
         }
     }
 
@@ -438,7 +448,10 @@ mod tests {
         ao.client.wait(Duration::from_secs(3), None, |l| (l.generation() == 2).then_some(())).unwrap();
         assert!(!ao.is_connected());
         ao.check_connection();
-        assert_eq!(ao.take_debug(), ["StepGuiderSxAoINDI::Disconnect"]);
+        assert_eq!(
+            ao.take_debug(),
+            ["StepGuiderSxAoINDI::Disconnect", "StepGuiderSxAoINDI::serverDisconnected disconnecting StepGuider"]
+        );
         ao.client.shutdown();
     }
 

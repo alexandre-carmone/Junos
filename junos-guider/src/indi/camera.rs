@@ -81,6 +81,8 @@ pub struct IndiCamera {
     force_exposure: bool,
     /// The link generation the camera connected in: `Connected`.
     attached: Option<u64>,
+    /// The store's sequence number when it connected.
+    attach_seq: u64,
     binning: u8,
     /// `m_curBinning`, and the binning property's sequence number when it
     /// was last read from the driver.
@@ -113,6 +115,7 @@ impl IndiCamera {
             force_video: opts.force_video,
             force_exposure: opts.force_exposure,
             attached: None,
+            attach_seq: 0,
             binning: 1,
             cur_binning: 0,
             binning_seq: 0,
@@ -135,6 +138,8 @@ impl IndiCamera {
 
     /// `Connect`: waits up to 30 s for the device to connect.
     pub fn connect(&mut self, cancel: &CancelToken) -> Result<(), String> {
+        // A drop not looked at yet: PHD2 let go of the device when it came.
+        self.check_connection();
         if self.attached.is_some() {
             return Ok(());
         }
@@ -144,7 +149,12 @@ impl IndiCamera {
         self.debug.push(format!("INDI Camera connecting to device [{}]", self.device));
         self.client.want_blob(&self.device, self.blob);
         self.debug.push(format!("Waiting for 30s for [{}] to connect...", self.device));
-        self.attached = Some(client::connect_device(&self.client, &self.device, cancel)?);
+        let (generation, seq) = client::connect_device(&self.client, &self.device, cancel).inspect_err(|_| {
+            // No frames for a camera that did not connect.
+            self.client.drop_blob(&self.device, self.blob);
+        })?;
+        self.attached = Some(generation);
+        self.attach_seq = seq;
         self.first_frame = true;
         // A driver defines its capture properties right after `CONNECT`
         // turns On; PHD2's first capture comes long after, ours may not.
@@ -209,13 +219,21 @@ impl IndiCamera {
         if link.store.device(&self.device).is_none() {
             return Some("INDI camera disconnected");
         }
-        (self.ready(link) && link.device_connected(&self.device) == Some(false)).then_some("INDI camera disconnected")
+        let off = link.switched_off(&self.device, self.attach_seq)?;
+        self.ready_with(&|name, kind| off.had(name, kind)).then_some("INDI camera disconnected")
     }
 
     /// `CheckState`'s `ready`: the BLOB and a way to capture.
     fn ready(&self, link: &Link) -> bool {
-        self.has(link, self.blob, Kind::Blob)
-            && (self.has(link, &self.prop("EXPOSURE"), Kind::Number) || self.video(link).is_some())
+        self.ready_with(&|name, kind| self.has(link, name, kind))
+    }
+
+    /// `ready` over the properties `has` says are defined.
+    fn ready_with(&self, has: &dyn Fn(&str, Kind) -> bool) -> bool {
+        has(self.blob, Kind::Blob)
+            && (has(&self.prop("EXPOSURE"), Kind::Number)
+                || has(&self.prop("VIDEO_STREAM"), Kind::Switch)
+                || has("VIDEO_STREAM", Kind::Switch))
     }
 
     fn is_connected_in(&self, link: &Link) -> bool {
@@ -948,10 +966,15 @@ mod tests {
         assert_eq!(capture(&mut cam, 20, None).unwrap().w, 64);
         let modes: Vec<String> = sent(&fake).into_iter().filter(|s| s.starts_with("enableBLOB")).collect();
         assert_eq!(modes.last().map(String::as_str), Some("enableBLOB device=CCD Simulator name=CCD1 Also"));
-        // The device switched off once ready: "INDI camera disconnected".
-        fake.push(&fake::set_switch(DEV, "CONNECTION", "Ok", &[("CONNECT", false), ("DISCONNECT", true)]));
-        let off = |l: &mut Link| l.device_connected(DEV) == Some(false);
-        cam.client.wait(Duration::from_secs(2), None, |l| off(l).then_some(())).unwrap();
+        // The device switched off once ready: "INDI camera disconnected",
+        // although the driver deletes the capture properties right after.
+        let mut off = fake::set_switch(DEV, "CONNECTION", "Ok", &[("CONNECT", false), ("DISCONNECT", true)]);
+        for p in ["CCD_EXPOSURE", "CCD1", "CCD_FRAME"] {
+            off += &format!("<delProperty device='{DEV}' name='{p}'/>\n");
+        }
+        fake.push(&off);
+        let gone = |l: &mut Link| l.store.property(DEV, "CCD_FRAME").is_none();
+        cam.client.wait(Duration::from_secs(5), None, |l| gone(l).then_some(())).unwrap();
         let dropped = CaptureError::Disconnected { msg: "INDI camera disconnected".into(), reconnect: false };
         assert_eq!(capture(&mut cam, 20, None).unwrap_err(), dropped);
         cam.client.shutdown();

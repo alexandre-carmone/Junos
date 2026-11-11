@@ -124,6 +124,27 @@ pub struct Link {
     discover: bool,
     blobs: Vec<Blob>,
     debug: Vec<String>,
+    /// Per device, the last update that turned its `CONNECT` switch Off.
+    switched_off: Vec<(String, SwitchedOff)>,
+}
+
+/// What a device had defined when an update turned its `CONNECT` switch
+/// Off. PHD2 tests its `ready` flag on that update, but a driver deletes
+/// the properties `ready` stands for in the same burst, right after it
+/// (defaultdevice.cpp:1190-1196: `setConnected(false)`, then
+/// `updateProperties`): a wrapper looking later finds them gone.
+#[derive(Debug)]
+pub struct SwitchedOff {
+    /// The update's sequence number.
+    pub seq: u64,
+    props: Vec<(String, Kind)>,
+}
+
+impl SwitchedOff {
+    /// The device had `name`, of `kind`, defined then.
+    pub fn had(&self, name: &str, kind: Kind) -> bool {
+        self.props.iter().any(|(n, k)| n == name && *k == kind)
+    }
 }
 
 impl Link {
@@ -149,6 +170,12 @@ impl Link {
     /// The `CONNECTION.CONNECT` switch of `device`, `None` before it is defined.
     pub fn device_connected(&self, device: &str) -> Option<bool> {
         self.store.property(device, "CONNECTION").filter(|p| p.kind == Kind::Switch).and_then(|p| p.switch("CONNECT"))
+    }
+
+    /// The last update that turned `device`'s `CONNECT` switch Off, if it
+    /// came after the sequence number `since`.
+    pub fn switched_off(&self, device: &str, since: u64) -> Option<&SwitchedOff> {
+        self.switched_off.iter().find(|(d, _)| d == device).map(|(_, o)| o).filter(|o| o.seq > since)
     }
 }
 
@@ -444,6 +471,7 @@ fn serve(sh: &Shared, sock: TcpStream) {
         sh.redial.store(false, Ordering::SeqCst);
         link.store.clear();
         link.blobs.clear();
+        link.switched_off.clear();
         link.up = true;
         link.generation += 1;
         link.debug.push(format!("INDI: connected to {}:{}", sh.host, sh.port));
@@ -486,6 +514,7 @@ fn serve(sh: &Shared, sock: TcpStream) {
         link.up = false;
         link.store.clear();
         link.blobs.clear();
+        link.switched_off.clear();
         link.debug.push(format!("INDI: lost the connection to {}:{}", sh.host, sh.port));
         if let Some(s) = lock(&sh.writer).take() {
             let _ = s.shutdown(Shutdown::Both);
@@ -509,6 +538,16 @@ fn handle(sh: &Shared, link: &mut Link, e: Element) {
     }
     let out = link.store.apply(msg);
     for c in &out.changes {
+        // PHD2's wrappers test `ready` on every `CONNECTION` update with
+        // `CONNECT` Off (cam_indi.cpp:333, scope_indi.cpp:424,
+        // rotator_indi.cpp:372): keep what the device had at that moment.
+        if c.kind == ChangeKind::Updated && c.property == "CONNECTION" && link.device_connected(&c.device) == Some(false)
+        {
+            let props = link.store.device(&c.device).map(|d| d.properties.iter().map(|p| (p.name.clone(), p.kind)));
+            let off = SwitchedOff { seq: c.seq, props: props.into_iter().flatten().collect() };
+            link.switched_off.retain(|(d, _)| *d != c.device);
+            link.switched_off.push((c.device.clone(), off));
+        }
         let wanted = link.blob_props.iter().any(|(d, p)| *d == c.device && *p == c.property);
         if c.kind == ChangeKind::Defined && wanted {
             write(sh, &xml::enable_blob(&c.device, Some(&c.property), BlobMode::Also));
@@ -543,8 +582,10 @@ pub fn sleep_ms(ms: u64, cancel: &CancelToken) -> bool {
 /// The camera's and the mount's `Connect` (cam_indi.cpp:604,
 /// scope_indi.cpp:272): watch the device, connect it through `CONNECTION`
 /// once its `DRIVER_INFO` is there (`newProperty`, which sends it once), and
-/// wait up to 30 s for `CONNECT` to be On. The link's generation on success.
-pub fn connect_device(client: &IndiClient, device: &str, cancel: &CancelToken) -> Result<u64, String> {
+/// wait up to 30 s for `CONNECT` to be On. On success the link's generation
+/// and the store's sequence number then: a later [`Link::switched_off`]
+/// is the wrapper's to see.
+pub fn connect_device(client: &IndiClient, device: &str, cancel: &CancelToken) -> Result<(u64, u64), String> {
     let generation = client
         .wait_up(cancel)
         .ok_or_else(|| format!("Cannot connect to INDI server {}:{}", client.host(), client.port()))?;
@@ -555,7 +596,7 @@ pub fn connect_device(client: &IndiClient, device: &str, cancel: &CancelToken) -
             return Some(Err("INDI server disconnected".to_string()));
         }
         if link.device_connected(device) == Some(true) {
-            return Some(Ok(generation));
+            return Some(Ok((generation, link.store.seq())));
         }
         if !asked && link.store.property(device, "DRIVER_INFO").is_some_and(|p| p.kind == Kind::Text) {
             asked = true;
@@ -886,7 +927,8 @@ mod tests {
         // The profile's gear is watched from the first connection.
         let client = IndiClient::start("127.0.0.1", fake.port, &["Telescope Simulator"]);
         let t = Instant::now();
-        assert_eq!(connect_device(&client, "Telescope Simulator", &CancelToken::new()), Ok(1));
+        let generation = |r: Result<(u64, u64), String>| r.map(|(g, _)| g);
+        assert_eq!(generation(connect_device(&client, "Telescope Simulator", &CancelToken::new())), Ok(1));
         assert!(t.elapsed() >= Duration::from_millis(100));
         assert_eq!(
             asked(&fake),
@@ -896,7 +938,7 @@ mod tests {
             ]
         );
         // Connected already: nothing is sent.
-        assert_eq!(connect_device(&client, "Telescope Simulator", &CancelToken::new()), Ok(1));
+        assert_eq!(generation(connect_device(&client, "Telescope Simulator", &CancelToken::new())), Ok(1));
         assert_eq!(fake.received().len(), 2);
         client.shutdown();
     }
