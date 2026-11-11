@@ -4,9 +4,8 @@
 //! Guiding Assistant, the darks, the polar drift tool, the logs. Each maps
 //! onto an engine [`Command`] or the profile store; parameters are named
 //! (or positional in the table's order). The tools the engine does not
-//! have yet (
-//! bad-pixel editing, a single device's connect) answer
-//! code 1 "not available".
+//! have yet (a single device's connect) answer code 1 "not
+//! available".
 //!
 //! The relay socket's own `set_frame_filter` and `get_history` are not
 //! here: the socket answers them itself.
@@ -325,6 +324,8 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
         "pa_static_stop" => command(d, Command::StaticPaClose).await,
         "comet_train_start" => command(d, Command::CometTrainStart).await,
         "pierflip_start" => command(d, Command::PierFlipOpen).await,
+        "bpm_set" => command(d, Command::BpmSet { cold: int(p, "cold")?, hot: int(p, "hot")? }).await,
+        "bpm_save" => command(d, Command::BpmSave { cold: int(p, "cold")?, hot: int(p, "hot")? }).await,
         "drift_align_start" => command(d, Command::DriftAlign(DriftAlignCmd::Open)).await,
         "drift_align_slew" => {
             let (ra, dec) = (p.param("ra").and_then(float_param), p.param("dec").and_then(float_param));
@@ -547,7 +548,7 @@ mod tests {
         assert_eq!((d.snapshot().profile_name.as_str(), d.snapshot().exposure_setting_ms), ("Mak", 1500));
         assert_eq!(call(&d, "ga_history", json!({})).await, Ok(json!([])));
         assert_eq!(call(&d, "list_devices", json!({})).await.unwrap()["devices"], json!([]));
-        assert_eq!(call(&d, "bpm_save", json!({})).await, Err(e1("not available")));
+        assert_eq!(call(&d, "connect_device", json!({"role": "camera"})).await, Err(e1("not available")));
         // The image logger's dialog: the thresholds held to 1–10.
         let r = call(&d, "set_image_logger", json!({"enabled": true, "dropped": true, "thresh_px": 20.0})).await;
         assert_eq!(r, Ok(json!(0)));

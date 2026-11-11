@@ -1202,3 +1202,29 @@ fn drift_align_drifts_in_ra_only_then_adjusts() {
     assert_eq!(r.e.snapshot().dec_guide_mode, Some(DecGuideMode::Auto));
     assert!(r.debug_log().contains("EndDecDrift: DecGuideMode set to Auto (1)"));
 }
+
+#[test]
+fn the_bad_pixel_map_is_refined_from_its_master_dark() {
+    let mut r = Rig::new(SimParams::new(scale()), false, |_| {});
+    let e = r.cmd(Command::BpmSet { cold: 75, hot: 75 }).unwrap_err();
+    assert_eq!(e.message, "no master dark frames: build the bad-pixel map first");
+    let note = String::new();
+    r.cmd(Command::DarksBuild(DarksBuildKind::DefectMap { exp_s: 1, count: 2, note })).unwrap();
+    while r.e.has_work() {
+        r.step();
+    }
+    let counts = r.cmd(Command::BpmSet { cold: 75, hot: 75 }).unwrap();
+    let wide = r.cmd(Command::BpmSet { cold: 100, hot: 100 }).unwrap();
+    assert!(wide["hot"].as_u64() >= counts["hot"].as_u64(), "{counts} {wide}");
+    // The Darks dialog's 5 s floor for the defect map's darks.
+    assert_eq!(counts["exposure_ms"], 5000);
+    let built = r.cmd(Command::BpmSave { cold: 60, hot: 80 }).unwrap();
+    assert!(r.e.snapshot().defect_map_loaded);
+    assert_eq!(r.e.store().profile().get_i32("/camera/dmap_hot_factor", 0), 80);
+    let files = r.files.0.lock().unwrap();
+    let (_, text) = files.iter().find(|(k, _)| k.ends_with(".txt") && k.contains("defect_map")).expect("map");
+    let text = String::from_utf8_lossy(text);
+    assert!(text.contains("# Aggressiveness, hot: 80"), "{text}");
+    let pixels = text.lines().filter(|l| !l.starts_with('#')).count() as u64;
+    assert_eq!(built["hot"].as_u64().unwrap() + built["cold"].as_u64().unwrap(), pixels);
+}

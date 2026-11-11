@@ -1352,7 +1352,10 @@ impl Engine {
             Command::GaApply(kind) => self.ga_command(GaCommand::Apply(kind)),
             Command::GaReview(ts) => self.ga_command(GaCommand::Review(ts)),
             Command::GaClose => self.ga_command(GaCommand::Close),
-            Command::DarksBuild(kind) => self.darks_build(kind),
+            Command::DarksBuild(kind) => {
+                self.bpm_forget();
+                self.darks_build(kind)
+            }
             Command::DarksStop => self.darks_stop(),
             Command::DarksUse(on) => Ok(json!(self.load_dark_handler(on))),
             Command::DefectMapUse(on) => {
@@ -1367,6 +1370,8 @@ impl Engine {
             Command::StarCrossStop => self.starcross_stop(),
             Command::StaticPaOpen => self.static_pa_open(),
             Command::CometTrainStart => self.comet_train_start(),
+            Command::BpmSet { cold, hot } => self.bpm_set(cold, hot),
+            Command::BpmSave { cold, hot } => self.bpm_save(cold, hot),
             Command::DriftAlign(c) => self.drift_align(c),
             Command::PierFlipOpen => self.pierflip_open(),
             Command::PierFlipNext => self.pierflip_next(),

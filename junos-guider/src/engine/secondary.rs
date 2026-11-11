@@ -3,12 +3,15 @@
 //! machines of [`super::tools`]. Their state reaches the UI as one JSON
 //! view ([`Engine::tools_view`]).
 //!
-//! Ported from PHD2 src/starcross_test.cpp (OnStart, ExecuteTest), src/nudge_lock.cpp (UpdateLockPos, DoMove), src/comet_tool.cpp (OnStart, OnStop, CalcRate, OnAppStateNotify), src/pierflip_tool.cpp (StartCalibration, OnNextClick, OnGuidingStateUpdated), src/guider.cpp (the bookmarks) — BSD-3-Clause, see THIRD_PARTY.md
+//! Ported from PHD2 src/starcross_test.cpp (OnStart, ExecuteTest), src/nudge_lock.cpp (UpdateLockPos, DoMove), src/comet_tool.cpp (OnStart, OnStop, CalcRate, OnAppStateNotify), src/pierflip_tool.cpp (StartCalibration, OnNextClick, OnGuidingStateUpdated), src/Refine_DefMap.cpp (LoadFromProfile, GetBadPxCounts, ApplyNewMap), src/guider.cpp (the bookmarks) — BSD-3-Clause, see THIRD_PARTY.md
 
 use serde_json::{Value, json};
 
 use super::command::{BookmarkOp, CmdError, INVALID_REQUEST, Reply};
 use super::guider::ShiftUnits;
+use super::darks::{self, DefectMapBuilder};
+use super::calibration::ProfileAccess;
+use super::fits;
 use super::tools::bookmarks;
 use super::tools::comet::{self, CometTraining};
 use super::tools::pierflip::{self, GuidingState, PierFlip, State as PftState};
@@ -28,6 +31,9 @@ pub(super) struct Tools {
     /// The comet tool's training.
     comet: Option<CometTraining>,
     pierflip: Option<PierFlip>,
+    /// The Refine Bad-pixel Map window's builder, read from the master dark
+    /// and its filtered copy on first use.
+    bpm: Option<DefectMapBuilder>,
 }
 
 impl Engine {
@@ -50,6 +56,76 @@ impl Engine {
     /// (`Guider::LoadProfileSettings`).
     pub(super) fn load_tool_settings(&mut self) {
         self.tools.bookmarks = bookmarks::load(&self.store.profile());
+        self.tools.bpm = None;
+    }
+
+    // ------------------------------------------------- bad-pixel map
+
+    /// The master darks are built anew: the builder is read again.
+    pub(super) fn bpm_forget(&mut self) {
+        self.tools.bpm = None;
+    }
+
+    /// `DefectMapDarks::LoadDarks` and `DefectMapBuilder::Init`, once.
+    fn bpm_builder(&mut self) -> Result<&DefectMapBuilder, CmdError> {
+        if !self.camera_connected() {
+            return Err(CmdError::new(1, "Please connect to a camera first"));
+        }
+        if self.tools.bpm.is_none() {
+            let (inst, id) = (self.cfg.instance as i32, self.store.current_profile_id());
+            let dir = self.cfg.darks_dir.clone();
+            let mut read = |name: String| {
+                let bytes = self.files.read(&format!("{dir}/{name}"))?;
+                fits::load_fits(&bytes, &name).ok()
+            };
+            let master = read(darks::defect_map_master_file_name(inst, id));
+            let filtered = read(darks::defect_map_filter_file_name(inst, id));
+            let (Some(master), Some(filtered)) = (master, filtered) else {
+                return Err(CmdError::new(1, "no master dark frames: build the bad-pixel map first"));
+            };
+            let b = DefectMapBuilder::new(master, filtered).map_err(|e| CmdError::new(1, e))?;
+            self.tools.bpm = Some(b);
+        }
+        Ok(self.tools.bpm.as_ref().expect("read"))
+    }
+
+    /// The sliders moved (`GetBadPxCounts`): the pixels each would take,
+    /// with the master dark's details.
+    pub(super) fn bpm_set(&mut self, cold: i32, hot: i32) -> Reply {
+        let b = self.bpm_builder()?;
+        let (cold_n, hot_n) = b.counts(cold, hot);
+        let s = b.stats();
+        Ok(json!({
+            "cold": cold_n,
+            "hot": hot_n,
+            "exposure_ms": b.master.img_exp_dur,
+            "frames": b.master.img_stack_cnt,
+            "mean": s.mean,
+            "stdev": s.stdev,
+            "median": s.median,
+            "mad": s.mad,
+        }))
+    }
+
+    /// `ApplyNewMap`: the map built at these aggressiveness values, saved
+    /// with its info lines, loaded, and the values kept in the profile.
+    pub(super) fn bpm_save(&mut self, cold: i32, hot: i32) -> Reply {
+        let camera = self.camera.as_ref().map(|c| c.name()).unwrap_or_default();
+        let now = self.wall();
+        let b = self.bpm_builder()?;
+        let built = b.build(cold, hot);
+        let text = built.map.to_text(&b.map_info(cold, hot, &camera, &now));
+        let path = self.defect_map_path();
+        if self.files.write(&path, text.as_bytes()).is_err() {
+            return Err(CmdError::new(1, format!("cannot save {path}")));
+        }
+        self.load_defect_map_handler(true);
+        let mut prof = self.store.profile();
+        prof.set_i32("/camera/dmap_hot_factor", hot);
+        prof.set_i32("/camera/dmap_cold_factor", cold);
+        drop(prof);
+        self.set_dark_menu_state();
+        Ok(json!({"cold": built.cold, "hot": built.hot}))
     }
 
     // ---------------------------------------------------------- the lock

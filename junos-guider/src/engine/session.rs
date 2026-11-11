@@ -725,7 +725,7 @@ impl Engine {
         join(&self.cfg.darks_dir, &name)
     }
 
-    fn defect_map_path(&self) -> String {
+    pub(super) fn defect_map_path(&self) -> String {
         let name = darks::defect_map_file_name(self.cfg.instance as i32, self.store.current_profile_id());
         join(&self.cfg.darks_dir, &name)
     }

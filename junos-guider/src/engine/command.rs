@@ -365,6 +365,10 @@ pub enum Command {
     PierFlipRestart,
     PierFlipClose,
     DriftAlign(DriftAlignCmd),
+    /// The Refine Bad-pixel Map window: the pixel counts at these
+    /// aggressiveness values (0..=100), and its Apply.
+    BpmSet { cold: i32, hot: i32 },
+    BpmSave { cold: i32, hot: i32 },
 }
 
 impl Command {
@@ -450,6 +454,8 @@ impl Command {
                 DriftAlignCmd::Notes(_) => "drift_align_notes",
                 DriftAlignCmd::Close => "drift_align_stop",
             },
+            Command::BpmSet { .. } => "bpm_set",
+            Command::BpmSave { .. } => "bpm_save",
             Command::PierFlipOpen => "pierflip_start",
             Command::PierFlipNext => "pierflip_next",
             Command::PierFlipRestart => "pierflip_restart",
