@@ -1093,18 +1093,21 @@ mod tests {
         // a background-subtracted mass close to the Gaussian's 2πσ²·peak
         let mass_ref = 2.0 * std::f64::consts::PI * 1.5 * 1.5 * 2000.0;
         assert!((s.mass - mass_ref).abs() / mass_ref < 0.05, "mass = {}", s.mass);
+        // and bit for bit what PHD2's C++ (star.cpp built with g++ on
+        // x86-64) measures on this frame
+        let phd2 = (31.288408279461297, 28.700901793505544, 28187.633093525128, 117.33271568951893, 3.4709251644221015, 2015, FindResult::Ok);
+        assert_eq!(measured(&s), phd2);
     }
 
     #[test]
     fn peak_mode_takes_the_brightest_raw_pixel() {
         let img = one_star(2000.0);
         let s = Star::find(&img, 15, 32.0, 28.0, FindMode::Peak, 1.5, 10.0, 0);
-        assert_eq!(s.result, FindResult::Ok);
         // the peak pixel is the one nearest the true centre, mass = raw peak,
-        // and the empty HFR list gives the 0.25 fallback (hfd 0.5)
-        assert_eq!((s.x, s.y), (31.0, 29.0));
+        // and the empty HFR list gives the 0.25 fallback (hfd 0.5); the
+        // values are PHD2's C++ output on this frame
         assert_eq!(s.mass, img.pixel(31, 29) as f64);
-        assert_eq!(s.hfd, 0.5);
+        assert_eq!(measured(&s), (31.0, 29.0, 2015.0, 31.672907574681986, 0.5, 2015, FindResult::Ok));
         // peak mode never tracks max3, so it is never saturated
         let sat = one_star(300000.0);
         let s = Star::find(&sat, 15, 32.0, 28.0, FindMode::Peak, 1.5, 10.0, 0);
@@ -1115,11 +1118,10 @@ mod tests {
     fn flat_top_is_saturated_without_a_known_max_adu() {
         let img = one_star(300000.0);
         let s = Star::find(&img, 15, 32.0, 28.0, FindMode::Centroid, 1.5, 20.0, 0);
-        assert_eq!(s.result, FindResult::Saturated);
         assert!(s.was_found());
-        assert_eq!(s.peak_val, 65535);
-        // measurements are kept on a saturated star
-        assert!(s.mass > 0.0 && s.snr > 0.0 && s.hfd > 0.0);
+        // measurements are kept on a saturated star (PHD2's C++ output)
+        let phd2 = (31.29664428944004, 28.702552138539144, 2337304.614814811, 1080.7264630398697, 4.779520762775285, 65535, FindResult::Saturated);
+        assert_eq!(measured(&s), phd2);
         // an 8-bit frame uses the 1/191 rule: the same flat top is saturated
         let mut img8 = img.clone();
         img8.bits_per_pixel = 8;
@@ -1129,9 +1131,11 @@ mod tests {
     #[test]
     fn known_max_adu_rule_and_pedestal() {
         let img = one_star(2000.0);
-        // peak ~2100: saturated once max_adu is at or below it
+        // peak 2015: saturated once max_adu is at or below it, with the Ok
+        // measurements kept (PHD2's C++ output)
         let s = Star::find(&img, 15, 32.0, 28.0, FindMode::Centroid, 1.5, 10.0, 2000);
-        assert_eq!(s.result, FindResult::Saturated);
+        let phd2 = (31.288408279461297, 28.700901793505544, 28187.633093525128, 117.33271568951893, 3.4709251644221015, 2015, FindResult::Saturated);
+        assert_eq!(measured(&s), phd2);
         let s = Star::find(&img, 15, 32.0, 28.0, FindMode::Centroid, 1.5, 10.0, 60000);
         assert_eq!(s.result, FindResult::Ok);
         // the pedestal is removed before the comparison
@@ -1421,8 +1425,42 @@ mod tests {
         }
     }
 
-    fn near(s: &GuideStar, x: f64, y: f64) -> bool {
-        (s.star.x - x).abs() < 0.05 && (s.star.y - y).abs() < 0.05
+    // The AutoFind expectations below (positions, lists, offsets and these
+    // measurements) are PHD2's C++ output on the same frames: star.cpp and
+    // image_math.cpp's Median3 built with g++ on x86-64, wx stubbed.
+    /// The 20000 star of `six_stars`.
+    const BRIGHT: Measured =
+        (180.29885515345154, 60.70083738570846, 282488.054744526, 375.25066047723726, 3.4544032305703456, 19309, FindResult::Ok);
+    /// The 8000 star.
+    const MID: Measured =
+        (130.60223688251548, 120.20201097114779, 112904.58214285717, 236.62630126809998, 3.5237816302385805, 7746, FindResult::Ok);
+    /// The brighter star of the close pair.
+    const PAIR: Measured =
+        (40.001996758632174, 139.99983395141786, 42156.33707865167, 143.81639977675545, 3.5366925202775112, 3111, FindResult::Ok);
+    /// The saturated star.
+    const SATURATED: Measured =
+        (60.3940981285546, 50.19990753273377, 2337265.6028037383, 1080.590399087413, 4.846224842909718, 65535, FindResult::Saturated);
+
+    /// `auto_find`'s list as (star, offset from the primary); every star's
+    /// reference point is its position.
+    fn listed(list: &[GuideStar]) -> Vec<(Measured, Point)> {
+        list.iter()
+            .map(|g| {
+                assert_eq!(g.reference_point, g.star.position());
+                (measured(&g.star), g.offset_from_primary)
+            })
+            .collect()
+    }
+
+    fn pair(dim: f64) -> UsImage {
+        field(
+            128,
+            128,
+            100.0,
+            5.0,
+            9,
+            &[Gauss { x: 60.3, y: 60.7, sigma: 1.5, peak: 20000.0 }, Gauss { x: 72.0, y: 66.0, sigma: 1.5, peak: dim }],
+        )
     }
 
     #[test]
@@ -1439,15 +1477,10 @@ mod tests {
             // with saturation by ADU and no level, the level becomes 2^16 − 1
             assert_eq!(r.saturation_adu_set, if by_adu { Some(65535) } else { None });
             // the pair is pruned (both), the edge star too (243 ≥ 256 − 15):
-            // the primary and the 8000 star remain
-            assert_eq!(list.len(), 2);
-            assert!(near(&list[0], 180.3, 60.7) && list[0].star.result == FindResult::Ok);
-            assert_eq!(list[0].reference_point, list[0].star.position());
-            assert_eq!(list[0].offset_from_primary, Point::new(0.0, 0.0));
-            assert!(near(&list[1], 130.6, 120.2));
-            // the offset runs from the primary's peak, not its centroid
-            assert_eq!(list[1].offset_from_primary, list[1].reference_point - Point::new(180.0, 61.0));
-            assert!(list[1].star.snr >= 6.0);
+            // the primary and the 8000 star remain, its offset running from
+            // the primary's peak (180, 61), not its centroid
+            let from_peak = Point::new(-49.397763117484516, 59.202010971147786);
+            assert_eq!(listed(&list), vec![(BRIGHT, Point::default()), (MID, from_peak)]);
         }
     }
 
@@ -1455,23 +1488,19 @@ mod tests {
     fn auto_find_passes() {
         let img = six_stars();
         // pass 1 skips a star over 90 % of the saturation level: at 21000
-        // ADU the threshold is 18900 and the 20000 star peaks at 19309;
-        // the two stars listed ahead of the 8000 one are erased
+        // ADU the threshold is 18900 and the 20000 star peaks at 19309
+        // (BRIGHT); the two stars listed ahead of the 8000 one are erased
         let p = AutoFindParams { saturation_adu: 21000, ..af_params() };
         let mut list = Vec::new();
         let r = GuideStar::auto_find(&img, 0, 15, None, &mut list, 12, &p);
         assert_eq!(r, AutoFindResult { position: Some(Point::new(131.0, 120.0)), saturation_adu_set: None });
-        assert_eq!(list.len(), 1);
-        assert!(near(&list[0], 130.6, 120.2));
+        assert_eq!(listed(&list), vec![(MID, Point::default())]);
         // no star reaches the SNR floor: pass 3 takes the brightest one
         // found, saturated or not, and the list is that star alone
         let p = AutoFindParams { min_snr: 1e6, ..af_params() };
         let r = GuideStar::auto_find(&img, 0, 15, None, &mut list, 12, &p);
         assert_eq!(r.position, Some(Point::new(60.0, 50.0)));
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].star.result, FindResult::Saturated);
-        assert_eq!(list[0].star.peak_val, 65535);
-        assert_eq!(list[0].reference_point, list[0].star.position());
+        assert_eq!(listed(&list), vec![(SATURATED, Point::default())]);
     }
 
     #[test]
@@ -1482,56 +1511,48 @@ mod tests {
         // of the edges: only the 8000 star is left
         let r = GuideStar::auto_find(&img, 50, 15, None, &mut list, 12, &af_params());
         assert_eq!(r.position, Some(Point::new(131.0, 120.0)));
-        assert_eq!(list.len(), 1);
+        assert_eq!(listed(&list), vec![(MID, Point::default())]);
         // an ROI excludes the 20000 star (Median3 blanks the rest)
         let roi = Some(Rect::new(100, 80, 156, 112));
         let r = GuideStar::auto_find(&img, 0, 15, roi, &mut list, 12, &af_params());
         assert_eq!(r.position, Some(Point::new(131.0, 120.0)));
-        // downsampling by 2 maps peak 90 back to 90·2 + 1
+        assert_eq!(listed(&list), vec![(MID, Point::default())]);
+        // downsampling by 2 maps peak 90 back to 90·2 + 1, and the offsets
+        // run from there
         let p = AutoFindParams { downsample: 2, ..af_params() };
         let r = GuideStar::auto_find(&img, 0, 15, None, &mut list, 12, &p);
         assert_eq!(r.position, Some(Point::new(181.0, 61.0)));
-        assert_eq!(list[1].offset_from_primary, list[1].reference_point - Point::new(181.0, 61.0));
+        let mid_from_peak = Point::new(-50.397763117484516, 59.202010971147786);
+        assert_eq!(listed(&list), vec![(BRIGHT, Point::default()), (MID, mid_from_peak)]);
         // by 3 the pair is 4 px apart: one local maximum, no pair to prune,
         // so three stars are listed; max_stars cuts the list
         let p = AutoFindParams { downsample: 3, ..af_params() };
-        GuideStar::auto_find(&img, 0, 15, None, &mut list, 12, &p);
-        assert_eq!(list.len(), 3);
-        assert!(near(&list[2], 40.0, 140.0));
+        let r = GuideStar::auto_find(&img, 0, 15, None, &mut list, 12, &p);
+        assert_eq!(r.position, Some(Point::new(181.0, 61.0)));
+        let pair_from_peak = Point::new(-140.99800324136783, 78.99983395141786);
+        assert_eq!(listed(&list), vec![(BRIGHT, Point::default()), (MID, mid_from_peak), (PAIR, pair_from_peak)]);
         GuideStar::auto_find(&img, 0, 15, None, &mut list, 2, &p);
-        assert_eq!(list.len(), 2);
-        assert!(near(&list[0], 180.3, 60.7) && near(&list[1], 130.6, 120.2));
+        assert_eq!(listed(&list), vec![(BRIGHT, Point::default()), (MID, mid_from_peak)]);
         // single-star mode: the primary alone, no secondaries collected
         let r = GuideStar::auto_find(&img, 0, 15, None, &mut list, 1, &af_params());
         assert_eq!(r.position, Some(Point::new(180.0, 61.0)));
-        assert_eq!(list.len(), 1);
-        assert!(near(&list[0], 180.3, 60.7));
+        assert_eq!(listed(&list), vec![(BRIGHT, Point::default())]);
     }
 
     #[test]
     fn auto_find_close_pair_ratio() {
         // two stars 12 px apart in one search box: both dropped...
-        let pair = |dim: f64| {
-            field(
-                128,
-                128,
-                100.0,
-                5.0,
-                9,
-                &[Gauss { x: 60.3, y: 60.7, sigma: 1.5, peak: 20000.0 }, Gauss { x: 72.0, y: 66.0, sigma: 1.5, peak: dim }],
-            )
-        };
         let mut list = Vec::new();
         let r = GuideStar::auto_find(&pair(8000.0), 0, 15, None, &mut list, 12, &af_params());
-        assert_eq!(r.position, None);
+        assert_eq!(r, AutoFindResult { position: None, saturation_adu_set: Some(65535) });
         assert!(list.is_empty());
         // ...unless the brighter scores 5× the dimmer: a very dim star does
         // not eliminate a very bright one (the dim one is a duplicate of the
         // bright one within 25 px, so the list holds one star)
         let r = GuideStar::auto_find(&pair(1500.0), 0, 15, None, &mut list, 12, &af_params());
         assert_eq!(r.position, Some(Point::new(60.0, 61.0)));
-        assert_eq!(list.len(), 1);
-        assert!(near(&list[0], 60.3, 60.7));
+        let bright = (60.30138715925526, 60.70039132977992, 282642.046875, 375.29590691143716, 3.453256310253279, 19314, FindResult::Ok);
+        assert_eq!(listed(&list), vec![(bright, Point::default())]);
     }
 
     #[test]
