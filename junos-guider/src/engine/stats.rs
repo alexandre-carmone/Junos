@@ -6,8 +6,7 @@
 //! backlash estimate) and in the GA dialog, so PHD2's arithmetic is kept to
 //! the letter, including its quirks (each one is named at the spot).
 //!
-//! Ported from PHD2 src/guiding_stats.h — BSD-3-Clause, see THIRD_PARTY.md
-//! Ported from PHD2 src/guiding_stats.cpp — BSD-3-Clause, see THIRD_PARTY.md
+//! Ported from PHD2 src/guiding_stats.h, src/guiding_stats.cpp — BSD-3-Clause, see THIRD_PARTY.md
 
 use std::ops::Deref;
 
@@ -115,8 +114,8 @@ impl DescriptiveStats {
     }
 
     /// Quirk: the raw Welford S (the sum of squared deviations), not S/(n−1)
-    /// (`guiding_stats.cpp:112`). The backlash tool's sigma estimate is built
-    /// on this value, so it stays. 0 unless at least two values.
+    /// (`guiding_stats.cpp:112`). PHD2 has no caller of it; kept for parity.
+    /// 0 unless at least two values.
     pub fn variance(&self) -> f64 {
         if self.count > 1 { self.running_s } else { 0.0 }
     }
@@ -584,8 +583,8 @@ impl WindowedAxisStats {
 
     /// Change the auto window, trimming the oldest samples down to `new_size`
     /// at once. 0 turns auto-trimming off without discarding anything.
-    /// Always true (PHD2 returns false only for a negative size, which the
-    /// unsigned parameter rules out).
+    /// Always true: PHD2's false branch is unreachable, its parameter is
+    /// unsigned too.
     pub fn change_window_size(&mut self, new_size: usize) -> bool {
         if new_size > 0 {
             while self.stats.count() > new_size {
@@ -906,6 +905,32 @@ mod tests {
         w.add_guide_info(3.0, 2.0, 0.0);
         assert_eq!(w.max_displacement(), 5.0);
         assert_eq!(w.min_displacement(), 1.0);
+        assert_eq!(w.max_delta(), 4.0);
+    }
+
+    #[test]
+    fn windowed_max_delta_goes_stale_until_its_index_reaches_zero() {
+        // Quirk (`guiding_stats.cpp:629,680`): removing an entry recomputes
+        // the max delta only when that entry is the min or the max or the
+        // max-delta index has reached 0, so a step that already left the
+        // window can still be reported for a while. Values from a C++ trace.
+        let mut w = WindowedAxisStats::new(12);
+        for (i, v) in [0.0, -9.0, 5.0, -1.0, 3.0, 6.0, 10.0, 8.0, 4.0, 0.0, -4.0, -8.0].iter().enumerate() {
+            w.add_guide_info(i as f64, *v, 0.0);
+        }
+        assert_eq!(w.max_delta(), 14.0);
+        w.add_guide_info(12.0, -7.0, 0.0);
+        assert_eq!(w.max_delta(), 14.0);
+        // −9 leaves: it was the min, so everything is recomputed without
+        // the step out of −9; the largest left is 5 → −1 = 6.
+        w.add_guide_info(13.0, -6.0, 0.0);
+        assert_eq!(w.max_delta(), 6.0);
+        // 5 leaves: neither min nor max and the index is 1, so the 6 stays
+        // although the 5 → −1 step is gone.
+        w.add_guide_info(14.0, -5.0, 0.0);
+        assert_eq!(w.max_delta(), 6.0);
+        // The index reached 0: recomputed.
+        w.add_guide_info(15.0, -4.0, 0.0);
         assert_eq!(w.max_delta(), 4.0);
     }
 
