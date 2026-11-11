@@ -204,6 +204,9 @@ translations! {
     guide_refresh_settings, guide_save_calibration, guide_export_log,
     // Guide tab — redesigned layout
     guide_btn_start, guide_btn_stop, guide_connect_phd2, guide_phd2_already_connected, guide_drift_title, guide_target_title, guide_no_drift, guide_total,
+    // Guide tab — drift plot marks (both backends)
+    guider_marker_dither, guider_marker_settle_begin, guider_marker_settled, guider_marker_settle_failed,
+    guider_marker_star_lost, guider_marker_cal_done, guider_marker_paused, guider_marker_resumed,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
     // Rig (optical-train) manager — section in the Profiles tab

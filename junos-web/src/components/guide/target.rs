@@ -3,7 +3,9 @@
 //! `GuideTargetPlot` (kstars/ekos/guide/guidetargetplot.cpp): rings at 100 /
 //! 150 / 200 % of `guiderAccuracyThreshold` (green / yellow / red) in a
 //! ±3× range, NSEW labels, RA axis reversed. Past points are one path; the
-//! latest one is a highlighted cross.
+//! latest one is a highlighted cross. The unit is the samples' (″, or px for
+//! junos-guider without a pixel scale); `ra_only` (Dec guiding off) dims the
+//! Dec axis.
 
 use leptos::prelude::*;
 
@@ -21,7 +23,13 @@ fn fmt_num(v: f64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-pub fn target_plot(drift: &[GuideDriftSample], accuracy: f64, empty: &'static str) -> impl IntoView + use<> {
+pub fn target_plot(
+    drift: &[GuideDriftSample],
+    accuracy: f64,
+    unit: &'static str,
+    ra_only: bool,
+    empty: &'static str,
+) -> impl IntoView + use<> {
     let r = accuracy.max(0.1);
     let half = r * RANGE_MULT;
     let px = move |arcsec: f64| arcsec / half * C;
@@ -51,9 +59,11 @@ pub fn target_plot(drift: &[GuideDriftSample], accuracy: f64, empty: &'static st
                     <circle cx=C cy=C r=px(r * k) fill="none" stroke="var(--border-mid)" stroke-width="0.5" stroke-dasharray="2 2" />
                 })}
                 <line x1="0" y1=C x2=S y2=C stroke="var(--border-mid)" stroke-width="0.5" />
-                <line x1=C y1="0" x2=C y2=S stroke="var(--border-mid)" stroke-width="0.5" />
-                {compass(C, 10.0, "N")}
-                {compass(C, S - 10.0, "S")}
+                <g opacity=if ra_only { "0.35" } else { "1" }>
+                    <line x1=C y1="0" x2=C y2=S stroke="var(--border-mid)" stroke-width="0.5" />
+                    {compass(C, 10.0, "N")}
+                    {compass(C, S - 10.0, "S")}
+                </g>
                 {compass(S - 8.0, C + 10.0, "E")}
                 {compass(8.0, C + 10.0, "W")}
                 <path d=marks fill="none" stroke="var(--text-muted)" stroke-opacity="0.7"
@@ -64,8 +74,8 @@ pub fn target_plot(drift: &[GuideDriftSample], accuracy: f64, empty: &'static st
                         <path d=format!("M{:.1} {y:.1}h12M{x:.1} {:.1}v12", x - 6.0, y - 6.0) />
                     </g>
                 })}
-                <text x="5" y="11" fill="var(--text-faint)" font-size="9">{format!("\u{00b1}{}\u{2033}", fmt_num(half))}</text>
-                <text x="5" y=S - 6.0 fill="var(--state-ok)" font-size="9">{format!("\u{25cb} {}\u{2033}", fmt_num(r))}</text>
+                <text x="5" y="11" fill="var(--text-faint)" font-size="9">{format!("\u{00b1}{}{unit}", fmt_num(half))}</text>
+                <text x="5" y=S - 6.0 fill="var(--state-ok)" font-size="9">{format!("\u{25cb} {}{unit}", fmt_num(r))}</text>
             </svg>
             {pts.is_empty().then(|| view! {
                 <div class="absolute inset-0 flex items-center justify-center px-8 text-center text-xs text-text-faint">{empty}</div>

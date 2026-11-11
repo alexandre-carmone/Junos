@@ -1588,5 +1588,13 @@
   "abins_turns": "Tours",
   "abins_warn_datapoints": "Trop peu de points",
   "abins_warn_mismatch": "Nombre de points incohérent",
-  "abins_warn_offsets": "Décalages des tuiles indisponibles"
+  "abins_warn_offsets": "Décalages des tuiles indisponibles",
+  "guider_marker_dither": "Dithering",
+  "guider_marker_settle_begin": "Stabilisation",
+  "guider_marker_settled": "Stabilisé",
+  "guider_marker_settle_failed": "Échec de la stabilisation",
+  "guider_marker_star_lost": "Étoile perdue",
+  "guider_marker_cal_done": "Calibration terminée",
+  "guider_marker_paused": "En pause",
+  "guider_marker_resumed": "Reprise"
 }

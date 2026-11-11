@@ -1498,5 +1498,13 @@
   "abins_turns": "Turns",
   "abins_warn_datapoints": "Too few datapoints",
   "abins_warn_mismatch": "Datapoint mismatch",
-  "abins_warn_offsets": "Tile offsets unavailable"
+  "abins_warn_offsets": "Tile offsets unavailable",
+  "guider_marker_dither": "Dither",
+  "guider_marker_settle_begin": "Settling",
+  "guider_marker_settled": "Settled",
+  "guider_marker_settle_failed": "Settling failed",
+  "guider_marker_star_lost": "Star lost",
+  "guider_marker_cal_done": "Calibration done",
+  "guider_marker_paused": "Paused",
+  "guider_marker_resumed": "Resumed"
 }

@@ -55,12 +55,14 @@ use crate::ws::SendCmd;
 use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
+mod protocol;
+mod rows;
 mod settings;
 mod target;
 mod timeline;
 use settings::{settings_i64, GuideSettings, GUIDERS};
 use target::target_plot;
-use timeline::drift_plot;
+use timeline::{drift_plot, DriftSeries};
 
 const EXPORT_ICON: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 L12 15 M7.5 10.5 L12 15 L16.5 10.5 M5 19 L19 19"/></svg>"##;
 
@@ -143,6 +145,7 @@ pub fn GuideTab(
     let status   = Memo::new(move |_| snap.with(|g| g.status.clone()));
     let drift    = Memo::new(move |_| snap.with(|g| g.drift.clone()));
     let history  = Memo::new(move |_| snap.with(|g| g.history.clone()));
+    let series   = Memo::new(move |_| drift.with(|d| history.with(|h| DriftSeries::ekos(d, h))));
     let rms      = Memo::new(move |_| snap.with(|g| (g.ra_rms, g.de_rms)));
     let log      = Memo::new(move |_| snap.with(|g| g.log.clone()));
     let device   = Memo::new(move |_| snap.with(|g| g.device.clone()));
@@ -276,12 +279,12 @@ pub fn GuideTab(
 
                     <div class=CARD>
                         <span class=CARD_TITLE>{move || tr().guide_drift_title}</span>
-                        {move || drift.with(|d| history.with(|h| drift_plot(d, h, tr())))}
+                        {move || series.with(|s| drift_plot(s, "h-40 md:h-auto md:flex-1 md:min-h-48", tr()))}
                     </div>
 
                     <div class=CARD>
                         <span class=CARD_TITLE>{move || tr().guide_target_title}</span>
-                        {move || drift.with(|d| target_plot(d, accuracy.get(), tr().guide_no_drift))}
+                        {move || drift.with(|d| target_plot(d, accuracy.get(), "\u{2033}", false, tr().guide_no_drift))}
                     </div>
 
                     // Guide camera frame (uuid "+G*", kstars media.cpp:753).

@@ -10,19 +10,18 @@
 //! - Save calibration is `guide_set_calibration_settings` (message.cpp:679),
 //!   a bulk save of the 8 calibration fields from the current widget map.
 
+use std::sync::Arc;
+
 use leptos::prelude::*;
 use serde_json::Value;
 
-use crate::components::form::{CARD_TITLE, CHECK, CHIP, FOOTER, LABEL, ROW};
-use crate::dom::{event_target_checked, event_target_value};
-use crate::i18n::{t, Lang, Translations};
+use crate::components::form::{CARD_TITLE, CHIP, FOOTER, LABEL, ROW};
+use crate::dom::event_target_value;
+use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
 use crate::ws_helpers::{dispatch_setting, option_get, option_set, send_cmd};
 
-type LabelFn = fn(&Translations) -> &'static str;
-
-const NUM: &str = "input input--sm font-mono w-[104px] shrink-0 text-right max-md:h-9";
-const SELECT: &str = "input input--sm w-[180px] shrink-0 max-md:h-9";
+use super::rows::{bool_row, num_row, section, select_row, value_str, LabelFn, Rows, NUM};
 
 // Combo option lists (sourced from kstars/ekos/guide/*.ui).
 const BINNING_OPTIONS: &[&str] = &["1x1", "2x2", "3x3", "4x4"];
@@ -46,15 +45,6 @@ pub const GUIDERS: [(i64, LabelFn); 3] = [
 
 pub fn settings_i64(v: &Value, key: &str) -> Option<i64> {
     v.get(key).and_then(|x| x.as_i64().or_else(|| x.as_f64().map(|f| f as i64)))
-}
-
-fn settings_str(v: &Value, key: &str) -> Option<String> {
-    v.get(key).and_then(|x| match x {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        _ => None,
-    })
 }
 
 /// The `Options::` entries this sheet shows.
@@ -87,88 +77,15 @@ fn save_calibration(send: &SendCmd, s: &Value) {
     }));
 }
 
-/// What every row needs: the command sink, both value maps and the language.
-#[derive(Clone)]
-struct Ctx {
-    send: SendCmd,
-    settings: Memo<Value>,
-    options: Memo<Value>,
-    lang: RwSignal<Lang>,
-}
-
-impl Ctx {
-    fn label(&self, label: LabelFn) -> impl Fn() -> &'static str + Copy + Send + 'static + use<> {
-        let lang = self.lang;
-        move || label(t(lang.get()))
-    }
-
-    fn set(&self, key: &str, value: Value) {
-        dispatch_setting(&self.send, "guide_set_all_settings", None, key, value);
-    }
-}
-
-/// Checkbox row for a boolean widget.
-fn bool_row(c: &Ctx, key: &'static str, label: LabelFn) -> impl IntoView + use<> {
-    let (cc, settings) = (c.clone(), c.settings);
-    view! {
-        <label class="flex items-center gap-3 min-h-[44px] md:min-h-9 cursor-pointer">
-            <input type="checkbox" class=CHECK
-                   prop:checked=move || settings.with(|s| s.get(key).and_then(Value::as_bool).unwrap_or(false))
-                   on:change=move |ev| cc.set(key, Value::Bool(event_target_checked(&ev))) />
-            <span class=LABEL>{c.label(label)}</span>
-        </label>
-    }
-}
-
-/// Number row. A whole `step` sends an integer (QSpinBox), else a float
-/// (QDoubleSpinBox); either is clamped to `min..=max`.
-fn num_row(c: &Ctx, key: &'static str, label: LabelFn, min: f64, max: f64, step: f64) -> impl IntoView + use<> {
-    let (cc, settings) = (c.clone(), c.settings);
-    let int = step.fract() == 0.0;
-    view! {
-        <div class=ROW>
-            <span class=format!("{LABEL} flex-1")>{c.label(label)}</span>
-            <input type="number" inputmode="decimal" class=NUM
-                   min=min.to_string() max=max.to_string() step=step.to_string()
-                   prop:value=move || settings.with(|s| s.get(key).and_then(Value::as_f64).map(|v| v.to_string()).unwrap_or_default())
-                   on:change=move |ev| {
-                       let Ok(v) = event_target_value(&ev).parse::<f64>() else { return };
-                       let v = v.clamp(min, max);
-                       cc.set(key, if int { Value::from(v.round() as i64) } else { Value::from(v) });
-                   } />
-        </div>
-    }
-}
-
-/// Combo row; a current value missing from `options` is kept selectable.
-fn select_row(c: &Ctx, key: &'static str, label: LabelFn, options: &'static [&'static str]) -> impl IntoView + use<> {
-    let (cc, settings) = (c.clone(), c.settings);
-    view! {
-        <div class=ROW>
-            <span class=format!("{LABEL} flex-1")>{c.label(label)}</span>
-            <select class=SELECT on:change=move |ev| cc.set(key, Value::String(event_target_value(&ev)))>
-                {move || {
-                    let cur = settings.with(|s| settings_str(s, key).unwrap_or_default());
-                    let extra = (!cur.is_empty() && !options.contains(&cur.as_str())).then(|| cur.clone());
-                    extra.into_iter().chain(options.iter().map(|o| o.to_string())).map(|o| {
-                        let (selected, text) = (o == cur, o.clone());
-                        view! { <option value=o prop:selected=selected>{text}</option> }
-                    }).collect::<Vec<_>>()
-                }}
-            </select>
-        </div>
-    }
-}
-
 /// Host (text) or port (1–65535) row for an `Options::` entry.
-fn option_row(c: &Ctx, name: &'static str, label: LabelFn, port: bool) -> impl IntoView + use<> {
-    let (send, options) = (c.send.clone(), c.options);
+fn option_row(r: &Rows, send: &SendCmd, options: Memo<Value>, name: &'static str, label: LabelFn, port: bool) -> impl IntoView + use<> {
+    let send = send.clone();
     view! {
         <div class=ROW>
-            <span class=format!("{LABEL} flex-1")>{c.label(label)}</span>
+            <span class=format!("{LABEL} flex-1")>{r.label(label)}</span>
             <input type=if port { "number" } else { "text" }
                    class=if port { NUM } else { "input input--sm font-mono w-[180px] shrink-0 max-md:h-9" }
-                   prop:value=move || options.with(|o| settings_str(o, name).unwrap_or_default())
+                   prop:value=move || options.with(|o| value_str(o, name).unwrap_or_default())
                    on:change=move |ev| {
                        let v = event_target_value(&ev);
                        let value = if port {
@@ -182,20 +99,6 @@ fn option_row(c: &Ctx, name: &'static str, label: LabelFn, port: bool) -> impl I
     }
 }
 
-/// A collapsible card.
-fn section(title: impl Fn() -> &'static str + Send + 'static, open: bool, body: impl IntoView) -> impl IntoView {
-    view! {
-        <details class="panel group" open=open>
-            <summary class="flex items-center gap-2 px-3 min-h-[44px] md:min-h-10 cursor-pointer select-none \
-                            list-none [&::-webkit-details-marker]:hidden">
-                <span class=format!("{CARD_TITLE} flex-1")>{move || title()}</span>
-                <span class="text-text-faint transition-transform group-open:rotate-90">"\u{203a}"</span>
-            </summary>
-            <div class="px-3 pb-3 flex flex-col">{body}</div>
-        </details>
-    }
-}
-
 #[component]
 pub fn GuideSettings(
     settings: Memo<Value>,
@@ -205,7 +108,12 @@ pub fn GuideSettings(
     lang: RwSignal<Lang>,
 ) -> impl IntoView {
     let tr = move || t(lang.get());
-    let c = Ctx { send: send.clone(), settings, options, lang };
+    let s_set = send.clone();
+    let c = Rows {
+        values: settings.into(),
+        set: Arc::new(move |key, value| dispatch_setting(&s_set, "guide_set_all_settings", None, key, value)),
+        lang,
+    };
     let guider = Memo::new(move |_| options.with(|o| settings_i64(o, "guiderType").unwrap_or(0)));
 
     let s_save = send.clone();
@@ -234,12 +142,12 @@ pub fn GuideSettings(
                     })}
                 </div>
                 <div class="flex flex-col" class:hidden=move || guider.get() != 1>
-                    {option_row(&c, "pHD2Host", |t| t.guide_host, false)}
-                    {option_row(&c, "pHD2Port", |t| t.guide_port, true)}
+                    {option_row(&c, &send, options, "pHD2Host", |t| t.guide_host, false)}
+                    {option_row(&c, &send, options, "pHD2Port", |t| t.guide_port, true)}
                 </div>
                 <div class="flex flex-col" class:hidden=move || guider.get() != 2>
-                    {option_row(&c, "linGuiderHost", |t| t.guide_host, false)}
-                    {option_row(&c, "linGuiderPort", |t| t.guide_port, true)}
+                    {option_row(&c, &send, options, "linGuiderHost", |t| t.guide_host, false)}
+                    {option_row(&c, &send, options, "linGuiderPort", |t| t.guide_port, true)}
                 </div>
             })}
 
