@@ -11,6 +11,7 @@
 
 use std::f64::consts::PI;
 
+use super::log::cfmt::fmt_f;
 use super::traits::{Parity, PierSide, Point};
 
 /// `UNKNOWN_DECLINATION` (`mount.h:74`): the declination of a calibration done
@@ -42,7 +43,30 @@ pub fn norm_angle(val: f64) -> f64 {
     norm(val, -PI, PI)
 }
 
-/// The profile keys under `/<mount class>/calibration/` (`mount.cpp:1580-1813`).
+/// `degrees` (`image_math.h:120`): `r * 180 / π`, in that order. Rust's
+/// `to_degrees` multiplies by a folded `180 / π` and is 1 ulp off for about
+/// a quarter of the inputs, enough to move a `%.1f` or a 50 ms bucket.
+pub fn degrees(radians: f64) -> f64 {
+    radians * 180.0 / PI
+}
+
+/// `radians` (`image_math.h:125`): `d * π / 180`, in that order (see
+/// [`degrees`]).
+pub fn radians(degrees: f64) -> f64 {
+    degrees * PI / 180.0
+}
+
+/// `wxMax` (`a > b ? a : b`): a NaN in `b` comes through, unlike `f64::max`.
+fn wx_max(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+/// `wxMin` (`a < b ? a : b`), see [`wx_max`].
+fn wx_min(a: f64, b: f64) -> f64 {
+    if a < b { a } else { b }
+}
+
+/// The profile keys under `/<mount class>/calibration/` (`mount.cpp:1582-1849`).
 /// The mount class is `scope` or `stepguider`.
 pub mod keys {
     /// `"/<class>/calibration/"`.
@@ -110,6 +134,17 @@ impl Calibration {
         norm_angle(self.x_angle - self.y_angle + PI / 2.0)
     }
 
+    /// `Mount::yAngle` (`mount.cpp:879`): the Dec axis angle rebuilt from
+    /// `x_angle` and [`y_angle_error`](Self::y_angle_error), so always in
+    /// `[-π, π)`. Every reader goes through this — the flip, the settings
+    /// summary, `get_calibration_data`'s `yAngle`, the guide-log header —
+    /// never the raw `y_angle`, which may sit outside that range (a manual
+    /// calibration, an imported profile, `atan2` returning π) and is only
+    /// what gets stored.
+    pub fn y_angle(&self) -> f64 {
+        norm_angle(self.x_angle - self.y_angle_error() + PI / 2.0)
+    }
+
     /// `Scope::IsCalibrated`'s Dec leg (`scope.cpp:1137`): a Dec rate was
     /// measured.
     pub fn dec_calibrated(&self) -> bool {
@@ -152,36 +187,36 @@ impl CalibrationIssue {
             CalibrationIssue::None => "Bogus",
         }
     }
-}
 
-/// `CalibrationIssueString` (`mount.h:103`): the name the guide log and the
-/// calibration review print (`Last Cal Issue = %s`).
-pub fn issue_text(issue: &CalibrationIssue) -> &'static str {
-    match issue {
-        CalibrationIssue::None => "None",
-        CalibrationIssue::Steps => "Steps",
-        CalibrationIssue::Angle => "Orthogonality",
-        CalibrationIssue::Rates => "Rates",
-        CalibrationIssue::Different => "Difference",
+    /// `CalibrationIssueString` (`mount.h:103`): the name the guide log and
+    /// the calibration review print (`Last Cal Issue = %s`).
+    pub fn text(self) -> &'static str {
+        match self {
+            CalibrationIssue::None => "None",
+            CalibrationIssue::Steps => "Steps",
+            CalibrationIssue::Angle => "Orthogonality",
+            CalibrationIssue::Rates => "Rates",
+            CalibrationIssue::Different => "Difference",
+        }
     }
-}
 
-/// The advisory alert PHD2 shows for an issue (`scope.cpp:949-962`); empty
-/// for `None`.
-pub fn issue_advisory(issue: &CalibrationIssue) -> &'static str {
-    match issue {
-        CalibrationIssue::None => "",
-        CalibrationIssue::Steps => {
-            "Advisory: Calibration completed but few guide steps were used, so accuracy is questionable"
-        }
-        CalibrationIssue::Angle => {
-            "Advisory: Calibration completed but RA/Dec axis angles are questionable and guiding may be impaired"
-        }
-        CalibrationIssue::Different => {
-            "Advisory: This calibration is substantially different from the previous one - have you changed configurations?"
-        }
-        CalibrationIssue::Rates => {
-            "Advisory: Calibration completed but RA and Dec rates vary by an unexpected amount (often caused by large Dec backlash)"
+    /// The advisory alert PHD2 shows for an issue (`scope.cpp:949-962`);
+    /// empty for `None`.
+    pub fn advisory(self) -> &'static str {
+        match self {
+            CalibrationIssue::None => "",
+            CalibrationIssue::Steps => {
+                "Advisory: Calibration completed but few guide steps were used, so accuracy is questionable"
+            }
+            CalibrationIssue::Angle => {
+                "Advisory: Calibration completed but RA/Dec axis angles are questionable and guiding may be impaired"
+            }
+            CalibrationIssue::Different => {
+                "Advisory: This calibration is substantially different from the previous one - have you changed configurations?"
+            }
+            CalibrationIssue::Rates => {
+                "Advisory: Calibration completed but RA and Dec rates vary by an unexpected amount (often caused by large Dec backlash)"
+            }
         }
     }
 }
@@ -197,7 +232,7 @@ pub struct CalibrationDetails {
     pub dec_guide_speed: f64,
     /// Degrees, see [`ortho_error_deg`].
     pub ortho_error: f64,
-    /// A double in PHD2 (`mount.h:111`), compared to the camera's `u16` binning.
+    /// A double in PHD2 (`mount.h:112`), compared to the camera's `u16` binning.
     pub orig_binning: f64,
     pub ra_steps: Vec<Point>,
     pub dec_steps: Vec<Point>,
@@ -215,17 +250,19 @@ impl CalibrationDetails {
     }
 }
 
-/// `orthoError` (`scope.cpp:1107`, also `scope.cpp:891`): the angle between
-/// the two axes' deviation from the nearest multiple of 90°, in degrees.
+/// `orthoError` (`scope.cpp:1107`, also `scope.cpp:891`): how far the angle
+/// between the axes is from 90°, degrees.
 pub fn ortho_error_deg(x_angle: f64, y_angle: f64) -> f64 {
-    (norm_angle(x_angle - y_angle).abs() - PI / 2.0).abs().to_degrees()
+    degrees((norm_angle(x_angle - y_angle).abs() - PI / 2.0).abs())
 }
 
 /// `Mount::TransformCameraCoordinatesToMountCoordinates` (`mount.cpp:1135`):
 /// a camera-plane offset into (RA, Dec) axis amounts. The RA component is the
-/// projection on the RA axis, the Dec component the projection on the Dec
-/// axis as measured (`x_angle + y_angle_error`), so the pair is not a
-/// rotation when the axes are not orthogonal.
+/// projection on the RA axis. The Dec component, `sin(θ − (x_angle +
+/// y_angle_error))`, is the projection on the axis at `2·x_angle − y_angle +
+/// π`: the measured Dec axis mirrored about the perpendicular to RA, which is
+/// the measured axis itself only when the axes are orthogonal. So the pair is
+/// not a rotation when they are not.
 pub fn camera_to_mount(offset: Point, cal: &Calibration) -> Point {
     let hyp = offset.x.hypot(offset.y);
     let camera_theta = offset.y.atan2(offset.x);
@@ -234,7 +271,7 @@ pub fn camera_to_mount(offset: Point, cal: &Calibration) -> Point {
     Point::new(x_angle.cos() * hyp, y_angle.sin() * hyp)
 }
 
-/// `Mount::TransformMountCoordinatesToCameraCoordinates` (`mount.cpp:1185`):
+/// `Mount::TransformMountCoordinatesToCameraCoordinates` (`mount.cpp:1181`):
 /// (RA, Dec) axis amounts back onto the camera plane. A plain rotation by
 /// `x_angle`, after mirroring the mount angle when the Dec axis runs the
 /// other way (`|y_angle_error| > π/2`). Only exact for orthogonal axes.
@@ -259,12 +296,12 @@ fn parity_str(p: Parity) -> &'static str {
 
 /// `Mount::DeclinationStr` with the default `%.1f`.
 fn declination_str(dec: f64) -> String {
-    if dec == UNKNOWN_DECLINATION { "Unknown".to_string() } else { format!("{:.1}", dec.to_degrees()) }
+    if dec == UNKNOWN_DECLINATION { "Unknown".to_string() } else { fmt_f(degrees(dec), 1) }
 }
 
 /// `RotAngleStr` (`mount.cpp:884`).
 fn rot_angle_str(rot: f64) -> String {
-    if rot == ROTATOR_POSITION_UNKNOWN { "None".to_string() } else { format!("{rot:.1}") }
+    if rot == ROTATOR_POSITION_UNKNOWN { "None".to_string() } else { fmt_f(rot, 1) }
 }
 
 /// What [`flip_calibration`] reports.
@@ -287,11 +324,11 @@ pub fn flip_calibration(cal: &mut Calibration, dec_flip_required: bool) -> Optio
         return None;
     }
     let orig_x = cal.x_angle;
-    let orig_y = cal.y_angle;
+    let orig_y = cal.y_angle();
     let mut log = vec![format!(
-        "FlipCalibration before: x={:.1}, y={:.1} decFlipRequired={} sideOfPier={} rotAngle={} parity={}/{}",
-        orig_x.to_degrees(),
-        orig_y.to_degrees(),
+        "FlipCalibration before: x={}, y={} decFlipRequired={} sideOfPier={} rotAngle={} parity={}/{}",
+        fmt_f(degrees(orig_x), 1),
+        fmt_f(degrees(orig_y), 1),
         dec_flip_required as i32,
         cal.pier_side.label(),
         rot_angle_str(cal.rotator_angle),
@@ -304,7 +341,11 @@ pub fn flip_calibration(cal: &mut Calibration, dec_flip_required: bool) -> Optio
     if dec_flip_required {
         new_y += PI;
     }
-    log.push(format!("FlipCalibration pre-normalize: x={:.1}, y={:.1}", new_x.to_degrees(), new_y.to_degrees()));
+    log.push(format!(
+        "FlipCalibration pre-normalize: x={}, y={}",
+        fmt_f(degrees(new_x), 1),
+        fmt_f(degrees(new_y), 1)
+    ));
     new_x = norm_angle(new_x);
     new_y = norm_angle(new_y);
 
@@ -314,9 +355,9 @@ pub fn flip_calibration(cal: &mut Calibration, dec_flip_required: bool) -> Optio
     // unless the mount already reverses its Dec motor on the flip.
     let new_dec_parity = if dec_flip_required { cal.dec_guide_parity } else { cal.dec_guide_parity.flipped() };
     log.push(format!(
-        "FlipCalibration after: x={:.1} y={:.1} sideOfPier={} parity={}/{}",
-        new_x.to_degrees(),
-        new_y.to_degrees(),
+        "FlipCalibration after: x={} y={} sideOfPier={} parity={}/{}",
+        fmt_f(degrees(new_x), 1),
+        fmt_f(degrees(new_y), 1),
         new_side.label(),
         parity_str(cal.ra_guide_parity),
         parity_str(new_dec_parity)
@@ -330,13 +371,13 @@ pub fn flip_calibration(cal: &mut Calibration, dec_flip_required: bool) -> Optio
     // PierSideStrTr(side, "") — an unknown side prints as nothing.
     let side_str = |s: PierSide| if s == PierSide::Unknown { "" } else { s.label() };
     let status = format!(
-        "CAL: {}({:.0},{:.0})->{}({:.0},{:.0})",
+        "CAL: {}({},{})->{}({},{})",
         side_str(prior_side),
-        orig_x.to_degrees(),
-        orig_y.to_degrees(),
+        fmt_f(degrees(orig_x), 0),
+        fmt_f(degrees(orig_y), 0),
         side_str(new_side),
-        new_x.to_degrees(),
-        new_y.to_degrees()
+        fmt_f(degrees(new_x), 0),
+        fmt_f(degrees(new_y), 0)
     );
     Some(FlipResult { status, log })
 }
@@ -442,11 +483,11 @@ pub fn adjust_for_scope_pointing(
                 .to_string(),
         );
         out.log.push(format!(
-            "Guide speeds have changed since calibration.  Orig RA = {:.1}, Orig Dec = {:.1}, Curr RA = {:.1}, Curr Dec = {:.1}, Units are arc-sec/sec",
-            details.ra_guide_speed * 3600.0,
-            details.dec_guide_speed * 3600.0,
-            cur_ra * 3600.0,
-            cur_dec * 3600.0
+            "Guide speeds have changed since calibration.  Orig RA = {}, Orig Dec = {}, Curr RA = {}, Curr Dec = {}, Units are arc-sec/sec",
+            fmt_f(details.ra_guide_speed * 3600.0, 1),
+            fmt_f(details.dec_guide_speed * 3600.0, 1),
+            fmt_f(cur_ra * 3600.0, 1),
+            fmt_f(cur_dec * 3600.0, 1)
         ));
     }
 
@@ -466,15 +507,16 @@ pub fn adjust_for_scope_pointing(
                 .to_string(),
         );
         out.log.push(format!(
-            "Camera pixel size changed from {:.1} to {:.1}",
-            pointing.profile_pixel_size, pointing.camera_pixel_size
+            "Camera pixel size changed from {} to {}",
+            fmt_f(pointing.profile_pixel_size, 1),
+            fmt_f(pointing.camera_pixel_size, 1)
         ));
         scale_adjustment = pointing.camera_pixel_size / pointing.profile_pixel_size;
         out.new_pixel_size = Some(pointing.camera_pixel_size);
     }
 
     if binning != cal.binning && cal.is_valid {
-        // Quirk (mount.cpp:1314): `binning / m_cal.binning` is an unsigned
+        // Quirk (mount.cpp:1319): `binning / m_cal.binning` is an unsigned
         // short division, so 2 -> 3 yields 1 and no image-scale change is
         // seen; the rates themselves use the double ratio. PHD2 would trap on
         // a stored binning of 0; a divisor of 1 stands in for it here.
@@ -483,13 +525,13 @@ pub fn adjust_for_scope_pointing(
         let new_x = cal.x_rate * adj;
         let new_y = cal.y_rate * adj;
         out.log.push(format!(
-            "Binning {} -> {}, rates ({:.3}, {:.3}) -> ({:.3}, {:.3})",
+            "Binning {} -> {}, rates ({}, {}) -> ({}, {})",
             cal.binning,
             binning,
-            cal.x_rate * 1000.0,
-            cal.y_rate * 1000.0,
-            new_x * 1000.0,
-            new_y * 1000.0
+            fmt_f(cal.x_rate * 1000.0, 3),
+            fmt_f(cal.y_rate * 1000.0, 3),
+            fmt_f(new_x * 1000.0, 3),
+            fmt_f(new_y * 1000.0, 3)
         ));
         cal.x_rate = new_x;
         cal.y_rate = new_y;
@@ -531,10 +573,12 @@ pub fn adjust_for_scope_pointing(
             let da = new_rot - cal.rotator_angle;
             if da.abs() > 0.05 {
                 out.log.push(format!(
-                    "New rotator position {:.1} deg, prev = {:.1} deg, delta = {:.1} deg",
-                    new_rot, cal.rotator_angle, da
+                    "New rotator position {} deg, prev = {} deg, delta = {} deg",
+                    fmt_f(new_rot, 1),
+                    fmt_f(cal.rotator_angle, 1),
+                    fmt_f(da, 1)
                 ));
-                let da = da.to_radians();
+                let da = radians(da);
                 cal.x_angle = norm_angle(cal.x_angle - da);
                 cal.y_angle = norm_angle(cal.y_angle - da);
                 cal.rotator_angle = new_rot;
@@ -557,21 +601,22 @@ pub fn adjust_for_scope_pointing(
             out.log.push("skipping Dec comp: Dec Comp not enabled".to_string());
         } else {
             // Near the pole the rate would blow up downstream: clamp to ±89°.
-            let dec = new_declination.max((-89.0f64).to_radians()).min(89.0f64.to_radians());
+            // wxMax / wxMin, so a NaN declination comes through.
+            let dec = wx_max(radians(-89.0), wx_min(radians(89.0), new_declination));
             out.x_rate = (cal.x_rate / cal.declination.cos()) * dec.cos();
             deccomp = true;
             out.log.push(format!(
-                "Dec comp: XRate {:.3} -> {:.3} for dec {:.1} -> dec {:.1}",
-                cal.x_rate * 1000.0,
-                out.x_rate * 1000.0,
-                cal.declination.to_degrees(),
-                dec.to_degrees()
+                "Dec comp: XRate {} -> {} for dec {} -> dec {}",
+                fmt_f(cal.x_rate * 1000.0, 3),
+                fmt_f(out.x_rate * 1000.0, 3),
+                fmt_f(degrees(cal.declination), 1),
+                fmt_f(degrees(dec), 1)
             ));
         }
     }
     if !deccomp {
         if prev_x_rate != cal.x_rate {
-            out.log.push(format!("No dec comp, asserted base xRate {:.3}", cal.x_rate * 1000.0));
+            out.log.push(format!("No dec comp, asserted base xRate {}", fmt_f(cal.x_rate * 1000.0, 3)));
         }
         out.x_rate = cal.x_rate;
     }
@@ -609,7 +654,7 @@ pub struct SanityResult {
 /// only when the setup looks the same (image scale within 0.1″/px, RA angle
 /// within 5°, both Dec rates measured). `old_cal.is_valid` false skips the
 /// last test. The caller writes `last_issue` into the details
-/// (`FlagCalibrationIssue`) and shows [`issue_advisory`].
+/// (`FlagCalibrationIssue`) and shows [`CalibrationIssue::advisory`].
 pub fn sanity_check_calibration(
     new_cal: &Calibration,
     new_details: &CalibrationDetails,
@@ -630,7 +675,7 @@ pub fn sanity_check_calibration(
     let non_ortho = ortho_error_deg(new_cal.x_angle, new_cal.y_angle);
     if non_ortho > CAL_ALERT_ORTHOGONALITY_TOLERANCE {
         res.issue = CalibrationIssue::Angle;
-        res.detail = format!("Non-orthogonality = {non_ortho:.3}");
+        res.detail = format!("Non-orthogonality = {}", fmt_f(non_ortho, 3));
     } else if new_cal.declination != UNKNOWN_DECLINATION
         && new_cal.y_rate != CALIBRATION_RATE_UNCALIBRATED
         && new_cal.declination.abs() <= DEC_COMP_LIMIT
@@ -647,10 +692,10 @@ pub fn sanity_check_calibration(
         if (expected_ratio - actual_ratio).abs() > CAL_ALERT_AXISRATES_TOLERANCE {
             res.issue = CalibrationIssue::Rates;
             res.detail = format!(
-                "Expected ratio at dec={:.1} is {:.3}, actual is {:.3}",
-                new_cal.declination.to_degrees(),
-                expected_ratio,
-                actual_ratio
+                "Expected ratio at dec={} is {}, actual is {}",
+                fmt_f(degrees(new_cal.declination), 1),
+                fmt_f(expected_ratio, 3),
+                fmt_f(actual_ratio, 3)
             );
         }
     }
@@ -659,7 +704,7 @@ pub fn sanity_check_calibration(
     if res.issue == CalibrationIssue::None
         && old_cal.is_valid
         && (old_details.image_scale - new_details.image_scale).abs() < 0.1
-        && (old_cal.x_angle - new_cal.x_angle).to_degrees().abs() < 5.0
+        && degrees(old_cal.x_angle - new_cal.x_angle).abs() < 5.0
         && new_cal.y_rate != CALIBRATION_RATE_UNCALIBRATED
         && old_cal.y_rate != CALIBRATION_RATE_UNCALIBRATED
         && new_cal.y_rate != 0.0
@@ -667,7 +712,7 @@ pub fn sanity_check_calibration(
         let ratio = old_cal.y_rate / new_cal.y_rate;
         if (1.0 - ratio).abs() > CAL_ALERT_DECRATE_DIFFERENCE {
             res.issue = CalibrationIssue::Different;
-            res.detail = format!("Current/previous Dec rate ratio is {ratio:.3}");
+            res.detail = format!("Current/previous Dec rate ratio is {}", fmt_f(ratio, 3));
         }
     }
     res
@@ -714,7 +759,7 @@ pub fn calibration_step_size(
     let total_duration = distance as f64 * image_scale / (15.0 * guide_speed);
     let pulse = total_duration / desired_steps as f64 * 1000.0;
     let max_pulse = total_duration / CALSTEP_MIN_STEPS * 1000.0;
-    let pulse = max_pulse.min(pulse / declination_deg.to_radians().cos());
+    let pulse = wx_min(max_pulse, pulse / radians(declination_deg).cos());
     // Too-small pulses lead to calibration problems: round up, not to nearest.
     let step = (pulse / 50.0).ceil() as i32 * 50;
     (image_scale, step)
@@ -741,9 +786,9 @@ mod tests {
         Calibration {
             x_rate: 0.01,
             y_rate: 0.0106,
-            x_angle: x_deg.to_radians(),
-            y_angle: y_deg.to_radians(),
-            declination: 20.0f64.to_radians(),
+            x_angle: radians(x_deg),
+            y_angle: radians(y_deg),
+            declination: radians(20.0),
             rotator_angle: ROTATOR_POSITION_UNKNOWN,
             binning: 1,
             pier_side: PierSide::East,
@@ -770,7 +815,7 @@ mod tests {
 
     fn pointing() -> Pointing {
         Pointing {
-            declination: Some(20.0f64.to_radians()),
+            declination: Some(radians(20.0)),
             pier_side: PierSide::East,
             rotator_angle: None,
             binning: 1,
@@ -787,8 +832,19 @@ mod tests {
         assert!(near(norm_angle(PI), -PI, 1e-12)); // the top end is exclusive
         assert!(near(norm_angle(-PI), -PI, 1e-12));
         assert!(near(norm_angle(3.0 * PI), -PI, 1e-12));
-        assert!(near(norm_angle(195.0f64.to_radians()), -165.0f64.to_radians(), 1e-12));
+        assert!(near(norm_angle(radians(195.0)), -radians(165.0), 1e-12));
         assert!(near(norm(25.0, 0.0, 24.0), 1.0, 1e-12));
+    }
+
+    #[test]
+    fn degrees_and_radians_in_phd2_order() {
+        // From PHD2's C++ (image_math.h): `d * M_PI / 180.` is 1 ulp above
+        // Rust's `to_radians` at 89°.
+        assert_eq!(radians(89.0), 1.5533430342749535);
+        assert_eq!(89.0f64.to_radians(), 1.5533430342749532);
+        assert_eq!(radians(20.0), 0.3490658503988659);
+        assert_eq!(degrees(1.0), 57.295779513082323);
+        assert_eq!(ortho_error_deg(0.0, radians(250.0)), 20.000000000000028);
     }
 
     #[test]
@@ -798,7 +854,15 @@ mod tests {
         assert!(near(cal(15.0, -75.0).y_angle_error(), -PI, 1e-12));
         assert!(near(cal(0.0, 270.0).y_angle_error(), -PI, 1e-12));
         assert!(near(cal(170.0, -100.0).y_angle_error(), 0.0, 1e-12)); // 360° wraps to 0
-        assert!(near(cal(15.0, 92.0).y_angle_error().to_degrees(), 13.0, 1e-9));
+        assert!(near(degrees(cal(15.0, 92.0).y_angle_error()), 13.0, 1e-9));
+    }
+
+    #[test]
+    fn y_angle_reads_back_normalised() {
+        // A stored 270° reads as -90°; an in-range angle reads as itself.
+        assert!(near(cal(15.0, 270.0).y_angle(), -PI / 2.0, 1e-15));
+        assert!(near(cal(15.0, 105.0).y_angle(), radians(105.0), 1e-15));
+        assert!(near(cal(-170.0, -260.0).y_angle(), radians(100.0), 1e-12));
     }
 
     #[test]
@@ -819,8 +883,9 @@ mod tests {
     #[test]
     fn transforms_non_orthogonal_92_degree_y_axis() {
         // Dec axis at 92° absolute, 13° off orthogonal: the forward transform
-        // projects on the measured axis, and the reverse cannot undo it
-        // exactly (mount.cpp:1096).
+        // projects Dec on the axis at 2·15 − 92 + 180 = 118° (cos(−118°)·10 =
+        // −4.6947), not on the measured 92° (which would give −0.349), and the
+        // reverse cannot undo it exactly (mount.cpp:1096).
         let c = cal(15.0, 92.0);
         let m = camera_to_mount(Point::new(10.0, 0.0), &c);
         assert!(near(m.x, 9.659258262890683, 1e-9));
@@ -848,8 +913,8 @@ mod tests {
     fn flip_without_dec_flip_inverts_parity() {
         let mut c = cal(15.0, 105.0);
         let r = flip_calibration(&mut c, false).unwrap();
-        assert!(near(c.x_angle.to_degrees(), -165.0, 1e-9));
-        assert!(near(c.y_angle.to_degrees(), 105.0, 1e-9));
+        assert!(near(degrees(c.x_angle), -165.0, 1e-9));
+        assert!(near(degrees(c.y_angle), 105.0, 1e-9));
         assert_eq!(c.pier_side, PierSide::West);
         assert_eq!(c.ra_guide_parity, Parity::Even);
         assert_eq!(c.dec_guide_parity, Parity::Odd);
@@ -866,13 +931,13 @@ mod tests {
     fn flip_with_dec_flip_turns_y_and_keeps_parity() {
         let mut c = cal(15.0, 105.0);
         flip_calibration(&mut c, true).unwrap();
-        assert!(near(c.x_angle.to_degrees(), -165.0, 1e-9));
-        assert!(near(c.y_angle.to_degrees(), -75.0, 1e-9));
+        assert!(near(degrees(c.x_angle), -165.0, 1e-9));
+        assert!(near(degrees(c.y_angle), -75.0, 1e-9));
         assert_eq!(c.dec_guide_parity, Parity::Even);
         assert_eq!(c.pier_side, PierSide::West);
         // Flipping back restores the angles.
         flip_calibration(&mut c, true).unwrap();
-        assert!(near(c.x_angle.to_degrees(), 15.0, 1e-9) && near(c.y_angle.to_degrees(), 105.0, 1e-9));
+        assert!(near(degrees(c.x_angle), 15.0, 1e-9) && near(degrees(c.y_angle), 105.0, 1e-9));
         assert_eq!(c.pier_side, PierSide::East);
         // Nothing to flip without a calibration.
         let mut none = Calibration::default();
@@ -880,11 +945,24 @@ mod tests {
     }
 
     #[test]
+    fn flip_reads_the_normalised_y_angle() {
+        // From PHD2's C++: a stored 270° Dec axis flips as -90°.
+        let mut c = cal(15.0, 270.0);
+        let r = flip_calibration(&mut c, false).unwrap();
+        assert_eq!(r.log[0], "FlipCalibration before: x=15.0, y=-90.0 decFlipRequired=0 sideOfPier=East rotAngle=None parity=+/+");
+        assert_eq!(r.log[1], "FlipCalibration pre-normalize: x=195.0, y=-90.0");
+        assert_eq!(r.log[2], "FlipCalibration after: x=-165.0 y=-90.0 sideOfPier=West parity=+/-");
+        assert_eq!(r.status, "CAL: East(15,-90)->West(-165,-90)");
+        assert_eq!(c.x_angle, -2.8797932657906435);
+        assert_eq!(c.y_angle, -1.5707963267948966);
+    }
+
+    #[test]
     fn dec_comp_at_cal_dec_20_pointing_60() {
         let mut c = cal(15.0, 105.0);
-        let p = Pointing { declination: Some(60.0f64.to_radians()), ..pointing() };
+        let p = Pointing { declination: Some(radians(60.0)), ..pointing() };
         let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &OPTS, 0.01);
-        assert!(near(a.x_rate, 0.005320888862379561, 1e-15));
+        assert_eq!(a.x_rate, 0.0053208888623795612); // PHD2's C++
         assert!(near(c.x_rate, 0.01, 0.0)); // the stored rate is untouched
         assert!(!a.flipped && !a.cal_changed && a.alerts.is_empty());
         assert_eq!(a.log[1], "Dec comp: XRate 10.000 -> 5.321 for dec 20.0 -> dec 60.0");
@@ -893,9 +971,17 @@ mod tests {
     #[test]
     fn dec_comp_clamps_at_89_and_skips_when_off_or_far() {
         let mut c = cal(15.0, 105.0);
-        let p = Pointing { declination: Some(89.5f64.to_radians()), ..pointing() };
+        let p = Pointing { declination: Some(radians(89.5)), ..pointing() };
         let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p, &OPTS, 0.01);
-        assert!(near(a.x_rate, 0.00018572463006772728, 1e-18));
+        assert_eq!(a.x_rate, 0.00018572463006772492); // PHD2's C++, radians(89)
+        assert_eq!(a.log[1], "Dec comp: XRate 10.000 -> 0.186 for dec 20.0 -> dec 89.0");
+
+        // A NaN declination goes through wxMax / wxMin, as in PHD2's C++.
+        let p_nan = Pointing { declination: Some(f64::NAN), ..pointing() };
+        let a = adjust_for_scope_pointing(&mut c, &details(8, 8), &p_nan, &OPTS, 0.01);
+        assert!(a.x_rate.is_nan());
+        assert_eq!(a.log[0], "AdjustCalibrationForScopePointing (scope): current dec=nan pierSide=0, cal dec=20.0 pierSide=0 rotAngle=None bin=1");
+        assert_eq!(a.log[1], "Dec comp: XRate 10.000 -> nan for dec 20.0 -> dec nan");
 
         // Dec comp off: base rate, plus the "asserted" line when it differed.
         let off = AdjustOpts { use_dec_comp: false, ..OPTS };
@@ -905,8 +991,8 @@ mod tests {
         assert_eq!(a.log[2], "No dec comp, asserted base xRate 10.000");
 
         // Calibrated past 60°: an alert, no compensation.
-        let mut far = Calibration { declination: 65.0f64.to_radians(), ..cal(15.0, 105.0) };
-        let p = Pointing { declination: Some(10.0f64.to_radians()), ..pointing() };
+        let mut far = Calibration { declination: radians(65.0), ..cal(15.0, 105.0) };
+        let p = Pointing { declination: Some(radians(10.0)), ..pointing() };
         let a = adjust_for_scope_pointing(&mut far, &details(8, 8), &p, &OPTS, 0.01);
         assert_eq!(a.x_rate, 0.01);
         assert_eq!(a.alerts, vec!["Calibration was too far from equator, recalibration is needed.".to_string()]);
@@ -930,8 +1016,8 @@ mod tests {
         assert_eq!(c.pier_side, PierSide::West);
         assert_eq!(c.dec_guide_parity, Parity::Odd);
         // Flip: 15 → -165, 105; then the 10° rotator delta is subtracted.
-        assert!(near(c.x_angle.to_degrees(), -175.0, 1e-9));
-        assert!(near(c.y_angle.to_degrees(), 95.0, 1e-9));
+        assert!(near(degrees(c.x_angle), -175.0, 1e-9));
+        assert!(near(degrees(c.y_angle), 95.0, 1e-9));
         assert_eq!(c.rotator_angle, 40.0);
         assert_eq!(
             a.log[1],
@@ -1028,14 +1114,16 @@ mod tests {
         let r = sanity_check_calibration(&c, &details(8, 8), &old, &od, false);
         assert_eq!(r.issue, CalibrationIssue::Different);
         assert_eq!(r.detail, "Current/previous Dec rate ratio is 0.530");
-        let far = Calibration { declination: 65.0f64.to_radians(), ..c.clone() };
+        let far = Calibration { declination: radians(65.0), ..c.clone() };
         assert_eq!(sanity_check_calibration(&far, &details(8, 8), &old, &od, true).issue, CalibrationIssue::Different);
         let unk = Calibration { declination: UNKNOWN_DECLINATION, ..c.clone() };
         assert_eq!(sanity_check_calibration(&unk, &details(8, 8), &old, &od, true).issue, CalibrationIssue::Different);
         // ... and to None when the previous Dec rate is the same.
         let same = Calibration { y_rate: 0.02, ..old.clone() };
         assert_eq!(sanity_check_calibration(&c, &details(8, 8), &same, &od, false).issue, CalibrationIssue::None);
-        // The Dec guide speed scales the expected ratio: half-speed Dec passes.
+        // The Dec guide speed scales the expected ratio: at half-speed Dec the
+        // ratio of c (0.25) is still off, while c2, whose Dec rate halved too,
+        // passes.
         let d = CalibrationDetails { dec_guide_speed: od.ra_guide_speed * 0.5, ..details(8, 8) };
         assert_eq!(sanity_check_calibration(&c, &d, &old, &od, true).issue, CalibrationIssue::Rates);
         let c2 = Calibration { y_rate: 0.0053, ..cal(15.0, 105.0) };
@@ -1062,14 +1150,14 @@ mod tests {
 
     #[test]
     fn issue_names_and_advisories() {
-        assert_eq!(issue_text(&CalibrationIssue::Angle), "Orthogonality");
-        assert_eq!(issue_text(&CalibrationIssue::Different), "Difference");
+        assert_eq!(CalibrationIssue::Angle.text(), "Orthogonality");
+        assert_eq!(CalibrationIssue::Different.text(), "Difference");
         assert_eq!(CalibrationIssue::from_i32(3), CalibrationIssue::Rates);
         assert_eq!(CalibrationIssue::from_i32(9), CalibrationIssue::None);
         assert_eq!(CalibrationIssue::Different as i32, 4);
         assert_eq!(CalibrationIssue::Different.warning_key_qualifier(), "Diff");
-        assert!(issue_advisory(&CalibrationIssue::Steps).starts_with("Advisory: Calibration completed but few guide steps"));
-        assert_eq!(issue_advisory(&CalibrationIssue::None), "");
+        assert!(CalibrationIssue::Steps.advisory().starts_with("Advisory: Calibration completed but few guide steps"));
+        assert_eq!(CalibrationIssue::None.advisory(), "");
     }
 
     #[test]
@@ -1078,7 +1166,8 @@ mod tests {
         // 537 ms per step at dec 0 → 550.
         assert!(near(pixel_scale(3.75, 400, 1), 1.933734375, 1e-12));
         assert_eq!(calstep(3.75, 1, 400, 0.5, 0.0, CALSTEP_DEFAULT_STEPS), (25, 550));
-        // dec 45: 759.6 → 800. dec 60: 1074.3, the 6-step cap exactly → 1100.
+        // dec 45: 759.6 → 800. dec 60: the Dec term 1074.2968749999998 sits
+        // just under the 6-step cap 1074.296875 and wins → 1100.
         assert_eq!(calstep(3.75, 1, 400, 0.5, 45.0, CALSTEP_DEFAULT_STEPS), (25, 800));
         assert_eq!(calstep(3.75, 1, 400, 0.5, 60.0, CALSTEP_DEFAULT_STEPS), (25, 1100));
         // Long focal length: 20″ wins the distance (0.2475″/px → 81 px).
@@ -1090,8 +1179,8 @@ mod tests {
 
     #[test]
     fn ortho_error_and_keys() {
-        assert!(near(ortho_error_deg(0.0, 250.0f64.to_radians()), 20.0, 1e-9));
-        assert!(near(ortho_error_deg((-170.0f64).to_radians(), 100.0f64.to_radians()), 0.0, 1e-9));
+        assert!(near(ortho_error_deg(0.0, radians(250.0)), 20.0, 1e-9));
+        assert!(near(ortho_error_deg(radians(-170.0), radians(100.0)), 0.0, 1e-9));
         assert_eq!(keys::prefix("scope"), "/scope/calibration/");
         assert_eq!(keys::prefix("stepguider") + keys::RA_STEPS, "/stepguider/calibration/ra_steps");
         assert!(!Calibration { y_rate: CALIBRATION_RATE_UNCALIBRATED, ..cal(0.0, 90.0) }.dec_calibrated());
