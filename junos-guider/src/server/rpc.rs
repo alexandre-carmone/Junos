@@ -274,7 +274,10 @@ pub static METHODS: &[Method] = &[
     ws("comet_train_stop", &[]),
     ws("set_dither_mode", &["mode", "scale", "ra_only"]),
     ws("set_auto_exposure", &["min", "max", "target_snr"]),
-    ws("set_image_logger", &[]),
+    ws(
+        "set_image_logger",
+        &["enabled", "over_rel", "over_px", "dropped", "auto_select", "next_n", "thresh_rel", "thresh_px", "next_n_count"],
+    ),
     ws("set_frame_filter", &["frames", "profile", "kinds", "max_width", "quality"]),
     ws("get_history", &[]),
     ws("list_logs", &[]),

@@ -5,8 +5,8 @@
 //! onto an engine [`Command`] or the profile store; parameters are named
 //! (or positional in the table's order). The tools the engine does not
 //! have yet (static PA, drift align, calibration assistant, pier-flip,
-//! comet training, bad-pixel editing, the image logger's
-//! dialog, a single device's connect) answer code 1 "not available".
+//! comet training, bad-pixel editing, a single device's connect) answer
+//! code 1 "not available".
 //!
 //! The relay socket's own `set_frame_filter` and `get_history` are not
 //! here: the socket answers them itself.
@@ -20,6 +20,7 @@ use crate::engine::algo::{AlgoKind, Axis};
 use crate::engine::assistant::{self, RecKind};
 use crate::engine::calibration::Calibration;
 use crate::engine::control::DitherMode;
+use crate::engine::log::image_log::ImageLoggerSettings;
 use crate::engine::traits::{PierSide, Point};
 use crate::engine::{BookmarkOp, Command, DarksBuildKind, Engine, ManualPointing, Which};
 use crate::indi::client::Role;
@@ -234,6 +235,27 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
         "set_auto_exposure" => {
             let (min_ms, max_ms, target_snr) = (int(p, "min")?, int(p, "max")?, num(p, "target_snr")?);
             command(d, Command::SetAutoExposure { min_ms, max_ms, target_snr }).await
+        }
+        "set_image_logger" => {
+            // The dialog's fields; one left out takes the default.
+            let b = |n: &str, v: bool| p.param(n).and_then(bool_param).unwrap_or(v);
+            let f = |n: &str, v: f64| p.param(n).and_then(float_param).unwrap_or(v);
+            let base = ImageLoggerSettings::default();
+            let ui = ImageLoggerSettings {
+                logging_enabled: flag(p, "enabled")?,
+                log_frames_over_thresh_rel: b("over_rel", base.log_frames_over_thresh_rel),
+                log_frames_over_thresh_px: b("over_px", base.log_frames_over_thresh_px),
+                log_frames_dropped: b("dropped", base.log_frames_dropped),
+                log_auto_select_frames: b("auto_select", base.log_auto_select_frames),
+                log_next_n_frames: b("next_n", base.log_next_n_frames),
+                guide_error_thresh_rel: f("thresh_rel", base.guide_error_thresh_rel),
+                guide_error_thresh_px: f("thresh_px", base.guide_error_thresh_px),
+                log_next_n_frames_count: p
+                    .param("next_n_count")
+                    .and_then(int_param)
+                    .map_or(base.log_next_n_frames_count, |n| n.max(0) as u32),
+            };
+            command(d, Command::SetImageLogger(ui)).await
         }
         "ga_open" => command(d, Command::GaOpen).await,
         "ga_close" => command(d, Command::GaClose).await,
@@ -471,6 +493,15 @@ mod tests {
         assert_eq!(call(&d, "ga_history", json!({})).await, Ok(json!([])));
         assert_eq!(call(&d, "list_devices", json!({})).await.unwrap()["devices"], json!([]));
         assert_eq!(call(&d, "pa_static_start", json!({})).await, Err(e1("not available")));
+        // The image logger's dialog: the thresholds held to 1–10.
+        let r = call(&d, "set_image_logger", json!({"enabled": true, "dropped": true, "thresh_px": 20.0})).await;
+        assert_eq!(r, Ok(json!(0)));
+        let px = engine(&d, |e| {
+            use crate::engine::calibration::ProfileAccess;
+            Ok(e.store().profile().get_f64("/ImageLogger/ErrorThreshPx", 0.0))
+        });
+        assert_eq!(px.await, Ok(10.0));
+        assert_eq!(call(&d, "set_image_logger", json!({})).await.unwrap_err().message, "expected enabled param");
         assert_eq!(call(&d, "select_star", json!({"x": 1})).await.unwrap_err().message, "expected y param");
         d.shutdown().await;
         d.close();
