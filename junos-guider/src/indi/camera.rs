@@ -767,7 +767,7 @@ mod tests {
                 "newSwitchVector CCD Simulator.CCD_COMPRESSION INDI_DISABLED=On",
                 "newSwitchVector CCD Simulator.CCD_TRANSFER_FORMAT FORMAT_FITS=On",
                 "newNumberVector CCD Simulator.CCD_FRAME X=0 Y=0 WIDTH=64 HEIGHT=48",
-                "newNumberVector CCD Simulator.CCD_EXPOSURE CCD_EXPOSURE_VALUE=0.1",
+                "newNumberVector CCD Simulator.CCD_EXPOSURE CCD_EXPOSURE_VALUE=0.10000000000000000555",
             ]
         );
         assert_eq!(

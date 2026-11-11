@@ -199,7 +199,7 @@ impl PropertyStore {
                     None => {}
                 }
             }
-            Message::PingRequest { .. } | Message::GetProperties { .. } => {}
+            Message::PingRequest { .. } | Message::GetProperties => {}
         }
         out
     }
@@ -275,13 +275,14 @@ impl PropertyStore {
             }
         }
         for m in s.members {
-            let member = p.members.iter_mut().find(|x| x.name == m.name);
+            let member = m.name.as_deref().and_then(|n| p.members.iter_mut().find(|x| x.name == n));
             match m.update {
-                Update::Blob { format, size, data, .. } => {
+                Update::Blob { format, size, data } => {
                     // An error drops the whole update and the BLOBs decoded
                     // with it, but not the state set above.
-                    let (Some(format), Some(size), false) = (format, size, m.name.is_empty()) else {
-                        out.error = Some(format!("INDI: {}.{}.{} No valid members.", s.device, s.name, m.name));
+                    let shown = m.name.clone().unwrap_or_default();
+                    let (Some(format), Some(size), Some(name)) = (format, size, m.name) else {
+                        out.error = Some(format!("INDI: {}.{}.{shown} No valid members.", s.device, s.name));
                         out.blobs.clear();
                         return;
                     };
@@ -292,10 +293,10 @@ impl PropertyStore {
                         Ok((format, data)) => {
                             member.value = Value::Blob { format: format.clone(), size: data.len() };
                             let (device, property) = (s.device.clone(), s.name.clone());
-                            out.blobs.push(Blob { device, property, member: m.name, format, data });
+                            out.blobs.push(Blob { device, property, member: name, format, data });
                         }
                         Err(e) => {
-                            out.error = Some(format!("INDI: {}.{}.{} compression error: {e}", s.device, s.name, m.name));
+                            out.error = Some(format!("INDI: {}.{}.{name} compression error: {e}", s.device, s.name));
                             out.blobs.clear();
                             return;
                         }
@@ -533,7 +534,7 @@ mod tests {
         while !rest.is_empty() {
             let n = cut().clamp(1, rest.len());
             for e in stream.push(&rest[..n]) {
-                outcomes.push(store.apply(Message::from_element(&e).expect("a message")));
+                outcomes.push(store.apply(Message::from_element(e.clone()).expect("a message")));
                 elements.push(e);
             }
             rest = &rest[n..];
@@ -620,7 +621,7 @@ mod tests {
 
     fn apply(store: &mut PropertyStore, xml: &str) -> Outcome {
         let e = XmlStream::new().push(xml.as_bytes()).remove(0);
-        store.apply(Message::from_element(&e).unwrap())
+        store.apply(Message::from_element(e).unwrap())
     }
 
     const GUIDE_NS: &str = "<defNumberVector device='M' name='TELESCOPE_TIMED_GUIDE_NS' state='Idle' perm='rw'>\
@@ -696,6 +697,9 @@ mod tests {
         let gone: Vec<_> = o.changes.iter().map(|c| (c.property.as_str(), c.kind)).collect();
         assert_eq!(gone, [("TELESCOPE_TIMED_GUIDE_NS", ChangeKind::Deleted), ("L", ChangeKind::Deleted)]);
         assert!(store.device("M").is_none());
+        // A def's message is never read (buildProp has no checkMessage).
+        let o = apply(&mut store, "<defTextVector device='M' name='T2' message='hi'><defText name='A'>a</defText></defTextVector>");
+        assert_eq!((o.message, o.changes.len()), (None, 1));
         // A message for no known device has no trailing space.
         let o = apply(&mut store, "<message device='Nobody' timestamp='T' message='x'/>");
         assert_eq!(o.message, Some(DriverMessage { device: None, line: "T: x".into() }));

@@ -461,7 +461,7 @@ fn serve(sh: &Shared, sock: TcpStream) {
         }
         {
             let mut link = lock(&sh.link);
-            for e in &elements {
+            for e in elements {
                 handle(sh, &mut link, e);
             }
         }
@@ -488,7 +488,7 @@ fn write(sh: &Shared, text: &str) {
     }
 }
 
-fn handle(sh: &Shared, link: &mut Link, e: &Element) {
+fn handle(sh: &Shared, link: &mut Link, e: Element) {
     let Some(msg) = Message::from_element(e) else { return };
     if let Message::PingRequest { uid } = &msg {
         write(sh, &xml::ping_reply(uid));

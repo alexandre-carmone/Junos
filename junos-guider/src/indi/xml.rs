@@ -21,6 +21,8 @@
 //! userio.c, libs/indidevice/basedevice.cpp,
 //! libs/indiabstractclient/abstractbaseclient.cpp — LGPL-2.1-or-later, see THIRD_PARTY.md
 
+use crate::engine::log::cfmt::fmt_gp;
+
 // ---------------------------------------------------------------- tokenizer
 
 /// One XML element and everything inside it.
@@ -81,7 +83,8 @@ pub struct XmlStream {
     /// `<?`/`<!` to skip.
     last: u8,
     skipping: bool,
-    /// Why the last malformed element was dropped (lilxml's `ynot`).
+    /// Why a malformed element was dropped during the last [`push`](Self::push)
+    /// (lilxml's `ynot`, cleared at each `parseXMLChunk`).
     pub last_error: Option<String>,
 }
 
@@ -108,6 +111,7 @@ impl XmlStream {
 
     /// Reads more of the stream; returns the top-level elements it completed.
     pub fn push(&mut self, data: &[u8]) -> Vec<Element> {
+        self.last_error = None;
         let mut out = Vec::new();
         let mut i = 0;
         while i < data.len() {
@@ -620,15 +624,15 @@ pub struct DefVector {
     /// Switches only.
     pub rule: Rule,
     pub timeout: f64,
-    pub timestamp: Option<String>,
-    pub message: Option<String>,
     pub members: Vec<Member>,
 }
 
 /// One member of a `set*Vector`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SetMember {
-    pub name: String,
+    /// `None` without the attribute: libindi tests its presence, so an
+    /// empty name is a name.
+    pub name: Option<String>,
     pub update: Update,
 }
 
@@ -640,8 +644,10 @@ pub enum Update {
     Switch(bool),
     Text(String),
     Light(PropState),
-    /// `data` is the base64 text as received.
-    Blob { format: Option<String>, size: Option<i64>, enclen: Option<i64>, data: Vec<u8> },
+    /// `data` is the base64 text as received. `size` reads like `stoi`: 0
+    /// when it does not parse or overflows an `int`. (`enclen` only serves
+    /// lilxml's optional `WITH_ENCLEN` buffering, so it is not read.)
+    Blob { format: Option<String>, size: Option<i64>, data: Vec<u8> },
 }
 
 /// A `set*Vector`: new values for a defined property.
@@ -668,14 +674,16 @@ pub enum Message {
     DelProperty { device: String, name: Option<String>, timestamp: Option<String>, message: Option<String> },
     Message { device: Option<String>, timestamp: Option<String>, message: Option<String> },
     PingRequest { uid: String },
-    GetProperties { version: Option<String>, device: Option<String>, name: Option<String> },
+    /// A server's own `getProperties`, which a client ignores.
+    GetProperties,
 }
 
 impl Message {
     /// The message a top-level element carries; `None` for what a client
     /// ignores (echoed `new*Vector`s, `pingReply`, unknown tags) and for a
-    /// `def*`/`set*` without the `device` or `name` libindi requires.
-    pub fn from_element(e: &Element) -> Option<Message> {
+    /// `def*`/`set*` without the `device` or `name` libindi requires. Taken
+    /// by value: a BLOB's base64 text moves into the message uncopied.
+    pub fn from_element(mut e: Element) -> Option<Message> {
         let attr = |name: &str| e.attr(name).map(str::to_owned);
         match e.name.as_str() {
             "delProperty" => Some(Message::DelProperty {
@@ -690,17 +698,13 @@ impl Message {
                 message: attr("message"),
             }),
             "pingRequest" => Some(Message::PingRequest { uid: attr("uid").unwrap_or_default() }),
-            "getProperties" => Some(Message::GetProperties {
-                version: attr("version"),
-                device: attr("device"),
-                name: attr("name"),
-            }),
+            "getProperties" => Some(Message::GetProperties),
             tag => {
                 let vector = |prefix: &str| tag.strip_prefix(prefix)?.strip_suffix("Vector").and_then(Kind::from_tag);
                 if let Some(kind) = vector("def") {
-                    Some(Message::Def(def_vector(e, kind)?))
+                    Some(Message::Def(def_vector(&e, kind)?))
                 } else if let Some(kind) = vector("set") {
-                    Some(Message::Set(set_vector(e, kind)?))
+                    Some(Message::Set(set_vector(&mut e, kind)?))
                 } else {
                     None
                 }
@@ -752,19 +756,18 @@ fn def_vector(e: &Element, kind: Kind) -> Option<DefVector> {
         perm: Perm::parse(attr("perm")).unwrap_or(Perm::Ro),
         rule: Rule::parse(attr("rule")).unwrap_or(Rule::OneOfMany),
         timeout: stod(e.attr("timeout")),
-        timestamp: e.attr("timestamp").map(str::to_owned),
-        message: e.attr("message").map(str::to_owned),
+        // buildProp never reads a def's `message` (no checkMessage).
         members,
     })
 }
 
 /// `BaseDevice::setValue`: every child is a member (only `oneBLOB` ones for
 /// a BLOB vector), whatever its tag; numbers read through `std::stod`.
-fn set_vector(e: &Element, kind: Kind) -> Option<SetVector> {
+fn set_vector(e: &mut Element, kind: Kind) -> Option<SetVector> {
     let stod = |s: &str| scan_double(s).unwrap_or(0.0);
     let members = e
         .children
-        .iter()
+        .iter_mut()
         .filter(|m| kind != Kind::Blob || m.name == "oneBLOB")
         .map(|m| {
             let update = match kind {
@@ -778,12 +781,11 @@ fn set_vector(e: &Element, kind: Kind) -> Option<SetVector> {
                 Kind::Light => Update::Light(PropState::parse(&m.text_str()).unwrap_or(PropState::Ok)),
                 Kind::Blob => Update::Blob {
                     format: m.attr("format").map(str::to_owned),
-                    size: m.attr("size").map(|s| scan_int(s).unwrap_or(0)),
-                    enclen: m.attr("enclen").map(|s| scan_int(s).unwrap_or(0)),
-                    data: m.text.clone(),
+                    size: m.attr("size").map(|s| scan_int(s).filter(|&v| i32::try_from(v).is_ok()).unwrap_or(0)),
+                    data: std::mem::take(&mut m.text),
                 },
             };
-            SetMember { name: m.attr("name").unwrap_or_default().to_owned(), update }
+            SetMember { name: m.attr("name").map(str::to_owned), update }
         })
         .collect();
     Some(SetVector {
@@ -821,18 +823,9 @@ fn escape(s: &str) -> String {
     out
 }
 
-/// A number as `%.20g` writes it, but in the shortest form that reads back
-/// to the same double; the exponent shows where `%g` would show one.
+/// A number as `IUUserIONumberContext` writes it: `%.20g`.
 fn number_text(v: f64) -> String {
-    if v.is_nan() {
-        "nan".into()
-    } else if v.is_infinite() {
-        (if v > 0.0 { "inf" } else { "-inf" }).into()
-    } else if v != 0.0 && (v.abs() < 1e-4 || v.abs() >= 1e20) {
-        format!("{v:e}")
-    } else {
-        format!("{v}")
-    }
+    fmt_gp(v, 20)
 }
 
 /// `IUUserIOGetProperties`: `device` and `name` only when non-empty.
@@ -969,6 +962,8 @@ mod tests {
         assert!(s.push(b"<a>\0").is_empty());
         assert_eq!(s.last_error.as_deref(), Some("early XML EOF"));
         assert_eq!(s.push(b"<b/>")[0].name, "b");
+        // Each chunk starts with no error, as parseXMLChunk clears ynot.
+        assert_eq!(s.last_error, None);
     }
 
     #[test]
@@ -1025,7 +1020,7 @@ mod tests {
     }
 
     fn message(xml: &str) -> Option<Message> {
-        Message::from_element(&XmlStream::new().push(xml.as_bytes())[0])
+        Message::from_element(XmlStream::new().push(xml.as_bytes()).remove(0))
     }
 
     #[test]
@@ -1042,7 +1037,6 @@ mod tests {
         assert_eq!((d.kind, d.device.as_str(), d.name.as_str()), (Kind::Number, "Telescope Simulator", "EQUATORIAL_EOD_COORD"));
         assert_eq!((d.label.as_str(), d.group.as_str()), ("Eq. Coordinates", "Main Control"));
         assert_eq!((d.state, d.perm, d.timeout), (PropState::Ok, Perm::Rw, 60.0));
-        assert_eq!(d.timestamp.as_deref(), Some("2026-11-11T10:00:00"));
         assert_eq!(
             d.members[1],
             Member {
@@ -1088,15 +1082,17 @@ mod tests {
         assert_eq!((s.state, &s.members[0].update), (Some(PropState::Ok), &Update::Light(PropState::Ok)));
         let Some(Message::Set(s)) = message(
             "<setBLOBVector device='D' name='CCD1' state='Ok'>\
-             <oneBLOB name='CCD1' size='3' enclen='4' format='.fits'>\nQUJD\n</oneBLOB><oneText name='X'>y</oneText></setBLOBVector>",
+             <oneBLOB name='CCD1' size='3' enclen='4' format='.fits'>\nQUJD\n</oneBLOB><oneText name='X'>y</oneText>\
+             <oneBLOB name='' size='2147483648' format='.fits'>QUJD</oneBLOB><oneBLOB size='-2147483648'/></setBLOBVector>",
         ) else {
             panic!()
         };
-        assert_eq!(s.members.len(), 1);
-        assert_eq!(
-            s.members[0].update,
-            Update::Blob { format: Some(".fits".into()), size: Some(3), enclen: Some(4), data: b"QUJD".to_vec() }
-        );
+        assert_eq!(s.members.len(), 3);
+        assert_eq!(s.members[0].update, Update::Blob { format: Some(".fits".into()), size: Some(3), data: b"QUJD".to_vec() });
+        // An empty name is a name; a size past an int reads 0 (stoi throws).
+        assert_eq!(s.members[1].name.as_deref(), Some(""));
+        assert_eq!(s.members[1].update, Update::Blob { format: Some(".fits".into()), size: Some(0), data: b"QUJD".to_vec() });
+        assert_eq!((s.members[2].name.as_deref(), &s.members[2].update), (None, &Update::Blob { format: None, size: Some(i32::MIN as i64), data: vec![] }));
         let Some(Message::Set(s)) = message("<setSwitchVector device='D' name='S' state='Alert '/>") else { panic!() };
         assert_eq!(s.state, None);
     }
@@ -1113,10 +1109,7 @@ mod tests {
             })
         );
         assert_eq!(message("<pingRequest uid='42'/>"), Some(Message::PingRequest { uid: "42".into() }));
-        assert_eq!(
-            message("<getProperties version='1.7' device='X'/>"),
-            Some(Message::GetProperties { version: Some("1.7".into()), device: Some("X".into()), name: None })
-        );
+        assert_eq!(message("<getProperties version='1.7' device='X'/>"), Some(Message::GetProperties));
     }
 
     #[test]
@@ -1165,9 +1158,12 @@ mod tests {
     }
 
     #[test]
-    fn numbers_go_out_shortest_and_read_back_identical() {
-        let texts: Vec<_> = [0.5, 0.1, 1.0, -0.0, 1e-4, 1.5e-5, 2.5e20, 1e19].into_iter().map(number_text).collect();
-        assert_eq!(texts, ["0.5", "0.1", "1", "-0", "0.0001", "1.5e-5", "2.5e20", "10000000000000000000"]);
+    fn numbers_go_out_as_percent_20g_and_read_back_identical() {
+        let texts: Vec<_> = [0.5, 0.1, 1.0, -0.0, 1.5e-5, 2.5e20, 1e19, f64::NAN].into_iter().map(number_text).collect();
+        assert_eq!(
+            texts,
+            ["0.5", "0.10000000000000000555", "1", "-0", "1.500000000000000038e-05", "2.5e+20", "10000000000000000000", "nan"]
+        );
         let values = [0.1, 1.0 / 3.0, 1e-7, 123456789.123, 6.02e23, -2.5, f64::MIN_POSITIVE, f64::MAX];
         let xml = new_number_vector("D", "N", &values.map(|v| ("V", v)));
         let e = &XmlStream::new().push(xml.as_bytes())[0];

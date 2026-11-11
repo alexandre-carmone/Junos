@@ -695,7 +695,7 @@ mod tests {
         assert_eq!(
             sent(&fake)[1..],
             [
-                "newNumberVector Telescope Simulator.TELESCOPE_MOTION_RATE MOTION_RATE=0.075",
+                "newNumberVector Telescope Simulator.TELESCOPE_MOTION_RATE MOTION_RATE=0.074999999999999997224",
                 "newSwitchVector Telescope Simulator.TELESCOPE_MOTION_WE MOTION_WEST=Off MOTION_EAST=On",
                 "newSwitchVector Telescope Simulator.TELESCOPE_MOTION_WE MOTION_WEST=Off MOTION_EAST=Off",
             ]
