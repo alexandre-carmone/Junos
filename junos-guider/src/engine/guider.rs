@@ -38,9 +38,19 @@ use super::scope::{CalibrationEnv, CalibrationNext, Scope};
 use super::star::Star;
 use super::traits::{Dir, MoveOpts, Parity, Point, Rect};
 
-/// The profile key the guider itself reads (the star settings, AutoSelect's
+/// The profile keys the guider itself reads (the star settings, AutoSelect's
 /// downsampling included, are [`multistar::keys`](super::multistar::keys)).
 pub const FAST_RECENTER_KEY: &str = "/guider/FastRecenter";
+/// Whether the frame is shown scaled to the window (`DefaultScaleImage` on).
+pub const SCALE_IMAGE_KEY: &str = "/guider/ScaleImage";
+/// The slit overlay and its defaults (`Guider::Guider`): centre, size, angle.
+const SLIT_KEYS: [(&str, i32); 5] = [
+    ("/overlay/slit/center.x", 752 / 2),
+    ("/overlay/slit/center.y", 580 / 2),
+    ("/overlay/slit/width", 8),
+    ("/overlay/slit/height", 100),
+    ("/overlay/slit/angle", 0),
+];
 
 /// `CurrentError` past this long without a star (`THRESHOLD_SECONDS`).
 const STAR_LOST_SECONDS: i64 = 20;
@@ -264,8 +274,9 @@ pub enum GuiderEvent {
     /// `MyFrame::SetAutoLoadCalibration`: the frame's flag, saved to
     /// `/AutoLoadCalibration` when it changes.
     SetAutoLoadCalibration(bool),
-    /// `pFrame->Alert`.
-    Alert { msg: String, kind: AlertKind },
+    /// `pFrame->Alert`. The event server's `Alert` carries `msg` and `kind`
+    /// only; `button` is for the junos UI.
+    Alert { msg: String, kind: AlertKind, button: Option<AlertButton> },
     /// `pFrame->StatusMsg`.
     Status(String),
     /// A guide-log `INFO:` line, without the prefix; the log writes it only
@@ -273,6 +284,24 @@ pub enum GuiderEvent {
     Info(String),
     /// A debug-log line.
     Debug(String),
+}
+
+/// The action button of an alert (`pFrame->Alert`'s `buttonLabel` and
+/// `SpecialFn`). Pressing it runs the action, which also dismisses the alert.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlertButton {
+    /// `SetAutoLoad` (guider.cpp:1196): `MyFrame::SetAutoLoadCalibration(true)`,
+    /// as [`GuiderEvent::SetAutoLoadCalibration`] does.
+    AutoRestoreCalibration,
+}
+
+impl AlertButton {
+    /// The button's label.
+    pub fn label(self) -> &'static str {
+        match self {
+            AlertButton::AutoRestoreCalibration => "Auto-restore",
+        }
+    }
 }
 
 fn debug(ev: &mut Vec<GuiderEvent>, line: impl Into<String>) {
@@ -646,6 +675,12 @@ impl Guider {
     /// `sticky_lock` is the global `/StickyLockPosition`.
     pub fn new(profile: &mut dyn ProfileAccess, sticky_lock: bool, ev: &mut Vec<GuiderEvent>) -> Guider {
         debug(ev, "guider state => UNINITIALIZED");
+        // `SetOverlaySlitCoords` writes the slit overlay back, so a profile
+        // export has its keys; the overlay itself is the UI's.
+        for (key, default) in SLIT_KEYS {
+            let v = profile.get_i32(key, default);
+            profile.set_i32(key, v);
+        }
         debug(ev, "Changing from state UNINITIALIZED to UNINITIALIZED");
         debug(ev, "guider state => SELECTING");
         let mut g = Guider {
@@ -683,19 +718,25 @@ impl Guider {
     /// `Guider::LoadProfileSettings` and `GuiderMultiStar::LoadProfileSettings`
     /// (a profile switch): the settings, their effective values written
     /// back, the display cleared (when not calibrating or guiding), then the
-    /// multi-star mode set as [`Guider::set_multi_star_mode`] does. Its
-    /// re-selection finds no image after the clear, so it never sets a
-    /// saturation level or runs a frame. The display scaling and the
+    /// multi-star mode set as [`Guider::set_multi_star_mode`] does, whose
+    /// update is returned. Its re-selection finds no image after the clear,
+    /// unless a calibration or guiding was running (`DisplayImage` refuses
+    /// then): on that frame it can set a saturation level and, after a
+    /// calibration (stopped back to SELECTING), run the frame again. The
+    /// display scaling (`/guider/ScaleImage`, written back) and the
     /// bookmarks are the UI's.
-    pub fn load_profile_settings(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
+    pub fn load_profile_settings(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) -> GuideUpdate {
         let on = self.load_settings(cx.profile, cx.gamma, ev);
-        self.set_multi_star_mode(on, cx, ev);
+        self.set_multi_star_mode(on, cx, ev)
     }
 
     /// The settings part of `LoadProfileSettings`; the multi-star flag read.
     fn load_settings(&mut self, profile: &mut dyn ProfileAccess, gamma: f64, ev: &mut Vec<GuiderEvent>) -> bool {
         let fast = profile.get_i32(FAST_RECENTER_KEY, 1) != 0;
         self.enable_fast_recenter(fast, profile);
+        // `SetScaleImage` writes it back; the display scaling is the UI's.
+        let scale = profile.get_i32(SCALE_IMAGE_KEY, 1) != 0;
+        profile.set_i32(SCALE_IMAGE_KEY, scale as i32);
 
         let (cfg, raw_threshold, raw_region) = {
             let p = &*profile;
@@ -1328,7 +1369,11 @@ impl Guider {
     /// frame (`roi` limits the search), lock on it and, from SELECTING,
     /// run the frame again at once so the state is SELECTED — Ekos starts
     /// guiding right after. The star is returned only when all of that
-    /// worked; the update holds that frame's and AutoFind's saturation level.
+    /// worked: the primary as that frame left it, which the status shows
+    /// (`find_star` answers with [`Guider::lock_position`] instead). The
+    /// update holds that frame's and AutoFind's saturation level. When the
+    /// current image has data, the caller then hands it to the image logger
+    /// (`ImageLogger::LogAutoSelectImage(image, success)`), on a failure too.
     pub fn auto_select(
         &mut self,
         roi: Option<Rect>,
@@ -1344,6 +1389,11 @@ impl Guider {
         let before = *self.multistar.primary();
         let scale = cx.cal_env.image_scale;
         let res = self.multistar.auto_select(&img, roi, edge, cx.use_subframes, scale, &cx.find);
+        // AutoFind set the camera's level (`SetSaturationByADU(true, level)`):
+        // the frame run below finds the star with it.
+        if let Some(level) = res.saturation_adu_set {
+            cx.find.saturation_adu = level;
+        }
         let mut log = self.multistar.take_log();
         if img.data.is_empty() {
             ev.extend(log.into_iter().map(GuiderEvent::Debug));
@@ -1374,6 +1424,10 @@ impl Guider {
                         debug(ev, format!("AutoSelect: state = {}, call UpdateGuideState", self.state as i32));
                         out = self.update_guide_state(None, false, cx, ev);
                     }
+                    // That frame found the star again, from its truncated
+                    // position and in the star find mode, and locked on it:
+                    // PHD2 reports `m_primaryStar` as it is now.
+                    let star = *self.multistar.primary();
                     debug(ev, image_display_line(&self.current_image, cx.gamma));
                     ev.push(GuiderEvent::Status(format!(
                         "Auto-selected star at ({}, {})",
@@ -1757,6 +1811,7 @@ impl Guider {
                 ev.push(GuiderEvent::Alert {
                     msg: "Shifted lock position outside allowable area. Lock Position Shift disabled.".into(),
                     kind: AlertKind::Warning,
+                    button: None,
                 });
                 // From GUIDING a multi-star re-selection stops at SELECTED,
                 // so nothing of its own frame comes back here.
@@ -1954,18 +2009,22 @@ impl Guider {
         }
     }
 
-    /// `CheckCalibrationAutoLoad`: after a calibration, turn calibration
+    /// `CheckCalibrationAutoLoad`, each time guiding starts from CALIBRATED
+    /// (guider.cpp:1481), calibrated just now or not: turn calibration
     /// auto-restore on for a new profile when the mount reports where it
-    /// points, or offer it once when the profile has it off.
+    /// points, or offer it once, with an "Auto-restore" button, when the
+    /// profile has it off.
     fn check_calibration_auto_load(&mut self, cx: &mut GuiderCx, ev: &mut Vec<GuiderEvent>) {
         let stored = cx.profile.get_i32("/AutoLoadCalibration", -1);
         let should = cx.pointing.is_some_and(|p| p.can_report_position());
         if stored == -1 {
             ev.push(GuiderEvent::SetAutoLoadCalibration(should));
         } else if stored == 0 && should && cx.profile.get_i32("/AlreadyAskedCalibAutoload", 0) == 0 {
+            // Flags 0: an "info" alert.
             ev.push(GuiderEvent::Alert {
                 msg: "Do you want to automatically restore this calibration whenever the profile is used?".into(),
                 kind: AlertKind::Info,
+                button: Some(AlertButton::AutoRestoreCalibration),
             });
             cx.profile.set_i32("/AlreadyAskedCalibAutoload", 1);
         }
@@ -2014,7 +2073,7 @@ mod tests {
     use crate::engine::calibration::{CALIBRATION_RATE_UNCALIBRATED, Calibration};
     use crate::engine::mount::{GuideOutput, StepFrame};
     use crate::engine::scope::ScopeIo;
-    use crate::engine::star::FindMode;
+    use crate::engine::star::{FindMode, FindResult};
     use crate::engine::traits::{CancelToken, MoveResult, Parity, PierSide};
 
     #[derive(Default)]
@@ -2048,9 +2107,11 @@ mod tests {
         }
     }
 
-    /// A mount that reports its declination only.
+    /// A mount that reports its declination only; `reports` is
+    /// `CanReportPosition`.
     struct Pointing {
         dec: f64,
+        reports: bool,
     }
 
     impl PointingSource for Pointing {
@@ -2067,7 +2128,7 @@ mod tests {
             false
         }
         fn can_report_position(&self) -> bool {
-            false
+            self.reports
         }
     }
 
@@ -2136,6 +2197,8 @@ mod tests {
         now_ms: i64,
         frame: u32,
         busy: bool,
+        /// What each call's finds read, [`FP`] at first.
+        fp: FindParams,
         pointing: Option<Pointing>,
         ev: Vec<GuiderEvent>,
         /// What the scope said while the bench made the moves.
@@ -2181,6 +2244,7 @@ mod tests {
                 now_ms: 1_700_000_000_000,
                 frame: 0,
                 busy: false,
+                fp: FP,
                 pointing: None,
                 ev,
                 mev: Vec::new(),
@@ -2196,7 +2260,7 @@ mod tests {
                 cal_env: &self.env,
                 scope_pointing: &self.sp,
                 algo: &self.algo,
-                find: FP,
+                find: self.fp,
                 use_subframes: false,
                 ra_only: false,
                 settling: false,
@@ -2294,6 +2358,9 @@ mod tests {
         assert_eq!(profile.get_i32(keys::SEARCH_REGION, 0), 50);
         assert_eq!(profile.get_f64(keys::MASS_CHANGE_THRESHOLD, 0.0), 0.5);
         assert_eq!(profile.get_i32(FAST_RECENTER_KEY, -1), 1);
+        assert_eq!(profile.get_i32(SCALE_IMAGE_KEY, -1), 1);
+        let slit: Vec<i32> = SLIT_KEYS.iter().map(|(k, _)| profile.get_i32(k, -1)).collect();
+        assert_eq!(slit, [376, 290, 8, 100, 0]);
         let lines: Vec<String> = ev
             .iter()
             .filter_map(|e| match e {
@@ -2911,7 +2978,7 @@ mod tests {
     #[test]
     fn an_ephemeris_rate_turns_into_camera_pixels() {
         let mut b = Bench::new();
-        b.pointing = Some(Pointing { dec: 60.0 });
+        b.pointing = Some(Pointing { dec: 60.0, reports: false });
         b.calibrate_scope();
         b.select();
         // Before the camera angle is known, the rate is only kept.
@@ -2965,7 +3032,7 @@ mod tests {
         b.frame();
         let at = |e: &GuiderEvent| b.ev.iter().position(|x| x == e).unwrap();
         let limit = at(&GuiderEvent::LockShiftLimitReached);
-        let GuiderEvent::Alert { kind: AlertKind::Warning, msg } = &b.ev[limit + 1] else { panic!() };
+        let GuiderEvent::Alert { kind: AlertKind::Warning, msg, button: None } = &b.ev[limit + 1] else { panic!() };
         assert!(msg.starts_with("Shifted lock"));
         assert!(!b.guider.lock_shift_params().enabled);
         // The user's multi-star mode is back, which re-selects the star and
@@ -3006,5 +3073,119 @@ mod tests {
         let cal = Calibration { y_rate: CALIBRATION_RATE_UNCALIBRATED, is_valid: true, ..Calibration::default() };
         b.scope.set_calibration(&cal, "T", &mut b.profile, &mut Vec::new());
         assert!(!GuiderMount::is_calibrated(&b.scope));
+    }
+
+    /// AutoFind sets the saturation level from the bit depth, and the frame
+    /// AutoSelect runs from SELECTING finds the star with it: a flat top
+    /// under 65535 is no longer "Saturated" as the flat-top test has it.
+    #[test]
+    fn auto_selects_frame_finds_the_star_with_autofinds_saturation_level() {
+        let mut b = Bench::new();
+        let mut img = (*render(Some(b.star), 40000.0, 1)).clone();
+        for v in img.data.iter_mut() {
+            *v = (*v).min(30000);
+        }
+        let flat = Star::find(&img, 15, 100.0, 100.0, FindMode::Centroid, 1.5, 20.0, 0);
+        assert_eq!(flat.result, FindResult::Saturated);
+        b.call(|g, cx, ev| g.update_guide_state(Some(Arc::new(img)), false, cx, ev));
+        b.ev.clear();
+        let (star, upd) = b.call(|g, cx, ev| g.auto_select(None, cx, ev));
+        assert_eq!(upd.saturation_adu, Some(65535));
+        assert_eq!(star.map(|s| s.result), Some(FindResult::Ok));
+        let looping = b.ev.iter().find_map(|e| match e {
+            GuiderEvent::LoopingExposures { star, .. } => Some(*star),
+            _ => None,
+        });
+        assert_eq!(looping.flatten().map(|s| s.result), Some(FindResult::Ok));
+        // Not "m=615965 SNR=551.2 Saturated".
+        assert!(b.debug("UpdateGuideState exits: m=615965 SNR=551.2"));
+    }
+
+    /// The status and the star returned are the primary as AutoSelect's own
+    /// frame left it: found again in the user's star find mode, here the
+    /// peak pixel, while AutoSelect's pick is a centroid.
+    #[test]
+    fn auto_select_reports_the_star_its_frame_found_again() {
+        let mut b = Bench::new();
+        b.star = Point::new(100.3, 99.6);
+        b.fp.mode = FindMode::Peak;
+        b.frame();
+        b.ev.clear();
+        let star = b.call(|g, cx, ev| g.auto_select(None, cx, ev)).0.unwrap();
+        assert!(b.debug("setting lock position to (100.30, 99.60)"));
+        assert_eq!((star.x, star.y), (100.0, 100.0));
+        assert_eq!(star, *b.guider.primary_star());
+        assert_eq!(b.guider.lock_position(), Some(Point::new(100.0, 100.0)));
+        assert_eq!(b.ev.last(), Some(&GuiderEvent::Status("Auto-selected star at (100.0, 100.0)".into())));
+    }
+
+    /// A new profile gets auto-restore as the mount can do it; one with it
+    /// off is offered it once, with the button that turns it on.
+    #[test]
+    fn auto_restore_is_offered_once_with_its_button() {
+        let mut b = Bench::new();
+        b.pointing = Some(Pointing { dec: 0.0, reports: true });
+        b.profile.set_i32("/AutoLoadCalibration", 0);
+        b.calibrate_scope();
+        b.select();
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        b.ev.clear();
+        b.frame();
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+        let offer = GuiderEvent::Alert {
+            msg: "Do you want to automatically restore this calibration whenever the profile is used?".into(),
+            kind: AlertKind::Info,
+            button: Some(AlertButton::AutoRestoreCalibration),
+        };
+        assert!(b.has(&offer));
+        assert_eq!(AlertButton::AutoRestoreCalibration.label(), "Auto-restore");
+        assert_eq!(b.profile.get_i32("/AlreadyAskedCalibAutoload", 0), 1);
+        assert!(!b.ev.iter().any(|e| matches!(e, GuiderEvent::SetAutoLoadCalibration(_))));
+
+        // Guiding again from the stored calibration: asked already.
+        b.call(|g, cx, ev| g.stop_guiding(cx, ev));
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        b.ev.clear();
+        b.frame();
+        assert_eq!(b.guider.state(), GuiderState::Guiding);
+        assert!(!b.ev.iter().any(|e| matches!(e, GuiderEvent::Alert { .. })));
+
+        // A new profile: on, since the mount reports where it points.
+        b.profile.i.remove("/AutoLoadCalibration");
+        b.call(|g, cx, ev| g.stop_guiding(cx, ev));
+        b.call(|g, cx, ev| g.start_guiding(cx, ev));
+        b.ev.clear();
+        b.frame();
+        assert!(b.has(&GuiderEvent::SetAutoLoadCalibration(true)));
+    }
+
+    /// A profile switch re-selects the star when multi-star turns on.
+    /// Guiding, the frame is kept: AutoSelect finds the star, sets the
+    /// saturation level and guiding restarts. Selected, the frame is cleared
+    /// and AutoSelect has no image.
+    #[test]
+    fn a_profile_switch_re_selects_on_the_kept_frame_only_while_guiding() {
+        let mut b = guiding_at(Point::new(100.0, 100.0));
+        b.profile.set_i32(keys::MULTISTAR_ENABLED, 1);
+        b.ev.clear();
+        let upd = b.call(|g, cx, ev| g.load_profile_settings(cx, ev));
+        assert_eq!(upd.saturation_adu, Some(65535));
+        assert!(b.guider.multistar().cfg.multi_star);
+        assert!(b.debug("MultiStar mode enabled, AutoFind forced"));
+        assert!(b.has(&GuiderEvent::GuidingStopped));
+        assert_eq!(b.guider.state(), GuiderState::Calibrated);
+        assert!(!b.guider.current_image().data.is_empty());
+
+        let mut b = Bench::new();
+        b.select();
+        b.profile.set_i32(keys::MULTISTAR_ENABLED, 1);
+        b.ev.clear();
+        let upd = b.call(|g, cx, ev| g.load_profile_settings(cx, ev));
+        assert_eq!(upd, GuideUpdate::default());
+        assert!(b.guider.current_image().data.is_empty());
+        assert!(b.debug("Error thrown from guider_multistar.cpp:457->No Current Image"));
+        assert!(b.debug("MultiStar mode enabled"));
+        assert_eq!(b.guider.state(), GuiderState::Selected);
+        assert!(b.guider.current_position().is_none());
     }
 }

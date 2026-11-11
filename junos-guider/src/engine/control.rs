@@ -1106,8 +1106,9 @@ impl Control {
 
     /// `MyFrame::AutoSelectStar`: pick and lock on the best star of the
     /// current frame (within `roi`); refused while calibrating or guiding.
-    /// True when a star was selected. Its auto-exposure step and saturation
-    /// level are applied here.
+    /// True when a star was selected; `find_star` then answers with the
+    /// guider's lock position (event_server.cpp:1006), or fails when it is
+    /// invalid. Its auto-exposure step and saturation level are applied here.
     pub fn auto_select_star(&mut self, roi: Option<Rect>, cx: &mut ControlCx, ev: &mut Vec<ControlEvent>) -> bool {
         if cx.guider.is_calibrating_or_guiding() {
             debug(ev, "cannot auto-select star while calibrating or guiding");
