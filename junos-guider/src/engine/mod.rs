@@ -7,6 +7,7 @@
 pub mod algo;
 pub mod backlash;
 pub mod calibration;
+pub mod camera;
 pub mod darks;
 pub mod fits;
 pub mod image;
