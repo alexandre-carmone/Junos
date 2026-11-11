@@ -450,6 +450,10 @@ impl Mount {
         &self.cal
     }
 
+    pub(super) fn calibration_mut(&mut self) -> &mut MountCalibration {
+        &mut self.cal
+    }
+
     /// `MountCal`.
     pub fn mount_cal(&self) -> &Calibration {
         &self.cal.cal

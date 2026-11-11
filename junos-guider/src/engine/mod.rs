@@ -14,6 +14,7 @@ pub mod log;
 pub mod mount;
 pub mod multistar;
 pub mod rng;
+pub mod scope;
 pub mod star;
 pub mod stats;
 pub mod tools;
