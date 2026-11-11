@@ -48,9 +48,8 @@ use super::log::debug_log::{PHD2_VERSION, execution_banner};
 use super::log::guide_log::{
     CameraSummary, GuideLogHeader, MountKind, MountSummary, PointingSummary, SUMMARY_TAIL_BYTES, ScopeSummary,
 };
-use super::log::image_log::{ErrorStats, ImageLogOut, ImageLoggerSettings, SaveCx};
+use super::log::image_log::{ImageLogCall, ImageLogOut, ImageLoggerSettings, SaveCx};
 use super::mount::{AlertKind, MountEvent, stopwatch_seconds};
-use super::multistar::{PositionLost, PositionUpdate};
 use super::scope::Scope;
 use super::stepguider::StepGuider;
 use super::{AoDev, Engine, ScopeDev, THREAD};
@@ -324,6 +323,8 @@ impl Engine {
             GuiderEvent::SetAutoLoadCalibration(on) => self.set_auto_load_calibration(on),
             // Applied by `Control::forward`, which never passes them on.
             GuiderEvent::AdjustAutoExposure(_) | GuiderEvent::ResetAutoExposure => {}
+            GuiderEvent::ImageReplaced(prev) => self.ilog.save_image(prev.0),
+            GuiderEvent::ImageLog(call) => self.log_frame_image(call),
             GuiderEvent::Alert { msg, kind, button } => {
                 self.debug(&format!("Alert: {msg}"));
                 self.events.push(EngineEvent::Alert { msg, kind, button, dont_show: None });
@@ -493,24 +494,19 @@ impl Engine {
 
     // ------------------------------------------------------- the image logger
 
-    /// What `UpdateCurrentPosition` hands the image logger.
-    pub(super) fn log_frame_image(
-        &mut self,
-        img: &Arc<UsImage>,
-        position: &Option<Result<PositionUpdate, PositionLost>>,
-        stats: ErrorStats,
-        active: bool,
-    ) {
+    /// One of `UpdateCurrentPosition`'s image logger calls, on the guider's
+    /// current image.
+    fn log_frame_image(&mut self, call: ImageLogCall) {
         let header = self.save_header();
         let (log_dir, stamp) = (self.cfg.log_dir.clone(), self.stamp);
+        let img = self.guider.current_image().clone();
         let Engine { ilog, files, .. } = self;
         let mut mkdir = |p: &str| files.mkdir(p);
         let mut cx = SaveCx { log_dir: &log_dir, stamp: &stamp, header: &header, mkdir: &mut mkdir };
-        let out = match position {
-            Some(Ok(u)) => ilog.log_distance(img, u.raw_distance, stats, &mut cx),
-            Some(Err(lost)) if !lost.reset_auto_exposure() => ilog.log_star_deselected(img, &mut cx),
-            Some(Err(lost)) => ilog.log_dropped(img, lost.info.star_error, active, &mut cx),
-            None => Vec::new(),
+        let out = match call {
+            ImageLogCall::Distance { distance, stats } => ilog.log_distance(&img, distance, stats, &mut cx),
+            ImageLogCall::Dropped { star_error, active } => ilog.log_dropped(&img, star_error, active, &mut cx),
+            ImageLogCall::Deselected => ilog.log_star_deselected(&img, &mut cx),
         };
         self.write_image_log(out);
     }
@@ -532,8 +528,10 @@ impl Engine {
                 ImageLogOut::Debug(l) => self.debug(&l),
                 ImageLogOut::Save { path, bytes } => {
                     let p = join(&self.cfg.log_dir, &path);
-                    if let Err(e) = self.files.write(&p, &bytes) {
-                        self.debug(&format!("ImgLogger: cannot write {p}: {e}"));
+                    // PHD2's line for a file it cannot create; it has none
+                    // for a later write error, which the caller cannot tell.
+                    if self.files.write(&p, &bytes).is_err() {
+                        self.debug("CFITSIO error (105) saving image: couldn't create the named file");
                     }
                 }
             }

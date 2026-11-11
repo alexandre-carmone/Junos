@@ -249,7 +249,8 @@ pub enum Command {
     SetDitherMode { mode: DitherMode, ra_only: bool, scale: f64 },
     /// `set_auto_exposure`: min/max ms, target SNR.
     SetAutoExposure { min_ms: i32, max_ms: i32, target_snr: f64 },
-    /// `set_image_logger`.
+    /// `set_image_logger`: the settings dialog's fields, taken as its OK
+    /// does ([`ImageLoggerSettings::from_dialog`]).
     SetImageLogger(ImageLoggerSettings),
     /// `set_manual_pointing`; `None` drops it.
     SetManualPointing(Option<ManualPointing>),

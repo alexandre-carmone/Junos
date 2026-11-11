@@ -29,6 +29,7 @@ use super::algo::AlgoCtx;
 use super::calibration::{Adjustment, ProfileAccess, ScopePointing, degrees};
 use super::image::UsImage;
 use super::log::cfmt::{fmt_f, fmt_gp};
+use super::log::image_log::{ErrorStats, ImageLogCall};
 use super::mount::{AlertKind, GuiderOffset, Mount, MountEvent, PointingSource, stopwatch_seconds};
 use super::multistar::{
     BoxState, FindParams, FrameErrorInfo, GuidingView, LossReason, MAX_SEARCH_REGION, MIN_SEARCH_REGION, MultiStar,
@@ -308,6 +309,28 @@ pub enum GuiderEvent {
     Info(String),
     /// A debug-log line.
     Debug(String),
+    /// `ImageLogger::SaveImage(prev)`: a frame replaced the current image
+    /// (`UpdateGuideState` with a frame, `DisplayImage`).
+    ImageReplaced(PrevImage),
+    /// One of `UpdateCurrentPosition`'s `ImageLogger::LogImage*` calls, on
+    /// the current image, in its place among the debug lines.
+    ImageLog(ImageLogCall),
+}
+
+/// The image the guider let go of. Two are equal when they are the same frame.
+#[derive(Clone)]
+pub struct PrevImage(pub Arc<UsImage>);
+
+impl std::fmt::Debug for PrevImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "PrevImage(frame {})", self.0.frame_num)
+    }
+}
+
+impl PartialEq for PrevImage {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// The action button of an alert (`pFrame->Alert`'s `buttonLabel` and
@@ -1212,13 +1235,14 @@ impl Guider {
     }
 
     /// `DisplayImage`: a frame shown while not calibrating or guiding (a
-    /// single exposure) becomes the current image. The image logger's save
-    /// of the previous one is the caller's.
+    /// single exposure) becomes the current image, the previous one going
+    /// to the image logger.
     pub fn display_image(&mut self, img: Arc<UsImage>, gamma: f64, ev: &mut Vec<GuiderEvent>) {
         if self.is_calibrating_or_guiding() {
             return;
         }
-        self.current_image = img;
+        let prev = std::mem::replace(&mut self.current_image, img);
+        ev.push(GuiderEvent::ImageReplaced(PrevImage(prev)));
         debug(ev, image_display_line(&self.current_image, gamma));
     }
 
@@ -1743,7 +1767,13 @@ impl Guider {
         let res = self.multistar.update_current_position(&self.current_image, &cx.find, lock, &view, cx.now_ms, cal);
         match &res {
             Ok(u) => {
-                self.drain_multistar_log(ev);
+                // LogImage comes before RefineOffset and the transform.
+                let mut lines = self.multistar.take_log();
+                let after = lines.split_off(u.image_log_at.min(lines.len()));
+                ev.extend(lines.into_iter().map(GuiderEvent::Debug));
+                let stats = ErrorStats::from(&view);
+                ev.push(GuiderEvent::ImageLog(ImageLogCall::Distance { distance: u.raw_distance, stats }));
+                ev.extend(after.into_iter().map(GuiderEvent::Debug));
                 if let Some((d, d_ra)) = u.current_distance {
                     self.update_current_distance(d, d_ra, cx.now_ms);
                 }
@@ -1770,16 +1800,24 @@ impl Guider {
             ev.push(GuiderEvent::Status(format!("Mass: {} vs {}", fmt_f(mass, 0), fmt_f(limits[1], 0))));
         }
         self.drain_multistar_log(ev);
+        if lost.reason == LossReason::Jump {
+            ev.push(GuiderEvent::Status("Recovering".into()));
+        }
+        // The image logger, right before the throw.
+        let active = self.is_calibrating_or_guiding() && !self.is_paused();
+        ev.push(GuiderEvent::ImageLog(match lost.reason {
+            LossReason::NoStar => ImageLogCall::Deselected,
+            _ => ImageLogCall::Dropped { star_error: lost.info.star_error, active },
+        }));
         match lost.reason {
-            LossReason::NoStar => {}
+            LossReason::NoStar | LossReason::Jump => {}
             LossReason::NotFound => {
                 debug(ev, "Error thrown from guider_multistar.cpp:958->UpdateCurrentPosition():newStar not found");
             }
             LossReason::MassChange(_) => debug(ev, "Throw from guider_multistar.cpp:989->massChangeThreshold error"),
-            LossReason::Jump => {
-                ev.push(GuiderEvent::Status("Recovering".into()));
-                debug(ev, "Throw from guider_multistar.cpp:1020->CheckDistance error");
-            }
+        }
+        if lost.reason == LossReason::Jump {
+            debug(ev, "Throw from guider_multistar.cpp:1020->CheckDistance error");
         }
     }
 
@@ -1808,7 +1846,8 @@ impl Guider {
         use GuiderState::*;
         debug(ev, format!("UpdateGuideState(): m_state={}", self.state as i32));
         if let Some(img) = img {
-            self.current_image = img;
+            let prev = std::mem::replace(&mut self.current_image, img);
+            ev.push(GuiderEvent::ImageReplaced(PrevImage(prev)));
         }
         let mut out = GuideUpdate::default();
         let mut status: String;
@@ -2687,8 +2726,12 @@ mod tests {
         b.amp = 6000.0;
         b.ev.clear();
         b.frame();
+        // The frame switched in goes to the image logger's ring at once.
+        assert!(matches!(&b.ev[1], GuiderEvent::ImageReplaced(_)));
+        let ev: Vec<_> = b.ev.iter().filter(|e| !matches!(e, GuiderEvent::ImageReplaced(_))).cloned().collect();
+        let dropped = |star_error, active| GuiderEvent::ImageLog(ImageLogCall::Dropped { star_error, active });
         assert_eq!(
-            b.ev[..5],
+            ev[..6],
             [
                 GuiderEvent::Debug("UpdateGuideState(): m_state=2".into()),
                 GuiderEvent::Status("Mass: 95766 vs 31725".into()),
@@ -2698,6 +2741,8 @@ mod tests {
                         .into()
                 ),
                 GuiderEvent::Debug("DistanceChecker: activated".into()),
+                // LogImage right before the throw (guider_multistar.cpp:987).
+                dropped(FindResult::MassChange, false),
                 GuiderEvent::Debug("Throw from guider_multistar.cpp:989->massChangeThreshold error".into()),
             ]
         );
@@ -2725,8 +2770,9 @@ mod tests {
         b.star = b.star + Point::new(6.0, 0.0);
         b.ev.clear();
         b.frame();
+        let ev: Vec<_> = b.ev.iter().filter(|e| !matches!(e, GuiderEvent::ImageReplaced(_))).cloned().collect();
         assert_eq!(
-            b.ev[..5],
+            ev[..6],
             [
                 GuiderEvent::Debug("UpdateGuideState(): m_state=6".into()),
                 GuiderEvent::Debug(
@@ -2734,9 +2780,20 @@ mod tests {
                 ),
                 GuiderEvent::Debug("DistanceChecker: activated".into()),
                 GuiderEvent::Status("Recovering".into()),
+                dropped(FindResult::Error, true),
                 GuiderEvent::Debug("Throw from guider_multistar.cpp:1020->CheckDistance error".into()),
             ]
         );
+        // A star found: LogImage with the frame's error averages, before the
+        // tracker's transform lines (guider_multistar.cpp:1023).
+        b.star = b.star - Point::new(6.0, 0.0);
+        b.ev.clear();
+        b.frame();
+        let at = b.ev.iter().position(|e| matches!(e, GuiderEvent::ImageLog(_))).unwrap();
+        let transform = b.ev.iter().position(|e| matches!(e, GuiderEvent::Debug(l) if l.starts_with("CameraToMount"))).unwrap();
+        assert!(at < transform);
+        let GuiderEvent::ImageLog(ImageLogCall::Distance { stats, .. }) = b.ev[at] else { panic!() };
+        assert!(stats.guiding && stats.frame_count > 0);
     }
 
     #[test]
@@ -3446,6 +3503,7 @@ mod tests {
         let role = |r: &MountRole| if *r == MountRole::Primary { "primary" } else { "secondary" };
         Some(match e {
             GuiderEvent::AdjustAutoExposure(_) | GuiderEvent::ResetAutoExposure => return None,
+            GuiderEvent::ImageReplaced(_) | GuiderEvent::ImageLog(_) => return None,
             GuiderEvent::Debug(s) if s.starts_with("CameraToMount") => return None,
             GuiderEvent::Debug(s) if s.starts_with("UpdateLockPosShiftCameraCoords") => return None,
             GuiderEvent::Mount(_, MountEvent::Debug(s)) if s.starts_with("MountToCamera") => return None,

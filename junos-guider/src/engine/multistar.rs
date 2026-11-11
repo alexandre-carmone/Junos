@@ -526,6 +526,10 @@ pub struct PositionUpdate {
     pub current_distance: Option<(f64, f64)>,
     /// `AdjustAutoExposure(snr)` is due with this (the primary's SNR).
     pub auto_exposure_snr: f64,
+    /// How many of the tracker's pending debug lines come before
+    /// `ImageLogger::LogImage(img, distance)`, whose own lines go before
+    /// the multi-star refinement's and the transform's.
+    pub image_log_at: usize,
     /// `StarStatus` (guider_multistar.cpp:422), the frame's status text:
     /// the guider shows it and ends its "UpdateGuideState exits: " debug
     /// line with it.
@@ -1102,10 +1106,12 @@ impl MultiStar {
             return Err(lost(FindResult::Error, &new_star, self.primary.status_str(), LossReason::Jump));
         }
 
+        let image_log_at = self.log.len();
         self.primary = new_star;
         self.mass_checker.append_data(new_star.mass, now_ms);
 
         let mut out = PositionUpdate {
+            image_log_at,
             primary: new_star,
             camera_ofs: None,
             mount_ofs: None,

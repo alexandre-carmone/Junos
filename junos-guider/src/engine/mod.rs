@@ -83,7 +83,7 @@ use self::guider::{Guider, GuiderCx, GuiderMount, MountRole, PauseType, Schedule
 use self::image::{NoiseReduction, UsImage, apply_noise_reduction};
 use self::log::debug_log::{DebugLog, LogFileStamp};
 use self::log::guide_log::GuideLog;
-use self::log::image_log::{ErrorStats, ImageLogger};
+use self::log::image_log::{ImageLogger, ImageLoggerSettings};
 use self::mount::{GuideOutput, GuiderOffset, PointingSource, StepFrame, stopwatch_seconds};
 use self::multistar::FindParams;
 use self::scope::{CalibrationEnv, DecGuideMode, Scope, ScopeIo};
@@ -400,19 +400,8 @@ impl Engine {
         }
         let img = Arc::new(img);
 
-        // The image logger reads the error averages before the frame, and
-        // keeps the frame it replaces.
-        let now_ms = self.now_ms();
-        let ra_only = self.ra_only();
-        let g = &self.guider;
-        let stats = ErrorStats {
-            guiding: g.is_guiding() && !g.is_paused() && !self.ctrl.is_settling(),
-            frame_count: g.current_error_frame_count(),
-            smoothed_error: g.current_error_smoothed(ra_only, now_ms),
-        };
-        let active = g.is_calibrating_or_guiding() && !g.is_paused();
-        self.ilog.save_image(self.guider.current_image().clone());
-
+        // The image logger hears from the guider (its ImageReplaced and
+        // ImageLog events), in PHD2's places.
         let frame = img.clone();
         let upd = self.call(move |c, cx, ev| {
             let stopping = !c.continue_capturing();
@@ -422,7 +411,6 @@ impl Engine {
             upd
         });
         self.queue_moves(&upd.moves);
-        self.log_frame_image(&img, &upd.position, stats, active);
         self.pa_tools(upd.pa_tools);
         self.events.push(EngineEvent::FrameReady(img));
         self.call(|c, cx, ev| c.after_frame(cx, ev));
@@ -1133,7 +1121,8 @@ impl Engine {
                     None => Err(CmdError::new(1, "invalid auto exposure settings")),
                 }
             }
-            Command::SetImageLogger(s) => {
+            Command::SetImageLogger(ui) => {
+                let s = ImageLoggerSettings::from_dialog(self.ilog.settings(), ui);
                 let line = self.ilog.apply_settings(s);
                 self.debug(&line);
                 s.save(&mut self.store.profile());

@@ -16,6 +16,15 @@
 //! files to write, in PHD2's order, and only the session folder's creation
 //! goes through the caller ([`SaveCx::mkdir`]).
 //!
+//! The guider says when to call, at PHD2's call points, through its events:
+//! `GuiderEvent::ImageReplaced` for [`ImageLogger::save_image`] (a frame
+//! switched in by `UpdateGuideState`, `DisplayImage` — the empty placeholder
+//! `LoadProfileSettings` shows included) and `GuiderEvent::ImageLog` for the
+//! `LogImage*` calls inside `UpdateCurrentPosition`, among the tracker's
+//! debug lines: before `RefineOffset`'s, before the throw's. AutoSelect's
+//! second `UpdateGuideState(NULL)` logs the same frame a second time, with
+//! no `SaveImage`, as PHD2's does.
+//!
 //! There is no guard on the number of files. PHD2 clears old folders at
 //! start-up with `Debug.RemoveOldDirectories("PHD2_CameraFrames*", 30)`
 //! (`logger.cpp:172`), which compares what follows the name's first `_`
@@ -31,6 +40,7 @@ use super::debug_log::LogFileStamp;
 use crate::engine::calibration::ProfileAccess;
 use crate::engine::fits::{SaveHeader, write_fits};
 use crate::engine::image::UsImage;
+use crate::engine::multistar::GuidingView;
 use crate::engine::star::FindResult;
 
 /// The profile keys (`myframe.cpp:806`). The next-N series is not stored.
@@ -107,6 +117,23 @@ impl ImageLoggerSettings {
         }
     }
 
+    /// The settings dialog's OK (`myframe.cpp:3382`): from `current`
+    /// (`GetSettings`), only the switch when `ui` turns logging off — the
+    /// other fields keep their values — else all of `ui`, the thresholds
+    /// held to the spin controls' 1–10 and the count to 1–100. The caller
+    /// then applies and saves the result.
+    pub fn from_dialog(current: ImageLoggerSettings, ui: ImageLoggerSettings) -> Self {
+        if !ui.logging_enabled {
+            return ImageLoggerSettings { logging_enabled: false, ..current };
+        }
+        ImageLoggerSettings {
+            guide_error_thresh_rel: ui.guide_error_thresh_rel.clamp(1.0, 10.0),
+            guide_error_thresh_px: ui.guide_error_thresh_px.clamp(1.0, 10.0),
+            log_next_n_frames_count: ui.log_next_n_frames_count.clamp(1, 100),
+            ..ui
+        }
+    }
+
     /// `SaveImageLoggerSettings` (`myframe.cpp:823`): everything but the series.
     pub fn save(&self, p: &mut dyn ProfileAccess) {
         p.set_bool(keys::LOGGING_ENABLED, self.logging_enabled);
@@ -126,8 +153,10 @@ pub enum ImageLogOut {
     Debug(String),
     /// `usImage::Save`: write `bytes` to `path`, relative to
     /// [`SaveCx::log_dir`] (`<session folder>/<file>`), replacing any file
-    /// there. A write the caller fails is its to debug-log, as PHD2 writes
-    /// `CFITSIO error (<status>) saving image: <text>`.
+    /// there. A file the caller cannot create is its to debug-log as PHD2
+    /// does, `CFITSIO error (105) saving image: couldn't create the named
+    /// file`; a failure while writing gives no line (`PHD_fits_close_file`
+    /// drops its status, fitsiowrap.cpp:119).
     Save { path: String, bytes: Vec<u8> },
 }
 
@@ -149,10 +178,10 @@ pub struct SaveCx<'a> {
     pub mkdir: &'a mut dyn FnMut(&str) -> bool,
 }
 
-/// What `LogImage(img, distance)` reads from the guider and the controller.
-/// Take it before the frame goes through the guider: PHD2 reads it inside
-/// `UpdateCurrentPosition`, before this frame's `UpdateCurrentDistance` and
-/// before the state changes (a CALIBRATED frame is not yet guiding).
+/// What `LogImage(img, distance)` reads from the guider and the controller,
+/// inside `UpdateCurrentPosition`: before this frame's
+/// `UpdateCurrentDistance` and before the state changes (a CALIBRATED frame
+/// is not yet guiding). The guider's `GuidingView` for the frame holds it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ErrorStats {
     /// `IsGuiding() && !IsPaused() && !PhdController::IsSettling()`.
@@ -160,9 +189,27 @@ pub struct ErrorStats {
     /// `CurrentErrorFrameCount()`.
     pub frame_count: u32,
     /// `CurrentGuideErrorSmoothed()`: the slow error average, RA only when
-    /// the scope's Dec guide mode is None (100 once the star has been lost
-    /// for 20 s).
+    /// the scope's Dec guide mode is None; 100 when no star was ever found,
+    /// and once the star has been lost for 20 s (guider.cpp:1122).
     pub smoothed_error: f64,
+}
+
+impl From<&GuidingView> for ErrorStats {
+    fn from(v: &GuidingView) -> Self {
+        ErrorStats { guiding: v.guiding && !v.paused && !v.settling, frame_count: v.error_frame_count, smoothed_error: v.error_smoothed }
+    }
+}
+
+/// Which `LogImage*` `UpdateCurrentPosition` calls, with what it reads then.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ImageLogCall {
+    /// `LogImage(img, distance)`: the star was found.
+    Distance { distance: f64, stats: ErrorStats },
+    /// `LogImage(img, FrameDroppedInfo)`: `active` is
+    /// `IsCalibratingOrGuiding() && !IsPaused()`.
+    Dropped { star_error: FindResult, active: bool },
+    /// `LogImageStarDeselected`: no star selected.
+    Deselected,
 }
 
 /// PHD2's `ImageLogger` (its static `IL`).
@@ -228,7 +275,8 @@ impl ImageLogger {
             fmt_f(if s.log_frames_over_thresh_px { s.guide_error_thresh_px } else { 0.0 }, 2),
             s.log_frames_dropped as i32,
             s.log_auto_select_frames as i32,
-            if s.log_next_n_frames { s.log_next_n_frames_count } else { 0 },
+            // `%d` of an unsigned.
+            if s.log_next_n_frames { s.log_next_n_frames_count as i32 } else { 0 },
         );
         self.settings = s;
         if s.logging_enabled && s.log_next_n_frames && self.images_to_log < s.log_next_n_frames_count {
@@ -241,10 +289,10 @@ impl ImageLogger {
         line
     }
 
-    /// `SaveImage`: the guider's current image is being replaced by a new
-    /// frame. Call it with that image (`Guider::CurrentImage`) before
-    /// `update_guide_state(Some(frame))`, and before a `display_image` that
-    /// takes the frame (not calibrating or guiding).
+    /// `SaveImage`: the guider's current image was replaced, on its
+    /// `ImageReplaced` event. Accepted deviation: the ring can take the
+    /// guider's empty placeholder (frame 0), which an early trigger saves
+    /// named with the 1970 epoch, where PHD2 formats an invalid date.
     pub fn save_image(&mut self, prev: Arc<UsImage>) {
         self.saved.rotate_left(1);
         self.saved[SAVE_IMAGES - 1] = Some(prev);
@@ -261,7 +309,7 @@ impl ImageLogger {
 
     /// `LogImage(img, FrameDroppedInfo)`: the star was lost (`star_error`,
     /// any other `PositionLost`). `active` is `IsCalibratingOrGuiding() &&
-    /// !IsPaused()`, read before the frame goes through the guider.
+    /// !IsPaused()` inside `UpdateCurrentPosition`.
     pub fn log_dropped(
         &mut self,
         img: &UsImage,
@@ -854,5 +902,35 @@ mod tests {
         // A float card cfitsio refuses: the error line, no file.
         b.header.pixel_scale = f64::NAN;
         assert_eq!(b.found(2, 0.0, NOT_GUIDING)[1], "CFITSIO error (402) saving image: bad float to string conversion");
+    }
+
+    #[test]
+    fn the_dialog_keeps_the_rest_when_logging_goes_off_and_clamps_its_spins() {
+        let current = ImageLoggerSettings {
+            logging_enabled: true,
+            log_frames_dropped: true,
+            guide_error_thresh_px: 2.5,
+            log_next_n_frames_count: 7,
+            ..ImageLoggerSettings::default()
+        };
+        let ui = ImageLoggerSettings {
+            logging_enabled: false,
+            log_frames_dropped: false,
+            guide_error_thresh_px: 50.0,
+            log_next_n_frames_count: 0,
+            ..ImageLoggerSettings::default()
+        };
+        assert_eq!(ImageLoggerSettings::from_dialog(current, ui), ImageLoggerSettings { logging_enabled: false, ..current });
+        let on = ImageLoggerSettings { logging_enabled: true, guide_error_thresh_rel: 0.2, log_next_n_frames: true, ..ui };
+        let s = ImageLoggerSettings::from_dialog(current, on);
+        assert_eq!(
+            (s.log_frames_dropped, s.guide_error_thresh_rel, s.guide_error_thresh_px, s.log_next_n_frames_count),
+            (false, 1.0, 10.0, 1)
+        );
+        let s = ImageLoggerSettings::from_dialog(current, ImageLoggerSettings { log_next_n_frames_count: 500, ..on });
+        assert_eq!(s.log_next_n_frames_count, 100);
+        // Past the dialog, PHD2's %d of the count goes negative.
+        let big = ImageLoggerSettings { log_next_n_frames_count: 3_000_000_000, ..on };
+        assert!(ImageLogger::new().apply_settings(big).ends_with("NextN=-1294967296"));
     }
 }
