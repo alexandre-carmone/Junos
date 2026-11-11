@@ -100,7 +100,7 @@ use self::windows::{DarksJob, GaCommand};
 use crate::profile::ProfileStore;
 
 pub use self::command::{
-    BookmarkOp, CalAssistCmd, CmdError, Command, DriftAlignCmd, DarksBuildKind, Gear, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator,
+    BookmarkOp, CalAssistCmd, CmdError, Command, DriftAlignCmd, DarksBuildKind, Gear, GearRole, INVALID_PARAMS, INVALID_REQUEST, ManualPointing, Reply, Rotator,
     ScopeGear, ScopeOutput, SingleFrame, Which,
 };
 pub use self::static_pa_win::StaticPaSet;
@@ -1207,8 +1207,10 @@ impl Engine {
             },
             Command::SetCoolerState(enable) => self.set_cooler_state(enable),
             Command::SaveImage => self.save_image(),
-            Command::Attach(gear) => self.attach(gear),
+            Command::Attach(gear) => self.attach(gear, None),
             Command::Detach => self.detach(),
+            Command::AttachDevice(role, gear) => self.attach(gear, Some(role)),
+            Command::DetachDevice(role) => self.detach_device(role),
             Command::ProfileChanged => {
                 // `LoadGearChoices` makes the gear anew from the new profile:
                 // the camera with its darks and defect map, the mounts with

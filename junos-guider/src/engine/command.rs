@@ -71,6 +71,30 @@ pub enum ScopeOutput {
     OnAo(Box<dyn GuideOutput + Send>),
 }
 
+/// One device of the gear dialog, for its own Connect and Disconnect
+/// buttons (`connect_device`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GearRole {
+    Camera,
+    Mount,
+    AuxMount,
+    Ao,
+    Rotator,
+}
+
+impl GearRole {
+    /// The `OnButtonConnect<what>` / `OnButtonDisconnect<what>` name.
+    pub fn handler(self) -> &'static str {
+        match self {
+            GearRole::Camera => "Camera",
+            GearRole::Mount => "Scope",
+            GearRole::AuxMount => "AuxScope",
+            GearRole::Ao => "StepGuider",
+            GearRole::Rotator => "Rotator",
+        }
+    }
+}
+
 /// The mount the guide pulses go to, as the daemon connected it.
 pub struct ScopeGear {
     /// The equipment name (`INDI Mount [<dev>]`, `On Camera`, …).
@@ -278,6 +302,12 @@ pub enum Command {
     Attach(Gear),
     /// `set_connected false` disconnected everything.
     Detach,
+    /// `connect_device`: one device the daemon connected, its role in the
+    /// gear, the rest left as it is (`OnButtonConnect<what>`).
+    AttachDevice(GearRole, Gear),
+    /// `connect_device` off: one device let go (`OnButtonDisconnect<what>`);
+    /// the daemon disconnects it once this answers.
+    DetachDevice(GearRole),
     /// A profile switch (`set_profile`, the daemon's): the settings read
     /// again.
     ProfileChanged,
@@ -402,6 +432,7 @@ impl Command {
             Command::SaveImage => "save_image",
             Command::Attach(_) => "set_connected",
             Command::Detach => "set_connected",
+            Command::AttachDevice(..) | Command::DetachDevice(_) => "connect_device",
             Command::ProfileChanged => "set_profile",
             Command::SettingsChanged(_) => "set_profile_value",
             Command::Tick => "tick",

@@ -37,7 +37,7 @@ use serde_json::{Value, json};
 use super::algo::{self, Axis, MountClass};
 use super::calibration::{self, ProfileAccess, ROTATOR_POSITION_UNKNOWN};
 use super::camera::{self, DEFAULT_CAMERA_GAIN};
-use super::command::{CmdError, Gear, Reply};
+use super::command::{CmdError, Gear, GearRole, Reply, ScopeOutput};
 use super::control::{Control, ControlEvent};
 use super::darks::{self, DefectMap, FileGeometry};
 use super::event::{EngineEvent, SettleView};
@@ -906,61 +906,82 @@ impl Engine {
     /// `ConnectAll`'s refusal, then what `DoConnectCamera`, the mounts'
     /// connect buttons and the dialog's `EndModal` do. The gear replaces
     /// what was there; a mount of the same name keeps its object (and its
-    /// calibration in memory), as PHD2 keeps it across a reconnect.
-    pub(super) fn attach(&mut self, gear: Gear) -> Reply {
+    /// calibration in memory), as PHD2 keeps it across a reconnect. With
+    /// `only`, one device's Connect button: that role alone is replaced,
+    /// the rest of the gear left as it is.
+    pub(super) fn attach(&mut self, gear: Gear, only: Option<GearRole>) -> Reply {
         if self.ctrl.capture_active() {
             return Err(CmdError::new(1, "cannot connect equipment when capture is active"));
         }
-        self.debug("gear_dialog: ConnectAll calls OnButtonConnectAll");
-        self.debug("gear_dialog: OnButtonConnectAll");
+        match only {
+            None => {
+                self.debug("gear_dialog: ConnectAll calls OnButtonConnectAll");
+                self.debug("gear_dialog: OnButtonConnectAll");
+            }
+            Some(r) => self.debug(&format!("gear_dialog: OnButtonConnect{}", r.handler())),
+        }
+        let has = |r: GearRole| only.is_none_or(|o| o == r);
         let now = self.clock.mono();
         let Gear { camera, scope, aux_mount, ao, rotator } = gear;
 
         // `TheScope()` is the gear dialog's object, made from the choice
         // before anything connects: the camera's binning check adjusts it.
         let mut mev = Vec::new();
-        self.scope = scope.map(|g| {
-            let s = match self.scope.take() {
-                Some(old) if old.name == g.name => old.scope,
-                _ => Scope::new(&mut self.store.profile(), false, now, &mut mev),
-            };
-            ScopeDev { scope: s, name: g.name, output: g.output, pointing: g.pointing }
-        });
-        let scope_role = if ao.is_some() { MountRole::Secondary } else { MountRole::Primary };
+        if has(GearRole::Mount) {
+            self.scope = scope.map(|g| {
+                let s = match self.scope.take() {
+                    Some(old) if old.name == g.name => old.scope,
+                    _ => Scope::new(&mut self.store.profile(), false, now, &mut mev),
+                };
+                ScopeDev { scope: s, name: g.name, output: g.output, pointing: g.pointing }
+            });
+        }
+        let with_ao = if has(GearRole::Ao) { ao.is_some() } else { self.ao.is_some() };
+        let scope_role = if with_ao { MountRole::Secondary } else { MountRole::Primary };
         self.emit_mount_events(scope_role, mev);
 
-        self.camera = camera;
-        self.connect_camera(false);
+        if has(GearRole::Camera) {
+            self.camera = camera;
+            self.connect_camera(false);
+        }
 
         // The AO, then the scope (OnButtonConnectAll's order).
         let mut mev = Vec::new();
-        self.ao = ao.map(|dev| {
-            let name = dev.name();
-            let mut sg = match self.ao.take() {
-                Some(a) if a.sg.mount().name() == name => a.sg,
-                _ => StepGuider::new(&mut self.store.profile(), now, &mut mev),
-            };
-            sg.mount_mut().set_name(&name);
-            sg.connect(&*dev, &mut mev);
-            // The connect handler centred the AO (`OnButtonConnectStepGuider`),
-            // which zeroes the position kept from a previous connection.
-            sg.zero_current_position();
-            AoDev { sg, dev }
-        });
+        if has(GearRole::Ao) {
+            self.ao = ao.map(|dev| {
+                let name = dev.name();
+                let mut sg = match self.ao.take() {
+                    Some(a) if a.sg.mount().name() == name => a.sg,
+                    _ => StepGuider::new(&mut self.store.profile(), now, &mut mev),
+                };
+                sg.mount_mut().set_name(&name);
+                sg.connect(&*dev, &mut mev);
+                // The connect handler centred the AO (`OnButtonConnectStepGuider`),
+                // which zeroes the position kept from a previous connection.
+                sg.zero_current_position();
+                AoDev { sg, dev }
+            });
+        }
         self.emit_mount_events(MountRole::Primary, mev);
-        if let Some(s) = self.scope.as_mut() {
-            s.scope.mount.set_name(&s.name);
-            s.scope.mount.connect();
-            // A new pointing source checks the stored guide speeds again.
-            *s.scope.cal_details_validated_mut() = false;
+        if has(GearRole::Mount) {
+            if let Some(s) = self.scope.as_mut() {
+                s.scope.mount.set_name(&s.name);
+                s.scope.mount.connect();
+                // A new pointing source checks the stored guide speeds again.
+                *s.scope.cal_details_validated_mut() = false;
+            }
+            if self.scope.is_some() {
+                self.status("Mount Connected");
+            }
+            let name = self.scope.as_ref().map_or("None".to_string(), |s| s.name.clone());
+            self.debug(&format!("Connected Scope:{name}"));
         }
-        if self.scope.is_some() {
-            self.status("Mount Connected");
+        if has(GearRole::AuxMount) {
+            self.aux = aux_mount;
         }
-        let name = self.scope.as_ref().map_or("None".to_string(), |s| s.name.clone());
-        self.debug(&format!("Connected Scope:{name}"));
-        self.aux = aux_mount;
-        self.rotator = rotator;
+        if has(GearRole::Rotator) {
+            self.rotator = rotator;
+        }
 
         self.end_modal();
         self.refresh_ra_guide_speed();
@@ -1350,6 +1371,47 @@ impl Engine {
         self.disconnect_handler("StepGuider", (1675, 1680), ao, "AO Disconnected");
         let rotator = self.rotator.as_ref().map(|r| r.is_connected());
         self.disconnect_handler("Rotator", (1806, 1811), rotator, "Rotator Disconnected");
+        Ok(json!(0))
+    }
+
+    /// One device's Disconnect button (`OnButtonDisconnect<what>`): the
+    /// engine's side, its lines and status; the daemon disconnects the
+    /// device. A mount guiding through the camera's or the AO's ST-4 port
+    /// goes with it (`RequiresCamera`, `RequiresStepGuider`).
+    pub(super) fn detach_device(&mut self, role: GearRole) -> Reply {
+        if self.ctrl.capture_active() {
+            return Err(CmdError::new(1, "cannot disconnect equipment while capture active"));
+        }
+        let what = role.handler();
+        let (connected, lines, status) = match role {
+            GearRole::Camera => (self.camera.as_ref().map(|c| c.is_connected()), (1257, 1262), "Camera Disconnected"),
+            GearRole::Mount => (self.scope.as_ref().map(|s| s.scope.mount.is_connected()), (1492, 1497), "Mount Disconnected"),
+            GearRole::AuxMount => (self.aux.as_ref().map(|_| true), (1526, 1531), "Aux Mount Disconnected"),
+            GearRole::Ao => (self.ao.as_ref().map(|a| a.sg.mount().is_connected()), (1675, 1680), "AO Disconnected"),
+            GearRole::Rotator => (self.rotator.as_ref().map(|r| r.is_connected()), (1806, 1811), "Rotator Disconnected"),
+        };
+        if connected != Some(true) {
+            self.disconnect_handler(what, lines, connected, status);
+            return Ok(json!(0));
+        }
+        self.debug(&format!("gear_dialog: OnButtonDisconnect{what}"));
+        match role {
+            GearRole::Mount => self.scope.as_mut().expect("scope").scope.mount.disconnect(),
+            GearRole::AuxMount => self.aux = None,
+            GearRole::Ao => self.ao.as_mut().expect("ao").sg.disconnect(),
+            GearRole::Camera | GearRole::Rotator => {}
+        }
+        let needs = |s: &ScopeDev| match role {
+            GearRole::Camera => matches!(s.output, ScopeOutput::OnCamera),
+            GearRole::Ao => matches!(s.output, ScopeOutput::OnAo(_)),
+            _ => false,
+        };
+        if self.scope.as_ref().is_some_and(|s| needs(s) && s.scope.mount.is_connected()) {
+            let dev = if role == GearRole::Camera { "camera" } else { "stepguider" };
+            self.debug(&format!("gear_dialog: scope requires {dev} so disconnecting scope"));
+            self.detach_device(GearRole::Mount)?;
+        }
+        self.status(status);
         Ok(json!(0))
     }
 

@@ -3,9 +3,7 @@
 //! with clicks — the profiles, the equipment choices, the algorithms, the
 //! Guiding Assistant, the darks, the polar drift tool, the logs. Each maps
 //! onto an engine [`Command`] or the profile store; parameters are named
-//! (or positional in the table's order). The tools the engine does not
-//! have yet (a single device's connect) answer code 1 "not
-//! available".
+//! (or positional in the table's order).
 //!
 //! The relay socket's own `set_frame_filter` and `get_history` are not
 //! here: the socket answers them itself.
@@ -21,7 +19,9 @@ use crate::engine::calibration::Calibration;
 use crate::engine::control::DitherMode;
 use crate::engine::log::image_log::ImageLoggerSettings;
 use crate::engine::traits::{PierSide, Point};
-use crate::engine::{BookmarkOp, CalAssistCmd, Command, DriftAlignCmd, StaticPaSet, DarksBuildKind, Engine, ManualPointing, Which};
+use crate::engine::{
+    BookmarkOp, CalAssistCmd, Command, DarksBuildKind, DriftAlignCmd, Engine, GearRole, ManualPointing, StaticPaSet, Which,
+};
 use crate::indi::client::Role;
 
 /// PHD2's `pConfig->Global` keys the UI edits through `set_profile_value`
@@ -188,6 +188,17 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
         }
         "export_settings" => engine(d, |e| Ok(json!({"text": e.store().save_all()}))).await,
         "set_equipment" => set_equipment(d, p).await,
+        "connect_device" => {
+            let role = match text(p, "role")? {
+                "camera" => GearRole::Camera,
+                "mount" => GearRole::Mount,
+                "aux_mount" => GearRole::AuxMount,
+                "ao" => GearRole::Ao,
+                "rotator" => GearRole::Rotator,
+                _ => return Err(RpcError::invalid_params("expected role param")),
+            };
+            d.connect_device(role, flag(p, "connected")?).await.map_err(|e| RpcError::new(e.code, e.message))
+        }
         "list_devices" => Ok(list_devices(d)),
         "set_algorithm" => {
             let kind = AlgoKind::from_i32(int(p, "algorithm")?).ok_or_else(|| e1("unknown algorithm"))?;
@@ -368,7 +379,6 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
             let tail = p.param("tail").and_then(Value::as_u64);
             read_log(&d.options().engine.log_dir, text(p, "name")?, tail)
         }
-        name if super::rpc::method(name, true).is_some() => Err(e1("not available")),
         _ => Err(RpcError::new(METHOD_NOT_FOUND, "method not found")),
     }
 }
@@ -548,7 +558,7 @@ mod tests {
         assert_eq!((d.snapshot().profile_name.as_str(), d.snapshot().exposure_setting_ms), ("Mak", 1500));
         assert_eq!(call(&d, "ga_history", json!({})).await, Ok(json!([])));
         assert_eq!(call(&d, "list_devices", json!({})).await.unwrap()["devices"], json!([]));
-        assert_eq!(call(&d, "connect_device", json!({"role": "camera"})).await, Err(e1("not available")));
+        assert_eq!(call(&d, "connect_device", json!({"role": "camera"})).await.unwrap_err().code, -32602);
         // The image logger's dialog: the thresholds held to 1–10.
         let r = call(&d, "set_image_logger", json!({"enabled": true, "dropped": true, "thresh_px": 20.0})).await;
         assert_eq!(r, Ok(json!(0)));
@@ -601,6 +611,40 @@ mod tests {
         assert_eq!(set("/stepguider/XGuideAlgorithm", json!(3)).await, Ok(json!(0)));
         assert_eq!(d.snapshot().algo_x.clone().unwrap().class_name, "Lowpass2");
         assert!(all_connected(&d, true));
+        d.shutdown().await;
+        d.close();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn one_device_connects_and_disconnects_alone() {
+        let d = start(&dir("extras-device"), |_| {});
+        let dev = |role: &str, on: bool| call(&d, "connect_device", json!({"role": role, "connected": on}));
+        let state = |d: &Daemon| {
+            let s = d.snapshot();
+            (s.camera.as_ref().map(|c| c.connected), s.mount.as_ref().map(|m| m.connected))
+        };
+        // The simulator's mount guides through the camera's port.
+        assert_eq!(dev("mount", true).await, Err(e1("equipment failed to connect: mount")));
+        assert_eq!(dev("camera", true).await, Ok(json!(0)));
+        assert_eq!(state(&d), (Some(true), None));
+        assert_eq!(dev("mount", true).await, Ok(json!(0)));
+        assert_eq!(state(&d), (Some(true), Some(true)));
+        assert_eq!(dev("camera", true).await, Ok(json!(0)));
+        // No aux mount chosen.
+        assert_eq!(dev("aux_mount", true).await, Err(e1("equipment failed to connect: aux mount")));
+        // The mount alone, then the camera, which takes its port's mount.
+        assert_eq!(dev("mount", false).await, Ok(json!(0)));
+        assert_eq!(state(&d), (Some(true), Some(false)));
+        assert_eq!(dev("mount", true).await, Ok(json!(0)));
+        assert_eq!(dev("camera", false).await, Ok(json!(0)));
+        assert_eq!(state(&d), (Some(false), Some(false)));
+        assert_eq!(dev("camera", false).await, Ok(json!(0)));
+        // While capturing, as set_connected.
+        assert_eq!(d.set_connected(true).await, Ok(json!(0)));
+        assert_eq!(state(&d), (Some(true), Some(true)));
+        d.command(Command::Loop).await.unwrap();
+        assert_eq!(dev("mount", false).await, Err(e1("cannot disconnect equipment while capture active")));
+        d.command(Command::StopCapture).await.unwrap();
         d.shutdown().await;
         d.close();
     }

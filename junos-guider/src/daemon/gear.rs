@@ -37,7 +37,7 @@ use crate::engine::image::UsImage;
 use crate::engine::mount::{AlertKind, GuideOutput, PointingSource};
 use crate::engine::stepguider::{StepGuiderDevice, StepResult};
 use crate::engine::traits::{CancelToken, Dir, MoveResult, PierSide, Rect};
-use crate::engine::{Command, DeviceView, Engine, Gear, Rotator, ScopeGear, ScopeOutput, Which};
+use crate::engine::{Command, DeviceView, Engine, Gear, GearRole, Rotator, ScopeGear, ScopeOutput, Which};
 use crate::indi::ao::{AoOptions, IndiAo};
 use crate::indi::camera::{CameraOptions, IndiCamera};
 use crate::indi::client::IndiClient;
@@ -48,7 +48,7 @@ use super::DaemonOptions;
 
 /// A device as the daemon handles it, beside the trait the engine drives
 /// it through.
-trait Device: Send {
+pub(super) trait Device: Send {
     fn connect(&mut self, cancel: &CancelToken) -> Result<(), String>;
     fn disconnect(&mut self);
     fn is_connected(&self) -> bool;
@@ -166,6 +166,21 @@ impl Rig {
         client: Option<IndiClient>,
         cancel: &CancelToken,
     ) -> (Rig, Gear, Vec<Note>) {
+        let mut rig = Rig::build(choices, client);
+        let mut notes = Vec::new();
+        for role in [GearRole::Camera, GearRole::Ao, GearRole::Mount, GearRole::AuxMount, GearRole::Rotator] {
+            if let Some(dev) = rig.dev_mut(role) {
+                connect_device(role, dev, cancel, &mut notes);
+            }
+        }
+        rig.generation = rig.client.as_ref().map_or(0, |c| c.lock().generation());
+        let gear = rig.gear();
+        (rig, gear, notes)
+    }
+
+    /// The chosen devices made, none connected. `client` is the previous
+    /// connect's INDI connection.
+    pub(super) fn build(choices: &Choices, client: Option<IndiClient>) -> Rig {
         let mut rig = Rig::default();
         #[cfg(any(test, feature = "sim"))]
         if let Some((params, ao)) = choices.sim() {
@@ -175,38 +190,70 @@ impl Rig {
         }
         #[cfg(not(any(test, feature = "sim")))]
         rig.build_indi(choices, client);
+        rig.generation = rig.client.as_ref().map_or(0, |c| c.lock().generation());
+        rig
+    }
 
-        let mut notes = Vec::new();
-        let mut connect = |what: &str, dev: &mut Box<dyn Device>| {
-            notes.push(Note::Status(format!("Connecting to {what} ...")));
-            let r = dev.connect(cancel);
-            notes.extend(dev.take_debug().into_iter().map(Note::Debug));
-            match r {
-                Ok(()) => notes.push(Note::Debug(format!("Connected {what}"))),
-                Err(e) => {
-                    notes.push(Note::Debug(e));
-                    notes.push(Note::Status(format!("{what} Connect Failed")));
+    /// A role's device, `None` when the choice is "None".
+    fn dev_mut(&mut self, role: GearRole) -> Option<&mut Box<dyn Device>> {
+        match role {
+            GearRole::Camera => self.camera.as_mut().map(|s| &mut s.dev),
+            GearRole::Mount => self.scope.as_mut().map(|s| &mut s.dev),
+            GearRole::AuxMount => self.aux.as_mut().map(|s| &mut s.dev),
+            GearRole::Ao => self.ao.as_mut().map(|s| &mut s.dev),
+            GearRole::Rotator => self.rotator.as_mut().map(|s| &mut s.dev),
+        }
+    }
+
+    /// A role's device taken out to connect off the engine thread, an
+    /// unconnected stand-in left in its place: `Err` when the choice is
+    /// "None", `Ok(None)` when it is connected already.
+    pub(super) fn take(&mut self, role: GearRole) -> Result<Option<Box<dyn Device>>, ()> {
+        let dev = self.dev_mut(role).ok_or(())?;
+        if dev.is_connected() {
+            return Ok(None);
+        }
+        Ok(Some(std::mem::replace(dev, Box::new(Port::new(|| None)))))
+    }
+
+    /// [`take`](Self::take)'s device back; the engine's side of it when it
+    /// connected.
+    pub(super) fn put(&mut self, role: GearRole, dev: Box<dyn Device>) -> Option<Gear> {
+        *self.dev_mut(role)? = dev;
+        let mut gear = Gear::default();
+        match role {
+            GearRole::Camera => gear.camera = connected(&self.camera),
+            GearRole::Mount => gear.scope = connected(&self.scope),
+            GearRole::AuxMount => gear.aux_mount = connected(&self.aux),
+            GearRole::Ao => gear.ao = connected(&self.ao),
+            GearRole::Rotator => gear.rotator = connected(&self.rotator),
+        }
+        let some = gear.camera.is_some()
+            || gear.scope.is_some()
+            || gear.aux_mount.is_some()
+            || gear.ao.is_some()
+            || gear.rotator.is_some();
+        some.then_some(gear)
+    }
+
+    /// One device's Disconnect button once the engine let go: the device
+    /// disconnected, and the mount when the engine let it go with its
+    /// camera or AO port.
+    pub(super) fn disconnect(&mut self, role: GearRole, e: &mut Engine) {
+        let mount_down = e.snapshot().mount.as_ref().is_none_or(|m| !m.connected);
+        for r in [role, GearRole::Mount] {
+            if r != role && !mount_down {
+                continue;
+            }
+            if let Some(d) = self.dev_mut(r) {
+                if d.is_connected() {
+                    d.disconnect();
+                }
+                for l in d.take_debug() {
+                    e.debug(&l);
                 }
             }
-        };
-        if let Some(s) = rig.camera.as_mut() {
-            connect("Camera", &mut s.dev);
         }
-        if let Some(s) = rig.ao.as_mut() {
-            connect("AO", &mut s.dev);
-        }
-        if let Some(s) = rig.scope.as_mut() {
-            connect("Mount", &mut s.dev);
-        }
-        if let Some(s) = rig.aux.as_mut() {
-            connect("Aux Mount", &mut s.dev);
-        }
-        if let Some(s) = rig.rotator.as_mut() {
-            connect("Rotator", &mut s.dev);
-        }
-        rig.generation = rig.client.as_ref().map_or(0, |c| c.lock().generation());
-        let gear = rig.gear();
-        (rig, gear, notes)
     }
 
     #[cfg(any(test, feature = "sim"))]
@@ -335,9 +382,6 @@ impl Rig {
 
     /// The engine's side of the connected devices.
     fn gear(&self) -> Gear {
-        fn connected<T>(s: &Option<Slot<T>>) -> Option<T> {
-            s.as_ref().filter(|s| s.dev.is_connected()).map(|s| (s.engine)())
-        }
         Gear {
             camera: connected(&self.camera),
             scope: connected(&self.scope),
@@ -485,6 +529,43 @@ impl Rig {
                 let _ = d.connect_all();
             });
         }
+    }
+}
+
+/// A role's engine side, when its device is connected.
+fn connected<T>(s: &Option<Slot<T>>) -> Option<T> {
+    s.as_ref().filter(|s| s.dev.is_connected()).map(|s| (s.engine)())
+}
+
+/// `OnButtonConnect<what>`'s device connect: its status and debug lines.
+pub(super) fn connect_device(role: GearRole, dev: &mut Box<dyn Device>, cancel: &CancelToken, notes: &mut Vec<Note>) {
+    let what = match role {
+        GearRole::Camera => "Camera",
+        GearRole::Mount => "Mount",
+        GearRole::AuxMount => "Aux Mount",
+        GearRole::Ao => "AO",
+        GearRole::Rotator => "Rotator",
+    };
+    notes.push(Note::Status(format!("Connecting to {what} ...")));
+    let r = dev.connect(cancel);
+    notes.extend(dev.take_debug().into_iter().map(Note::Debug));
+    match r {
+        Ok(()) => notes.push(Note::Debug(format!("Connected {what}"))),
+        Err(e) => {
+            notes.push(Note::Debug(e));
+            notes.push(Note::Status(format!("{what} Connect Failed")));
+        }
+    }
+}
+
+/// `ConnectAll`'s name for a device that failed to connect.
+pub(super) fn failure_name(role: GearRole) -> &'static str {
+    match role {
+        GearRole::Camera => "camera",
+        GearRole::Mount => "mount",
+        GearRole::AuxMount => "aux mount",
+        GearRole::Ao => "AO",
+        GearRole::Rotator => "Rotator",
     }
 }
 

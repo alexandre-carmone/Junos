@@ -54,7 +54,9 @@ use tokio::sync::{broadcast, oneshot, watch};
 use self::gear::{Choices, Rig};
 use crate::engine::image::UsImage;
 use crate::engine::traits::{CancelToken, SystemClock};
-use crate::engine::{CmdError, Command, Engine, EngineConfig, EngineEvent, Files, Reply, Snapshot, StopRequest};
+use crate::engine::{
+    CmdError, Command, Engine, EngineConfig, EngineEvent, Files, GearRole, Reply, Snapshot, StopRequest,
+};
 use crate::indi::client::IndiClient;
 use crate::profile::ProfileStore;
 use crate::server::rpc::INTERNAL_ERROR;
@@ -360,6 +362,87 @@ impl Daemon {
         connecting.engine = reply.is_none();
         reply.ok_or_else(internal)??;
         if fail.is_empty() { Ok(json!(0)) } else { Err(CmdError::new(1, format!("equipment failed to connect:{fail}"))) }
+    }
+
+    /// `connect_device`: one device's Connect or Disconnect button in the
+    /// gear dialog (`OnButtonConnect<what>`, `OnButtonDisconnect<what>`),
+    /// the rest of the gear left as it is; refused while capturing, as
+    /// `set_connected` is. A device that fails to connect answers
+    /// `ConnectAll`'s text for it.
+    pub async fn connect_device(&self, role: GearRole, on: bool) -> Reply {
+        if on {
+            let d = self.clone();
+            return tokio::task::spawn_blocking(move || d.connect_one(role)).await.map_err(|_| internal())?;
+        }
+        if self.0.connecting.load(Ordering::SeqCst) {
+            return Err(CmdError::new(1, "cannot disconnect equipment when Connect Equipment dialog is open"));
+        }
+        self.run(move |e, rig| {
+            let reply = e.handle(Command::DetachDevice(role));
+            if reply.is_ok() {
+                rig.disconnect(role, e);
+            }
+            reply
+        })
+        .await
+        .ok_or_else(internal)?
+    }
+
+    /// [`connect_device`](Self::connect_device) on: the rig made from the
+    /// profile's choices when nothing in it is connected, then the device
+    /// connected on the caller's thread and handed to the engine.
+    fn connect_one(&self, role: GearRole) -> Reply {
+        let epoch = self.0.epoch.load(Ordering::SeqCst);
+        let _one = lock(&self.0.connect_one);
+        if self.0.epoch.load(Ordering::SeqCst) != epoch {
+            return Err(cancelled());
+        }
+        self.0.connecting.store(true, Ordering::SeqCst);
+        let mut connecting = Connecting { d: self, engine: false };
+        let (tx, rx) = oneshot::channel();
+        self.0.jobs.send(Job::Command(Command::Connecting(true), tx)).map_err(|_| internal())?;
+        rx.blocking_recv().map_err(|_| internal())??;
+        connecting.engine = true;
+        let failed = || CmdError::new(1, format!("equipment failed to connect: {}", gear::failure_name(role)));
+        let opts = self.0.opts.clone();
+        let taken = self.run_blocking(move |e, rig| {
+            if !rig.any_connected() {
+                let new = Rig::build(&Choices::read(e, &opts), rig.client());
+                std::mem::replace(rig, new).discard(rig, e);
+            }
+            rig.take(role)
+        });
+        let Some(mut dev) = taken.ok_or_else(internal)?.map_err(|()| failed())? else {
+            // Connected already.
+            return Ok(json!(0));
+        };
+
+        let cancel = CancelToken::new();
+        *lock(&self.0.connect_cancel) = cancel.clone();
+        if self.0.epoch.load(Ordering::SeqCst) != epoch {
+            cancel.cancel();
+        }
+        let mut notes = Vec::new();
+        gear::connect_device(role, &mut dev, &cancel, &mut notes);
+        let d = self.clone();
+        let reply = self.run_blocking(move |e, rig| {
+            for n in notes {
+                n.apply(e);
+            }
+            let reply = match rig.put(role, dev) {
+                _ if d.0.epoch.load(Ordering::SeqCst) != epoch => Err(cancelled()),
+                Some(gear) => e.handle(Command::AttachDevice(role, gear)).map(|_| true),
+                None => Ok(false),
+            };
+            if !matches!(reply, Ok(true)) {
+                rig.disconnect(role, e);
+            }
+            *lock(&d.0.indi) = rig.client();
+            let _ = e.handle(Command::Connecting(false));
+            reply
+        });
+        connecting.engine = reply.is_none();
+        if reply.ok_or_else(internal)?? { Ok(json!(0)) } else { Err(failed()) }
     }
 
     /// `DisconnectAll`. Refused at once while capturing, before the engine

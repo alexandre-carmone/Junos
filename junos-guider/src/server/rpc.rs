@@ -200,7 +200,6 @@ pub static METHODS: &[Method] = &[
     // The junos-web Guide tab's extras, reached through the relay's
     // `guider_rpc` only: one row per engine command the UI asks for
     // (`Command::name`), and the names each handler in `extras.rs` reads.
-    // The tools the engine does not have yet start with start/stop.
     ws("select_star", &["x", "y"]),
     ws("set_profile_value", &["key", "value"]),
     ws("new_profile", &["name"]),
