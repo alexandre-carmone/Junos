@@ -16,9 +16,10 @@ Copyright holders of the ported code:
 - Copyright (c) 2014-2015, Max Planck Society — Edgar D. Klenske, Stephan
   Wenninger, Raffi Enficiaud (`contributions/MPI_IS_gaussian_process`: the
   Gaussian-process "Predictive PEC" guider, kernels, period estimation).
-- Copyright (c) 2018 Ken Self (`src/zfilterfactory.cpp`, the ZFilter design),
-  based on *mkfilter* by A.J. Fisher, University of York, September 1992
-  (https://www-users.cs.york.ac.uk/~fisher/mkfilter/).
+- Copyright (c) 2018 Ken Self (`src/guide_algorithm_zfilter.{h,cpp}`,
+  `src/zfilterfactory.{h,cpp}`: the ZFilter guide algorithm and its design),
+  the design based on *mkfilter* by A.J. Fisher, University of York,
+  September 1992 (https://www-users.cs.york.ac.uk/~fisher/mkfilter/).
 - Copyright (c) 2017 Ken Self (`src/polardrift_toolwin.cpp`,
   `src/staticpa_toolwin.cpp`: the polar drift and static polar alignment tools).
 
