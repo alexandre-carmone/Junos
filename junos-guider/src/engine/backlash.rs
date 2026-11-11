@@ -13,34 +13,37 @@
 //!
 //! Ported from PHD2 `src/backlash_comp.h`, `src/backlash_comp.cpp`, `src/guiding_assistant.cpp` — BSD-3-Clause, see THIRD_PARTY.md
 
+use super::algo::ParamLookup;
 use super::calibration::{Calibration, camera_to_mount};
 use super::log::cfmt::fmt_f;
 use super::stats::AxisStats;
 use super::traits::{Dir, MoveOpts, Point, c_int, phd_round};
 
-/// Smallest compensation pulse, ms (`backlash_comp.cpp:41`): small enough to
-/// disable the compensation in practice.
+/// Smallest compensation pulse, ms (`backlash_comp.cpp:41`,
+/// `GetBacklashPulseMinValue`): small enough to disable the compensation in
+/// practice.
 pub const MIN_COMP_AMOUNT: i32 = 20;
-/// Largest compensation pulse, ms (`backlash_comp.cpp:42`).
+/// Largest compensation pulse, ms (`backlash_comp.cpp:42`,
+/// `GetBacklashPulseMaxValue`).
 pub const MAX_COMP_AMOUNT: i32 = 8000;
 
 // ---------------------------------------------------------------- BLC history
 
-/// One follow-on deflection of a compensation event (`CorrectionTuple`). PHD2
-/// also stores the time of each; nothing reads it, so it is not kept.
+/// One compensation event (`BLCEvent`). PHD2 also stores the time of each
+/// deflection and an `initialUndershoot` flag; nothing reads them, so they
+/// are not kept.
 #[derive(Clone, Debug, PartialEq)]
 struct BlcEvent {
     /// `[0]` is the deflection that triggered the pulse, `[1]` the first miss
     /// after it, `[2]` the optional second one (needed to see stiction).
     corrections: Vec<f64>,
     initial_overshoot: bool,
-    initial_undershoot: bool,
     stiction_seen: bool,
 }
 
 impl BlcEvent {
     fn new(amount: f64) -> Self {
-        Self { corrections: vec![amount], initial_overshoot: false, initial_undershoot: false, stiction_seen: false }
+        Self { corrections: vec![amount], initial_overshoot: false, stiction_seen: false }
     }
 
     fn info_count(&self) -> usize {
@@ -55,9 +58,8 @@ impl BlcEvent {
             self.corrections.push(amount);
             if amount.abs() > min_move {
                 if self.info_count() == 2 {
-                    if amount > 0.0 {
-                        self.initial_undershoot = true;
-                    } else {
+                    // An under-shoot (amount > 0) only sets PHD2's unread flag.
+                    if amount <= 0.0 {
                         self.initial_overshoot = true;
                     }
                 } else if self.info_count() == 3 {
@@ -82,13 +84,13 @@ struct RecentStats {
 /// `BLCHistory` (`backlash_comp.cpp:114`): the last `HISTORY_DEPTH`
 /// compensation events, each with its trigger and up to two follow-on
 /// deflections. The window is open from the pulse until an adjustment is
-/// made from the first follow-on or two follow-ons were recorded.
+/// made from the first follow-on or two follow-ons were recorded. PHD2's
+/// `timeBase` and `lastIncrease` are written and never read: not kept.
 #[derive(Clone, Debug)]
 struct BlcHistory {
     events: Vec<BlcEvent>,
     blc_index: usize,
     window_open: bool,
-    last_increase: i32,
 }
 
 const ENTRY_CAPACITY: usize = 3;
@@ -96,7 +98,7 @@ const HISTORY_DEPTH: usize = 10;
 
 impl BlcHistory {
     fn new() -> Self {
-        Self { events: Vec::new(), blc_index: 0, window_open: false, last_increase: 0 }
+        Self { events: Vec::new(), blc_index: 0, window_open: false }
     }
 
     fn close_window(&mut self, log: &mut Vec<String>) {
@@ -114,16 +116,11 @@ impl BlcHistory {
         self.window_open = true;
     }
 
-    fn add_deflection(&mut self, amt: f64, min_move: f64, log: &mut Vec<String>) -> bool {
+    /// `AddDeflection`; its "added" result is never read.
+    fn add_deflection(&mut self, amt: f64, min_move: f64, log: &mut Vec<String>) {
         match self.events.get_mut(self.blc_index) {
-            Some(evt) if evt.info_count() < ENTRY_CAPACITY => {
-                evt.add_event_info(amt, min_move);
-                true
-            }
-            _ => {
-                self.close_window(log);
-                false
-            }
+            Some(evt) if evt.info_count() < ENTRY_CAPACITY => evt.add_event_info(amt, min_move),
+            _ => self.close_window(log),
         }
     }
 
@@ -197,9 +194,8 @@ impl BlcHistory {
         let stats = self.stats(HISTORY_DEPTH);
         let avg_init_miss = stats.avg_initial_miss;
         let curr = &self.events[self.blc_index];
-        // PHD2 reads corrections[1] unconditionally here (std::to_string of
-        // a vector element past the end); it is always present since the
-        // deflection was just added.
+        // PHD2 reads corrections[1] unchecked. It is always there: the
+        // caller has just added a deflection, or found the event full.
         let mut deflections =
             format!(" Deflections: 0={}, 1:{}", fmt_f(curr.corrections[0], 6), fmt_f(curr.corrections[1], 6));
         if curr.info_count() > 2 {
@@ -231,8 +227,7 @@ impl BlcHistory {
                             log.push("BLC: Under-shoot; no adjustment because of over-shoot history".into());
                         } else {
                             adjust = true;
-                            correction = corr as f64;
-                            self.last_increase = corr;
+                            correction = f64::from(corr);
                             log.push(format!("BLC: Under-shoot: nominal increase by {corr}"));
                         }
                     } else {
@@ -256,12 +251,14 @@ impl BlcHistory {
                         log.push("BLC: Over-shoot, first stiction event, no adjustment".into());
                     }
                 } else if stats.long_count > stats.short_count && self.blc_index >= 4 {
-                    correction = -(corr as f64);
+                    // PHD2 negates the int, so a zero correction logs as
+                    // 0.000000, not -0.000000.
+                    correction = f64::from(corr.wrapping_neg());
                     self.remove_oldest_overshoots(2);
                     adjust = true;
                     log.push(format!("BLC: Recent history of over-shoots, nominal decrease by {}", fmt_f(correction, 6)));
                 } else if avg_init_miss <= -0.1 {
-                    correction = -(corr as f64);
+                    correction = f64::from(corr.wrapping_neg());
                     adjust = true;
                     log.push(format!(
                         "BLC: Average miss indicates over-shooting, nominal decrease by {}",
@@ -287,7 +284,17 @@ impl BlcHistory {
 
 // --------------------------------------------------------------- BacklashComp
 
-/// The persisted compensation settings, PHD2's four `/<mount class>/` keys.
+/// `DecBacklashPulse`. The keys are always under `/scope/`: only the scope
+/// builds a `BacklashComp` (`scope.cpp:113`; the AO has none, `mount.cpp:861`).
+pub const KEY_PULSE: &str = "/scope/DecBacklashPulse";
+/// `DecBacklashFloor`.
+pub const KEY_FLOOR: &str = "/scope/DecBacklashFloor";
+/// `DecBacklashCeiling`.
+pub const KEY_CEILING: &str = "/scope/DecBacklashCeiling";
+/// `BacklashCompEnabled`.
+pub const KEY_ENABLED: &str = "/scope/BacklashCompEnabled";
+
+/// The persisted compensation settings, PHD2's four `/scope/` keys.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BacklashConfig {
     /// `DecBacklashPulse`, ms (default 0: no compensation).
@@ -301,25 +308,18 @@ pub struct BacklashConfig {
 }
 
 impl BacklashConfig {
-    /// The profile keys, in the order `pulse, floor, ceiling, enabled`.
-    pub fn keys(mount_class: &str) -> [String; 4] {
-        [
-            format!("/{mount_class}/DecBacklashPulse"),
-            format!("/{mount_class}/DecBacklashFloor"),
-            format!("/{mount_class}/DecBacklashCeiling"),
-            format!("/{mount_class}/BacklashCompEnabled"),
-        ]
-    }
-
-    /// Read the four keys through `get` (`None` = absent, PHD2's defaults
-    /// apply; the boolean is any non-zero value, as wxConfig stores it).
-    pub fn from_profile(mount_class: &str, get: impl Fn(&str) -> Option<i64>) -> Self {
-        let [k_pulse, k_floor, k_ceiling, k_enabled] = Self::keys(mount_class);
+    /// The constructor's reads (`backlash_comp.cpp:375-381`), in PHD2's
+    /// order; absent keys take PHD2's defaults (0, false). The flag is read
+    /// only when the pulse is positive, as in PHD2, whose profile reads each
+    /// write a debug line.
+    pub fn from_profile(get: ParamLookup) -> Self {
+        let int = |key| get(key).map_or(0, |v| v as i32);
+        let pulse = int(KEY_PULSE);
         Self {
-            pulse: get(&k_pulse).unwrap_or(0) as i32,
-            floor: get(&k_floor).unwrap_or(0) as i32,
-            ceiling: get(&k_ceiling).unwrap_or(0) as i32,
-            enabled: get(&k_enabled).unwrap_or(0) != 0,
+            pulse,
+            floor: int(KEY_FLOOR),
+            ceiling: int(KEY_CEILING),
+            enabled: pulse > 0 && get(KEY_ENABLED).is_some_and(|v| v != 0.0),
         }
     }
 }
@@ -332,9 +332,11 @@ pub struct BlcEffects {
     /// `("Backlash comp enabled", bool)`, the `GuideParamChange` event.
     pub param_changes: Vec<(&'static str, serde_json::Value)>,
     /// Profile writes, key → value (booleans as 0/1).
-    pub profile_writes: Vec<(String, i64)>,
+    pub profile_writes: Vec<(&'static str, i64)>,
     /// `Scope::SetMaxDecDuration`: the pulse exceeded the Dec max duration,
-    /// which must be raised to this.
+    /// which must be raised to this. Apply it before sending
+    /// `param_changes`: PHD2 raises it inside `SetCompValues`, so its "Dec Max
+    /// Duration" notification comes before "Backlash comp amount".
     pub max_dec_duration: Option<i32>,
     /// Debug-log lines, without the trailing newline.
     pub log: Vec<String>,
@@ -344,7 +346,6 @@ pub struct BlcEffects {
 /// scope.
 #[derive(Clone, Debug)]
 pub struct BacklashComp {
-    mount_class: String,
     comp_active: bool,
     last_direction: Option<Dir>,
     adjustment_floor: i32,
@@ -355,13 +356,12 @@ pub struct BacklashComp {
 }
 
 impl BacklashComp {
-    /// `BacklashComp::BacklashComp` (`backlash_comp.cpp:371`). `mount_class`
-    /// is `scope` or `stepguider` (the profile key prefix); `max_dec_duration`
-    /// is the scope's current Dec max duration, which the pulse may raise.
-    pub fn new(mount_class: &str, cfg: BacklashConfig, max_dec_duration: i32) -> (Self, BlcEffects) {
+    /// `BacklashComp::BacklashComp` (`backlash_comp.cpp:371`).
+    /// `max_dec_duration` is the scope's current Dec max duration, which the
+    /// pulse may raise.
+    pub fn new(cfg: BacklashConfig, max_dec_duration: i32) -> (Self, BlcEffects) {
         let mut fx = BlcEffects::default();
         let mut comp = Self {
-            mount_class: mount_class.to_string(),
             comp_active: cfg.pulse > 0 && cfg.enabled,
             last_direction: None,
             adjustment_floor: 0,
@@ -387,16 +387,6 @@ impl BacklashComp {
 
     fn fixed_or_adjustable(&self) -> &'static str {
         if self.fixed_size { "Fixed" } else { "Adjustable" }
-    }
-
-    /// `GetBacklashPulseMinValue`: [`MIN_COMP_AMOUNT`].
-    pub fn backlash_pulse_min_value() -> i32 {
-        MIN_COMP_AMOUNT
-    }
-
-    /// `GetBacklashPulseMaxValue`: [`MAX_COMP_AMOUNT`].
-    pub fn backlash_pulse_max_value() -> i32 {
-        MAX_COMP_AMOUNT
     }
 
     /// `GetBacklashCompSettings`: `(pulse width, floor, ceiling)`, ms.
@@ -437,9 +427,11 @@ impl BacklashComp {
         } else {
             ceiling.min(MAX_COMP_AMOUNT)
         };
-        // C int arithmetic: a floor near INT_MIN wraps, as on x86.
+        // C int arithmetic: a floor near INT_MIN wraps, as on x86, and
+        // `abs(int) < unsigned` compares as unsigned, so abs(INT_MIN) is not
+        // fixed-size.
         self.fixed_size =
-            self.adjustment_ceiling.wrapping_sub(self.adjustment_floor).wrapping_abs() < MIN_COMP_AMOUNT;
+            (self.adjustment_ceiling.wrapping_sub(self.adjustment_floor).wrapping_abs() as u32) < MIN_COMP_AMOUNT as u32;
         if self.pulse_width > max_dec_duration && self.comp_active {
             fx.max_dec_duration = Some(self.pulse_width);
         }
@@ -466,10 +458,9 @@ impl BacklashComp {
                 self.history.close_window(&mut fx.log);
             }
         }
-        let [k_pulse, k_floor, k_ceiling, _] = BacklashConfig::keys(&self.mount_class);
-        fx.profile_writes.push((k_pulse, self.pulse_width.into()));
-        fx.profile_writes.push((k_floor, self.adjustment_floor.into()));
-        fx.profile_writes.push((k_ceiling, self.adjustment_ceiling.into()));
+        fx.profile_writes.push((KEY_PULSE, self.pulse_width.into()));
+        fx.profile_writes.push((KEY_FLOOR, self.adjustment_floor.into()));
+        fx.profile_writes.push((KEY_CEILING, self.adjustment_ceiling.into()));
         fx
     }
 
@@ -485,8 +476,7 @@ impl BacklashComp {
             }
         }
         self.comp_active = enable;
-        let [_, _, _, k_enabled] = BacklashConfig::keys(&self.mount_class);
-        fx.profile_writes.push((k_enabled, self.comp_active as i64));
+        fx.profile_writes.push((KEY_ENABLED, self.comp_active.into()));
         fx.log.push(format!(
             "BLC: Backlash comp {}, Comp pulse = {} ms",
             if self.comp_active { "enabled" } else { "disabled" },
@@ -578,8 +568,7 @@ impl BacklashComp {
             n
         };
         fx.log.push(format!("BLC: Pulse adjusted to {new_blc}"));
-        let [k_pulse, ..] = BacklashConfig::keys(&self.mount_class);
-        fx.profile_writes.push((k_pulse, new_blc.into()));
+        fx.profile_writes.push((KEY_PULSE, new_blc.into()));
         let (floor, ceiling) = (self.adjustment_floor, self.adjustment_ceiling);
         self.set_comp_values(new_blc, floor, ceiling, max_dec_duration, &mut fx);
         fx
@@ -1340,17 +1329,30 @@ mod tests {
 
     fn comp(pulse: i32, floor: i32, ceiling: i32) -> BacklashComp {
         let cfg = BacklashConfig { pulse, floor, ceiling, enabled: true };
-        BacklashComp::new("scope", cfg, 2500).0
+        BacklashComp::new(cfg, 2500).0
     }
 
     #[test]
-    fn config_from_profile_reads_the_four_keys() {
-        let cfg = BacklashConfig::from_profile("scope", |k| match k {
-            "/scope/DecBacklashPulse" => Some(300),
-            "/scope/BacklashCompEnabled" => Some(1),
-            _ => None,
-        });
+    fn config_from_profile_reads_the_flag_only_with_a_pulse() {
+        let reads = std::cell::RefCell::new(Vec::new());
+        let seen = &reads;
+        let profile = |pulse: f64| {
+            move |k: &str| -> Option<f64> {
+                seen.borrow_mut().push(k.to_string());
+                match k {
+                    KEY_PULSE => Some(pulse),
+                    KEY_ENABLED => Some(1.0),
+                    _ => None,
+                }
+            }
+        };
+        let cfg = BacklashConfig::from_profile(&profile(300.0));
         assert_eq!(cfg, BacklashConfig { pulse: 300, floor: 0, ceiling: 0, enabled: true });
+        assert_eq!(*reads.borrow(), [KEY_PULSE, KEY_FLOOR, KEY_CEILING, KEY_ENABLED]);
+        reads.borrow_mut().clear();
+        let cfg = BacklashConfig::from_profile(&profile(0.0));
+        assert_eq!(cfg, BacklashConfig::default());
+        assert_eq!(*reads.borrow(), [KEY_PULSE, KEY_FLOOR, KEY_CEILING]);
     }
 
     #[test]
@@ -1374,20 +1376,20 @@ mod tests {
     #[test]
     fn disabled_without_a_pulse_and_max_dec_raised() {
         let cfg = BacklashConfig { pulse: 0, floor: 0, ceiling: 0, enabled: true };
-        let (c, fx) = BacklashComp::new("scope", cfg, 2500);
+        let (c, fx) = BacklashComp::new(cfg, 2500);
         assert!(!c.is_enabled());
         assert_eq!(fx.max_dec_duration, None);
         assert_eq!(fx.log, ["BLC: Backlash compensation is disabled"]);
 
         let cfg = BacklashConfig { pulse: 3000, floor: 0, ceiling: 0, enabled: true };
-        let (c, fx) = BacklashComp::new("scope", cfg, 2500);
+        let (c, fx) = BacklashComp::new(cfg, 2500);
         assert!(c.is_enabled());
         assert_eq!(fx.max_dec_duration, Some(3000));
         assert_eq!(fx.log, ["BLC: Enabled with correction = 3000 ms, Floor = 20, Ceiling = 4500, Adjustable"]);
 
         // Disabled: the max duration is left alone.
         let cfg = BacklashConfig { pulse: 3000, floor: 0, ceiling: 0, enabled: false };
-        assert_eq!(BacklashComp::new("scope", cfg, 2500).1.max_dec_duration, None);
+        assert_eq!(BacklashComp::new(cfg, 2500).1.max_dec_duration, None);
     }
 
     #[test]
@@ -1398,9 +1400,9 @@ mod tests {
         assert_eq!(
             fx.profile_writes,
             [
-                ("/scope/DecBacklashPulse".to_string(), 350),
-                ("/scope/DecBacklashFloor".to_string(), 20),
-                ("/scope/DecBacklashCeiling".to_string(), 525),
+                ("/scope/DecBacklashPulse", 350),
+                ("/scope/DecBacklashFloor", 20),
+                ("/scope/DecBacklashCeiling", 525),
             ]
         );
         assert_eq!(fx.log, ["BLC: Comp pulse set to 350 ms, Floor = 20 ms, Ceiling = 525 ms, Adjustable"]);
@@ -1415,6 +1417,11 @@ mod tests {
         c.set_backlash_pulse_width(100, 95, 110, 2500);
         assert_eq!(c.backlash_comp_settings(), (100, 95, 110));
         assert!(c.fixed_size);
+        // abs(0 − INT_MIN) wraps to INT_MIN, which the unsigned compare keeps
+        // adjustable. The line is PHD2's, from its C++ (backlash_comp.cpp).
+        let fx = c.set_backlash_pulse_width(0, i32::MIN, 0, 2500);
+        assert_eq!(fx.log, ["BLC: Comp pulse set to 0 ms, Floor = -2147483648 ms, Ceiling = 0 ms, Adjustable"]);
+        assert!(!c.fixed_size);
     }
 
     #[test]
@@ -1423,7 +1430,7 @@ mod tests {
         c.last_direction = Some(Dir::North);
         let fx = c.enable_backlash_comp(false);
         assert_eq!(fx.param_changes, [("Backlash comp enabled", serde_json::json!(false))]);
-        assert_eq!(fx.profile_writes, [("/scope/BacklashCompEnabled".to_string(), 0)]);
+        assert_eq!(fx.profile_writes, [("/scope/BacklashCompEnabled", 0)]);
         assert_eq!(fx.log, ["BLC: Backlash comp disabled, Comp pulse = 300 ms"]);
         // Re-enabling: the reset runs while still disabled, so it does nothing.
         let fx = c.enable_backlash_comp(true);
@@ -1497,7 +1504,7 @@ mod tests {
         let fx = event(&mut c, 1.0, &[0.5, 0.5], 0.01);
         assert!(fx[0].profile_writes.is_empty()); // waiting for more data
         assert_eq!(fx[0].log.last().unwrap(), "BLC: Under-shoot, no adjustment, waiting for more data");
-        assert_eq!(fx[1].profile_writes, [("/scope/DecBacklashPulse".to_string(), 330)]);
+        assert_eq!(fx[1].profile_writes, [("/scope/DecBacklashPulse", 330)]);
         assert_eq!(c.backlash_pulse_width(), 330);
         assert!(!c.history.window_open);
         // A third follow-on lands on a closed window: ignored.
@@ -1608,6 +1615,44 @@ mod tests {
         assert!(log.contains(&"BLC: Recent history of over-shoots, nominal decrease by -50.000000".to_string()));
         assert_eq!((h.events.len(), h.blc_index), (3, 2));
         assert!(!h.window_open);
+    }
+
+    #[test]
+    fn a_zero_decrease_logs_as_positive_zero() {
+        // |avg| = 0.2 < yRate 0.5: corr = (int)(0 + 0.5) = 0. PHD2 negates
+        // the int, so std::to_string prints 0.000000. Both blocks of lines
+        // come from PHD2's C++ (backlash_comp.cpp).
+        let mut h = BlcHistory::new();
+        let mut log = Vec::new();
+        h.record_new_blc_pulse(1.0, &mut log);
+        h.add_deflection(-0.2, 0.1, &mut log);
+        let corr = h.adjustment_needed(-0.2, 0.1, 0.5, &mut log).unwrap();
+        assert!(corr == 0.0 && corr.is_sign_positive());
+        assert_eq!(
+            log,
+            [
+                "BLC: History state: CurrMiss=-0.20, AvgInitMiss=-0.20, ShCount=0, LgCount=1, SticCount=0,  Deflections: 0=1.000000, 1:-0.200000",
+                "BLC: Average miss indicates over-shooting, nominal decrease by 0.000000",
+                "BLC: window closed",
+            ]
+        );
+        // The over-shoot history branch (five events) negates the int too.
+        let mut h = BlcHistory::new();
+        let mut log = Vec::new();
+        for _ in 0..5 {
+            h.record_new_blc_pulse(1.0, &mut log);
+            h.add_deflection(-0.2, 0.1, &mut log);
+        }
+        let corr = h.adjustment_needed(-0.2, 0.1, 0.5, &mut log).unwrap();
+        assert!(corr == 0.0 && corr.is_sign_positive());
+        assert_eq!(
+            log,
+            [
+                "BLC: History state: CurrMiss=-0.20, AvgInitMiss=-0.20, ShCount=0, LgCount=5, SticCount=0,  Deflections: 0=1.000000, 1:-0.200000",
+                "BLC: Recent history of over-shoots, nominal decrease by 0.000000",
+                "BLC: window closed",
+            ]
+        );
     }
 
     #[test]
