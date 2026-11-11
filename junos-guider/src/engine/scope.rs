@@ -3,7 +3,7 @@
 //! It owns its settings (calibration step and distance, the per-axis pulse
 //! limits, the Dec guide mode, the calibration options), the backlash
 //! compensation, `MoveAxis` (the Dec-mode filter, the clamps, the
-//! pulse-limit alerts, the slew check) and the calibration state machine
+//! pulse-limit alerts) and the calibration state machine
 //! that moves the star West, back East, clears the Dec backlash, North,
 //! back South, nudges it home and stores the result.
 //!
@@ -107,6 +107,9 @@ pub enum CalibrationState {
 /// The devices a scope move reaches, and the engine clock.
 pub struct ScopeIo<'a> {
     pub output: &'a mut dyn GuideOutput,
+    /// The pointing source. No scope move reads it: PHD2's INDI mount
+    /// makes no slew check before a pulse (see
+    /// [`Scope::enable_stop_guiding_when_slewing`]).
     pub pointing: Option<&'a dyn PointingSource>,
     pub cancel: &'a CancelToken,
     /// Engine clock, seconds: the pulse-limit alert's grace period and rate
@@ -156,6 +159,7 @@ struct MoveState {
     max_ra_duration: i32,
     max_dec_duration: i32,
     dec_guide_mode: DecGuideMode,
+    /// A setting only: PHD2's INDI mount never acts on it.
     stop_guiding_when_slewing: bool,
     /// `m_limitReachedDeferralTime`, whole seconds.
     limit_deferral_time: i64,
@@ -213,22 +217,6 @@ impl MoveState {
             profile.set_i32(key, value as i32);
         }
         events.extend(fx.log.into_iter().map(MountEvent::Debug));
-    }
-
-    /// `Scope::Guide` with the slew check of PHD2's ASCOM mount
-    /// (`scope_ascom.cpp:471`), done for every mount here: with
-    /// `StopGuidingWhenSlewing` a slewing mount gets no pulse, and the move
-    /// reports `Slewing` so the guider stops.
-    fn guide(&self, dir: Dir, ms: i32, io: &mut ScopeIo, events: &mut Vec<MountEvent>) -> MoveResult {
-        if self.stop_guiding_when_slewing && io.pointing.is_some_and(|p| p.is_slewing()) {
-            debug(events, "Error thrown from scope_ascom.cpp:540->attempt to guide while slewing");
-            events.push(MountEvent::Alert {
-                msg: "Guiding stopped: the scope started slewing.".into(),
-                kind: AlertKind::Warning,
-            });
-            return MoveResult::Slewing;
-        }
-        io.output.guide(dir, ms as u32, io.cancel)
     }
 
     /// `Scope::MoveAxis` (`scope.cpp:703`). Algorithm and deduced moves are
@@ -299,7 +287,8 @@ impl MoveState {
                 }
             }
             if duration > 0 {
-                result = self.guide(dir, duration, io, events);
+                // `Guide`: the pulse, with no slew check (see `stop_guiding_when_slewing`).
+                result = io.output.guide(dir, duration as u32, io.cancel);
                 if result != MoveResult::Ok {
                     debug(events, "Error thrown from scope.cpp:795->guide failed");
                     break 'move_ true;
@@ -506,8 +495,13 @@ impl Scope {
     /// settings from the profile through their setters, in PHD2's order, so
     /// the effective values are written back and the max durations and the
     /// Dec mode announce themselves as parameter changes (PHD2 starts them
-    /// at 0 and Off). Then the backlash compensation, and the slew check,
-    /// whose default is whether the mount can report slewing.
+    /// at 0 and Off). Then the backlash compensation, and the slew-check
+    /// setting, whose default is `can_check_slewing`: the mount's
+    /// `CanCheckSlewing` when PHD2's Factory reads it, before connecting —
+    /// false for an INDI mount (no `EQUATORIAL_EOD_COORD` yet), so a new
+    /// profile stores 0. PHD2 builds an aux mount with this same
+    /// constructor, its parameter changes, write-backs and debug lines
+    /// included.
     pub fn new(
         profile: &mut impl ProfileAccess,
         can_check_slewing: bool,
@@ -746,7 +740,10 @@ impl Scope {
         self.mv.stop_guiding_when_slewing
     }
 
-    /// `EnableStopGuidingWhenSlewing`.
+    /// `EnableStopGuidingWhenSlewing`: the setting, its profile key and
+    /// debug line. Only PHD2's ASCOM mount acts on it, refusing a pulse
+    /// while the scope slews (`scope_ascom.cpp:471`); its INDI mount, this
+    /// port's, never checks, so no move here reads it.
     pub fn enable_stop_guiding_when_slewing(
         &mut self,
         enable: bool,
@@ -2427,33 +2424,23 @@ mod tests {
     }
 
     #[test]
-    fn a_slewing_mount_gets_no_pulse() {
+    fn a_slewing_mount_still_gets_its_pulse() {
+        // PHD2's INDI mount never checks for a slew: the setting is stored
+        // and logged, and the move goes out all the same.
         let mut p = Profile::default();
         let mut scope = connected_scope(&mut p, 0.0);
         let mut ev = Vec::new();
         let rig = Rig { slewing: true, ..Rig::default() };
-        // The check is off by default for a mount that cannot report slewing.
+        assert!(!scope.is_stop_guiding_when_slewing_enabled());
+        scope.enable_stop_guiding_when_slewing(true, &mut p, &mut ev);
+        assert_eq!(
+            rendered(&mut ev),
+            ["DEBUG: Scope: enabling slew check, guiding will stop when slew is detected"]
+        );
+        assert_eq!(p.i["/scope/StopGuidingWhenSlewing"], 1);
         let r = axis_move(&mut scope, Dir::West, 500, MoveOpts::GUIDE_STEP, 0.0, Some(&rig), true, &mut ev);
         assert_eq!(r, (MoveResult::Ok, vec![(Dir::West, 500)]));
-        scope.enable_stop_guiding_when_slewing(true, &mut p, &mut ev);
-        ev.clear();
-        let r = axis_move(&mut scope, Dir::West, 500, MoveOpts::GUIDE_STEP, 0.0, Some(&rig), true, &mut ev);
-        assert_eq!(r, (MoveResult::Slewing, vec![]));
-        assert_eq!(alerts(&ev), ["Guiding stopped: the scope started slewing."]);
-
-        // A slewing RA move skips the Dec move.
-        scope.set_calibration(&cal_15_105(), "T", &mut p, &mut ev);
-        ev.clear();
-        let mut pulses = Pulses::default();
-        let cancel = CancelToken::new();
-        let mut io = ScopeIo { output: &mut pulses, pointing: Some(&rig), cancel: &cancel, now: 0.0 };
-        let mut ofs = GuiderOffset { camera_ofs: Point::new(2.0, 2.0), mount_ofs: None };
-        let ctx = AlgoCtx::default();
-        let r = scope.move_offset(&mut ofs, MoveOpts::GUIDE_STEP, StepFrame::default, &ctx, &mut io, &mut p, &mut ev);
-        assert_eq!(r, MoveResult::Slewing);
-        assert!(!ev.iter().any(|e| matches!(e, MountEvent::Debug(l) if l.starts_with("MoveAxis(S") || l.starts_with("MoveAxis(N"))));
-        let Some(MountEvent::GuideStep(step)) = ev.last() else { panic!("no guide step") };
-        assert_eq!((step.duration_ra, step.duration_dec), (0, 0));
+        assert!(alerts(&ev).is_empty());
     }
 
     #[test]
