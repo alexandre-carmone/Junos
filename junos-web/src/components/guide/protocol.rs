@@ -48,6 +48,11 @@ pub const KEY_DITHER_SCALE: &str = "/DitherScaleFactor";
 /// A call's reply, `Some` once it lands (`ws_helpers::guider_rpc`).
 pub type Reply = RwSignal<Option<GuiderReply>>;
 
+/// The error of the latest call kept in `last`, once its reply lands.
+pub fn call_error(last: RwSignal<Option<Reply>>) -> Option<String> {
+    last.get().and_then(|r| r.get()).and_then(Result::err).map(|e| e.message)
+}
+
 /// The calls to junos-guider, through the relay.
 #[derive(Clone)]
 pub struct Rpc {

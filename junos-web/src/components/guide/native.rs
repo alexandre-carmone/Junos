@@ -30,6 +30,7 @@ use crate::Tab;
 
 use super::algorithms::algorithms_sheet;
 use super::calibration::{calibration_sheet, CalSheet};
+use super::darks::darks_sheet;
 use super::equipment::{equipment_card, equipment_sheet, Equip};
 use super::native_settings::native_settings_sheet;
 use super::frame::{frame_pane, zoom, FramePane};
@@ -165,6 +166,14 @@ pub fn NativeGuide(
         }
         cb.forget();
     }
+    // The Guider card's buttons; a tool that runs with its sheet closed
+    // shows as active.
+    let tool = move |s: Sheet, label: fn(&'static Translations) -> &'static str, busy: Signal<bool>| view! {
+        <button class=move || if busy.get() { "btn btn-ghost btn--active h-9" } else { "btn btn-ghost h-9" }
+                on:click=move |_| open.set(Some(s))>{move || label(tr())}</button>
+    };
+    let idle = || Signal::stored(false);
+    let darks = guider.darks;
     let equip = Equip {
         state,
         settings: guider.settings,
@@ -370,15 +379,11 @@ pub fn NativeGuide(
                         <div class=CARD>
                             <span class=CARD_TITLE>{move || tr().guider_tools_title}</span>
                             <div class="grid grid-cols-2 gap-2">
-                                <button class="btn btn-ghost h-9" on:click=move |_| open.set(Some(Sheet::Algorithms))>
-                                    {move || tr().guider_algorithms_title}
-                                </button>
-                                <button class="btn btn-ghost h-9" on:click=move |_| open.set(Some(Sheet::Calibration))>
-                                    {move || tr().guider_calibration_title}
-                                </button>
-                                <button class="btn btn-ghost h-9 col-span-2" on:click=move |_| open.set(Some(Sheet::Settings))>
-                                    {move || tr().guider_settings_title}
-                                </button>
+                                {tool(Sheet::Algorithms, |tr| tr.guider_algorithms_title, idle())}
+                                {tool(Sheet::Calibration, |tr| tr.guider_calibration_title, idle())}
+                                {tool(Sheet::Settings, |tr| tr.guider_settings_title, idle())}
+                                {tool(Sheet::Darks, |tr| tr.guider_darks_title,
+                                      Signal::derive(move || darks.with(|d| !d["build"].is_null())))}
                             </div>
                         </div>
                     </div>
@@ -424,6 +429,8 @@ pub fn NativeGuide(
                     })).into_any()),
                     Sheet::Settings => Some(sheet(move || tr().guider_settings_title, close,
                                                   native_settings_sheet(state, guider.settings, rpc.clone(), settle, lang)).into_any()),
+                    Sheet::Darks => Some(sheet(move || tr().guider_darks_title, close,
+                                               darks_sheet(state, darks, rpc.clone(), lang)).into_any()),
                 }
             }}
         </div>

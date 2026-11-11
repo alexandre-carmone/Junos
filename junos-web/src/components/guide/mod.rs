@@ -59,6 +59,7 @@ use crate::Tab;
 
 mod algorithms;
 mod calibration;
+mod darks;
 mod equipment;
 mod frame;
 mod lock_shift;
@@ -128,6 +129,7 @@ enum Sheet {
     Algorithms,
     Calibration,
     Settings,
+    Darks,
 }
 
 /// Download the accumulated guide log as a text file.

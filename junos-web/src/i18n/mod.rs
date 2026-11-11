@@ -268,6 +268,13 @@ translations! {
     guider_lock_shift_limit, guider_lock_shift_note,
     // Polar align — reset-view button, redesigned tab
     pa_reset_view, pa_settings, pa_no_frame, pa_meridian_warn, pa_step_adjust, pa_refresh_failed,
+    // Guide tab — junos-guider tools card, darks and bad-pixel map sheet
+    guider_tools, guider_darks_title, guider_darks_status, guider_darks_library_covers,
+    guider_darks_no_library, guider_darks_use, guider_bpm_loaded, guider_bpm_none, guider_bpm_use,
+    guider_darks_library, guider_darks_min_exp, guider_darks_max_exp, guider_darks_count,
+    guider_darks_new_library, guider_darks_build, guider_darks_cover_scope, guider_bpm_title,
+    guider_bpm_exposure, guider_bpm_count, guider_bpm_build, guider_bpm_aggressiveness, guider_bpm_hot,
+    guider_bpm_cold, guider_bpm_save,
     // Rig (optical-train) manager — section in the Profiles tab
     rig_section, rig_add_train, rig_offline_hint, rig_no_trains, rig_train_name,
     rig_role_mount, rig_role_camera, rig_role_scope, rig_role_guider,
