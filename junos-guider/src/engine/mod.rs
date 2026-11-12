@@ -656,7 +656,10 @@ impl Engine {
         let algo = self.algo_ctx();
         let ra_only = self.ra_only();
         let settling = self.ctrl.is_settling();
-        let slow_bump_suppressed = self.suppressed("SlowBumpWarningEnabled");
+        // Only an AO move reads it: PHD2 reads the key when the slow-bump
+        // alert fires (stepguider.cpp:1129), and the read's debug lines
+        // were written on every guide step of a rig without an AO.
+        let slow_bump_suppressed = self.ao.is_some() && self.suppressed("SlowBumpWarningEnabled");
         let secondary_busy = self.busy_role(MountRole::Secondary);
         let mut mev = Vec::new();
         let mut lines = Vec::new();

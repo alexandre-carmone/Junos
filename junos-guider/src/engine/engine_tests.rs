@@ -283,7 +283,10 @@ fn loop_auto_select_guide_calibrates_then_settles() {
     assert!(log.contains("Calibration Begins at "));
     assert!(log.contains("Calibration complete, mount = On Camera."));
     assert!(log.contains("INFO: SETTLING STATE CHANGE, Settling complete"));
-    assert!(r.debug_log().contains("PhdController complete: success"));
+    let dbg = r.debug_log();
+    assert!(dbg.contains("PhdController complete: success"));
+    // No AO: the slow-bump key is never read (PHD2 reads it at the alert).
+    assert!(!dbg.contains("SlowBumpWarningEnabled"));
 }
 
 /// The guiding section of the guide log: its header lines, then its rows.
