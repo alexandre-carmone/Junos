@@ -480,46 +480,62 @@ fn device_list(c: &IndiClient) -> Value {
     json!({"host": c.host(), "port": c.port(), "connected": up, "devices": devices})
 }
 
-/// How long `scan_indi` waits for the definitions to stop coming, and at
-/// most after the hello: indiserver sends every driver's in one burst.
+/// How long `scan_indi` waits, once the definitions started coming, for
+/// them to stop (indiserver relays each driver's in one burst), and at most
+/// after the hello: a driver busy or still starting answers late.
 const SCAN_QUIET: Duration = Duration::from_millis(300);
-const SCAN_MAX: Duration = Duration::from_secs(2);
+const SCAN_MAX: Duration = Duration::from_secs(4);
 
 /// `scan_indi`: the device list of PHD2's INDI dialog (`INDIConfig`, which
 /// opens its own connection to the server and watches no device, so that
 /// indiserver describes them all), the profile's server unless `host` /
-/// `port` name another. A connection of its own, closed once the server
-/// has gone quiet; `guider_devices`' shape.
+/// `port` name another — given both, the call doesn't wait for the engine,
+/// which reads the profile between frames. A connection of its own, closed
+/// once the server has gone quiet; `guider_devices`' shape.
 async fn scan_indi(d: &Daemon, p: &Params<'_>) -> Result<Value, RpcError> {
     use crate::engine::calibration::ProfileAccess;
     let host = p.param("host").and_then(Value::as_str).map(str::to_string);
     let port = p.param("port").and_then(int_param);
-    let (def_host, def_port) = (d.options().indi_host.clone(), d.options().indi_port);
-    let (host, port) = engine(d, move |e| {
-        let prof = e.store().profile();
-        let host = host.unwrap_or_else(|| prof.get_str("/indi/INDIhost", &def_host));
-        Ok((host, port.unwrap_or_else(|| prof.get_i32("/indi/INDIport", def_port as i32))))
-    })
-    .await?;
+    let (host, port) = match (host, port) {
+        (Some(h), Some(p)) => (h, p),
+        (host, port) => {
+            let (def_host, def_port) = (d.options().indi_host.clone(), d.options().indi_port);
+            engine(d, move |e| {
+                let prof = e.store().profile();
+                let host = host.unwrap_or_else(|| prof.get_str("/indi/INDIhost", &def_host));
+                Ok((host, port.unwrap_or_else(|| prof.get_i32("/indi/INDIport", def_port as i32))))
+            })
+            .await?
+        }
+    };
     let port = u16::try_from(port).ok().filter(|p| *p > 0).ok_or_else(|| RpcError::invalid_params("expected port param"))?;
     if host.trim().is_empty() {
         return Err(RpcError::invalid_params("expected host param"));
     }
     tokio::task::spawn_blocking(move || {
         let c = IndiClient::start(&host, port, &[]);
-        let list = c.wait_up(&CancelToken::new()).map(|_| {
-            let (mut seq, mut since) = (c.lock().store.seq(), Instant::now());
-            // A timeout only means the server never went quiet.
+        let list = c.wait_up(&CancelToken::new()).and_then(|_| {
+            // Quiet from the first definition on; a timeout only means none
+            // came (a server without drivers) or they never stopped.
+            let mut seq = c.lock().store.seq();
+            let mut since: Option<Instant> = None;
             let _ = c.wait(SCAN_MAX, None, |l| {
+                if !l.is_up() {
+                    return Some(());
+                }
                 let now = l.store.seq();
                 if now != seq {
-                    (seq, since) = (now, Instant::now());
+                    (seq, since) = (now, Some(Instant::now()));
                 }
-                (since.elapsed() >= SCAN_QUIET).then_some(())
+                since.is_some_and(|t| t.elapsed() >= SCAN_QUIET).then_some(())
             });
-            device_list(&c)
+            // Dropped meanwhile: an empty list would read as no devices.
+            let up = c.lock().is_up();
+            up.then(|| device_list(&c))
         });
-        c.shutdown();
+        // The reader may still be resolving or dialling (an unknown host):
+        // the reply doesn't wait for it to stop.
+        std::thread::spawn(move || c.shutdown());
         list.ok_or_else(|| e1(&format!("cannot connect to the INDI server at {host}:{port}")))
     })
     .await
@@ -712,6 +728,24 @@ mod tests {
         let r = call(&d, "scan_indi", json!({"host": "127.0.0.1", "port": closed})).await.unwrap_err();
         assert_eq!(r, e1(&format!("cannot connect to the INDI server at 127.0.0.1:{closed}")));
         assert_eq!(call(&d, "scan_indi", json!({"port": 0})).await.unwrap_err().code, -32602);
+        // Drivers that answer late are still waited for.
+        let slow = Fake::start(|e, peer| {
+            if e.name == "getProperties" {
+                peer.send_after(800, fake::driver("Guide Simulator", 0x6, false));
+            }
+        });
+        let r = call(&d, "scan_indi", json!({"host": "127.0.0.1", "port": slow.port})).await.unwrap();
+        assert_eq!(r["devices"][0]["name"], "Guide Simulator");
+        // A server that hangs up is an error, not an empty list.
+        let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let gone_port = gone.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for s in gone.incoming().flatten() {
+                drop(s);
+            }
+        });
+        let r = call(&d, "scan_indi", json!({"host": "127.0.0.1", "port": gone_port})).await.unwrap_err();
+        assert_eq!(r, e1(&format!("cannot connect to the INDI server at 127.0.0.1:{gone_port}")));
         d.shutdown().await;
         d.close();
     }

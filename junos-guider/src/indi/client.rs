@@ -443,7 +443,7 @@ impl IndiClient {
 fn run(sh: &Shared) {
     let mut backoff = MIN_BACKOFF;
     while !sh.stop.load(Ordering::SeqCst) {
-        if let Some(sock) = dial(&sh.host, sh.port) {
+        if let Some(sock) = dial(sh) {
             backoff = MIN_BACKOFF;
             serve(sh, sock);
         }
@@ -455,8 +455,14 @@ fn run(sh: &Shared) {
     }
 }
 
-fn dial(host: &str, port: u16) -> Option<TcpStream> {
-    (host, port).to_socket_addrs().ok()?.find_map(|a| TcpStream::connect_timeout(&a, DIAL_TIMEOUT).ok())
+/// Each address the host resolves to in turn, until one answers or the
+/// client is shut down.
+fn dial(sh: &Shared) -> Option<TcpStream> {
+    (sh.host.as_str(), sh.port)
+        .to_socket_addrs()
+        .ok()?
+        .take_while(|_| !sh.stop.load(Ordering::SeqCst))
+        .find_map(|a| TcpStream::connect_timeout(&a, DIAL_TIMEOUT).ok())
 }
 
 /// One connection: say hello, apply what comes, clear up when it ends.
