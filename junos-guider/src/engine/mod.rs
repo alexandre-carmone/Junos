@@ -1712,7 +1712,7 @@ impl Engine {
             dark_exp_ms: self.darks.current_dark().map(|d| d.img_exp_dur),
             defect_map_loaded: self.darks.defect_map.is_some(),
             profile_id: self.store.current_profile_id(),
-            profile_name: self.store.current_profile(),
+            profile_name: self.store.current_profile_quiet(),
             frame: self.frame_counter,
             ga: self.ga_view(),
             darks_build: self.darks_view(),

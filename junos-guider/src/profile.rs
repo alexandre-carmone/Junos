@@ -410,6 +410,19 @@ impl ProfileStore {
         if name.is_empty() { format!("Profile {id}") } else { name }
     }
 
+    /// [`Self::current_profile`] without its debug line, for the engine's
+    /// snapshot: PHD2 has no such read, and its `GetString` line, written
+    /// several times a frame, would fill the debug log.
+    pub fn current_profile_quiet(&self) -> String {
+        self.quiet_name(self.current)
+    }
+
+    fn quiet_name(&self, id: i32) -> String {
+        let key = fold(&format!("/profile/{id}/name"));
+        let name = self.entries.get(&key).map(|(_, v)| wx_text(v)).unwrap_or_default();
+        if name.is_empty() { format!("Profile {id}") } else { name }
+    }
+
     /// `ProfileExists`: the profile has a name.
     pub fn profile_exists(&self, id: i32) -> bool {
         !self.get_str_at(&format!("/profile/{id}/name"), "").is_empty()
@@ -521,11 +534,7 @@ impl ProfileStore {
     /// out. Empty groups a read left are listed, as `Profile <id>`.
     pub fn profiles(&self) -> Vec<(i32, String, bool)> {
         let ids: Vec<i32> = self.children("/profile").0.iter().filter_map(|g| to_long(g)).map(|id| id as i32).collect();
-        let name = |id: i32| {
-            let key = fold(&format!("/profile/{id}/name"));
-            let name = self.entries.get(&key).map(|(_, v)| wx_text(v)).unwrap_or_default();
-            if name.is_empty() { format!("Profile {id}") } else { name }
-        };
+        let name = |id: i32| self.quiet_name(id);
         ids.iter()
             .filter_map(|&g| {
                 let n = name(g);
@@ -1658,6 +1667,8 @@ mod tests {
             s.profiles(),
             [(1, "My Equipment".into(), true), (2, "Second".into(), false), (2, "SECOND".into(), false), (9, "Profile 9".into(), false)]
         );
+        assert_eq!(s.current_profile_quiet(), "My Equipment");
+        assert!(s.take_debug().is_empty());
         s.profile().set_i32("/scope/CalibrationDuration", 750);
         s.global().set_bool("/ServerMode", true);
         let prof: Vec<_> = s.profile_entries().map(|(k, v)| (k.to_string(), v.clone())).collect();
