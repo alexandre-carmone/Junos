@@ -314,8 +314,7 @@ impl IndiCamera {
         let device = self.device.clone();
         let expose = self.prop("EXPOSURE");
         let frame = self.prop("FRAME");
-        // `bool takeSubframe = UseSubframes` (cam_indi.cpp:991).
-        let mut take_sub = settings.use_subframes && subframe.is_some();
+        let mut take_sub = subframe.is_some();
         let mut sf = subframe.unwrap_or_default();
         let busy = {
             let mut link = client.lock();
@@ -854,13 +853,8 @@ mod tests {
         let fake = ccd(SIM);
         let mut cam = connected(&fake);
         capture(&mut cam, 20, None).unwrap();
-        // Subframes off (PHD2's default): the guider's box is ignored.
-        let sub = Rect::new(10, 8, 16, 12);
-        let img = capture(&mut cam, 20, Some(sub)).unwrap();
-        assert_eq!((img.w, img.h, img.subframe), (64, 48, None));
         // A subframe once the frame size is known, placed in the full frame.
-        let subs = CameraSettings { use_subframes: true, ..settings(15000) };
-        let capture = |cam: &mut IndiCamera, ms, sub| cam.capture(ms, CaptureKind::Light, sub, &subs, &CancelToken::new());
+        let sub = Rect::new(10, 8, 16, 12);
         let img = capture(&mut cam, 20, Some(sub)).unwrap();
         assert_eq!((img.w, img.h, img.subframe), (64, 48, Some(sub)));
         assert_eq!((img.pixel(9, 8), img.pixel(10, 8), img.pixel(11, 9)), (0, pixel(0, 1), pixel(17, 1)));

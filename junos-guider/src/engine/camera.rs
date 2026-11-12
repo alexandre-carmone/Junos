@@ -219,8 +219,9 @@ pub trait GuideCamera: Send {
         Vec::new()
     }
     /// One exposure of `dur_ms` ms, the raw frame back. `subframe` is the
-    /// area to read when subframes are in use; a camera that cannot take it
-    /// reads the full frame. `settings` holds what PHD2's camera reads from
+    /// area to read, `None` without "Use Subframes" ([`capture_frame`]
+    /// drops the guider's box then); a camera that cannot take it reads the
+    /// full frame. `settings` holds what PHD2's camera reads from
     /// itself: `ShutterClosed`, and `/camera/TimeoutMs` for the watchdog.
     fn capture(
         &mut self,
@@ -246,7 +247,8 @@ pub fn capture_frame(
     let start = clock.wall();
     // Every camera's `Capture` starts from `takeSubframe = UseSubframes`
     // (cam_indi.cpp:991, gear_simulator.cpp:1444): the guider's bounding
-    // box is only a request.
+    // box is only a request. Checked here once for every camera, since
+    // every capture comes through this function.
     let subframe = subframe.filter(|_| settings.use_subframes);
     let mut img = camera.capture(dur_ms, kind, subframe, settings, cancel)?;
     img.img_start_time = start;
