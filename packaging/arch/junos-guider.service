@@ -27,6 +27,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
+# AF_UNIX: glibc resolves --indi-host through systemd-resolved's socket.
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]

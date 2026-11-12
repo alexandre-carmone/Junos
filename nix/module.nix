@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, options, lib, pkgs, ... }:
 
 with lib;
 
@@ -44,14 +44,14 @@ let
   ];
 
   capturesPath = if cfg.capturesDir != null then toString cfg.capturesDir else null;
-  capturesArgs = optionals (capturesPath != null) [ "--captures-dir" capturesPath ];
+  capturesArgs = optionals (capturesPath != null) [ "--captures-dir" (escapeShellArg capturesPath) ];
 
   skymapPath = if cfg.skymapDir != null then toString cfg.skymapDir else null;
-  skymapArgs = optionals (skymapPath != null) [ "--skymap-dir" skymapPath ]
+  skymapArgs = optionals (skymapPath != null) [ "--skymap-dir" (escapeShellArg skymapPath) ]
             ++ optional cfg.skymapOnline "--skymap-online";
 
   taskqueuePath = if cfg.taskqueueDir != null then toString cfg.taskqueueDir else null;
-  taskqueueArgs = optionals (taskqueuePath != null) [ "--taskqueue-dir" taskqueuePath ];
+  taskqueueArgs = optionals (taskqueuePath != null) [ "--taskqueue-dir" (escapeShellArg taskqueuePath) ];
 
   # junos-guider listens on PHD2's event-server port 4400 + instance - 1 and
   # on the relay's socket 4410 + instance - 1 (junos-guider/src/config.rs).
@@ -68,12 +68,12 @@ let
                   else "${guiderStateDir}/logs";
   guiderExecStart = concatStringsSep " " (
     [ "${gcfg.package}/bin/junos-guider"
-      "--indi-host" gcfg.indiHost
+      "--indi-host" (escapeShellArg gcfg.indiHost)
       "--indi-port" (toString gcfg.indiPort)
       "--instance" (toString gcfg.instance)
     ]
     ++ optionals (!cfg.apps.enable) [ "--data-dir" guiderStateDir ]
-    ++ optionals (guiderLogPath != null) [ "--log-dir" guiderLogPath ]
+    ++ optionals (guiderLogPath != null) [ "--log-dir" (escapeShellArg guiderLogPath) ]
     ++ map escapeShellArg gcfg.extraArgs
   );
 
@@ -143,8 +143,10 @@ in
       type = types.bool;
       default = false;
       description = ''
-        Open the TCP ports (HTTP and, if enabled, HTTPS) in the NixOS firewall.
-        Enable this when KStars or browsers run on a different host.
+        Open the TCP ports (HTTP and, if enabled, HTTPS) in the NixOS firewall,
+        and with guider.enable PHD2's event-server port (4400 + instance - 1),
+        which has no authentication. Enable this when KStars or browsers run
+        on a different host.
       '';
     };
 
@@ -228,13 +230,15 @@ in
 
       packages = mkOption {
         type = types.listOf types.package;
-        default = [ pkgs.kstars pkgs.phd2 cfg.guider.package ];
+        default = [ pkgs.kstars pkgs.phd2 ]
+          ++ optional options.services.junos-web.guider.package.isDefined cfg.guider.package;
         defaultText = literalExpression "[ pkgs.kstars pkgs.phd2 config.services.junos-web.guider.package ]";
         description = ''
           Packages put on the service's PATH. The Launch buttons exec
           `kstars`, `phd2` and `junos-guider` by bare name. INDI drivers do
           not need to be listed: KStars resolves indiserver and the drivers
-          from its own settings.
+          from its own settings. junos-guider is listed only when
+          guider.package is set (the flake's module sets it).
         '';
       };
     };
@@ -333,8 +337,8 @@ in
         PHD2's event server (Ekos connects to it as to PHD2) and the Guide
         tab's native mode through the relay, which is pointed at it. It runs
         as a user unit next to the relay when apps.enable is set, else as a
-        hardened system unit. Do not run PHD2 at the same time: both listen
-        on the same port'';
+        hardened system unit. Needs services.junos-web.enable. Do not run
+        PHD2 at the same time: both listen on the same port'';
 
       package = mkOption {
         type = types.package;
@@ -347,13 +351,17 @@ in
       indiHost = mkOption {
         type = types.str;
         default = "localhost";
-        description = "INDI server host the guider drives the camera and mount through.";
+        description = ''
+          INDI server host the guider drives the camera and mount through,
+          when the guider profile names none: a server saved in the
+          Equipment sheet (`/indi/INDIhost`) wins.
+        '';
       };
 
       indiPort = mkOption {
         type = types.port;
         default = 7624;
-        description = "INDI server port.";
+        description = "INDI server port, when the guider profile names none.";
       };
 
       instance = mkOption {
@@ -375,7 +383,7 @@ in
           writes them to /var/lib/junos-guider/logs and the user unit to
           ~/Documents/PHD2, like PHD2. The system unit gets this folder in
           ReadWritePaths (bind-mounted when under /home), so it must exist
-          and be writable by `user`.
+          and be writable by `user`, which must then be set.
         '';
       };
 
@@ -404,6 +412,10 @@ in
         {
           assertion = cfg.hostPower.enable -> cfg.user != null;
           message = "services.junos-web: hostPower.enable needs a polkit rule for a named user, so services.junos-web.user must be set.";
+        }
+        {
+          assertion = gcfg.enable && !cfg.apps.enable && gcfg.logDir != null -> cfg.user != null;
+          message = "services.junos-web: a DynamicUser cannot write guider.logDir, so services.junos-web.user must be set.";
         }
       ];
 
@@ -553,6 +565,8 @@ in
             ProtectSystem = "strict";
             ProtectHome = if logUnderHome then "tmpfs" else true;
             NoNewPrivileges = true;
+            # AF_UNIX: glibc resolves indiHost through nscd's or
+            # systemd-resolved's socket.
             RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
           }
           // optionalAttrs (cfg.user  != null) { User  = cfg.user;  }

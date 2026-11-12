@@ -6,7 +6,7 @@ pkgdesc="Local KStars/Ekos Live LAN relay + WebGPU planetarium web client, with 
 arch=('x86_64' 'aarch64')
 url="https://github.com/alexandre-carmone/Junos"
 # junos-guider ports PHD2 (BSD-3-Clause), whose notices are in THIRD_PARTY.md.
-license=('GPL3' 'BSD-3-Clause')
+license=('GPL-3.0-or-later' 'BSD-3-Clause')
 # Disable makepkg's default LTO. Arch mainline's makepkg.conf enables `lto`,
 # which injects `-flto` into CFLAGS/LDFLAGS. `ring`'s build.rs compiles its C
 # limb functions through the `cc` crate (which honours CFLAGS), turning them

@@ -188,6 +188,12 @@
           '';
 
           doCheck = false;
+
+          meta = {
+            description = "PHD2-compatible autoguider for junos-web";
+            license = with pkgs.lib.licenses; [ gpl3Plus bsd3 ];
+            mainProgram = "junos-guider";
+          };
         };
 
         # ── Dev shell ───────────────────────────────────────────────────────
