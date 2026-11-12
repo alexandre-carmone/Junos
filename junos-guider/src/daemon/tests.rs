@@ -137,8 +137,10 @@ async fn connects_loops_guides_and_stops_on_the_simulator() {
     d.command(Command::Loop).await.unwrap();
     let seen = wait_for(&mut ev, 5, |e| matches!(e, EngineEvent::LoopingExposures { .. })).await;
     assert_eq!(app_state(&d), "Looping");
-    // The frames go to their own `watch`, never to the broadcast.
-    assert!(d.frames().borrow().is_some());
+    // The frames go to their own `watch`, never to the broadcast. The
+    // engine thread may still be between the event and the frame.
+    let mut frames = d.frames();
+    tokio::time::timeout(Duration::from_secs(5), frames.wait_for(|f| f.is_some())).await.unwrap().unwrap();
     assert!(!seen.iter().any(|e| matches!(**e, EngineEvent::FrameReady(_))));
     let lock = find_star(&d, &mut ev).await;
     assert_eq!(app_state(&d), "Selected");
