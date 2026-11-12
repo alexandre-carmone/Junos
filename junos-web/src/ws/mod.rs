@@ -293,6 +293,17 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
         let last_filter  = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let last_guider  = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let send_for_effect = send_fn.clone();
+        // A KStars reconnect drops `mount_status` (slew-rate labels included):
+        // forget the mount so the retries run again once the trains come back.
+        {
+            let last_mount = last_mount.clone();
+            let connected = store.connected;
+            Effect::new(move |_| {
+                if !connected.get() {
+                    last_mount.borrow_mut().clear();
+                }
+            });
+        }
         Effect::new(move |_| {
             let trains = trains_sig2.get();
             let profiles = profiles_sig.get();
@@ -419,7 +430,10 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
             {
                 *last_mount.borrow_mut() = train.mount.clone();
                 mount_sig.update(|opt| {
-                    opt.get_or_insert_with(MountStatusData::default).device = train.mount.clone();
+                    let ms = opt.get_or_insert_with(MountStatusData::default);
+                    ms.device = train.mount.clone();
+                    // Another mount's rates would be another driver's.
+                    ms.slew_rates.clear();
                 });
                 spawn_retry_property(
                     send_for_effect.clone(),
@@ -427,6 +441,15 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
                     "EQUATORIAL_EOD_COORD",
                     mount_sig,
                     |ms| ms.as_ref().and_then(|m| m.ra_h).is_some(),
+                );
+                // The rate pills need the labels: compact:false.
+                spawn_retry_property_with(
+                    send_for_effect.clone(),
+                    train.mount.clone(),
+                    "TELESCOPE_SLEW_RATE",
+                    false,
+                    mount_sig,
+                    |ms| ms.as_ref().is_some_and(|m| !m.slew_rates.is_empty()),
                 );
             }
 

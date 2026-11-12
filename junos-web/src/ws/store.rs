@@ -241,6 +241,20 @@ impl DeviceStore {
             .map_or(true, |w| w == device)
     }
 
+    /// True when `device` is the Mount train's mount (or no mount is known
+    /// yet): the Devices tab may subscribe to another telescope device.
+    fn is_mount(&self, device: &str) -> bool {
+        self.module_train_untracked("3")
+            .map(|t| t.mount)
+            .filter(|m| !m.is_empty() && m != "--")
+            .or_else(|| {
+                self.mount_status
+                    .with_untracked(|o| o.as_ref().map(|m| m.device.clone()))
+                    .filter(|d| !d.is_empty())
+            })
+            .map_or(true, |m| m == device)
+    }
+
     pub(super) fn new() -> Self {
         Self {
             connected: RwSignal::new(false),
@@ -917,6 +931,38 @@ impl DeviceStore {
                                 }
                             }
                             fs.current_slot = slot;
+                        });
+                    }
+                } else if prop == "TELESCOPE_SLEW_RATE"
+                    && payload["device"].as_str().is_some_and(|d| self.is_mount(d))
+                {
+                    // The driver's own rates: Ekos' `mount_set_slew_rate {rate}`
+                    // and `slewRate` are an index into this switch
+                    // (indimount.cpp:1213), whose count and labels vary by driver.
+                    let switches: &[serde_json::Value] = payload["switches"].as_array().map_or(&[], Vec::as_slice);
+                    let labels: Vec<String> = switches.iter()
+                        .filter_map(|el| el["label"].as_str().filter(|l| !l.is_empty()))
+                        .map(str::to_string)
+                        .collect();
+                    // Subscription pushes are compact (no labels): they only
+                    // move the ON index. Element names are never shown — they
+                    // would end the label fetch (`slew_rates` non-empty) and
+                    // stay. A compact list of another length means the driver
+                    // redefined the switch: drop the labels so they are fetched
+                    // again.
+                    let compact = labels.len() != switches.len();
+                    let on = switches.iter().position(|el| el["state"].as_i64() == Some(1));
+                    if !switches.is_empty() {
+                        self.mount_status.update(|opt| {
+                            let ms = opt.get_or_insert_with(MountStatusData::default);
+                            if !compact {
+                                ms.slew_rates = labels;
+                            } else if ms.slew_rates.len() != switches.len() {
+                                ms.slew_rates.clear();
+                            }
+                            if let Some(i) = on {
+                                ms.slew_rate = Some(i as i32);
+                            }
                         });
                     }
                 } else if prop == "EQUATORIAL_EOD_COORD" {

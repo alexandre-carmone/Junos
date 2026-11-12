@@ -152,6 +152,17 @@ pub(super) fn spawn_refresh_loop(send: SendCmd, store: DeviceStore) {
             // ── Mount INDI properties ────────────────────────────────
             // EQUATORIAL_EOD_COORD is owned by `spawn_mount_coord_loop`
             // (faster cadence + re-subscribe); intentionally not polled here.
+            // TELESCOPE_SLEW_RATE only until its labels land: a driver that
+            // came up after the bootstrap retry gave up.
+            if let Some(mount) = store.module_train_untracked("3").map(|t| t.mount)
+                .filter(|m| !m.is_empty() && m != "--")
+                .filter(|_| store.mount_status.with_untracked(|o| o.as_ref().map_or(true, |m| m.slew_rates.is_empty())))
+            {
+                send(serde_json::json!({
+                    "type": "device_property_get",
+                    "payload": { "device": mount, "property": "TELESCOPE_SLEW_RATE", "compact": false }
+                }).to_string());
+            }
 
             // ── Focuser INDI properties (Focus train) ────────────────
             if let Some(foc) = focus_train.as_ref().map(|t| t.focuser.as_str())

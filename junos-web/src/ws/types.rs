@@ -20,6 +20,9 @@ pub struct MountStatusData {
     pub ra0_h:                Option<f64>,
     pub dec0_deg:             Option<f64>,
     pub slew_rate:            Option<i32>,
+    /// The driver's `TELESCOPE_SLEW_RATE` element labels, in order: the
+    /// index `mount_set_slew_rate` and `slewRate` refer to.
+    pub slew_rates:           Vec<String>,
     pub target:               String,
     pub status_str:           String,
     pub meridian_flip_status: String,
