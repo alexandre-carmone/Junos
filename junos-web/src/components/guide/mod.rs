@@ -54,7 +54,7 @@ use crate::compat::{GuideSnapshot, GuiderSignals};
 use crate::components::form::{sheet, CARD, CARD_TITLE, FOOTER};
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{t, Lang};
-use crate::ws::SendCmd;
+use crate::ws::{ProfileInfo, SendCmd};
 use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
@@ -207,6 +207,9 @@ pub fn GuideTab(
     #[prop(into)] capture_status: Signal<String>,
     /// Ekos is started (`new_connection_state.online`).
     #[prop(into)] online: Signal<bool>,
+    /// KStars' profiles and the selected one, for "Use junos guider".
+    profiles: RwSignal<Vec<ProfileInfo>>,
+    selected_profile: RwSignal<Option<String>>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let native = Memo::new(move |_| guider.state.with(Option::is_some));
@@ -214,7 +217,7 @@ pub fn GuideTab(
     view! {
         <Show when=move || native.get() fallback=move || view! { <EkosGuide guide=guide send=send.clone() /> }>
             <NativeGuide guide=guide guider=guider capture_status=capture_status online=online
-                         send=send_native.clone() />
+                         profiles=profiles selected_profile=selected_profile send=send_native.clone() />
         </Show>
     }
 }

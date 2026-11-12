@@ -1868,5 +1868,8 @@
   "guider_pa_adjust": "Adjust",
   "guider_connect_ekos": "Connect Ekos",
   "guider_ekos_autostar_warning": "Ekos auto-star off: its tracking box wins once guiding starts",
-  "guider_cal_ekos_reset_note": "Ekos clears this calibration on every slew while its Reset calibration option is on (the default, in the Ekos settings)."
+  "guider_cal_ekos_reset_note": "Ekos clears this calibration on every slew while its Reset calibration option is on (the default, in the Ekos settings).",
+  "guider_use_junos_guider": "Use junos guider",
+  "guider_use_junos_note": "Ekos profile {profile}: PHD2 at localhost:{port}",
+  "guider_restart_profile": "Restart the Ekos profile to apply: Ekos reads its guider only when a profile starts."
 }

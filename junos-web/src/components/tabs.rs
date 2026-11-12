@@ -162,6 +162,7 @@ pub fn TabContent(
         <Show when=guide_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <GuideTab guide=guide_snapshot guider=guider capture_status=capture_status online=store.online
+                          profiles=store.profiles selected_profile=store.selected_profile
                           send=Arc::clone(&send_guide) />
             </div>
         </Show>

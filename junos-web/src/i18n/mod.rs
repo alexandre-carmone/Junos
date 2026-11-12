@@ -418,6 +418,8 @@ translations! {
     abins_warn_mismatch, abins_warn_offsets,
     // Guide tab — junos-guider with Ekos
     guider_connect_ekos, guider_ekos_autostar_warning, guider_cal_ekos_reset_note,
+    // Guide tab — Ekos settings, Use junos guider
+    guider_use_junos_guider, guider_use_junos_note, guider_restart_profile,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

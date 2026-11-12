@@ -9,6 +9,12 @@
 //!   echo `option_set`).
 //! - Save calibration is `guide_set_calibration_settings` (message.cpp:679),
 //!   a bulk save of the 8 calibration fields from the current widget map.
+//! - "Use junos guider" (native mode only) edits the selected KStars
+//!   profile — guider PHD2, host localhost, the daemon's port — with
+//!   `profile_update`, as the Profiles editor saves. Ekos sets its guider
+//!   type from the profile only when the profile starts (manager.cpp:1266,
+//!   1343; `option_set guiderType` changes nothing live), hence the restart
+//!   hint while its guider is still another.
 
 use std::sync::Arc;
 
@@ -18,7 +24,7 @@ use serde_json::Value;
 use crate::components::form::{CARD_TITLE, CHIP, FOOTER, LABEL, ROW};
 use crate::dom::event_target_value;
 use crate::i18n::{t, Lang};
-use crate::ws::SendCmd;
+use crate::ws::{ProfileInfo, SendCmd};
 use crate::ws_helpers::{dispatch_setting, option_get, option_set, send_cmd};
 
 use super::rows::{bool_row, num_row, section, select_row, value_str, LabelFn, Rows, NUM};
@@ -99,6 +105,60 @@ fn option_row(r: &Rows, send: &SendCmd, options: Memo<Value>, name: &'static str
     }
 }
 
+/// What "Use junos guider" reads: KStars' profiles, the selected one, the
+/// daemon's event-server port and whether Ekos is started.
+#[derive(Clone, Copy)]
+pub struct UseJunos {
+    pub profiles: RwSignal<Vec<ProfileInfo>>,
+    pub selected: RwSignal<Option<String>>,
+    pub port: Memo<Option<u16>>,
+    pub online: Signal<bool>,
+}
+
+/// The "Use junos guider" row: what it sets, the button (lit once the
+/// profile matches), then the restart hint.
+fn use_junos_row(j: UseJunos, guider: Memo<i64>, send: SendCmd, lang: RwSignal<Lang>) -> impl IntoView {
+    let tr = move || t(lang.get());
+    let profile = Signal::derive(move || {
+        let name = j.selected.get()?;
+        j.profiles.with(|l| l.iter().find(|p| p.name == name).cloned())
+    });
+    let set = Memo::new(move |_| {
+        let port = j.port.get();
+        profile.with(|p| p.as_ref().is_some_and(|p| {
+            p.guiding == 1 && matches!(p.remote_guiding_host.as_str(), "localhost" | "127.0.0.1") && Some(p.remote_guiding_port) == port
+        }))
+    });
+    let apply = move |_| {
+        let (Some(mut p), Some(port)) = (profile.get_untracked(), j.port.get_untracked()) else { return };
+        p.guiding = 1;
+        p.remote_guiding_host = "localhost".into();
+        p.remote_guiding_port = port;
+        send_cmd(&send, "profile_update", p.to_json());
+        // KStars' editor also sets the PHD2 host / port options at once
+        // (profileeditor.cpp:188-191): re-read them.
+        refresh_options(&send);
+    };
+    let what = move || {
+        let name = profile.with(|p| p.as_ref().map(|p| p.name.clone())).unwrap_or_else(|| "\u{2014}".into());
+        let port = j.port.get().map_or_else(|| "\u{2014}".into(), |p| p.to_string());
+        tr().guider_use_junos_note.replace("{profile}", &name).replace("{port}", &port)
+    };
+    view! {
+        <div class=ROW>
+            <span class="flex-1 min-w-0 text-xs text-text-muted leading-snug">{what}</span>
+            <button type="button" class=move || if set.get() { format!("{CHIP} btn--active shrink-0") } else { format!("{CHIP} shrink-0") }
+                    disabled=move || profile.with(Option::is_none) || j.port.get().is_none()
+                    on:click=apply>
+                {move || tr().guider_use_junos_guider}
+            </button>
+        </div>
+        <Show when=move || set.get() && j.online.get() && guider.get() != 1>
+            <div class="text-xs text-state-warn leading-snug pb-1">{move || tr().guider_restart_profile}</div>
+        </Show>
+    }
+}
+
 #[component]
 pub fn GuideSettings(
     settings: Memo<Value>,
@@ -106,6 +166,8 @@ pub fn GuideSettings(
     status: Memo<String>,
     #[prop(into)] send: SendCmd,
     lang: RwSignal<Lang>,
+    /// Native mode: the "Use junos guider" row.
+    #[prop(optional)] junos: Option<UseJunos>,
 ) -> impl IntoView {
     let tr = move || t(lang.get());
     let s_set = send.clone();
@@ -141,6 +203,7 @@ pub fn GuideSettings(
                         }
                     })}
                 </div>
+                {junos.map(|j| use_junos_row(j, guider, send.clone(), lang))}
                 <div class="flex flex-col" class:hidden=move || guider.get() != 1>
                     {option_row(&c, &send, options, "pHD2Host", |t| t.guide_host, false)}
                     {option_row(&c, &send, options, "pHD2Port", |t| t.guide_port, true)}

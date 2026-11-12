@@ -14,8 +14,9 @@
 //! (`guide_start`, "via Ekos") so its own sequence logic stays in charge, and
 //! so does Stop (`guide_stop`) while Ekos' state is one its abort acts on;
 //! the rest is always native. Not attached yet, the footer offers Connect
-//! Ekos (KStars' D-Bus `connectGuider`, as Connect PHD2 in the Ekos mode).
-//! With Ekos' auto-star off, Ekos moves the lock to its own tracking box once
+//! Ekos (KStars' D-Bus `connectGuider`, as Connect PHD2 in the Ekos mode),
+//! and the Ekos settings sheet's "Use junos guider" points the KStars
+//! profile at the daemon (`settings.rs`). With Ekos' auto-star off, Ekos moves the lock to its own tracking box once
 //! guiding starts (guide.cpp:1769): a caption over the footer says so. While
 //! Ekos' Capture is active, Dither is off (Ekos dithers from its sequence)
 //! and Stop takes a second tap, since it aborts the capture.
@@ -28,7 +29,7 @@ use crate::components::imaging::status_is_active;
 use crate::components::sky::persisted;
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::i18n::{t, Lang, Translations};
-use crate::ws::SendCmd;
+use crate::ws::{ProfileInfo, SendCmd};
 use crate::ws_helpers::send_cmd;
 use crate::Tab;
 
@@ -42,7 +43,7 @@ use super::pa_tools::pa_tools_sheet;
 use super::frame::{frame_pane, zoom, FramePane};
 use super::logs::{alert_toast, logs_sheet};
 use super::protocol::{Reply, Rpc, Settle, CALIBRATING, GUIDING, LOOPING, LOST_LOCK, PAUSED, SELECTED};
-use super::settings::{settings_i64, GuideSettings};
+use super::settings::{settings_i64, GuideSettings, UseJunos};
 use super::star_profile::star_profile;
 use super::tools::tools_sheet;
 use super::stats::{compute, stats_tiles};
@@ -102,6 +103,8 @@ pub fn NativeGuide(
     guider: GuiderSignals,
     capture_status: Signal<String>,
     online: Signal<bool>,
+    profiles: RwSignal<Vec<ProfileInfo>>,
+    selected_profile: RwSignal<Option<String>>,
     send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -348,11 +351,18 @@ pub fn NativeGuide(
     let alerts = guider.alerts;
     let log = guider.log;
 
-    // Ekos' settings sheet stays reachable (its guider choice, PHD2 port).
+    // Ekos' settings sheet stays reachable (its guider choice, PHD2 port),
+    // with "Use junos guider".
     let settings = Memo::new(move |_| snap.with(|g| g.settings.clone()));
     let options = Memo::new(move |_| snap.with(|g| g.options.clone()));
     let status = Memo::new(move |_| snap.with(|g| g.status.clone()));
     let send_settings = send.clone();
+    let junos = UseJunos {
+        profiles,
+        selected: selected_profile,
+        port: Memo::new(move |_| state.with(|s| s.as_ref().and_then(|s| s.port))),
+        online,
+    };
 
     view! {
         <div class="absolute inset-0 bg-bg text-text flex flex-col overflow-hidden">
@@ -452,7 +462,7 @@ pub fn NativeGuide(
                 match open.get()? {
                     Sheet::Ekos => Some(sheet(move || tr().guide_settings_title, close, view! {
                         <GuideSettings settings=settings options=options status=status
-                                       send=send_settings.clone() lang=lang />
+                                       send=send_settings.clone() lang=lang junos=junos />
                     }).into_any()),
                     Sheet::Equipment => Some(sheet(move || tr().guider_equipment_title, close,
                                                    equipment_sheet(equip.clone())).into_any()),
