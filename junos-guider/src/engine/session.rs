@@ -627,7 +627,7 @@ impl Engine {
         let pointing = PointingSummary {
             coords: p.and_then(|p| p.coordinates()),
             pier_side: p.map_or(Default::default(), |p| p.pier_side()),
-            latitude: None,
+            latitude: p.and_then(|p| p.site_lat_long()).map(|(lat, _)| lat),
             rotator: self.rotator.as_ref().map(|r| r.position_deg().unwrap_or(ROTATOR_POSITION_UNKNOWN)),
         };
         let camera = self.camera.as_ref().map(|c| {
