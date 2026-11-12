@@ -1,6 +1,7 @@
 //! Rotary tab wheel — right-edge tab navigator.
 //!
-//! Collapsed: a small circular knob showing the active tab's abbreviation.
+//! Collapsed: an edge tab — the knob slid mostly off the right edge, showing
+//!            the active tab's icon in a 24 px sliver.
 //! Expanded:  an arc of tab buttons on the left half of a 200 px disc, with
 //!            the active tab snapped to the 9 o'clock position. Clicking a
 //!            tab rotates the wheel so the chosen tab slides to the active
@@ -479,36 +480,46 @@ pub fn TabWheel() -> impl IntoView {
                 }
             />
 
-            // Centre knob — always visible (faded when idle). Tapping toggles
-            // expanded state.
+            // Centre knob — always visible. Idle, it slides right into an edge
+            // tab (24 px showing) so it hides as little of the tab as it can.
+            // Tapping toggles expanded state.
             <button
                 class=move || {
-                    let base = "absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 \
+                    let base = "absolute top-1/2 -translate-x-1/2 -translate-y-1/2 \
                                 w-[68px] h-[68px] rounded-full border-2 border-text-blue \
                                 bg-bg-wheel backdrop-blur-glass text-text-dim font-ui font-bold text-base leading-none tracking-[0.06em] \
                                 cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] \
                                 shadow-3 pointer-events-auto \
-                                transition-[background,border-color,box-shadow,transform,opacity] duration-300 ease-out \
+                                transition-[left,background,border-color,box-shadow,transform,opacity] duration-300 ease-out \
                                 hover:border-accent-cyan active:scale-[0.97] \
                                 flex items-center justify-center min-w-0";
-                    let fade = if expanded.get() { "opacity-100" } else { "opacity-25 hover:opacity-100" };
-                    format!("{base} {fade}")
+                    let state = if expanded.get() {
+                        "left-1/2 opacity-100"
+                    } else {
+                        "left-[calc(50%+48px)] opacity-60 hover:opacity-100"
+                    };
+                    format!("{base} {state}")
                 }
                 title=move || tab_title(active.get(), &tr())
                 on:click=on_knob_click
                 on:wheel={ let w = Rc::clone(&on_wheel); move |ev| w(ev) }
             >
                 <span
-                    class="inline-block w-[60%] h-[60%] pointer-events-none"
+                    class=move || {
+                        // Idle: a small icon centred in the visible sliver.
+                        let s = if expanded.get() { "w-[60%] h-[60%]" } else { "w-[16px] h-[16px] -translate-x-[22px]" };
+                        format!("inline-block pointer-events-none transition-transform duration-300 {s}")
+                    }
                     inner_html=move || tab_icon(active.get())
                 />
             </button>
 
             // Lang + tab-labels toggles — small chips just below the knob,
-            // only visible when expanded.
+            // shifted 20 px left so the row stays on screen; only visible
+            // when expanded.
             <div
                 class=move || {
-                    let base = "absolute left-1/2 top-[calc(50%+42px)] -translate-x-1/2 \
+                    let base = "absolute left-[calc(50%-20px)] top-[calc(50%+42px)] -translate-x-1/2 \
                                 flex gap-1 transition-opacity duration-150";
                     let vis = if expanded.get() { "opacity-100 pointer-events-auto" } else { "opacity-0 pointer-events-none" };
                     format!("{base} {vis}")
