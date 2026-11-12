@@ -833,6 +833,9 @@ fn capture(
             return Err(CaptureError::Timeout);
         }
     }
+    // `bool usingSubframe = UseSubframes` (gear_simulator.cpp:1458): the
+    // guider's box is only a request.
+    let subframe = subframe.filter(|_| settings.use_subframes);
     let (img, download_ms) = {
         let mut s = lock(sh);
         (s.render(duration, subframe, settings.shutter_closed), s.p.frame_download_ms)
@@ -1394,13 +1397,19 @@ mod tests {
         assert_eq!(hot, 8);
         assert!(dark.data.iter().all(|&v| v == u16::MAX || (6000..=11998).contains(&v)));
 
-        // A subframe is the only area read; one past the frame edge is dropped.
+        // Subframes off (PHD2's default): the full frame whatever the box.
         let sub = Rect::new(600, 420, 100, 100);
         let img = cam.capture(500, CaptureKind::Light, Some(sub), &settings(), &cancel).unwrap();
+        assert_eq!(img.subframe, None);
+        assert!(img.data.iter().all(|&v| v > 0));
+
+        // A subframe is the only area read; one past the frame edge is dropped.
+        let subs = CameraSettings { use_subframes: true, ..settings() };
+        let img = cam.capture(500, CaptureKind::Light, Some(sub), &subs, &cancel).unwrap();
         assert_eq!(img.subframe, Some(sub));
         assert_eq!((img.pixel(599, 420), img.pixel(600, 520)), (0, 0));
         assert!(img.pixel(600, 420) >= 3000 && img.pixel(699, 519) >= 3000);
-        let img = cam.capture(500, CaptureKind::Light, Some(Rect::new(701, 0, 52, 10)), &settings(), &cancel).unwrap();
+        let img = cam.capture(500, CaptureKind::Light, Some(Rect::new(701, 0, 52, 10)), &subs, &cancel).unwrap();
         assert_eq!(img.subframe, None);
         assert!(img.data.iter().all(|&v| v > 0));
     }
