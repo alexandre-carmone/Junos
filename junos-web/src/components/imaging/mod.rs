@@ -12,7 +12,11 @@
 //! Outbound (message.cpp::processCaptureCommands):
 //!   - capture_preview, capture_loop, capture_start (runs the next pending
 //!     job), capture_stop (stops whatever runs, framing included)
-//!   - capture_set_all_settings {<widget>: value} — `fields.rs`
+//!   - capture_set_all_settings {<widget>: value} — `fields.rs`; before a
+//!     Preview or Loop, Capture's own temperature target is cleared
+//!     (`cameraTemperatureN` to "--", or `cameraTemperatureS` off on older
+//!     KStars), so a one-shot frame neither waits for it nor sets it: the
+//!     Cooling card alone sets the camera's temperature
 //!   - capture_load_sequence_file {filedata | filepath} (replaces the queue),
 //!     capture_save_sequence_file {filepath}, capture_remove_sequence {index},
 //!     capture_clear_sequences, capture_get_sequences
@@ -230,6 +234,16 @@ pub fn ImagingTab(
         let s = s_plain.clone();
         move |_| send_cmd(&s, ty, json!({}))
     };
+    // Preview and Loop: one-shot frames, at whatever temperature the Cooling
+    // card left the camera.
+    let s_frame = send.clone();
+    let one_shot = move |ty: &'static str| {
+        let s = s_frame.clone();
+        move |_| {
+            settings.clear_temperature_target();
+            send_cmd(&s, ty, json!({}));
+        }
+    };
     let s_run = send.clone();
     let on_run = move |_| {
         let ty = if busy.get_untracked() { "capture_stop" } else { "capture_start" };
@@ -285,6 +299,7 @@ pub fn ImagingTab(
             }));
             send_cmd(&send, "livestacker_start", json!({}));
             if start_loop {
+                settings.clear_temperature_target();
                 send_cmd(&send, "capture_loop", json!({}));
                 loop_started.set(true);
             }
@@ -673,11 +688,11 @@ pub fn ImagingTab(
             // Footer: Preview, Loop, Start / Stop.
             <div class=format!("{FOOTER} md:pl-4 md:pr-6")>
                 <button class="btn btn-ghost h-11 px-4 max-md:flex-1 md:ml-auto" disabled=move || busy.get()
-                        on:click=plain("capture_preview")>
+                        on:click=one_shot("capture_preview")>
                     {move || tr().preview}
                 </button>
                 <button class="btn btn-ghost h-11 px-4 max-md:flex-1" disabled=move || busy.get()
-                        on:click=plain("capture_loop")>
+                        on:click=one_shot("capture_loop")>
                     {move || tr().focus_loop_btn}
                 </button>
                 <button class=move || if stack_on.get() {

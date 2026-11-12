@@ -100,6 +100,27 @@ impl Settings {
         text(&self.get(key))
     }
 
+    /// Clear Capture's own temperature target before a one-shot frame, so a
+    /// Preview or Loop neither waits for it nor sets it on the camera: the
+    /// Cooling card drives the camera alone. A preview job takes its target
+    /// from that panel (`Camera::updateJobFromUI`); KStars before Sep 2026
+    /// enforces it through the `cameraTemperatureS` box, later ones through
+    /// `cameraTemperatureN` itself, whose "--" (no target) is the range's
+    /// minimum — what any lower value clamps to.
+    pub(super) fn clear_temperature_target(&self) {
+        let (enforce, target) = self.snapshot.with_untracked(|snap| {
+            (snap.get("cameraTemperatureS").cloned(), snap.get("cameraTemperatureN").is_some())
+        });
+        let clear = match enforce {
+            Some(Value::Bool(true)) => Some(("cameraTemperatureS", Value::Bool(false))),
+            Some(_) => None,
+            None => target.then(|| ("cameraTemperatureN", Value::from(-1000.0))),
+        };
+        if let Some((key, value)) = clear {
+            self.send.with_value(|send| dispatch_setting(send, SET_ALL, None, key, value));
+        }
+    }
+
     /// Pin `value` and send it to KStars.
     fn set(&self, key: &'static str, value: Value) {
         self.pinned.update(|m| { m.insert(key, value.clone()); });
