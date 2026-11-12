@@ -8,6 +8,8 @@
 //! The relay socket's own `set_frame_filter` and `get_history` are not
 //! here: the socket answers them itself.
 
+use std::time::{Duration, Instant};
+
 use serde_json::{Value, json};
 
 use super::methods::command;
@@ -18,11 +20,11 @@ use crate::engine::assistant::{self, RecKind};
 use crate::engine::calibration::Calibration;
 use crate::engine::control::DitherMode;
 use crate::engine::log::image_log::ImageLoggerSettings;
-use crate::engine::traits::{PierSide, Point};
+use crate::engine::traits::{CancelToken, PierSide, Point};
 use crate::engine::{
     BookmarkOp, CalAssistCmd, Command, DarksBuildKind, DriftAlignCmd, Engine, GearRole, ManualPointing, StaticPaSet, Which,
 };
-use crate::indi::client::Role;
+use crate::indi::client::{DeviceEntry, IndiClient, Role};
 
 /// PHD2's `pConfig->Global` keys the UI edits through `set_profile_value`
 /// (the rest are the profile's); `guider_settings` carries them too.
@@ -200,6 +202,7 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
             d.connect_device(role, flag(p, "connected")?).await.map_err(|e| RpcError::new(e.code, e.message))
         }
         "list_devices" => Ok(list_devices(d)),
+        "scan_indi" => scan_indi(d, p).await,
         "set_algorithm" => {
             let kind = AlgoKind::from_i32(int(p, "algorithm")?).ok_or_else(|| e1("unknown algorithm"))?;
             command(d, Command::SetAlgorithm { axis: axis(p)?, kind }).await
@@ -426,14 +429,20 @@ async fn set_equipment(d: &Daemon, p: &Params<'_>) -> Result<Value, RpcError> {
 
 /// `guider_devices`: the INDI server of the gear last connected and every
 /// device it described, with the roles the chooser offers it for; empty
-/// before a connect (and with `--sim`).
+/// before a connect (and with `--sim`). The gear's client asks indiserver
+/// for its watched devices only (PHD2's watchDevice), so the list holds
+/// those and whatever else it sent: `scan_indi` is the chooser's list.
 pub fn list_devices(d: &Daemon) -> Value {
-    let Some(c) = d.indi_client() else {
-        return json!({"host": null, "port": null, "connected": false, "devices": []});
-    };
-    // The client asks indiserver for its watched devices only (PHD2's
-    // watchDevice), so the list holds those and whatever else it sent.
-    let link = c.lock();
+    match d.indi_client() {
+        Some(c) => device_list(&c),
+        None => json!({"host": null, "port": null, "connected": false, "devices": []}),
+    }
+}
+
+/// A client's devices in the store's order, each with the roles the
+/// chooser offers it for (by its `DRIVER_INFO` interface when defined,
+/// `IndiClient::devices`); a device that fits none (a focuser) has none.
+fn device_list(c: &IndiClient) -> Value {
     let roles = [
         (Role::Camera, "camera"),
         (Role::Mount, "mount"),
@@ -441,22 +450,80 @@ pub fn list_devices(d: &Daemon) -> Value {
         (Role::Ao, "ao"),
         (Role::Rotator, "rotator"),
     ];
-    let devices: Vec<Value> = link
-        .store
-        .devices()
+    let per_role: Vec<(&str, Vec<DeviceEntry>)> = roles.iter().map(|(r, n)| (*n, c.devices(*r))).collect();
+    let (names, up): (Vec<String>, bool) = {
+        let link = c.lock();
+        (link.store.devices().iter().map(|d| d.name.clone()).collect(), link.is_up())
+    };
+    let devices: Vec<Value> = names
         .iter()
-        .map(|dev| {
-            let i = dev.driver_interface();
-            let fits: Vec<&str> = roles.iter().filter(|(r, _)| i == 0 || r.includes(i)).map(|(_, n)| *n).collect();
-            json!({
-                "name": dev.name,
-                "interfaces": i,
-                "roles": fits,
-                "connected": link.device_connected(&dev.name) == Some(true),
-            })
+        .map(|name| {
+            let mut entry = None;
+            let mut fits = Vec::new();
+            for (role, list) in &per_role {
+                if let Some(e) = list.iter().find(|e| &e.name == name) {
+                    fits.push(*role);
+                    entry = Some(e);
+                }
+            }
+            let (interfaces, connected) = entry.map_or_else(
+                || {
+                    let link = c.lock();
+                    let i = link.store.device(name).map_or(0, |d| d.driver_interface());
+                    (i, link.device_connected(name) == Some(true))
+                },
+                |e| (e.interfaces, e.connected),
+            );
+            json!({"name": name, "interfaces": interfaces, "roles": fits, "connected": connected})
         })
         .collect();
-    json!({"host": c.host(), "port": c.port(), "connected": link.is_up(), "devices": devices})
+    json!({"host": c.host(), "port": c.port(), "connected": up, "devices": devices})
+}
+
+/// How long `scan_indi` waits for the definitions to stop coming, and at
+/// most after the hello: indiserver sends every driver's in one burst.
+const SCAN_QUIET: Duration = Duration::from_millis(300);
+const SCAN_MAX: Duration = Duration::from_secs(2);
+
+/// `scan_indi`: the device list of PHD2's INDI dialog (`INDIConfig`, which
+/// opens its own connection to the server and watches no device, so that
+/// indiserver describes them all), the profile's server unless `host` /
+/// `port` name another. A connection of its own, closed once the server
+/// has gone quiet; `guider_devices`' shape.
+async fn scan_indi(d: &Daemon, p: &Params<'_>) -> Result<Value, RpcError> {
+    use crate::engine::calibration::ProfileAccess;
+    let host = p.param("host").and_then(Value::as_str).map(str::to_string);
+    let port = p.param("port").and_then(int_param);
+    let (def_host, def_port) = (d.options().indi_host.clone(), d.options().indi_port);
+    let (host, port) = engine(d, move |e| {
+        let prof = e.store().profile();
+        let host = host.unwrap_or_else(|| prof.get_str("/indi/INDIhost", &def_host));
+        Ok((host, port.unwrap_or_else(|| prof.get_i32("/indi/INDIport", def_port as i32))))
+    })
+    .await?;
+    let port = u16::try_from(port).ok().filter(|p| *p > 0).ok_or_else(|| RpcError::invalid_params("expected port param"))?;
+    if host.trim().is_empty() {
+        return Err(RpcError::invalid_params("expected host param"));
+    }
+    tokio::task::spawn_blocking(move || {
+        let c = IndiClient::start(&host, port, &[]);
+        let list = c.wait_up(&CancelToken::new()).map(|_| {
+            let (mut seq, mut since) = (c.lock().store.seq(), Instant::now());
+            // A timeout only means the server never went quiet.
+            let _ = c.wait(SCAN_MAX, None, |l| {
+                let now = l.store.seq();
+                if now != seq {
+                    (seq, since) = (now, Instant::now());
+                }
+                (since.elapsed() >= SCAN_QUIET).then_some(())
+            });
+            device_list(&c)
+        });
+        c.shutdown();
+        list.ok_or_else(|| e1(&format!("cannot connect to the INDI server at {host}:{port}")))
+    })
+    .await
+    .map_err(|_| e1("the INDI scan failed"))?
 }
 
 /// The log folder's PHD2 logs, newest first.
@@ -607,6 +674,44 @@ mod tests {
         assert_eq!(px.await, Ok(10.0));
         assert_eq!(call(&d, "set_image_logger", json!({})).await.unwrap_err().message, "expected enabled param");
         assert_eq!(call(&d, "select_star", json!({"x": 1})).await.unwrap_err().message, "expected y param");
+        d.shutdown().await;
+        d.close();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn scan_indi_lists_every_device_of_the_server() {
+        use crate::indi::fake::{self, Fake};
+        let fake = Fake::start(|e, peer| {
+            if e.name == "getProperties" {
+                let mut all = String::new();
+                for (dev, bits) in [("CCD Simulator", 0x6), ("Telescope Simulator", 0x5), ("Focuser Simulator", 0x8)] {
+                    all += &fake::driver(dev, bits, dev == "Telescope Simulator");
+                }
+                peer.send(&all);
+            }
+        });
+        let d = start(&dir("extras-scan"), |_| {});
+        // The profile's server, then one named in the call.
+        let set = json!({"indi_host": "127.0.0.1", "indi_port": fake.port});
+        assert_eq!(call(&d, "set_equipment", set).await, Ok(json!(0)));
+        let r = call(&d, "scan_indi", json!({})).await.unwrap();
+        assert_eq!((r["host"].as_str(), r["port"].as_u64(), r["connected"].as_bool()), (Some("127.0.0.1"), Some(fake.port as u64), Some(true)));
+        let devices = r["devices"].as_array().unwrap();
+        let names: Vec<&str> = devices.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["CCD Simulator", "Telescope Simulator", "Focuser Simulator"]);
+        assert_eq!(devices[0]["roles"], json!(["camera"]));
+        assert_eq!(devices[1]["roles"], json!(["mount", "aux_mount"]));
+        assert_eq!((devices[1]["interfaces"].as_u64(), devices[1]["connected"].as_bool()), (Some(5), Some(true)));
+        assert_eq!(devices[2]["roles"], json!([]));
+        // Nothing watched: the server was asked for every device.
+        assert!(fake.received().iter().any(|e| e.name == "getProperties" && e.attr("device").is_none()));
+        let r = call(&d, "scan_indi", json!({"host": "127.0.0.1", "port": fake.port})).await.unwrap();
+        assert_eq!(r["devices"].as_array().unwrap().len(), 3);
+        // A server nobody listens on.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let r = call(&d, "scan_indi", json!({"host": "127.0.0.1", "port": closed})).await.unwrap_err();
+        assert_eq!(r, e1(&format!("cannot connect to the INDI server at 127.0.0.1:{closed}")));
+        assert_eq!(call(&d, "scan_indi", json!({"port": 0})).await.unwrap_err().code, -32602);
         d.shutdown().await;
         d.close();
     }

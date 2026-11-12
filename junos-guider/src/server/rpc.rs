@@ -227,6 +227,7 @@ pub static METHODS: &[Method] = &[
     ),
     ws("connect_device", &["role", "connected"]),
     ws("list_devices", &[]),
+    ws("scan_indi", &["host", "port"]),
     ws("set_algorithm", &["axis", "algorithm"]),
     ws("reset_algo_params", &["axis"]),
     ws("set_manual_pointing", &["latitude", "longitude", "ra", "dec", "pier_side"]),
