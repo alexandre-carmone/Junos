@@ -845,18 +845,22 @@ impl ProfileInfo {
         }
     }
 
-    /// Serialize for `profile_add` / `profile_update`.
+    /// Serialize for `profile_add` / `profile_update`. The ports go as
+    /// text: `ProfileEditor::setSettings` reads them with
+    /// `QJsonValue::toString(default)` (profileeditor.cpp:539, 542), which
+    /// takes a number for its default (7624 / 4400); null keeps that default.
     pub fn to_json(&self) -> serde_json::Value {
+        let port = |p: u16| if p == 0 { serde_json::Value::Null } else { p.to_string().into() };
         serde_json::json!({
             "name":                self.name,
             "auto_connect":        self.auto_connect,
             "port_selector":       self.port_selector,
             "mode":                self.mode,
             "remote_host":         self.remote_host,
-            "remote_port":         self.remote_port,
+            "remote_port":         port(self.remote_port),
             "guiding":             self.guiding,
             "remote_guiding_host": self.remote_guiding_host,
-            "remote_guiding_port": self.remote_guiding_port,
+            "remote_guiding_port": port(self.remote_guiding_port),
             "use_web_manager":     self.use_web_manager,
             "mount":               self.mount,
             "ccd":                 self.ccd,
