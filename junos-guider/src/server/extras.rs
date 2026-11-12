@@ -377,7 +377,8 @@ pub async fn dispatch(d: &Daemon, call: &Call) -> Result<Value, RpcError> {
         "list_logs" => list_logs(&d.options().engine.log_dir),
         "read_log" => {
             let tail = p.param("tail").and_then(Value::as_u64);
-            read_log(&d.options().engine.log_dir, text(p, "name")?, tail)
+            let offset = p.param("offset").and_then(Value::as_u64).unwrap_or(0);
+            read_log(&d.options().engine.log_dir, text(p, "name")?, tail, offset)
         }
         _ => Err(RpcError::new(METHOD_NOT_FOUND, "method not found")),
     }
@@ -474,14 +475,33 @@ fn list_logs(dir: &str) -> Result<Value, RpcError> {
     Ok(Value::Array(logs.into_iter().map(|(n, size, t)| json!({"name": n, "size": size, "modified": t})).collect()))
 }
 
-/// The log called `name` in the log folder, or its last `tail` bytes.
-fn read_log(dir: &str, name: &str, tail: Option<u64>) -> Result<Value, RpcError> {
+/// The most of a log one reply carries, bytes: a debug log can pass the
+/// relay's 16 MiB WebSocket frame.
+const LOG_CHUNK: u64 = 1 << 20;
+
+/// The log called `name` in the log folder: its last `tail` bytes, or up to
+/// `LOG_CHUNK` bytes from `offset`, cut after a line end (never inside a
+/// UTF-8 character) unless the file ends there. `next` is where the next
+/// chunk starts; the whole file is read once `next` reaches `size`.
+fn read_log(dir: &str, name: &str, tail: Option<u64>, offset: u64) -> Result<Value, RpcError> {
+    use std::io::{Read, Seek, SeekFrom};
     if name.contains('/') || !name.starts_with("PHD2_") || !name.ends_with(".txt") {
         return Err(RpcError::invalid_params("expected name param"));
     }
-    let bytes = std::fs::read(std::path::Path::new(dir).join(name)).map_err(|_| e1("cannot read the log"))?;
-    let from = tail.map_or(0, |t| bytes.len().saturating_sub(t as usize));
-    Ok(json!({"name": name, "size": bytes.len(), "text": String::from_utf8_lossy(&bytes[from..])}))
+    let fail = |_| e1("cannot read the log");
+    let mut f = std::fs::File::open(std::path::Path::new(dir).join(name)).map_err(fail)?;
+    let size = f.metadata().map_err(fail)?.len();
+    let from = tail.map_or(offset.min(size), |t| size.saturating_sub(t.min(LOG_CHUNK)));
+    let mut bytes = Vec::new();
+    f.seek(SeekFrom::Start(from)).map_err(fail)?;
+    f.take(LOG_CHUNK).read_to_end(&mut bytes).map_err(fail)?;
+    if tail.is_none() && from + (bytes.len() as u64) < size {
+        if let Some(end) = bytes.iter().rposition(|&b| b == b'\n') {
+            bytes.truncate(end + 1);
+        }
+    }
+    let next = from + bytes.len() as u64;
+    Ok(json!({"name": name, "size": size, "next": next, "text": String::from_utf8_lossy(&bytes)}))
 }
 
 /// The local sidereal time at `longitude_deg` (east positive), hours, at
@@ -509,9 +529,27 @@ mod tests {
         let logs = list_logs(d).unwrap();
         assert_eq!(logs.as_array().unwrap().len(), 1);
         assert_eq!(logs[0]["name"], "PHD2_GuideLog_a.txt");
-        assert_eq!(read_log(d, "PHD2_GuideLog_a.txt", Some(7)).unwrap()["text"], "line 2\n");
-        assert!(read_log(d, "../PHD2_x.txt", None).is_err());
-        assert!(read_log(d, "other.txt", None).is_err());
+        assert_eq!(read_log(d, "PHD2_GuideLog_a.txt", Some(7), 0).unwrap()["text"], "line 2\n");
+        let all = read_log(d, "PHD2_GuideLog_a.txt", None, 0).unwrap();
+        assert_eq!((all["text"].as_str(), all["next"].as_u64()), (Some("line 1\nline 2\n"), Some(14)));
+        assert_eq!(read_log(d, "PHD2_GuideLog_a.txt", None, 7).unwrap()["text"], "line 2\n");
+        // A log past one chunk comes in whole lines, chunk by chunk.
+        let line = "x".repeat(99) + "\n";
+        std::fs::write(dir.join("PHD2_DebugLog_b.txt"), line.repeat(15_000)).unwrap();
+        let (mut text, mut next) = (String::new(), 0);
+        loop {
+            let r = read_log(d, "PHD2_DebugLog_b.txt", None, next).unwrap();
+            let chunk = r["text"].as_str().unwrap();
+            assert!(chunk.len() as u64 <= LOG_CHUNK && chunk.ends_with('\n'));
+            text.push_str(chunk);
+            next = r["next"].as_u64().unwrap();
+            if next >= r["size"].as_u64().unwrap() {
+                break;
+            }
+        }
+        assert_eq!(text, line.repeat(15_000));
+        assert!(read_log(d, "../PHD2_x.txt", None, 0).is_err());
+        assert!(read_log(d, "other.txt", None, 0).is_err());
     }
 
     use crate::daemon::tests::{dir, start};

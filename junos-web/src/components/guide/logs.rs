@@ -2,7 +2,8 @@
 //! alerts (`guider_alert`, newest first, at most 50 in the store) and its
 //! log files, PHD2's guide and debug logs (`list_logs`), each with a tail
 //! view (`read_log {name, tail}`, newest at the bottom) and a download (the
-//! whole file through `read_log`, saved from a Blob). The toast shows the
+//! whole file through `read_log {name, offset}`, 1 MiB at a time, since a
+//! debug log can pass the relay's 16 MiB frame; saved from a Blob). The toast shows the
 //! newest alert over the bottom of the tab: an info for 8 s, a warning or
 //! an error until tapped.
 
@@ -85,17 +86,26 @@ pub(super) fn logs_sheet(alerts: RwSignal<Vec<GuiderAlert>>, rpc: Rpc, lang: RwS
     let tail = RwSignal::new(None::<Reply>);
     let tail_name = RwSignal::new(String::new());
     let download = RwSignal::new(None::<(String, Reply)>);
+    let downloaded = StoredValue::new(String::new());
     let last = RwSignal::new(None::<Reply>);
-    // A download's whole file, saved once it lands.
+    // A download's chunks, each asked once the one before lands; the file
+    // is saved after the last.
     Effect::new(move |_| {
         let Some((name, reply)) = download.get() else { return };
-        if let Some(r) = reply.get() {
-            if let Ok(v) = &r {
-                download_text(&name, v["text"].as_str().unwrap_or(""));
+        let Some(r) = reply.get() else { return };
+        if let Ok(v) = &r {
+            let chunk = v["text"].as_str().unwrap_or("");
+            downloaded.update_value(|t| t.push_str(chunk));
+            let next = v["next"].as_u64().unwrap_or(0);
+            if !chunk.is_empty() && next < v["size"].as_u64().unwrap_or(0) {
+                download.set(Some((name.clone(), call("read_log", json!({"name": name, "offset": next})))));
+                return;
             }
-            last.set(Some(reply));
-            download.set(None);
+            downloaded.update_value(|t| download_text(&name, &std::mem::take(t)));
         }
+        downloaded.set_value(String::new());
+        last.set(Some(reply));
+        download.set(None);
     });
     let open_tail = move |name: String| {
         tail.set(Some(call("read_log", json!({"name": name, "tail": TAIL_BYTES}))));
@@ -129,7 +139,8 @@ pub(super) fn logs_sheet(alerts: RwSignal<Vec<GuiderAlert>>, rpc: Rpc, lang: RwS
                         {move || tr().guider_logs_tail}
                     </button>
                     <button class="btn btn-ghost h-9 px-3 shrink-0" title=move || tr().guider_logs_download
-                            on:click=move |_| download.set(Some((n2.clone(), call("read_log", json!({"name": n2})))))>
+                            disabled=move || download.with(Option::is_some)
+                            on:click=move |_| download.set(Some((n2.clone(), call("read_log", json!({"name": n2, "offset": 0})))))>
                         "\u{2913}"
                     </button>
                 </div>

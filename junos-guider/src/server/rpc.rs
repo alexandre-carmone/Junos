@@ -294,7 +294,7 @@ pub static METHODS: &[Method] = &[
     ws("set_frame_filter", &["frames", "profile", "kinds", "max_width", "quality"]),
     ws("get_history", &[]),
     ws("list_logs", &[]),
-    ws("read_log", &["name", "tail"]),
+    ws("read_log", &["name", "tail", "offset"]),
 ];
 
 /// The method of that name; a `ws_only` one only when `ws`.
