@@ -14,6 +14,8 @@
 //!   - mount_goto_rade / mount_sync_rade {ra, de, isJ2000} — sexagesimal
 //!     strings (`dms::fromString`); mount_goto_target {target}
 //!   - mount_set_motion {direction: N|S|E|W, action}, mount_set_slew_rate {rate}
+//!     — `rate` is an index into the driver's `TELESCOPE_SLEW_RATE` switch
+//!     (indimount.cpp:1213); the pills are its labels, fetched by `ws/`.
 //!   - mount_park, mount_unpark, mount_abort, mount_set_tracking {enabled}
 //!   - mount_set_all_settings {executeMeridianFlip | meridianFlipOffsetDegrees},
 //!     then mount_get_all_settings: KStars doesn't echo mount settings.
@@ -54,7 +56,6 @@ use crate::Tab;
 type LabelFn = fn(&Translations) -> &'static str;
 
 const DASH: &str = "\u{2014}";
-const RATE_LABELS: [&str; 8] = ["G", "1×", "2×", "4×", "8×", "16×", "32×", "MAX"];
 const BINNING_OPTIONS: [&str; 4] = ["1x1", "2x2", "3x3", "4x4"];
 /// KStars radio groups (align.ui): picking one sends the whole group.
 const POST_ACTIONS: [(&str, LabelFn); 3] = [
@@ -85,7 +86,7 @@ const MOUNT_OPTIONS: &[&str] = &[
 const NUM: &str = "input input--sm font-mono w-[104px] shrink-0 text-right max-md:h-9";
 const PAD: &str = "btn-icon !w-full !h-full text-xl text-text-blue \
                    touch-none select-none [-webkit-touch-callout:none]";
-const RATE: &str = "chip h-9 md:h-7 px-0 min-w-0 justify-center font-mono cursor-pointer";
+const RATE: &str = "chip h-9 md:h-7 px-2 flex-1 basis-14 justify-center font-mono whitespace-nowrap cursor-pointer";
 const BIG: &str = "text-xl md:text-2xl text-text-blue-bright";
 const SMALL: &str = "text-base text-text-dim";
 const LOG_ICON: &str = r##"<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 7 L19 7 M5 12 L19 12 M5 17 L14 17"/></svg>"##;
@@ -388,6 +389,9 @@ pub fn MountTab(
     let parked = Memo::new(move |_| snap.with(|m| m.parked));
     let tracking = Memo::new(move |_| snap.with(|m| m.tracking));
     let rate = Memo::new(move |_| snap.with(|m| m.slew_rate));
+    // The driver's own rates (TELESCOPE_SLEW_RATE labels): KStars' rate is an
+    // index into them, and their number and names vary by driver.
+    let rates = Memo::new(move |_| snap.with(|m| m.slew_rates.clone()));
     let flip_on = Memo::new(move |_| snap.with(|m| m.meridian_flip_enabled.unwrap_or(false)));
     let flip_offset = Memo::new(move |_| snap.with(|m| m.meridian_flip_offset_deg));
     let align = Memo::new(move |_| align_settings.get());
@@ -753,19 +757,25 @@ pub fn MountTab(
                             {pad("S", "\u{2193}")}
                             <span></span>
                         </div>
-                        <span class="text-xs text-text-muted">{move || tr().mount_slew_rate}</span>
-                        <div class="grid grid-cols-8 gap-1">
-                            {(0..8i32).map(|i| {
-                                let set = set_rate.clone();
-                                view! {
-                                    <button type="button"
-                                            class=move || if rate.get() == Some(i) { format!("{RATE} btn--active") } else { RATE.to_string() }
-                                            on:click=move |_| set(i)>
-                                        {RATE_LABELS[i as usize]}
-                                    </button>
+                        <Show when=move || rates.with(|r| !r.is_empty())>
+                            <span class="text-xs text-text-muted">{move || tr().mount_slew_rate}</span>
+                            <div class="flex flex-wrap gap-1">
+                                {
+                                    let set_rate = set_rate.clone();
+                                    move || rates.get().into_iter().enumerate().map(|(i, label)| {
+                                        let i = i as i32;
+                                        let set = set_rate.clone();
+                                        view! {
+                                            <button type="button"
+                                                    class=move || if rate.get() == Some(i) { format!("{RATE} btn--active") } else { RATE.to_string() }
+                                                    on:click=move |_| set(i)>
+                                                {label}
+                                            </button>
+                                        }
+                                    }).collect::<Vec<_>>()
                                 }
-                            }).collect::<Vec<_>>()}
-                        </div>
+                            </div>
+                        </Show>
                     </div>
 
                     <div class=CARD>
