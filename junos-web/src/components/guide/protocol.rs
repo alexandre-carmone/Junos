@@ -53,6 +53,27 @@ pub fn call_error(last: RwSignal<Option<Reply>>) -> Option<String> {
     last.get().and_then(|r| r.get()).and_then(Result::err).map(|e| e.message)
 }
 
+/// Calls whose errors go to `err`. A reply is dropped once it lands, so an
+/// old failure doesn't show again after a later call.
+pub fn error_sink(err: RwSignal<Option<String>>) -> RwSignal<Vec<Reply>> {
+    let calls = RwSignal::new(Vec::<Reply>::new());
+    Effect::new(move |_| {
+        if calls.with(|c| c.iter().any(|r| r.with(Option::is_some))) {
+            calls.update(|c| {
+                c.retain(|r| match r.get_untracked() {
+                    Some(Err(e)) => {
+                        err.set(Some(e.message));
+                        false
+                    }
+                    Some(Ok(_)) => false,
+                    None => true,
+                })
+            });
+        }
+    });
+    calls
+}
+
 /// The calls to junos-guider, through the relay.
 #[derive(Clone)]
 pub struct Rpc {

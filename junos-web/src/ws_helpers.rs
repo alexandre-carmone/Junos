@@ -51,13 +51,17 @@ pub async fn file_command(
     None
 }
 
-/// How long a `guider_rpc` waits for its `guider_rpc_result`.
-const GUIDER_RPC_TIMEOUT_MS: u32 = 10_000;
+/// How long a `guider_rpc` waits for its `guider_rpc_result`, ms: 10 s, and
+/// 3 min for the connects, which answer once every INDI device has (each
+/// may take 30 s, the daemon's `DEVICE_CONNECT_TIMEOUT`).
+fn guider_rpc_timeout_ms(method: &str) -> u32 {
+    if matches!(method, "set_connected" | "connect_device") { 180_000 } else { 10_000 }
+}
 
 /// Call a junos-guider method (PHD2's, or one of the UI's extras) through the
 /// relay: `guider_rpc {method, params, id}`. The returned signal turns
 /// `Some` once with the `guider_rpc_result` (`DeviceStore::guider_pending`),
-/// a timeout after 10 s, or [`GuiderRpcError::LOST`] when the socket or the
+/// a timeout (`guider_rpc_timeout_ms`), or [`GuiderRpcError::LOST`] when the socket or the
 /// daemon goes first. Ids are unique to this page, since the relay hands
 /// every browser every reply.
 pub fn guider_rpc(
@@ -77,9 +81,10 @@ pub fn guider_rpc(
     pending.update_value(|m| {
         m.insert(id.clone(), reply);
     });
+    let timeout_ms = guider_rpc_timeout_ms(method);
     send_cmd(send, "guider_rpc", json!({ "method": method, "params": params, "id": id }));
     wasm_bindgen_futures::spawn_local(async move {
-        gloo_timers::future::TimeoutFuture::new(GUIDER_RPC_TIMEOUT_MS).await;
+        gloo_timers::future::TimeoutFuture::new(timeout_ms).await;
         if let Some(r) = pending.try_update_value(|m| m.remove(&id)).flatten() {
             r.set(Some(Err(GuiderRpcError {
                 code: GuiderRpcError::TIMEOUT,

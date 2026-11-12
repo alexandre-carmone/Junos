@@ -43,13 +43,19 @@ pub fn value_str(v: &Value, key: &str) -> Option<String> {
     })
 }
 
+/// A boolean as the profile holds it: `true`/`false`, or `1`/`0` in a
+/// profile imported from PHD2's text, which types every entry as a number.
+pub fn as_flag(v: &Value) -> Option<bool> {
+    v.as_bool().or(v.as_f64().map(|x| x != 0.0))
+}
+
 /// Checkbox row for a boolean.
 pub fn bool_row(r: &Rows, key: &'static str, label: LabelFn) -> impl IntoView + use<> {
     let (set, values) = (r.set.clone(), r.values);
     view! {
         <label class="flex items-center gap-3 min-h-[44px] md:min-h-9 cursor-pointer">
             <input type="checkbox" class=CHECK
-                   prop:checked=move || values.with(|s| s.get(key).and_then(Value::as_bool).unwrap_or(false))
+                   prop:checked=move || values.with(|s| s.get(key).and_then(as_flag).unwrap_or(false))
                    on:change=move |ev| set(key, Value::Bool(event_target_checked(&ev))) />
             <span class=LABEL>{r.label(label)}</span>
         </label>

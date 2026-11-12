@@ -1110,8 +1110,10 @@ pub struct GuiderCamera {
 #[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
 #[serde(default)]
 pub struct GuiderIndi {
-    pub host: String,
-    pub port: i64,
+    // As the profile holds them while not connected: a hand-edited port may
+    // be a string, and must not fail the whole state.
+    pub host: serde_json::Value,
+    pub port: serde_json::Value,
     pub connected: bool,
 }
 
@@ -1130,7 +1132,10 @@ impl GuiderStatusData {
         if v["attached"].as_bool() == Some(false) {
             return None;
         }
-        Some(serde_json::from_value(v.clone()).unwrap_or(Self { attached: true, ..Self::default() }))
+        Some(serde_json::from_value(v.clone()).unwrap_or_else(|e| {
+            debug_log!("guider_state: {e}");
+            Self { attached: true, ..Self::default() }
+        }))
     }
 }
 

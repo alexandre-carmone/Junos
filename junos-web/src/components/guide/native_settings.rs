@@ -24,7 +24,7 @@ use super::download_text;
 use super::lock_shift::lock_shift_card;
 use super::protocol::{profile_rows, Reply, Rpc, Settle, KEY_DITHER_MODE, KEY_DITHER_RA_ONLY, KEY_DITHER_SCALE};
 use super::pulses::pulses_card;
-use super::rows::{bool_row, num_row, num_row_with, section, LabelFn, Num, Rows};
+use super::rows::{as_flag, bool_row, num_row, num_row_with, section, LabelFn, Num, Rows};
 
 const NUM: &str = "input input--sm font-mono w-[104px] shrink-0 text-right max-md:h-9";
 
@@ -135,7 +135,7 @@ pub fn native_settings_sheet(
         move |key: &'static str, v: Value| -> Reply {
             let cur = |k: &str| if k == key { v.clone() } else { stored(k) };
             let f = |k: &str| cur(k).as_f64().unwrap_or(0.0);
-            let b = |k: &str| cur(k).as_bool().unwrap_or(false);
+            let b = |k: &str| as_flag(&cur(k)).unwrap_or(false);
             if VAR_DELAY.contains(&key) {
                 return rpc.call("set_variable_delay_settings", json!({
                     "Enabled": b(VAR_DELAY[0]),
@@ -190,8 +190,16 @@ pub fn native_settings_sheet(
     };
     let auto_fields = {
         let rpc = rpc.clone();
-        let ae = move || state.with_untracked(|s| s.as_ref().map(|s| s.auto_exposure.clone()).unwrap_or_default());
-        let (min, max, snr) = (RwSignal::new(ae().min as f64), RwSignal::new(ae().max as f64), RwSignal::new(ae().snr));
+        let ae = Memo::new(move |_| state.with(|s| s.as_ref().map(|s| s.auto_exposure.clone()).unwrap_or_default()));
+        let (min, max, snr) = (RwSignal::new(0.0), RwSignal::new(0.0), RwSignal::new(0.0));
+        // The fields as shown, refreshed from the daemon's (another client's edit).
+        Effect::new(move |_| {
+            ae.with(|a| {
+                min.set(a.min as f64);
+                max.set(a.max as f64);
+                snr.set(a.snr);
+            })
+        });
         let reply = RwSignal::new(None::<Reply>);
         Effect::new(move |_| {
             if let Some(Err(e)) = reply.get().and_then(|r| r.get()) {
@@ -200,7 +208,9 @@ pub fn native_settings_sheet(
         });
         Effect::new(move |prev: Option<()>| {
             let (a, b, c) = (min.get(), max.get(), snr.get());
-            if prev.is_some() {
+            // An edit is sent, the echo is not.
+            let echo = ae.with_untracked(|e| (e.min as f64, e.max as f64, e.snr) == (a.round(), b.round(), c));
+            if prev.is_some() && !echo {
                 reply.set(Some(rpc.call("set_auto_exposure", json!({ "min": a.round() as i64, "max": b.round() as i64, "target_snr": c }))));
             }
         });
@@ -314,7 +324,7 @@ pub fn native_settings_sheet(
             <input type="number" min="1" max="100" step="1" class=NUM prop:value=move || next_n.get()
                    on:input=move |ev| next_n.set(event_target_value(&ev)) />
             <button class="btn btn-ghost h-9 px-3"
-                    disabled=move || !settings.with(|s| s.get(IMAGE_LOGGER[0]).and_then(Value::as_bool).unwrap_or(false))
+                    disabled=move || !settings.with(|s| s.get(IMAGE_LOGGER[0]).and_then(as_flag).unwrap_or(false))
                     on:click=move |_| save_next()>
                 {move || tr().save_btn}
             </button>

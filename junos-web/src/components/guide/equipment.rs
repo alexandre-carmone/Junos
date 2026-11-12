@@ -170,6 +170,8 @@ fn watch_replies(err: RwSignal<Option<String>>) -> RwSignal<Vec<(Reply, After)>>
 
 fn profile_select(e: &Equip, err: RwSignal<Option<String>>, calls: RwSignal<Vec<(Reply, After)>>) -> impl IntoView + use<> {
     let (profiles, rpc) = (e.profiles, e.rpc.clone());
+    // Redrawn on an error: a refused pick goes back to the selected profile.
+    let refused = Memo::new(move |_| err.with(Option::is_some));
     view! {
         <select class=SELECT
                 on:change=move |ev| {
@@ -178,6 +180,7 @@ fn profile_select(e: &Equip, err: RwSignal<Option<String>>, calls: RwSignal<Vec<
                     calls.update(|c| c.push((rpc.call("set_profile", json!({ "id": id })), After::Nothing)));
                 }>
             {move || profiles.with(|p| {
+                refused.track();
                 p.as_array().cloned().unwrap_or_default().into_iter().map(|p| {
                     let id = p["id"].as_i64().unwrap_or(0);
                     let name = p["name"].as_str().unwrap_or_default().to_string();
@@ -267,14 +270,26 @@ pub fn equipment_card(e: Equip) -> impl IntoView {
 
 /// A role's row: its choice, and its INDI device (typed, or picked from
 /// what the server listed for the role).
-fn role_row<G: Fn(Value) + Clone + Send + Sync + 'static>(r: &'static Role, rows: &Rows, devices: RwSignal<Value>, gear: G) -> impl IntoView + use<G> {
+fn role_row<G: Fn(Value) + Clone + Send + Sync + 'static>(
+    r: &'static Role,
+    rows: &Rows,
+    devices: RwSignal<Value>,
+    err: RwSignal<Option<String>>,
+    gear: G,
+) -> impl IntoView + use<G> {
     let values = rows.values;
+    // Redrawn on an error: a refused choice or device goes back to the profile's.
+    let refused = Memo::new(move |_| err.with(Option::is_some));
     let tr = rows.label(r.label);
     let list = format!("guider-dev-{}", r.id);
     let choice = Memo::new(move |_| values.with(|v| v.get(r.choice_key).and_then(Value::as_str).unwrap_or("None").to_string()));
-    let device = move || values.with(|v| v.get(r.device_key).and_then(Value::as_str).unwrap_or_default().to_string());
+    let device = move || {
+        refused.track();
+        values.with(|v| v.get(r.device_key).and_then(Value::as_str).unwrap_or_default().to_string())
+    };
     let gear2 = gear.clone();
     let options = move || {
+        refused.track();
         let cur = choice.get();
         let mut all: Vec<&str> = vec!["None", r.indi];
         all.extend(r.extra);
@@ -446,7 +461,7 @@ pub fn equipment_sheet(e: Equip) -> impl IntoView {
     };
 
     let devices_body = {
-        let roles = ROLES.iter().map(|r| role_row(r, &rows, devices, gear.clone())).collect_view();
+        let roles = ROLES.iter().map(|r| role_row(r, &rows, devices, err, gear.clone())).collect_view();
         view! {
             <Show when=move || locked.get()>
                 <span class="text-xs text-state-warn">{move || tr().guider_gear_locked}</span>

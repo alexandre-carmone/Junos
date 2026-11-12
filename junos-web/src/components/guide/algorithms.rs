@@ -27,10 +27,10 @@ use crate::i18n::{t, Lang, Translations};
 use crate::ws::GuiderStatusData;
 
 use super::protocol::{
-    algo, algo_by_class, profile_rows, ALGOS, second_tap, AlgoParam, Reply, Rpc, AO_ALGOS, DEC_ALGOS, KEY_CAL_DISTANCE,
+    algo, algo_by_class, error_sink, profile_rows, ALGOS, second_tap, AlgoParam, Reply, Rpc, AO_ALGOS, DEC_ALGOS, KEY_CAL_DISTANCE,
     KEY_CAL_DURATION, KEY_DEC_GUIDE_MODE, KEY_MAX_DEC_DURATION, KEY_MAX_RA_DURATION, RA_ALGOS,
 };
-use super::rows::{bool_row, num_row, num_row_with, section, LabelFn, Num, Rows};
+use super::rows::{as_flag, bool_row, num_row, num_row_with, section, LabelFn, Num, Rows};
 
 /// PHD2's `DEC_GUIDE_MODE` order (`/scope/DecGuideMode`), as
 /// `set_dec_guide_mode` spells them.
@@ -114,7 +114,7 @@ fn flag_row(r: &Rows, key: &'static str, label: LabelFn) -> impl IntoView + use<
         <label class="flex items-center gap-3 min-h-[44px] md:min-h-9 cursor-pointer">
             <input type="checkbox" class=CHECK
                    prop:checked=move || values.with(|s| {
-                       s.get(key).and_then(|v| v.as_bool().or(v.as_f64().map(|x| x != 0.0))).unwrap_or(false)
+                       s.get(key).and_then(as_flag).unwrap_or(false)
                    })
                    on:change=move |ev| set(key, Value::Bool(event_target_checked(&ev))) />
             <span class=LABEL>{r.label(label)}</span>
@@ -197,14 +197,7 @@ pub fn algorithms_sheet(
 
     // Reset: `reset_algo_params` on pMount's axes, the table's defaults on
     // the other mount's.
-    let resets = RwSignal::new(Vec::<Reply>::new());
-    Effect::new(move |_| {
-        for r in resets.get() {
-            if let Some(Err(e)) = r.get() {
-                err.set(Some(e.message));
-            }
-        }
-    });
+    let resets = error_sink(err);
 
     let block_rows = rows.clone();
     let axis_block = move |a: AxisDef| {

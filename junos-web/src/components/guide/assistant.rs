@@ -84,10 +84,19 @@ pub(super) fn assistant_sheet(
 
     // PHD2 ticks the backlash test unless the mount has encoders; the box
     // is the browser's, sent on change and whenever the assistant opens.
+    // The daemon runs each call apart: the box goes once `ga_open` answers.
     let measure_blt = persisted("guider_ga_backlash", true);
+    let opening = RwSignal::new(None::<Reply>);
+    Effect::new(move |_| {
+        if let Some(Ok(_)) = opening.get().and_then(|r| r.get()) {
+            opening.set(None);
+            call("ga_set_measure_backlash", json!({"on": measure_blt.get_untracked()}));
+        }
+    });
     let open = move || {
-        call("ga_open", json!({}));
-        call("ga_set_measure_backlash", json!({"on": measure_blt.get_untracked()}));
+        let r = rpc.with_value(|r| r.call("ga_open", json!({})));
+        last.set(Some(r));
+        opening.set(Some(r));
     };
     if !ga.with_untracked(|g| g["open"].as_bool().unwrap_or(false)) {
         open();

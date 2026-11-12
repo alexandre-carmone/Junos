@@ -20,7 +20,7 @@ use crate::i18n::{t, Lang, Translations};
 use crate::ws::{GuiderCalStep, GuiderStatusData};
 
 use super::cal_assistant::cal_assistant_card;
-use super::protocol::{second_tap, Reply, Rpc, Settle, CALIBRATING, GUIDING, KEY_CAL_DISTANCE, KEY_CAL_DURATION, KEY_FOCAL_LENGTH, KEY_PIXEL_SIZE, LOST_LOCK};
+use super::protocol::{error_sink, second_tap, Reply, Rpc, Settle, CALIBRATING, GUIDING, KEY_CAL_DISTANCE, KEY_CAL_DURATION, KEY_FOCAL_LENGTH, KEY_PIXEL_SIZE, LOST_LOCK};
 use super::rows::section;
 
 const NUM: &str = "input input--sm font-mono w-[104px] shrink-0 text-right max-md:h-9";
@@ -115,14 +115,7 @@ pub fn calibration_sheet(c: CalSheet) -> impl IntoView {
     let (state, calibration, cal_steps, settings, rpc, settle) = (c.state, c.calibration, c.cal_steps, c.settings, c.rpc.clone(), c.settle);
     let ekos_resets = c.ekos_resets;
     let err = RwSignal::new(None::<String>);
-    let calls = RwSignal::new(Vec::<Reply>::new());
-    Effect::new(move |_| {
-        for r in calls.get() {
-            if let Some(Err(e)) = r.get() {
-                err.set(Some(e.message));
-            }
-        }
-    });
+    let calls = error_sink(err);
     let call = move |r: Reply| {
         err.set(None);
         calls.update(|c| c.push(r));

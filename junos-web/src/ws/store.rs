@@ -187,6 +187,13 @@ fn prune_window<T>(v: &mut Vec<T>, newest_ms: f64, t_ms: impl Fn(&T) -> f64, cap
     v.drain(..old.max(v.len().saturating_sub(cap)));
 }
 
+/// [`prune_window`] for the app states, keeping the last one before the
+/// window: the state in force at its start, so the ribbon starts filled.
+fn prune_states(v: &mut Vec<GuideStateSample>, newest_ms: f64) {
+    let old = v.iter().take_while(|s| s.t_ms < newest_ms - GUIDER_WINDOW_MS).count();
+    v.drain(..old.saturating_sub(1).max(v.len().saturating_sub(256)));
+}
+
 impl DeviceStore {
     /// Resolve the optical train assigned to an Ekos module by its
     /// `ProfileSettings` enum key ("1"=Capture, "2"=Focus, "3"=Mount,
@@ -382,7 +389,7 @@ impl DeviceStore {
             .fold(f64::NEG_INFINITY, f64::max);
         prune_window(&mut steps, newest, |s| s.t_ms, 2000);
         prune_window(&mut markers, newest, |m| m.t_ms, 200);
-        prune_window(&mut states, newest, |s| s.t_ms, 256);
+        prune_states(&mut states, newest);
         self.guider_steps.set(steps);
         self.guider_markers.set(markers);
         self.guider_states.set(states);
@@ -1439,7 +1446,7 @@ impl DeviceStore {
                         if self.guider_states.with_untracked(|v| v.last().map(|s| &s.status) != Some(&app)) {
                             self.guider_states.update(|v| {
                                 v.push(GuideStateSample { t_ms, status: app });
-                                prune_window(v, t_ms, |s| s.t_ms, 256);
+                                prune_states(v, t_ms);
                             });
                         }
                     }
