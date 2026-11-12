@@ -244,6 +244,10 @@ pub fn capture_frame(
     clock: &dyn Clock,
 ) -> Result<UsImage, CaptureError> {
     let start = clock.wall();
+    // Every camera's `Capture` starts from `takeSubframe = UseSubframes`
+    // (cam_indi.cpp:991, gear_simulator.cpp:1444): the guider's bounding
+    // box is only a request.
+    let subframe = subframe.filter(|_| settings.use_subframes);
     let mut img = camera.capture(dur_ms, kind, subframe, settings, cancel)?;
     img.img_start_time = start;
     img.bits_per_pixel = camera.bits_per_pixel();
@@ -573,11 +577,13 @@ mod tests {
             &mut self,
             _dur_ms: u32,
             _kind: CaptureKind,
-            _subframe: Option<Rect>,
+            subframe: Option<Rect>,
             _settings: &CameraSettings,
             _cancel: &CancelToken,
         ) -> Result<UsImage, CaptureError> {
-            Ok(UsImage::new(4, 3))
+            let mut img = UsImage::new(4, 3);
+            img.subframe = subframe;
+            Ok(img)
         }
     }
 
@@ -607,6 +613,14 @@ mod tests {
         let img = capture_frame(&mut cam, &s, 1500, CaptureKind::Light, None, &CancelToken::new(), &Fixed).unwrap();
         assert_eq!((img.w, img.h, img.img_exp_dur, img.bits_per_pixel), (4, 3, 1500, 12));
         assert_eq!(img.img_start_time.timestamp(), 1_000_000);
+        // The bounding box reaches the camera only with "Use Subframes".
+        let sub = Rect::new(1, 1, 2, 1);
+        let mut s = s;
+        let img = capture_frame(&mut cam, &s, 1500, CaptureKind::Light, Some(sub), &CancelToken::new(), &Fixed).unwrap();
+        assert_eq!(img.subframe, None);
+        s.use_subframes = true;
+        let img = capture_frame(&mut cam, &s, 1500, CaptureKind::Light, Some(sub), &CancelToken::new(), &Fixed).unwrap();
+        assert_eq!(img.subframe, Some(sub));
     }
 
     #[test]
