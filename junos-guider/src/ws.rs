@@ -425,7 +425,9 @@ fn calibration_json(v: &CalibrationView, stored: &Value) -> Value {
         "y_rate": v.y_rate * 1000.0,
         "x_parity": parity_str(v.x_parity),
         "y_parity": parity_str(v.y_parity),
-        "declination": v.declination.to_degrees(),
+        // Null at the sentinel, PHD2's "Unknown" (`Mount::DeclinationStr`,
+        // mount.cpp:135), not 997 rad in degrees.
+        "declination": (v.declination != calibration::UNKNOWN_DECLINATION).then(|| v.declination.to_degrees()),
     });
     if let (Some(r), Some(s)) = (r.as_object_mut(), stored.as_object()) {
         r.extend(s.clone());

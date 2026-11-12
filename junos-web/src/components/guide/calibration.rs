@@ -171,7 +171,7 @@ pub fn calibration_sheet(c: CalSheet) -> impl IntoView {
                 (tr.guider_cal_dec_rate, rate("y_rate"), false),
                 (tr.guider_cal_dec_parity, s("y_parity"), false),
                 (tr.guider_cal_ortho, ortho.map_or("\u{2014}".into(), |o| format!("{o:.1}\u{00b0}")), ortho.is_some_and(|o| o.abs() > 12.5)),
-                (tr.guider_cal_declination, format!("{}\u{00b0}", f("declination", 1)), false),
+                (tr.guider_cal_declination, c["declination"].as_f64().map_or("\u{2014}".into(), |d| format!("{d:.1}\u{00b0}")), false),
                 (tr.guider_pier_side, s("pier_side"), false),
                 (tr.guider_cam_binning, c["binning"].as_i64().map_or("\u{2014}".into(), |b| b.to_string()), false),
                 (tr.guider_focal_length, f("focal_length", 0), false),
@@ -289,7 +289,13 @@ pub fn calibration_sheet(c: CalSheet) -> impl IntoView {
     };
 
     // Manual calibration, opened with the current one.
-    let cur = move |k: &str| cal.with_untracked(|c| c[k].as_f64()).map(|v| format!("{v:.3}")).unwrap_or_default();
+    // An unknown declination (null) is offered as 0, as PHD2's dialog does
+    // (manualcal_dialog.cpp:80).
+    let cur = move |k: &str| {
+        cal.with_untracked(|c| c[k].as_f64().or((k == "declination" && c.is_object()).then_some(0.0)))
+            .map(|v| format!("{v:.3}"))
+            .unwrap_or_default()
+    };
     let m: [RwSignal<String>; 5] =
         ["x_rate", "y_rate", "x_angle_deg", "y_angle_deg", "declination"].map(|k| RwSignal::new(cur(k)));
     let m_bin = RwSignal::new(cal.with_untracked(|c| c["binning"].as_i64()).unwrap_or(1).to_string());
