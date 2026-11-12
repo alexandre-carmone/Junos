@@ -16,6 +16,9 @@ jobs:
   check:
     name: typecheck (x86_64)
     runs-on: ubuntu-24.04
+    # Both crates and the guider build warning-free: keep them so.
+    env:
+      RUSTFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@v4
 
@@ -48,5 +51,16 @@ jobs:
       - name: cargo test (server)
         run: cargo test -p junos-server
 
+      # These two INDI tests wait on real time and can fail on a loaded
+      # runner: they run alone in the next step.
       - name: cargo test (guider)
-        run: cargo test -p junos-guider
+        run: >-
+          cargo test -p junos-guider --
+          --skip hello_watch_ping_and_reconnect
+          --skip an_aux_mount_and_the_ways_a_mount_drops
+
+      - name: cargo test (guider, timing tests alone)
+        run: >-
+          cargo test -p junos-guider --lib -- --exact --test-threads=1
+          indi::client::tests::hello_watch_ping_and_reconnect
+          indi::mount::tests::an_aux_mount_and_the_ways_a_mount_drops

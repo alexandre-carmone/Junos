@@ -4,8 +4,10 @@ Two GitHub Actions workflows live in `.github/workflows/`.
 
 ## `ci.yml` — on every push to `main` and every PR
 
-Fast typecheck only (`cargo check` for `junos-server` + `junos-web` on wasm),
-mirroring `just check`. No artifacts. Runs on x86_64.
+`cargo check` of `junos-server`, `junos-guider` (with and without `sim`) and
+`junos-web` on wasm, with warnings denied, the i18n key check, then the server
+and guider tests — the two real-time INDI tests alone, after the others. No
+artifacts. Runs on x86_64.
 
 ## `release.yml` — on version tags and manual dispatch
 
