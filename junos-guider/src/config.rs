@@ -17,9 +17,9 @@ pub struct Config {
 
     /// PHD2 instance number: the event server listens on 4400 + instance - 1
     /// and the config file is suffixed with the instance, like PHD2's `-i`.
-    /// Up to 61136, the last that gives a port.
+    /// Up to 61126, the last that gives the relay's socket a port too.
     #[arg(long, env = "GUIDER_INSTANCE", default_value_t = 1,
-          value_parser = clap::value_parser!(u32).range(0..=61136))]
+          value_parser = clap::value_parser!(u32).range(0..=61126))]
     pub instance: u32,
 
     /// Event-server port override (0 = an ephemeral port, for the tests).
@@ -122,13 +122,14 @@ mod tests {
         assert_eq!(port(&[]), 4400);
         assert_eq!(port(&["--instance", "2"]), 4401);
         assert_eq!(port(&["--instance", "0"]), 4399);
-        assert_eq!(port(&["--instance", "61136"]), 65535);
+        assert_eq!(port(&["--instance", "61126"]), 65525);
         assert_eq!(port(&["--instance", "3", "--server-port", "0"]), 0);
         assert_eq!(port(&["--server-port", "4500"]), 4500);
-        assert!(Config::try_parse_from(["junos-guider", "--instance", "61137"]).is_err());
+        assert!(Config::try_parse_from(["junos-guider", "--instance", "61127"]).is_err());
         let ws = |args: &[&str]| Config::parse_from([&["junos-guider"][..], args].concat()).ws_addr();
         assert_eq!(ws(&[]), "127.0.0.1:4410");
         assert_eq!(ws(&["--instance", "2"]), "127.0.0.1:4411");
+        assert_eq!(ws(&["--instance", "61126"]), "127.0.0.1:65535");
         assert_eq!(ws(&["--instance", "2", "--ws-addr", "0.0.0.0:5000"]), "0.0.0.0:5000");
     }
 }

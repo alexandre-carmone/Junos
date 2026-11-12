@@ -12,6 +12,10 @@ use junos_guider::engine::calibration::ProfileAccess;
 use junos_guider::profile::ProfileStore;
 use junos_guider::server::{EventServer, ServerOptions};
 
+/// Exit code when the instance is already running: the service units list
+/// it in `RestartPreventExitStatus`, so they don't retry every 5 s forever.
+const ALREADY_RUNNING: i32 = 3;
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
@@ -34,7 +38,7 @@ fn main() {
                  option to start a different instance.",
                 cfg.instance
             );
-            exit(1);
+            exit(ALREADY_RUNNING);
         }
         Err(e) => {
             tracing::warn!(lock = %lock.display(), "cannot take the instance lock: {e}");

@@ -357,12 +357,12 @@ in
       };
 
       instance = mkOption {
-        type = types.ints.between 0 61136;
+        type = types.ints.between 0 61126;
         default = 1;
         description = ''
           PHD2 instance number: the event server listens on 4400 + instance
           - 1 (the port Ekos' PHD2 settings must name) and the relay's socket
-          on 4410 + instance - 1.
+          on 4410 + instance - 1, hence at most 61126.
         '';
       };
 
@@ -539,6 +539,8 @@ in
             ExecStart = guiderExecStart;
             Restart = "on-failure";
             RestartSec = "5s";
+            # 3: the instance is already running (junos-guider/src/main.rs).
+            RestartPreventExitStatus = 3;
 
             StateDirectory = "junos-guider";
             StateDirectoryMode = "0750";
@@ -572,6 +574,7 @@ in
           ExecStart = guiderExecStart;
           Restart = "on-failure";
           RestartSec = "5s";
+          RestartPreventExitStatus = 3;
         };
       };
     })

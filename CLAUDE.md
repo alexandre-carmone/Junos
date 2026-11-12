@@ -76,7 +76,7 @@ Pass `--no-https` to skip TLS for headless/CI runs. `config.rs` (clap, env-aware
 `junos-guider` listens on **`:4400`** — PHD2's event server, every interface, `4400 + instance − 1` — and on **`127.0.0.1:4410`** — the relay's socket, `4410 + instance − 1` — which `junos-server` dials (`--guider-ws`/`GUIDER_WS`, default `ws://127.0.0.1:4410`). `config.rs` (clap, each flag with an env var but the three one-shot ones):
 
 - `--indi-host`/`INDI_HOST`, `--indi-port`/`INDI_PORT` — `localhost:7624`; the profile's `/indi/INDIhost` / `/indi/INDIport` (the Equipment sheet) win once set.
-- `--instance`/`GUIDER_INSTANCE` — PHD2's `-i` (default 1): both ports and the config file (`config-N.json`). A second process of the same instance exits at once (an flock on `config[-N].lock`, PHD2's single-instance check).
+- `--instance`/`GUIDER_INSTANCE` — PHD2's `-i` (default 1): both ports and the config file (`config-N.json`). A second process of the same instance exits at once with code 3, which the service units don't restart (an flock on `config[-N].lock`, PHD2's single-instance check). At most 61126, so that the relay's socket stays a port.
 - `--server-port`/`GUIDER_SERVER_PORT` (0 = ephemeral, for the tests), `--ws-addr`/`GUIDER_WS_ADDR`.
 - `--data-dir`/`GUIDER_DATA_DIR` — the profile store, `darks/` and `save_image`'s folder in one place; default `$XDG_CONFIG_HOME/junos-guider/` for the store and `$XDG_DATA_HOME/junos-guider/` for the rest.
 - `--log-dir`/`GUIDER_LOG_DIR` — stands for PHD2's `/frame/LogDir`; default `~/Documents/PHD2`.

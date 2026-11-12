@@ -20,6 +20,8 @@ StateDirectoryMode=0750
 User=astronaut
 Restart=on-failure
 RestartSec=5s
+# 3: the instance is already running.
+RestartPreventExitStatus=3
 # Hardening (mirrors nix/module.nix).
 ProtectSystem=strict
 ProtectHome=true
