@@ -241,11 +241,14 @@ fn profile_part(e: &mut Engine) -> ProfilePart {
     let cal = [MountClass::Scope, MountClass::StepGuider].map(|class| {
         let det = calibration::load_calibration_details(&p, class);
         let stored = calibration::load_calibration(&p, class);
+        // `load_calibration` leaves the timestamp out (PHD2's restore);
+        // `GetLastCalibration` reads it.
+        let when = calibration::get_last_calibration(&p, class).timestamp;
         let steps = |v: &[crate::engine::traits::Point]| v.iter().map(|s| json!([s.x, s.y])).collect::<Vec<_>>();
         json!({
             "pier_side": stored.as_ref().map(|c| c.pier_side.label()),
             "binning": stored.as_ref().map(|c| c.binning),
-            "timestamp": stored.as_ref().map(|c| c.timestamp.clone()),
+            "timestamp": stored.as_ref().map(|_| when),
             "ortho_error": det.ortho_error,
             "ra_steps": steps(&det.ra_steps),
             "dec_steps": steps(&det.dec_steps),
