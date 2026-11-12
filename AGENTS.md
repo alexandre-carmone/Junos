@@ -10,11 +10,14 @@ Nothing repo-specific lives here. This file exists only so agents that look for
 ## The short version
 
 - `junos-web` is a LAN-only KStars/Ekos Live relay plus browser UI, not a cloud
-  client. Two crates: `junos-server` (Axum) and `junos-web` (Leptos + WebGPU).
-- `just check` typechecks both crates; `just test` runs the server tests;
-  `just build` then `just run` builds and starts everything.
-- `kstars/` is read-only upstream C++ reference. Grep it, never edit it.
+  client. Three crates: `junos-server` (Axum), `junos-web` (Leptos + WebGPU)
+  and `junos-guider` (a PHD2 2.6.14 port, the autoguider daemon).
+- `just check` typechecks the three crates; `just test` runs the server and
+  guider tests; `just build` then `just run` builds and starts everything.
+- `kstars/` and `phd2/` are read-only upstream C++ references. Grep them,
+  never edit them.
 - Licensed GPL-3.0-or-later. The constellation figures baked into `junos.bin`
-  are derived from Stellarium and stay GPL-2.0-or-later.
+  are derived from Stellarium and stay GPL-2.0-or-later; `junos-guider` keeps
+  PHD2's BSD-3-Clause notices (`junos-guider/THIRD_PARTY.md`).
 
 Everything else: see `CLAUDE.md`.

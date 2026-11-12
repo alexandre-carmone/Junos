@@ -7,12 +7,15 @@ relay between KStars and your browser. KStars thinks it is talking to
 `ekoslive.com`; in reality the traffic never leaves your LAN. Nothing is sent
 to the cloud, and no account is required.
 
-Two crates make it up:
+Three crates make it up:
 
 - **`junos-server`** — the relay. KStars connects *into* it; browsers connect
   to it; it also serves the compiled frontend.
 - **`junos-web`** — the browser app. A Leptos + WebGPU UI that speaks the
   Ekos Live wire format directly.
+- **`junos-guider`** — an optional autoguider, a Rust port of PHD2 that Ekos
+  drives like PHD2 and the Guide tab drives directly (see
+  [below](#junos-guider-the-built-in-autoguider)).
 
 ## Features
 
@@ -47,6 +50,9 @@ order:
   altitude error readout and correction guidance.
 - **Guide** — start/stop guiding on any backend (Internal, PHD2, LinGuider),
   with a drift timeline, a target scatter plot, and the full settings pane.
+  With **junos-guider** running, the whole guider in the browser: frame,
+  star profile, calibration, algorithms, darks, Guiding Assistant, polar
+  alignment tools and logs.
 - **Scheduler** — the job queue, plus a visual job builder that writes the
   `.esq` sequence file for you. An altitude-tonight chart shows each target's
   height over the night and whether a long session stays above your minimum
@@ -175,6 +181,75 @@ just clean        # cargo clean + rm junos-web/dist
    **Ekos online**, and the mount-anchored FOV reticle should appear on the
    sky view.
 
+## junos-guider: the built-in autoguider
+
+`junos-guider` is a Rust port of [PHD2](https://openphdguiding.org) 2.6.14:
+the same guide algorithms (Hysteresis, Lowpass, Lowpass2, Resist Switch,
+ZFilter, Predictive PEC), calibration, dithering and settling, multi-star
+guiding, dark library and bad-pixel map, Guiding Assistant, polar alignment
+tools and PHD2-format logs. It runs as a daemon on the observatory computer,
+drives the guide camera, mount and AO through your INDI server, and answers
+PHD2's own protocol on port 4400, so Ekos uses it exactly as it uses PHD2.
+Its interface is the browser's **Guide** tab.
+
+It takes PHD2's place: don't run both, they share port 4400 (the Profiles
+tab refuses to launch one while the other runs).
+
+### Run it
+
+```bash
+cargo build --release -p junos-guider           # `just build` builds it too
+./target/release/junos-guider                    # INDI server at localhost:7624
+./target/release/junos-guider --indi-host <host> --indi-port 7624
+```
+
+Or put `junos-guider` on the `PATH` of the Junos host and start it from
+**Profiles › Applications**. It keeps its profiles in
+`~/.config/junos-guider/`, its dark libraries in
+`~/.local/share/junos-guider/darks/`, and its guide and debug logs in
+`~/Documents/PHD2/` under PHD2's names (`PHD2_GuideLog_*.txt` opens in PHD2
+Log Viewer); `--data-dir` and `--log-dir` move them. `--sim` runs it on a
+built-in camera and mount simulator, with no INDI server (build it with
+`cargo build --release -p junos-guider --features sim`). `--help` lists
+every flag and its environment variable.
+
+### From the browser
+
+Once junos-guider runs on the Junos host, the **Guide** tab switches to it
+by itself:
+
+1. **Equipment** — pick the INDI server, the camera, the mount (or
+   *On-camera* for an ST-4 cable), and an AO or rotator if you have one;
+   enter the focal length and pixel size; **Connect all**.
+2. **Loop**, then **Auto-select** a star, or tap one on the frame.
+3. **▶ Guide** — calibrates first when needed, then guides. Dither, Pause
+   and Stop take its place in the footer; the drift graph, RMS, star profile
+   and target plot follow live.
+
+The algorithms, the calibration review, the guider settings, darks and
+bad-pixel map, the Guiding Assistant, polar alignment (drift, static, drift
+align) and PHD2's other tools open from the tab's cards; the Logs sheet
+lists and downloads the guide and debug logs.
+
+### With Ekos
+
+Ekos drives junos-guider the way it drives PHD2:
+
+1. In the Ekos equipment profile, set the guider to **PHD2**, host
+   `localhost` (or the guider's host) and port `4400`. From the browser:
+   Guide tab › Ekos settings (gear) › **Use junos guider** edits the selected
+   profile for you.
+2. Restart the Ekos profile: Ekos reads its guider from the profile only
+   when the profile starts.
+3. Connect the guider in Ekos' Guide module, or with **Connect Ekos** in the
+   Guide tab's footer.
+
+Ekos then calibrates, guides, dithers between frames, pauses around
+autofocus and runs the Scheduler through junos-guider. While Ekos is
+connected, the Guide tab's Guide and Stop go through Ekos, so its sequence
+logic stays in charge; everything else stays in the browser. Only PHD2's
+JSON-RPC server is implemented, not its older binary protocol on port 4300.
+
 ## Startup & shutdown procedures
 
 **Scheduler › Startup & shutdown** shows the night as a timeline of KStars'
@@ -255,6 +330,7 @@ Every option is a long flag with a matching environment variable.
 | `--skymap-dir` | `SKYMAP_DIR` | `.cache/skymap` | Offline sky map (DSS2 HiPS mirror) |
 | `--skymap-online` | `SKYMAP_ONLINE` | off | Fetch missing sky-map tiles from CDS on demand |
 | `--taskqueue-dir` | `TASKQUEUE_DIR` | `~/.local/share/kstars/taskqueue` | Scheduler startup/shutdown queues and scripts |
+| `--guider-ws` | `GUIDER_WS` | `ws://127.0.0.1:4410` | Where junos-guider's relay socket is |
 
 Notes:
 
@@ -345,7 +421,10 @@ self-signed HTTPS one, or pass `--insecure`.
    │     junos-server    │   Axum + Tokio relay
    │  (Rust, native)     │   also serves the frontend at /
    └─────────────────────┘
-         ▲
+         ▲          │  ws://127.0.0.1:4410
+         │          ▼
+         │    junos-guider (optional) ◀── indiserver (INDI)
+         │                            ◀── Ekos' PHD2 client (:4400)
          │  wss://<host>:8443/ws
          │
    Browser ── junos-web (Leptos + WebGPU)
@@ -353,20 +432,24 @@ self-signed HTTPS one, or pass `--insecure`.
 
 KStars connects *inbound* to the relay as if it were `ekoslive.com`. A
 broadcast channel fans every KStars event out to all connected browsers, and
-browser commands are forwarded back to the attached KStars session.
+browser commands are forwarded back to the attached KStars session. When
+junos-guider runs, the relay also dials its local socket and carries the
+guider's state, frames and commands to and from the Guide tab the same way.
 
 The server does **no protocol translation** — messages flow through opaque.
 All Ekos Live semantics live in the WASM client. Beyond the relay, the server
 adds a handful of local HTTP APIs the browser cannot do on its own: the
 captures-folder browser (`/api/files/*`), FITS thumbnailing, star detection
 on focus frames, the offline sky map (`/api/skymap/*`), and
-launching KStars or PHD2 on the host, or powering it off (`/api/apps/*`).
+launching KStars, PHD2 or junos-guider on the host, or powering it off
+(`/api/apps/*`).
 
 ## Repository layout
 
 - **`junos-server/`** — the Axum/Tokio relay and local HTTP APIs.
 - **`junos-web/`** — the Leptos + WebGPU browser app. Binary star and
   deep-sky catalogs live in `junos-web/public/`.
+- **`junos-guider/`** — the PHD2-compatible autoguider daemon.
 - **`scripts/`** — `gen_dso_catalog.py` builds the deep-sky catalog;
   `fetch_skymap.py` mirrors the DSS2 sky map and the Milky Way panorama.
 - **`packaging/`** — Arch Linux package, portable tarball, and CI notes.
@@ -375,12 +458,15 @@ launching KStars or PHD2 on the host, or powering it off (`/api/apps/*`).
 - **`kstars/`** — a read-only checkout of the upstream KStars C++ source,
   kept as the authoritative reference for the Ekos Live wire format. Not
   part of the build.
+- **`phd2/`** — a read-only checkout of PHD2 2.6.14, the source
+  `junos-guider` is ported from. Not part of the build; clone it with
+  `git clone --depth 1 --branch v2.6.14 https://github.com/OpenPHDGuiding/phd2 phd2`.
 
 ## Packaging & CI
 
-- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) typechecks both
-  crates and runs the server tests on every push and pull request
-  (`just check` plus `just test`).
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) typechecks the three
+  crates, checks the translations and runs the server and guider tests on
+  every push and pull request (`just check` plus `just test`).
 - [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the
   portable tarball and the Arch package for x86_64 and aarch64 — natively on
   both, no emulation — and attaches them to a GitHub Release. Trigger it by
@@ -402,6 +488,11 @@ the Stellarium-derived nebula textures and constellation figures described in
 Credits below. Upstream KStars/Ekos, whose protocol Junos speaks, is likewise
 GPL-2.0-or-later.
 
+`junos-guider` is a port of PHD2, distributed under the **BSD-3-Clause**
+license: its notices are kept in
+[`junos-guider/THIRD_PARTY.md`](junos-guider/THIRD_PARTY.md) and at the top
+of every ported file.
+
 ## Credits
 
 This project would not exist without the work of several upstream
@@ -413,6 +504,12 @@ projects. In particular:
   source kept as the authoritative protocol reference. All Ekos session
   logic, INDI device management, and plate-solving is performed by
   KStars itself; Junos is only a relay and a UI.
+
+- **[PHD2 Guiding](https://openphdguiding.org)** (Open PHD Guiding
+  development team, Craig Stark, Bret McKee, the Max Planck Society for the
+  Gaussian-process guider, Ken Self for ZFilter and the polar tools;
+  BSD-3-Clause) — `junos-guider` is a Rust port of PHD2 2.6.14: its
+  algorithms, calibration, tools, logs and event-server protocol.
 
 - **[Stellarium](https://stellarium.org/)** (Stellarium team,
   GPL-2.0-or-later) — the **constellation stick figures** baked into
