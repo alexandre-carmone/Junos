@@ -160,7 +160,7 @@ fn connect_guider(busy: RwSignal<bool>, note: RwSignal<Option<(String, bool)>>, 
             let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
             match body["ok"].as_bool() {
                 Some(true) => Ok(body["accepted"].as_bool().unwrap_or(true)),
-                _ => Err(body["error"].as_str().unwrap_or("unknown error").to_string()),
+                _ => Err(body["error"].as_str().map_or_else(|| t(lang.get_untracked()).guider_unknown_error.to_string(), String::from)),
             }
         }.await;
         busy.set(false);
@@ -201,6 +201,11 @@ fn download_text(name: &str, text: &str) {
 #[component]
 pub fn GuideTab(
     #[prop(into)] guide: Signal<GuideSnapshot>,
+    /// What the native mode reads of Ekos: its guide state, its guide
+    /// settings and the global options (cheaper than the whole `guide`).
+    #[prop(into)] ekos_status: Signal<String>,
+    #[prop(into)] ekos_settings: Signal<serde_json::Value>,
+    #[prop(into)] ekos_options: Signal<serde_json::Value>,
     /// junos-guider's state (the native mode, when `state` is `Some`).
     guider: GuiderSignals,
     /// Ekos Capture's status, for the coexistence guards.
@@ -216,7 +221,8 @@ pub fn GuideTab(
     let send_native = send.clone();
     view! {
         <Show when=move || native.get() fallback=move || view! { <EkosGuide guide=guide send=send.clone() /> }>
-            <NativeGuide guide=guide guider=guider capture_status=capture_status online=online
+            <NativeGuide ekos_status=ekos_status ekos_settings=ekos_settings ekos_options=ekos_options
+                         guider=guider capture_status=capture_status online=online
                          profiles=profiles selected_profile=selected_profile send=send_native.clone() />
         </Show>
     }

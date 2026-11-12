@@ -1961,5 +1961,8 @@
   "guider_cal_ekos_reset_note": "Ekos efface cette calibration à chaque pointage tant que son option Réinitialiser la calibration est active (par défaut, dans les réglages Ekos).",
   "guider_use_junos_guider": "Utiliser junos guider",
   "guider_use_junos_note": "Profil Ekos {profile} : PHD2 sur localhost:{port}",
-  "guider_restart_profile": "Redémarrez le profil Ekos pour l'appliquer : Ekos ne lit son guideur qu'au démarrage d'un profil."
+  "guider_restart_profile": "Redémarrez le profil Ekos pour l'appliquer : Ekos ne lit son guideur qu'au démarrage d'un profil.",
+  "guider_pier_unknown": "Inconnu",
+  "guider_frame_alt": "Image de guidage",
+  "guider_unknown_error": "Erreur inconnue"
 }

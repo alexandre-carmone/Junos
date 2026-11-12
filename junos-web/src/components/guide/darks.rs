@@ -120,12 +120,6 @@ pub(super) fn darks_sheet(
             _ => tr().guider_darks_no_library.to_string(),
         }
     };
-    let defect_counts = move || {
-        darks.with(|d| match (d["defect_map"]["hot"].as_i64(), d["defect_map"]["cold"].as_i64()) {
-            (Some(h), Some(c)) => format!("{} {h} \u{00b7} {} {c}", tr().guider_bpm_hot, tr().guider_bpm_cold),
-            _ => String::new(),
-        })
-    };
     let build = Memo::new(move |_| darks.with(|d| d["build"].clone()));
     let building = move || build.with(|b| !b.is_null());
 
@@ -141,6 +135,10 @@ pub(super) fn darks_sheet(
     let start = move |defect: bool| {
         if armed.get_untracked() != Some(defect) {
             armed.set(Some(defect));
+            gloo_timers::callback::Timeout::new(4000, move || {
+                armed.try_update(|a| if *a == Some(defect) { *a = None });
+            })
+            .forget();
             return;
         }
         armed.set(None);
@@ -195,7 +193,6 @@ pub(super) fn darks_sheet(
                 {use_row(move || tr().guider_darks_use, dark_loaded, move |on| call("darks_use", json!({"dark": on})))}
                 <div class="text-sm text-text-muted">
                     {move || if defect_loaded.get() { tr().guider_bpm_loaded } else { tr().guider_bpm_none }}
-                    " " {defect_counts}
                 </div>
                 {use_row(move || tr().guider_bpm_use, defect_loaded, move |on| call("darks_use", json!({"defect": on})))}
                 {move || (!build.with(Value::is_null)).then(|| {

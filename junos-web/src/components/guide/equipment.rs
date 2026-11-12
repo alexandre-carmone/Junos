@@ -203,27 +203,32 @@ pub fn equipment_card(e: Equip) -> impl IntoView {
         calls.update(|c| c.push((rpc.call(method, params), After::Nothing)));
     };
     let call2 = call.clone();
-    let chips = move || {
-        let call = call.clone();
+    // (ROLES index, device, connected): `guider_state` comes every frame,
+    // the buttons are rebuilt only when a device changes.
+    let devices = Memo::new(move |_| {
         state.with(|s| {
             let Some(s) = s else { return Vec::new() };
-            ROLES
-                .iter()
-                .filter_map(|r| device(s, r.id).map(|d| (r, d)))
-                .map(|(r, (name, on))| {
-                    let call = call.clone();
-                    let id = r.id;
-                    let dot = if on { "bg-state-ok" } else { "bg-text-faint" };
-                    view! {
-                        <button type="button" class=format!("{CHIP} gap-1.5 max-w-full") title=name.clone()
-                                on:click=move |_| call("connect_device", json!({ "role": id, "connected": !on }))>
-                            <span class=format!("w-2 h-2 rounded-full shrink-0 {dot}")></span>
-                            <span class="truncate">{move || (r.label)(tr())}</span>
-                        </button>
-                    }
-                })
-                .collect::<Vec<_>>()
+            ROLES.iter().enumerate().filter_map(|(i, r)| device(s, r.id).map(|(name, on)| (i, name, on))).collect::<Vec<_>>()
         })
+    });
+    let chips = move || {
+        let call = call.clone();
+        devices
+            .get()
+            .into_iter()
+            .map(|(i, name, on)| {
+                let call = call.clone();
+                let (id, label) = (ROLES[i].id, ROLES[i].label);
+                let dot = if on { "bg-state-ok" } else { "bg-text-faint" };
+                view! {
+                    <button type="button" class=format!("{CHIP} gap-1.5 max-w-full") title=name.clone()
+                            on:click=move |_| call("connect_device", json!({ "role": id, "connected": !on }))>
+                        <span class=format!("w-2 h-2 rounded-full shrink-0 {dot}")></span>
+                        <span class="truncate">{move || label(tr())}</span>
+                    </button>
+                }
+            })
+            .collect::<Vec<_>>()
     };
     let select = profile_select(&e, err, calls);
     let connected = Memo::new(move |_| state.with(any_connected));
@@ -529,7 +534,9 @@ pub fn equipment_sheet(e: Equip) -> impl IntoView {
         {field(3, |t| t.guider_dec_deg)}
         {setting_row(move || tr().guider_pier_side, view! {
             <select class=SELECT on:change=move |ev| side.set(event_target_value(&ev))>
-                {["Unknown", "East", "West"].map(|s| view! { <option value=s prop:selected=move || side.with(|v| v == s)>{s}</option> })}
+                {[("Unknown", (|t| t.guider_pier_unknown) as LabelFn), ("East", |t| t.pa_east), ("West", |t| t.pa_west)].map(|(s, l)| view! {
+                    <option value=s prop:selected=move || side.with(|v| v == s)>{move || l(tr())}</option>
+                })}
             </select>
         })}
         <div class="flex gap-2 pt-1">

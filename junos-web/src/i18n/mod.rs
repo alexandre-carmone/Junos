@@ -420,6 +420,7 @@ translations! {
     guider_connect_ekos, guider_ekos_autostar_warning, guider_cal_ekos_reset_note,
     // Guide tab — Ekos settings, Use junos guider
     guider_use_junos_guider, guider_use_junos_note, guider_restart_profile,
+    guider_pier_unknown, guider_frame_alt, guider_unknown_error,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────

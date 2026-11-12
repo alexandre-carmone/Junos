@@ -23,7 +23,7 @@
 
 use leptos::prelude::*;
 
-use crate::compat::{GuideSnapshot, GuiderSignals};
+use crate::compat::GuiderSignals;
 use crate::components::form::{sheet, CARD, CARD_TITLE, FOOTER};
 use crate::components::imaging::status_is_active;
 use crate::components::sky::persisted;
@@ -99,7 +99,9 @@ fn state_label(app: &str, tr: &'static Translations) -> &'static str {
 
 #[component]
 pub fn NativeGuide(
-    guide: Signal<GuideSnapshot>,
+    ekos_status: Signal<String>,
+    ekos_settings: Signal<serde_json::Value>,
+    ekos_options: Signal<serde_json::Value>,
     guider: GuiderSignals,
     capture_status: Signal<String>,
     online: Signal<bool>,
@@ -136,12 +138,14 @@ pub fn NativeGuide(
     });
 
     // Ekos drives Guide / Stop when its guider is PHD2 and attached.
-    let snap = Memo::new(move |_| guide.get());
-    let ekos_phd2 = Memo::new(move |_| online.get() && snap.with(|g| settings_i64(&g.options, "guiderType") == Some(1)));
-    let ekos_status = Memo::new(move |_| snap.with(|g| g.status.clone()));
+    let settings = Memo::new(move |_| ekos_settings.get());
+    let options = Memo::new(move |_| ekos_options.get());
+    let status = Memo::new(move |_| ekos_status.get());
+    let ekos_phd2 = Memo::new(move |_| online.get() && options.with(|o| settings_i64(o, "guiderType") == Some(1)));
+    let ekos_status = status;
     let ekos_drives = Memo::new(move |_| ekos_phd2.get() && ekos_status.with(|s| !s.is_empty() && s != "Disconnected"));
     let ekos_stops = Memo::new(move |_| ekos_drives.get() && ekos_status.with(|s| EKOS_ABORTS.contains(&s.as_str())));
-    let ekos_setting = move |k: &'static str| Memo::new(move |_| snap.with(|g| g.settings.get(k).and_then(|v| v.as_bool())));
+    let ekos_setting = move |k: &'static str| Memo::new(move |_| settings.with(|s| s.get(k).and_then(|v| v.as_bool())));
     let autostar = ekos_setting("guideAutoStar");
     let reset_cal = ekos_setting("kcfg_ResetGuideCalibration");
     let connecting = RwSignal::new(false);
@@ -165,7 +169,7 @@ pub fn NativeGuide(
         steps.with(|s| compute(s, w, k))
     });
     let accuracy = Memo::new(move |_| {
-        scale.get().map(|_| snap.with(|g| g.settings.get("guiderAccuracyThreshold").and_then(|v| v.as_f64()).unwrap_or(1.0)))
+        scale.get().map(|_| settings.with(|s| s.get("guiderAccuracyThreshold").and_then(|v| v.as_f64()).unwrap_or(1.0)))
     });
     let pin_graph = Memo::new(move |_| if guiding.get() { pin_graph_guiding.get() } else { pin_graph_idle.get() });
     let swap = move || {
@@ -175,18 +179,12 @@ pub fn NativeGuide(
 
     // The open sheet; Escape closes it.
     let open = RwSignal::new(None::<Sheet>);
-    {
-        let cb = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |e: web_sys::KeyboardEvent| {
-            if e.key() == "Escape" {
-                open.try_set(None);
-            }
-        });
-        if let Some(win) = web_sys::window() {
-            use wasm_bindgen::JsCast;
-            let _ = win.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
+    let esc = window_event_listener(leptos::ev::keydown, move |e| {
+        if e.key() == "Escape" {
+            open.try_set(None);
         }
-        cb.forget();
-    }
+    });
+    on_cleanup(move || esc.remove());
     // The Guider card's buttons; a tool that runs with its sheet closed
     // shows as active.
     let tool = move |s: Sheet, label: fn(&'static Translations) -> &'static str, busy: Signal<bool>| view! {
@@ -355,9 +353,6 @@ pub fn NativeGuide(
 
     // Ekos' settings sheet stays reachable (its guider choice, PHD2 port),
     // with "Use junos guider".
-    let settings = Memo::new(move |_| snap.with(|g| g.settings.clone()));
-    let options = Memo::new(move |_| snap.with(|g| g.options.clone()));
-    let status = Memo::new(move |_| snap.with(|g| g.status.clone()));
     let send_settings = send.clone();
     let junos = UseJunos {
         profiles,

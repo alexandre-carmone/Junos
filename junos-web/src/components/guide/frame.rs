@@ -222,15 +222,10 @@ pub fn frame_pane(p: FramePane, pinned: bool, swap: impl Fn() + 'static) -> impl
             }
         });
     });
-    {
-        let cb = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
-            laid_out.try_update(|n| *n = n.wrapping_add(1));
-        });
-        if let Some(win) = web_sys::window() {
-            let _ = win.add_event_listener_with_callback("resize", cb.as_ref().unchecked_ref());
-        }
-        cb.forget();
-    }
+    let resize = window_event_listener(leptos::ev::resize, move |_| {
+        laid_out.try_update(|n| *n = n.wrapping_add(1));
+    });
+    on_cleanup(move || resize.remove());
 
     // Tap: the lock (confirmed while guiding); double tap: full screen.
     let last_click = StoredValue::new(0.0_f64);
@@ -306,7 +301,7 @@ pub fn frame_pane(p: FramePane, pinned: bool, swap: impl Fn() + 'static) -> impl
                   fallback=move || view! {
                       <div class="text-text-faint text-sm text-center px-6">{move || tr().guider_no_frame}</div>
                   }>
-                <img node_ref=img_ref alt="guide frame"
+                <img node_ref=img_ref alt=move || tr().guider_frame_alt
                      src=move || frame.with(|f| f.as_ref().map(|f| f.url.clone()).unwrap_or_default())
                      class="max-w-full max-h-full object-contain cursor-crosshair [image-rendering:pixelated]"
                      on:click=on_click.clone()
@@ -350,7 +345,9 @@ pub fn zoom(p: FramePane) -> impl IntoView {
         if !open.get() || lite.is_some_and(|l| l.get()) {
             return None;
         }
-        p.overlay_png()
+        // Once per frame, not on every state message: a PNG encode.
+        frame.track();
+        untrack(|| p.overlay_png())
     });
     frame_zoom(url, overlay.into(), open, lang)
 }

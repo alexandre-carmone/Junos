@@ -58,6 +58,10 @@ pub fn TabContent(
     let capture_snapshot = compat::derive_capture(&store);
     let polar_snapshot = compat::derive_polar_align(&store);
     let guide_snapshot = compat::derive_guide(&store);
+    let guide_status = {
+        let gs = store.guide_status;
+        Signal::derive(move || gs.with(|g| g.as_ref().map(|g| g.status.clone()).unwrap_or_default()))
+    };
     let guider = compat::derive_guider(&store);
     let capture_status = {
         let cs = store.capture_status;
@@ -162,6 +166,7 @@ pub fn TabContent(
         <Show when=guide_visible>
             <div class="absolute inset-0 z-[40] md:right-[64px]">
                 <GuideTab guide=guide_snapshot guider=guider capture_status=capture_status online=store.online
+                          ekos_status=guide_status ekos_settings=store.guide_settings ekos_options=store.options
                           profiles=store.profiles selected_profile=store.selected_profile
                           send=Arc::clone(&send_guide) />
             </div>
