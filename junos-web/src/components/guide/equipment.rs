@@ -306,8 +306,9 @@ fn role_row<G: Fn(Value) + Clone + Send + Sync + 'static>(
 ) -> impl IntoView + use<G> {
     let values = rows.values;
     let lang = rows.lang;
-    // Redrawn on an error: a refused choice or device goes back to the profile's.
-    let refused = Memo::new(move |_| err.with(Option::is_some));
+    // Redrawn on each error: a refused choice or device goes back to the
+    // profile's. Not when the error clears, as the next pick does at once.
+    let refused = Memo::new(move |n: Option<&u32>| n.copied().unwrap_or(0) + u32::from(err.with(Option::is_some)));
     let tr = rows.label(r.label);
     let list = move || format!("guider-dev-{}", r.id);
     let choice = Memo::new(move |_| values.with(|v| v.get(r.choice_key).and_then(Value::as_str).unwrap_or("None").to_string()));
@@ -376,7 +377,8 @@ fn role_row<G: Fn(Value) + Clone + Send + Sync + 'static>(
                 }
             });
             view! {
-                <input class=INPUT list=list() prop:value=device
+                // Kept while typed into, should a scan land meanwhile.
+                <input class=INPUT list=list() prop:value=device on:focus=move |_| typed.set(true)
                        on:change=move |ev| gear(json!({ r.device_param: event_target_value(&ev) })) />
                 <datalist id=list()>{suggestions}</datalist>
                 {back}
@@ -436,8 +438,6 @@ pub fn equipment_sheet(e: Equip) -> impl IntoView {
         profile_rows(
             settings,
             vec![
-                ("/indi/INDIhost", json!("localhost")),
-                ("/indi/INDIport", json!(7624)),
                 ("/indi/INDIcam_ccd", json!(0)),
                 ("/camera/binning", json!(1)),
                 ("/camera/UseSubframes", json!(false)),
@@ -465,9 +465,24 @@ pub fn equipment_sheet(e: Equip) -> impl IntoView {
     let scan = RwSignal::new(None::<Result<Value, String>>);
     let scan_call = RwSignal::new(None::<Reply>);
     let scanning = Memo::new(move |_| scan_call.with(Option::is_some));
+    // The server the gear would use: the profile's, else the daemon's
+    // default (`--indi-host` / `--indi-port`), which `guider_state` carries.
+    let effective = Memo::new(move |_| {
+        let (sh, sp) = state.with(|s| s.as_ref().map(|s| (s.indi.host.clone(), s.indi.port.clone())).unwrap_or_default());
+        settings.with(|v| {
+            let host = v.get("/indi/INDIhost").cloned().unwrap_or(sh);
+            let port = v.get("/indi/INDIport").cloned().unwrap_or(sp);
+            let port = port.as_i64().or_else(|| port.as_str().and_then(|p| p.trim().parse().ok()));
+            (host.as_str().unwrap_or_default().to_string(), port)
+        })
+    });
+    // Both given, so the daemon doesn't wait for the frame in progress.
     let rescan = {
         let rpc = rpc.clone();
-        move || scan_call.set(Some(rpc.call("scan_indi", json!({}))))
+        move || {
+            let (host, port) = effective.get_untracked();
+            scan_call.set(Some(rpc.call("scan_indi", json!({ "host": host, "port": port }))))
+        }
     };
     Effect::new(move |_| {
         let Some(res) = scan_call.get().and_then(|r| r.get()) else { return };
@@ -477,10 +492,8 @@ pub fn equipment_sheet(e: Equip) -> impl IntoView {
     let server = {
         let values = rows.values;
         Memo::new(move |_| {
-            values.with(|v| {
-                let indi = ROLES.iter().any(|r| v.get(r.choice_key).and_then(Value::as_str).is_some_and(|c| c.contains("INDI")));
-                indi.then(|| (v.get("/indi/INDIhost").cloned(), v.get("/indi/INDIport").cloned()))
-            })
+            let indi = values.with(|v| ROLES.iter().any(|r| v.get(r.choice_key).and_then(Value::as_str).is_some_and(|c| c.contains("INDI"))));
+            indi.then(|| effective.get())
         })
     };
     Effect::new({
@@ -488,6 +501,9 @@ pub fn equipment_sheet(e: Equip) -> impl IntoView {
         move |_| {
             if server.get().is_some() {
                 rescan();
+            } else {
+                // The pending reply belonged to this Effect's last run.
+                scan_call.set(None);
             }
         }
     });
@@ -554,9 +570,8 @@ pub fn equipment_sheet(e: Equip) -> impl IntoView {
 
     let indi_body = {
         let (g1, g2) = (gear.clone(), gear.clone());
-        let values = rows.values;
-        let host = move || values.with(|v| v.get("/indi/INDIhost").and_then(Value::as_str).unwrap_or_default().to_string());
-        let port = move || values.with(|v| v.get("/indi/INDIport").and_then(Value::as_i64).unwrap_or(7624).to_string());
+        let host = move || effective.get().0;
+        let port = move || effective.get().1.map(|p| p.to_string()).unwrap_or_default();
         let up = move || state.with(|s| s.as_ref().is_some_and(|s| s.indi.connected));
         view! {
             <div class=ROW>
