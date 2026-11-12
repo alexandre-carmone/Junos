@@ -78,7 +78,7 @@ pub fn stats_tiles(
                   move || rms(stats.with(|s| s.de)), hint)}
             {tile(move || tr().guide_total.to_string(), move || cls(total()), move || rms(total()), hint)}
             {tile(move || tr().guider_peak.to_string(), || "text-text-dim",
-                  move || stats.with(|s| s.peak).map_or_else(dash, |(a, b)| format!("{a:.1} / {b:.1}{}", unit.get())), plain)}
+                  move || stats.with(|s| s.peak).map_or_else(dash, |(a, b)| format!("{a:.1}/{b:.1}{}", unit.get())), plain)}
             {tile(move || tr().guider_snr.to_string(), || "text-text-dim",
                   move || stats.with(|s| s.snr).map_or_else(dash, |v| format!("{v:.1}")), plain)}
             {tile(move || tr().guider_hfd.to_string(), || "text-text-dim",

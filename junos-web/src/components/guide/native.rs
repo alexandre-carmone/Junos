@@ -294,9 +294,11 @@ pub fn NativeGuide(
         let act = act.clone();
         let primary = matches!(b, Btn::Guide) || (b == Btn::Stop && app.get_untracked() != LOOPING && app.get_untracked() != SELECTED);
         let class = match (b, primary) {
-            (Btn::Guide, _) => "btn btn-primary h-11 px-5 font-semibold max-md:flex-1",
-            (Btn::Stop, true) => "btn btn-danger h-11 px-5 font-semibold max-md:flex-1",
-            _ => "btn btn-ghost h-11 px-4 max-md:flex-1",
+            // Narrow padding on phones: three buttons share 390 px and
+            // "Auto-select" was cut.
+            (Btn::Guide, _) => "btn btn-primary h-11 px-5 max-md:px-2 font-semibold max-md:flex-1",
+            (Btn::Stop, true) => "btn btn-danger h-11 px-5 max-md:px-2 font-semibold max-md:flex-1",
+            _ => "btn btn-ghost h-11 px-4 max-md:px-2 max-md:flex-1",
         };
         let label = move || {
             let tr = tr();
