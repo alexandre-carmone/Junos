@@ -285,6 +285,11 @@ fn loop_auto_select_guide_calibrates_then_settles() {
     assert!(log.contains("INFO: SETTLING STATE CHANGE, Settling complete"));
     let dbg = r.debug_log();
     assert!(dbg.contains("PhdController complete: success"));
+    // The image logger is off: no frame reads the profile name for a
+    // FITS header (the guide log's header does, once).
+    let frames = dbg.matches("Exposure complete").count();
+    let reads = dbg.matches("GetString(\"/profile/1/name\"").count();
+    assert!(frames > 20 && reads < 5, "{reads} name reads for {frames} frames");
     // No AO: the slow-bump key is never read (PHD2 reads it at the alert).
     assert!(!dbg.contains("SlowBumpWarningEnabled"));
 }

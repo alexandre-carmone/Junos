@@ -251,6 +251,12 @@ impl ImageLogger {
         }
     }
 
+    /// Whether a frame handed in now could be saved: logging on, or an
+    /// event's frames still to come.
+    pub fn may_save(&self) -> bool {
+        self.settings.logging_enabled || self.images_to_log > 0
+    }
+
     /// `GetSettings`: while a series runs, its count is the frames left
     /// (0 once it is done, the series still on).
     pub fn settings(&self) -> ImageLoggerSettings {

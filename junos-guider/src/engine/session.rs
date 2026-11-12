@@ -574,7 +574,9 @@ impl Engine {
     /// One of `UpdateCurrentPosition`'s image logger calls, on the guider's
     /// current image.
     fn log_frame_image(&mut self, call: ImageLogCall) {
-        let header = self.save_header();
+        // `usImage::Save` reads the profile name (a debug line) only when
+        // it saves; with the logger off (the default) nothing is saved.
+        let header = if self.ilog.may_save() { self.save_header() } else { SaveHeader::default() };
         let (log_dir, stamp) = (self.cfg.log_dir.clone(), self.stamp);
         let img = self.guider.current_image().clone();
         let Engine { ilog, files, .. } = self;
