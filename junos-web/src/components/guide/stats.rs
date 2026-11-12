@@ -77,7 +77,8 @@ pub fn stats_tiles(
             {tile(move || format!("{} RMS", tr().dec_label), move || cls(stats.with(|s| s.de)),
                   move || rms(stats.with(|s| s.de)), hint)}
             {tile(move || tr().guide_total.to_string(), move || cls(total()), move || rms(total()), hint)}
-            {tile(move || tr().guider_peak.to_string(), || "text-text-dim",
+            // Two numbers in a third of a phone's row: one size down there.
+            {tile(move || tr().guider_peak.to_string(), || "text-text-dim max-md:text-sm",
                   move || stats.with(|s| s.peak).map_or_else(dash, |(a, b)| format!("{a:.1}/{b:.1}{}", unit.get())), plain)}
             {tile(move || tr().guider_snr.to_string(), || "text-text-dim",
                   move || stats.with(|s| s.snr).map_or_else(dash, |v| format!("{v:.1}")), plain)}
