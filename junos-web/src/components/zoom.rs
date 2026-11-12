@@ -100,7 +100,7 @@ pub fn frame_zoom(
 
     view! {
         <Show when=move || open.get()>
-            <div class="fixed inset-0 md:right-[64px] z-[80] bg-[rgba(0,0,0,0.92)]">
+            <div class="fixed inset-0 md:right-[var(--tab-strip-w)] z-[80] bg-[rgba(0,0,0,0.92)]">
                 <div class="absolute inset-0 flex items-center justify-center overflow-hidden \
                             select-none cursor-move [touch-action:none]"
                      on:wheel=on_wheel on:pointerdown=on_down on:pointermove=on_move

@@ -1,9 +1,10 @@
 //! Desktop tab bar — vertical strip of all tab icons on the right edge.
 //!
 //! Replaces `TabWheel` at the `md` breakpoint (≥768px) so desktop users see
-//! every tab at once and can click directly. Mobile keeps the wheel. On a
-//! screen shorter than the strip, it scrolls; its padding (cancelled sideways
-//! by a negative margin) keeps the active tab's glow inside the scroller.
+//! every tab at once and can click directly. Mobile keeps the wheel. The strip
+//! is exactly `--tab-strip-w` wide (set on `#junos-app`: 64 px, 96 px with
+//! labels), the gutter the tab panes leave free, so it never covers a tab. On
+//! a screen shorter than the strip, it scrolls.
 
 use leptos::prelude::*;
 use web_sys::MouseEvent;
@@ -28,8 +29,8 @@ pub fn TabBar() -> impl IntoView {
         .unwrap_or_else(|| RwSignal::new(false));
 
     view! {
-        <div class="hidden md:flex flex-col gap-2 fixed right-2 top-1/2 -translate-y-1/2 z-[60] pointer-events-auto \
-                    max-h-[100dvh] overflow-y-auto [scrollbar-width:none] p-2 -mx-2">
+        <div class="hidden md:flex flex-col items-center gap-2 fixed right-0 top-1/2 -translate-y-1/2 z-[60] pointer-events-auto \
+                    w-[var(--tab-strip-w)] max-h-[100dvh] overflow-y-auto [scrollbar-width:none] py-2">
             {TABS.iter().map(|&tab| {
                 view! {
                     <button
@@ -39,7 +40,7 @@ pub fn TabBar() -> impl IntoView {
                                         backdrop-blur-glass \
                                         transition-[background,border-color,box-shadow] duration-150";
                             let size = if show_labels.get() {
-                                "w-[60px] min-h-[52px] px-1 py-1"
+                                "w-[80px] min-h-[52px] px-1 py-1"
                             } else {
                                 "w-[48px] h-[48px]"
                             };
@@ -77,7 +78,7 @@ pub fn TabBar() -> impl IntoView {
                 }
             }).collect_view()}
 
-            <div class="mt-1 self-center flex gap-1">
+            <div class="mt-1 flex flex-col items-center gap-1">
                 <button
                     class="min-w-[36px] h-[24px] min-h-[24px] px-2 \
                            rounded-[12px] border border-text-blue bg-bg-wheel text-text-blue \

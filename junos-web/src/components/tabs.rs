@@ -5,10 +5,11 @@
 //! context survives tab switches, and MosaicTab so its form survives the Pick
 //! on Sky round trip; the others are mounted lazily via `<Show>`.
 //!
-//! Each pane is `z-[40]` and stops `md:right-[64px]` short of the right edge,
-//! where the desktop tab strip lives (`z-[60]`). The pane's z-index traps any
-//! `fixed inset-0` overlay inside it below the strip, so those overlays repeat
-//! `md:right-[64px]` to stay clear of it.
+//! Each pane is `z-[40]` and stops `md:right-[var(--tab-strip-w)]` short of
+//! the right edge, where the desktop tab strip lives (`z-[60]`, that wide; the
+//! variable is set on `#junos-app`). The pane's z-index traps any `fixed
+//! inset-0` overlay inside it below the strip, so those overlays repeat
+//! `md:right-[var(--tab-strip-w)]` to stay clear of it.
 
 use std::sync::Arc;
 
@@ -127,30 +128,30 @@ pub fn TabContent(
             />
         </div>
         <Show when=targets_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
+            <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <TargetsTab site=site send=Arc::clone(&send_targets) />
             </div>
         </Show>
         <Show when=mount_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
+            <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <MountTab mount=mount solve=solve align_settings=store.align_settings options=store.options
                           solver_profiles=store.stellarsolver_profiles filter_wheel=filter_wheel site=site send=Arc::clone(&send_mount) />
             </div>
         </Show>
         <Show when=focus_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
+            <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <FocusTab focus=focus_snapshot send=Arc::clone(&send_focus) />
             </div>
         </Show>
         <Show when=imaging_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
+            <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <ImagingTab capture=capture_snapshot camera=camera filter_wheel=filter_wheel
                             livestacker_state=store.livestacker_state livestacker_settings=store.livestacker_settings
                             online=store.online send=Arc::clone(&send_imaging) />
             </div>
         </Show>
         <Show when=files_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
+            <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <FilesTab
                     online=store.online
                     file_reply=store.file_reply
@@ -159,12 +160,12 @@ pub fn TabContent(
             </div>
         </Show>
         <Show when=polar_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
+            <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <PolarAlignTab polar=polar_snapshot mount=mount send=Arc::clone(&send_polar) />
             </div>
         </Show>
         <Show when=guide_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
+            <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <GuideTab guide=guide_snapshot guider=guider capture_status=capture_status online=store.online
                           ekos_status=guide_status ekos_settings=store.guide_settings ekos_options=store.options
                           profiles=store.profiles selected_profile=store.selected_profile
@@ -172,7 +173,7 @@ pub fn TabContent(
             </div>
         </Show>
         <Show when=scheduler_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
+            <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <SchedulerTab scheduler=scheduler_snapshot site=site camera=camera filter_wheel=filter_wheel
                               capture_settings=store.capture_settings online=store.online file_reply=store.file_reply devices=store.devices
                               indi_properties=store.indi_properties send=Arc::clone(&send_scheduler) />
@@ -180,7 +181,7 @@ pub fn TabContent(
         </Show>
         // Kept mounted too: a Pick on Sky round trip leaves this tab, and its
         // sequence and scheduler options live in local signals.
-        <div class="absolute inset-0 z-[40] md:right-[64px]" class:hidden=move || !mosaic_visible()>
+        <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]" class:hidden=move || !mosaic_visible()>
             <MosaicTab
                 camera=camera
                 filter_wheel=filter_wheel
@@ -192,7 +193,7 @@ pub fn TabContent(
             />
         </div>
         <Show when=devices_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
+            <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <DevicesTab
                     devices=store.devices
                     indi_properties=store.indi_properties
@@ -203,7 +204,7 @@ pub fn TabContent(
             </div>
         </Show>
         <Show when=profiles_visible>
-            <div class="absolute inset-0 z-[40] md:right-[64px]">
+            <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <ProfilesTab
                     profiles=store.profiles
                     selected_profile=store.selected_profile

@@ -128,7 +128,7 @@ pub fn SkyControls(
         <Show when=move || open.get()>
             <div class="panel absolute z-[70] inset-x-0 bottom-0 max-h-[70dvh] \
                         rounded-b-none pb-[max(0.75rem,env(safe-area-inset-bottom))] \
-                        md:inset-x-auto md:bottom-auto md:top-[56px] md:right-[72px] md:w-[300px] \
+                        md:inset-x-auto md:bottom-auto md:top-[56px] md:right-[calc(var(--tab-strip-w)+8px)] md:w-[300px] \
                         md:max-h-[calc(100dvh-140px)] md:rounded-lg md:pb-3 \
                         overflow-y-auto [overscroll-behavior:contain] px-3 pt-2 flex flex-col gap-1.5 text-sm"
                  on:click=|ev| ev.stop_propagation()>

@@ -1780,7 +1780,7 @@ pub fn SkyTab(
             })}
 
             // ── Top bar: search · follow mount · layers ────────────────────
-            <div class="absolute z-50 top-[max(0.5rem,env(safe-area-inset-top))] left-2 right-2 md:right-[72px] \
+            <div class="absolute z-50 top-[max(0.5rem,env(safe-area-inset-top))] left-2 right-2 md:right-[calc(var(--tab-strip-w)+8px)] \
                         flex items-start gap-2 pointer-events-none">
                 <SkySearch
                     sky_search=sky_search

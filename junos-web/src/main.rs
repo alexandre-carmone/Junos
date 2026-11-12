@@ -485,7 +485,10 @@ fn App() -> impl IntoView {
     });
 
     view! {
-        <div id="junos-app" class="fixed inset-0 bg-bg text-[var(--text)] font-ui overflow-hidden">
+        // `--tab-strip-w` is the desktop tab strip's width (`TabBar`): the
+        // tab panes and their overlays stop that far short of the right edge.
+        <div id="junos-app" class="fixed inset-0 bg-bg text-[var(--text)] font-ui overflow-hidden"
+             style=move || format!("--tab-strip-w:{}px;", if show_tab_labels.get() { 96 } else { 64 })>
             <TabContent
                 store=store.clone()
                 send=Arc::clone(&send)
