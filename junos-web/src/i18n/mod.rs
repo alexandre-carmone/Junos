@@ -223,6 +223,8 @@ translations! {
     guider_tap_to_confirm, guider_role_camera, guider_role_mount, guider_role_aux, guider_role_ao,
     guider_role_rotator, guider_connect_all, guider_disconnect_all, guider_connecting, guider_scale_unknown,
     guider_indi_title, guider_indi_host, guider_indi_port, guider_devices_title, guider_gear_locked,
+    guider_indi_scanning, guider_indi_found, guider_indi_refresh, guider_indi_choose, guider_indi_other,
+    guider_indi_not_listed, guider_indi_list,
     guider_camera_title, guider_cam_ccd, guider_cam_ccd_main, guider_cam_ccd_guide, guider_cam_binning,
     guider_cam_subframes, guider_cam_pixel_size, guider_cam_sat_by_adu, guider_cam_sat_adu,
     guider_cam_timeout, guider_cam_gain, guider_cam_cooler, guider_cam_force_video, guider_cam_force_exposure,

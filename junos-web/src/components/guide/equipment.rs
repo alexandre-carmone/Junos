@@ -4,8 +4,9 @@
 //! sheet — PHD2's Connect Equipment dialog and the camera and optics
 //! settings: the profiles (select, new, rename, delete, import, export as
 //! PHD2's `PHD Profile 1` text), the INDI server, each role's choice and
-//! INDI device (the devices the server listed for that role as
-//! suggestions), the camera rows, the focal length with the pixel scale it
+//! INDI device (picked from the devices `scan_indi` found on the server for
+//! that role — scanned when the sheet opens and when the server changes —
+//! or typed), the camera rows, the focal length with the pixel scale it
 //! gives, and the manual pointing a rig with no mount position needs.
 //!
 //! The gear choices go through `set_equipment`, which the daemon refuses
@@ -53,6 +54,8 @@ struct Role {
     choice_param: &'static str,
     device_param: &'static str,
     extra: &'static [&'static str],
+    /// The device key's default, which names no device (`UNSET_CAMERA`, …).
+    unset: &'static str,
 }
 
 const ROLES: [Role; 5] = [
@@ -65,6 +68,7 @@ const ROLES: [Role; 5] = [
         choice_param: "camera",
         device_param: "camera_device",
         extra: &[],
+        unset: "INDI Camera",
     },
     Role {
         id: "mount",
@@ -75,6 +79,7 @@ const ROLES: [Role; 5] = [
         choice_param: "mount",
         device_param: "mount_device",
         extra: &["On-camera", "On-AO"],
+        unset: "INDI Mount",
     },
     // PHD2 keeps one INDI mount device for both the mount and the aux mount.
     Role {
@@ -86,6 +91,7 @@ const ROLES: [Role; 5] = [
         choice_param: "aux_mount",
         device_param: "mount_device",
         extra: &[],
+        unset: "INDI Mount",
     },
     Role {
         id: "ao",
@@ -96,6 +102,7 @@ const ROLES: [Role; 5] = [
         choice_param: "ao",
         device_param: "ao_device",
         extra: &[],
+        unset: "INDI SXV-AO-LF",
     },
     Role {
         id: "rotator",
@@ -106,6 +113,7 @@ const ROLES: [Role; 5] = [
         choice_param: "rotator",
         device_param: "rotator_device",
         extra: &[],
+        unset: "INDI Rotator",
     },
 ];
 
@@ -273,25 +281,42 @@ pub fn equipment_card(e: Equip) -> impl IntoView {
     }
 }
 
-/// A role's row: its choice, and its INDI device (typed, or picked from
-/// what the server listed for the role).
+/// `scan_indi`'s pick that switches a role's device to a typed name.
+const OTHER: &str = "\u{1}other";
+
+/// The devices of `list` (`scan_indi` or `guider_devices`) offered for `role`.
+fn role_devices(list: &Value, role: &str) -> Vec<String> {
+    list["devices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|d| d["roles"].as_array().is_some_and(|rs| rs.iter().any(|x| x == role)))
+        .filter_map(|d| d["name"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// A role's row: its choice, and its INDI device — picked from what the
+/// server listed for the role, or typed (Other…, or when nothing is listed).
 fn role_row<G: Fn(Value) + Clone + Send + Sync + 'static>(
     r: &'static Role,
     rows: &Rows,
-    devices: RwSignal<Value>,
+    devices: Memo<Value>,
     err: RwSignal<Option<String>>,
     gear: G,
 ) -> impl IntoView + use<G> {
     let values = rows.values;
+    let lang = rows.lang;
     // Redrawn on an error: a refused choice or device goes back to the profile's.
     let refused = Memo::new(move |_| err.with(Option::is_some));
     let tr = rows.label(r.label);
-    let list = format!("guider-dev-{}", r.id);
+    let list = move || format!("guider-dev-{}", r.id);
     let choice = Memo::new(move |_| values.with(|v| v.get(r.choice_key).and_then(Value::as_str).unwrap_or("None").to_string()));
     let device = move || {
         refused.track();
         values.with(|v| v.get(r.device_key).and_then(Value::as_str).unwrap_or_default().to_string())
     };
+    let names = Memo::new(move |_| devices.with(|d| role_devices(d, r.id)));
+    let typed = RwSignal::new(false);
     let gear2 = gear.clone();
     let options = move || {
         refused.track();
@@ -308,16 +333,71 @@ fn role_row<G: Fn(Value) + Clone + Send + Sync + 'static>(
             })
             .collect_view()
     };
+    // The listed devices, after the profile's when the server lacks it, or
+    // a prompt when the profile names none.
+    let picks = move || {
+        let cur = device();
+        let tr = t(lang.get());
+        let names = names.get();
+        let unset = cur.trim().is_empty() || cur == r.unset;
+        let head = if unset {
+            Some(view! { <option value="" disabled=true prop:selected=true>{tr.guider_indi_choose}</option> }.into_any())
+        } else if !names.contains(&cur) {
+            let label = tr.guider_indi_not_listed.replace("{name}", &cur);
+            Some(view! { <option value=cur.clone() prop:selected=true>{label}</option> }.into_any())
+        } else {
+            None
+        };
+        let listed = names
+            .into_iter()
+            .map(|n| {
+                let sel = n == cur;
+                view! { <option value=n.clone() prop:selected=sel>{n.clone()}</option> }
+            })
+            .collect_view();
+        view! {
+            {head}
+            {listed}
+            <option value=OTHER>{tr.guider_indi_other}</option>
+        }
+    };
     let suggestions = move || {
-        devices.with(|d| {
-            d["devices"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|d| d["roles"].as_array().is_some_and(|rs| rs.iter().any(|x| x == r.id)))
-                .map(|d| view! { <option value=d["name"].as_str().unwrap_or_default().to_string()></option> })
-                .collect_view()
-        })
+        names.get().into_iter().map(|n| view! { <option value=n></option> }).collect_view()
+    };
+    let typing = Memo::new(move |_| typed.get() || names.with(Vec::is_empty));
+    let device_field = move || {
+        let gear = gear2.clone();
+        if typing.get() {
+            let back = names.with(|n| !n.is_empty()).then(|| {
+                view! {
+                    <button type="button" class="btn btn-ghost h-9 px-2 shrink-0 text-xs" on:click=move |_| typed.set(false)>
+                        {move || t(lang.get()).guider_indi_list}
+                    </button>
+                }
+            });
+            view! {
+                <input class=INPUT list=list() prop:value=device
+                       on:change=move |ev| gear(json!({ r.device_param: event_target_value(&ev) })) />
+                <datalist id=list()>{suggestions}</datalist>
+                {back}
+            }
+            .into_any()
+        } else {
+            view! {
+                <select class=format!("{SELECT} max-w-[190px]")
+                        on:change=move |ev| {
+                            let v = event_target_value(&ev);
+                            if v == OTHER {
+                                typed.set(true);
+                            } else {
+                                gear(json!({ r.device_param: v }));
+                            }
+                        }>
+                    {picks}
+                </select>
+            }
+            .into_any()
+        }
     };
     view! {
         <div class="flex flex-col">
@@ -330,12 +410,7 @@ fn role_row<G: Fn(Value) + Clone + Send + Sync + 'static>(
             <Show when=move || choice.with(|c| c.contains("INDI"))>
                 <div class=ROW>
                     <span class=format!("{LABEL} flex-1 pl-3 text-text-muted")>"INDI"</span>
-                    <input class=INPUT list=list.clone() prop:value=device
-                           on:change={
-                               let gear = gear2.clone();
-                               move |ev| gear(json!({ r.device_param: event_target_value(&ev) }))
-                           } />
-                    <datalist id=list.clone()>{suggestions}</datalist>
+                    {device_field.clone()}
                 </div>
             </Show>
         </div>
@@ -382,6 +457,45 @@ pub fn equipment_sheet(e: Equip) -> impl IntoView {
         )
     };
     let locked = Memo::new(move |_| state.with(any_connected));
+
+    // The server's devices (`scan_indi`): scanned when the sheet opens and
+    // again when the profile's server changes, while some role is an INDI
+    // one; `guider_devices` (the gear's own client) stands in while no scan
+    // has answered.
+    let scan = RwSignal::new(None::<Result<Value, String>>);
+    let scan_call = RwSignal::new(None::<Reply>);
+    let scanning = Memo::new(move |_| scan_call.with(Option::is_some));
+    let rescan = {
+        let rpc = rpc.clone();
+        move || scan_call.set(Some(rpc.call("scan_indi", json!({}))))
+    };
+    Effect::new(move |_| {
+        let Some(res) = scan_call.get().and_then(|r| r.get()) else { return };
+        scan.set(Some(res.map_err(|e| e.message)));
+        scan_call.set(None);
+    });
+    let server = {
+        let values = rows.values;
+        Memo::new(move |_| {
+            values.with(|v| {
+                let indi = ROLES.iter().any(|r| v.get(r.choice_key).and_then(Value::as_str).is_some_and(|c| c.contains("INDI")));
+                indi.then(|| (v.get("/indi/INDIhost").cloned(), v.get("/indi/INDIport").cloned()))
+            })
+        })
+    };
+    Effect::new({
+        let rescan = rescan.clone();
+        move |_| {
+            if server.get().is_some() {
+                rescan();
+            }
+        }
+    });
+    let listed = Memo::new(move |_| match scan.get() {
+        Some(Ok(v)) => v,
+        _ => devices.get(),
+    });
+
     let gear = {
         let call = call.clone();
         move |params: Value| call("set_equipment", params, After::Nothing)
@@ -466,8 +580,31 @@ pub fn equipment_sheet(e: Equip) -> impl IntoView {
     };
 
     let devices_body = {
-        let roles = ROLES.iter().map(|r| role_row(r, &rows, devices, err, gear.clone())).collect_view();
+        let roles = ROLES.iter().map(|r| role_row(r, &rows, listed, err, gear.clone())).collect_view();
+        let status = move || {
+            let tr = tr();
+            if scanning.get() {
+                return view! { <span class="text-xs text-text-muted">{tr.guider_indi_scanning}</span> }.into_any();
+            }
+            match scan.get() {
+                Some(Ok(v)) => {
+                    let n = v["devices"].as_array().map_or(0, Vec::len);
+                    let server = format!("{}:{}", v["host"].as_str().unwrap_or_default(), v["port"]);
+                    let text = tr.guider_indi_found.replace("{n}", &n.to_string()).replace("{server}", &server);
+                    view! { <span class="text-xs text-text-muted">{text}</span> }.into_any()
+                }
+                Some(Err(m)) => view! { <span class="text-xs text-state-err">{m}</span> }.into_any(),
+                None => ().into_any(),
+            }
+        };
         view! {
+            <div class="flex items-center gap-2">
+                <div class="flex-1 min-w-0">{status}</div>
+                <button type="button" class="btn btn-ghost h-9 px-3 shrink-0" disabled=move || scanning.get()
+                        on:click=move |_| rescan()>
+                    {move || tr().guider_indi_refresh}
+                </button>
+            </div>
             <Show when=move || locked.get()>
                 <span class="text-xs text-state-warn">{move || tr().guider_gear_locked}</span>
             </Show>
