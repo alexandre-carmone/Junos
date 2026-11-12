@@ -106,11 +106,12 @@ pub fn frame_zoom(
                      on:wheel=on_wheel on:pointerdown=on_down on:pointermove=on_move
                      on:pointerup=on_up on:pointercancel=on_up
                      on:dblclick=move |_| reset() on:click=on_click>
-                    <img class="max-w-full max-h-full object-contain [image-rendering:pixelated] \
+                    <img class="w-full h-full object-contain [image-rendering:pixelated] \
                                 pointer-events-none select-none will-change-transform"
                          style:transform=move || format!("translate({}px,{}px) scale({})", tx.get(), ty.get(), scale.get())
                          src=move || url.get().unwrap_or_default() />
-                    // Fills the box as the frame does once contained, and both
+                    // Fills the box as the frame does (a frame smaller than the
+                    // box is scaled up too, or the two would part), and both
                     // transform about the box's centre, so they stay aligned.
                     <Show when=move || overlay.with(Option::is_some)>
                         <img class="absolute inset-0 w-full h-full object-contain [image-rendering:pixelated] \
