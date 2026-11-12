@@ -10,11 +10,15 @@
 //! cards on the right. The pinned footer follows PHD2's app state.
 //!
 //! Ekos coexistence: when Ekos runs with its guider set to PHD2 and talks to
-//! the daemon (its guide state is not Disconnected), Guide and Stop go
-//! through Ekos (`guide_start` / `guide_stop`, "via Ekos") so its own
-//! sequence logic stays in charge; the rest is always native. While Ekos'
-//! Capture is active, Dither is off (Ekos dithers from its sequence) and
-//! Stop takes a second tap, since it aborts the capture.
+//! the daemon (its guide state is not Disconnected), Guide goes through Ekos
+//! (`guide_start`, "via Ekos") so its own sequence logic stays in charge, and
+//! so does Stop (`guide_stop`) while Ekos' state is one its abort acts on;
+//! the rest is always native. Not attached yet, the footer offers Connect
+//! Ekos (KStars' D-Bus `connectGuider`, as Connect PHD2 in the Ekos mode).
+//! With Ekos' auto-star off, Ekos moves the lock to its own tracking box once
+//! guiding starts (guide.cpp:1769): a caption over the footer says so. While
+//! Ekos' Capture is active, Dither is off (Ekos dithers from its sequence)
+//! and Stop takes a second tap, since it aborts the capture.
 
 use leptos::prelude::*;
 
@@ -44,9 +48,17 @@ use super::tools::tools_sheet;
 use super::stats::{compute, stats_tiles};
 use super::target::target_plot;
 use super::timeline::{drift_plot, DriftSeries, WINDOW_MS};
-use super::{tone, Sheet};
+use super::{connect_guider, tone, Sheet};
 
 const CHIP: &str = "chip h-9 md:h-7 px-3 justify-center cursor-pointer";
+
+/// Ekos' guide states its `Guide::abort()` stops the guider from
+/// (guide.cpp:1071-1095); from the others (Idle, Calibrated, Dithering
+/// successful, …) it does nothing, so Stop goes native there.
+const EKOS_ABORTS: &[&str] = &[
+    "Capturing", "Looping", "Selecting star", "Calibrating", "Guiding", "Suspended", "Reacquiring",
+    "Dithering", "Manual Dithering", "Settling",
+];
 
 /// The footer's buttons.
 #[derive(Clone, Copy, PartialEq)]
@@ -122,12 +134,14 @@ pub fn NativeGuide(
 
     // Ekos drives Guide / Stop when its guider is PHD2 and attached.
     let snap = Memo::new(move |_| guide.get());
-    let ekos_drives = Memo::new(move |_| {
-        online.get()
-            && snap.with(|g| {
-                settings_i64(&g.options, "guiderType") == Some(1) && !g.status.is_empty() && g.status != "Disconnected"
-            })
-    });
+    let ekos_phd2 = Memo::new(move |_| online.get() && snap.with(|g| settings_i64(&g.options, "guiderType") == Some(1)));
+    let ekos_status = Memo::new(move |_| snap.with(|g| g.status.clone()));
+    let ekos_drives = Memo::new(move |_| ekos_phd2.get() && ekos_status.with(|s| !s.is_empty() && s != "Disconnected"));
+    let ekos_stops = Memo::new(move |_| ekos_drives.get() && ekos_status.with(|s| EKOS_ABORTS.contains(&s.as_str())));
+    let ekos_setting = move |k: &'static str| Memo::new(move |_| snap.with(|g| g.settings.get(k).and_then(|v| v.as_bool())));
+    let autostar = ekos_setting("guideAutoStar");
+    let reset_cal = ekos_setting("kcfg_ResetGuideCalibration");
+    let connecting = RwSignal::new(false);
     let capture_active = Memo::new(move |_| capture_status.with(|s| status_is_active(s)));
 
     // Drift window and unit (″ needs the pixel scale), the pinned pane.
@@ -261,7 +275,7 @@ pub fn NativeGuide(
                         return;
                     }
                     stop_armed.set(false);
-                    if ekos_drives.get_untracked() {
+                    if ekos_stops.get_untracked() {
                         return send_cmd(&send, "guide_stop", serde_json::json!({}));
                     }
                     if app.get_untracked() == PAUSED {
@@ -294,7 +308,11 @@ pub fn NativeGuide(
                 Btn::Stop => tr.guider_btn_stop,
             }
         };
-        let via_ekos = matches!(b, Btn::Guide | Btn::Stop);
+        let via_ekos = move || match b {
+            Btn::Guide => ekos_drives.get(),
+            Btn::Stop => ekos_stops.get(),
+            _ => false,
+        };
         view! {
             <button class=class
                     disabled=move || b == Btn::Dither && capture_active.get()
@@ -302,7 +320,7 @@ pub fn NativeGuide(
                     on:click=move |_| act(b)>
                 <span class="flex flex-col items-center min-w-0 max-w-full leading-tight">
                     <span class="truncate max-w-full">{label}</span>
-                    <Show when=move || via_ekos && ekos_drives.get()>
+                    <Show when=via_ekos>
                         <span class="text-[10px] font-normal opacity-80">{move || tr().guider_via_ekos}</span>
                     </Show>
                 </span>
@@ -398,6 +416,11 @@ pub fn NativeGuide(
                 </div>
             </div>
 
+            <Show when=move || ekos_drives.get() && autostar.get() == Some(false) && buttons(&app.get()).contains(&Btn::Guide)>
+                <div class="shrink-0 px-4 md:pl-4 md:pr-6 py-1 border-t border-border-base bg-bg-elev-1 text-xs text-state-warn truncate">
+                    {move || tr().guider_ekos_autostar_warning}
+                </div>
+            </Show>
             <div class=format!("{FOOTER} px-4 md:pl-4 md:pr-6")>
                 {move || match note.get() {
                     Some((text, is_err)) => view! {
@@ -410,6 +433,15 @@ pub fn NativeGuide(
                         </span>
                     }.into_any(),
                 }}
+                // Ekos on PHD2 but not attached: its Connect, short on phones.
+                <Show when=move || ekos_phd2.get() && !ekos_drives.get()>
+                    <button class="btn btn-ghost h-11 px-3 shrink-0" title=move || tr().guider_connect_ekos
+                            disabled=move || connecting.get()
+                            on:click=move |_| connect_guider(connecting, note, lang)>
+                        <span class="max-md:hidden">{move || tr().guider_connect_ekos}</span>
+                        <span class="md:hidden">"\u{21c4} Ekos"</span>
+                    </button>
+                </Show>
                 {move || buttons(&app.get()).iter().map(|b| button(*b)).collect_view()}
             </div>
 
@@ -432,6 +464,7 @@ pub fn NativeGuide(
                         cal_steps: guider.cal_steps,
                         settings: guider.settings,
                         tools: guider.tools,
+                        ekos_resets: Signal::derive(move || ekos_phd2.get() && reset_cal.get() != Some(false)),
                         rpc: rpc.clone(),
                         settle,
                         lang,

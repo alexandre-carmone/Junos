@@ -33,7 +33,8 @@
 //! `processGuideCommands` — silently dropped. The log export is therefore
 //! client-side: a Blob of `GuideSnapshot.log`.
 //!
-//! HTTP: `POST /api/apps/guider {action: connect}` — the Connect PHD2 button.
+//! HTTP: `POST /api/apps/guider {action: connect}` — the Connect PHD2 button
+//! (Connect Ekos in the native mode, the same call).
 //! Ekos Live has no equivalent of the Guide module's Connect button, and
 //! `option_set GuiderType` only writes the option (`Guide::processGuideOptions`
 //! is never called), so junos-server calls KStars' D-Bus `connectGuider`
@@ -140,6 +141,35 @@ enum Sheet {
     Logs,
     /// Star-cross, lock nudge and bookmarks, meridian flip calibration.
     Tools,
+}
+
+/// Ekos' Connect button, through the server's D-Bus bridge (`POST
+/// /api/apps/guider`). `busy` is on meanwhile; `note` gets the reply worth
+/// showing — a refusal (red) or "already connected" (muted).
+fn connect_guider(busy: RwSignal<bool>, note: RwSignal<Option<(String, bool)>>, lang: RwSignal<Lang>) {
+    note.set(None);
+    busy.set(true);
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = async {
+            let resp = gloo_net::http::Request::post("/api/apps/guider")
+                .json(&serde_json::json!({ "action": "connect" })).map_err(|e| e.to_string())?
+                .send().await.map_err(|e| e.to_string())?;
+            if !resp.ok() {
+                return Err(format!("HTTP {}", resp.status()));
+            }
+            let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+            match body["ok"].as_bool() {
+                Some(true) => Ok(body["accepted"].as_bool().unwrap_or(true)),
+                _ => Err(body["error"].as_str().unwrap_or("unknown error").to_string()),
+            }
+        }.await;
+        busy.set(false);
+        match result {
+            Ok(true) => {}
+            Ok(false) => note.set(Some((t(lang.get_untracked()).guide_phd2_already_connected.to_string(), false))),
+            Err(e) => note.set(Some((e, true))),
+        }
+    });
 }
 
 /// Download the accumulated guide log as a text file.
@@ -252,31 +282,7 @@ fn EkosGuide(guide: Signal<GuideSnapshot>, send: SendCmd) -> impl IntoView {
         if prev.is_some_and(|p| p != now) { note.set(None); }
         now
     });
-    let on_connect = move |_| {
-        note.set(None);
-        connecting.set(true);
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = async {
-                let resp = gloo_net::http::Request::post("/api/apps/guider")
-                    .json(&serde_json::json!({ "action": "connect" })).map_err(|e| e.to_string())?
-                    .send().await.map_err(|e| e.to_string())?;
-                if !resp.ok() {
-                    return Err(format!("HTTP {}", resp.status()));
-                }
-                let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-                match body["ok"].as_bool() {
-                    Some(true) => Ok(body["accepted"].as_bool().unwrap_or(true)),
-                    _ => Err(body["error"].as_str().unwrap_or("unknown error").to_string()),
-                }
-            }.await;
-            connecting.set(false);
-            match result {
-                Ok(true) => {}
-                Ok(false) => note.set(Some((tr().guide_phd2_already_connected.to_string(), false))),
-                Err(e) => note.set(Some((e, true))),
-            }
-        });
-    };
+    let on_connect = move |_| connect_guider(connecting, note, lang);
 
     let stat = move |label: String, value: Option<f64>| view! {
         <div class="min-w-0 rounded-lg bg-bg-elev-2 border border-border-base px-2.5 py-1.5 flex flex-col">

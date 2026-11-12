@@ -1955,5 +1955,8 @@
   "guider_pa_alt": "Altitude",
   "guider_pa_az": "Azimut",
   "guider_pa_circle": "Écart au cercle",
-  "guider_pa_adjust": "Ajuster"
+  "guider_pa_adjust": "Ajuster",
+  "guider_connect_ekos": "Connecter Ekos",
+  "guider_ekos_autostar_warning": "Étoile auto d'Ekos désactivée : son cadre de suivi l'emporte au démarrage du guidage",
+  "guider_cal_ekos_reset_note": "Ekos efface cette calibration à chaque pointage tant que son option Réinitialiser la calibration est active (par défaut, dans les réglages Ekos)."
 }

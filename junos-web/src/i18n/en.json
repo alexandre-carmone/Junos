@@ -1865,5 +1865,8 @@
   "guider_pa_alt": "Altitude",
   "guider_pa_az": "Azimuth",
   "guider_pa_circle": "Circle error",
-  "guider_pa_adjust": "Adjust"
+  "guider_pa_adjust": "Adjust",
+  "guider_connect_ekos": "Connect Ekos",
+  "guider_ekos_autostar_warning": "Ekos auto-star off: its tracking box wins once guiding starts",
+  "guider_cal_ekos_reset_note": "Ekos clears this calibration on every slew while its Reset calibration option is on (the default, in the Ekos settings)."
 }

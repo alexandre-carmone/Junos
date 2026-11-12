@@ -34,6 +34,9 @@ pub struct CalSheet {
     pub settings: RwSignal<Value>,
     /// `guider_tools`, for the assistant card.
     pub tools: RwSignal<Value>,
+    /// Ekos runs on PHD2 with `ResetGuideCalibration` on (its default): it
+    /// sends `clear_calibration` on every slew (guide.cpp:1922-1932).
+    pub ekos_resets: Signal<bool>,
     pub rpc: Rpc,
     pub settle: Settle,
     pub lang: RwSignal<Lang>,
@@ -110,6 +113,7 @@ pub fn calibration_sheet(c: CalSheet) -> impl IntoView {
     let lang = c.lang;
     let tr = move || t(lang.get());
     let (state, calibration, cal_steps, settings, rpc, settle) = (c.state, c.calibration, c.cal_steps, c.settings, c.rpc.clone(), c.settle);
+    let ekos_resets = c.ekos_resets;
     let err = RwSignal::new(None::<String>);
     let calls = RwSignal::new(Vec::<Reply>::new());
     Effect::new(move |_| {
@@ -221,6 +225,9 @@ pub fn calibration_sheet(c: CalSheet) -> impl IntoView {
                 {move || tr().guider_cal_recalibrate}
             </button>
         </div>
+        <Show when=move || ekos_resets.get()>
+            <span class="text-xs text-text-muted leading-snug">{move || tr().guider_cal_ekos_reset_note}</span>
+        </Show>
     };
 
     // The step calculator, opened with the profile's optics.

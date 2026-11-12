@@ -416,6 +416,8 @@ translations! {
     abins_tile_map_hint, abins_tile_selection, abins_tilt, abins_tilt_diag, abins_tilt_lr, abins_tilt_plate,
     abins_tilt_tb, abins_time, abins_title, abins_total_tilt, abins_train, abins_turns, abins_warn_datapoints,
     abins_warn_mismatch, abins_warn_offsets,
+    // Guide tab — junos-guider with Ekos
+    guider_connect_ekos, guider_ekos_autostar_warning, guider_cal_ekos_reset_note,
 }
 
 // ── Loader ───────────────────────────────────────────────────────────────────
