@@ -1874,5 +1874,7 @@
   "guider_restart_profile": "Restart the Ekos profile to apply: Ekos reads its guider only when a profile starts.",
   "guider_pier_unknown": "Unknown",
   "guider_frame_alt": "Guide frame",
-  "guider_unknown_error": "Unknown error"
+  "guider_unknown_error": "Unknown error",
+  "guider_ga_banner": "Guiding Assistant running — guide output off",
+  "guider_ga_banner_open": "Open"
 }

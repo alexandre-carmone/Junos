@@ -351,6 +351,18 @@ pub fn NativeGuide(
     let alerts = guider.alerts;
     let log = guider.log;
 
+    // The Guiding Assistant measures with the guide output off, and goes on
+    // once its sheet is closed (PHD2's): a banner over the footer says so.
+    let ga_running = Memo::new(move |_| state.with(|s| s.as_ref().is_some_and(|s| s.ga_running)));
+    let ga_stop = {
+        let rpc = rpc.clone();
+        move |_| {
+            last.set(Some(rpc.call("ga_stop", serde_json::json!({}))));
+            // A Stop before 2 min counts down in the sheet, as PHD2's.
+            open.set(Some(Sheet::Assistant));
+        }
+    };
+
     // Ekos' settings sheet stays reachable (its guider choice, PHD2 port),
     // with "Use junos guider".
     let send_settings = send.clone();
@@ -426,6 +438,15 @@ pub fn NativeGuide(
             <Show when=move || ekos_drives.get() && autostar.get() == Some(false) && buttons(&app.get()).contains(&Btn::Guide)>
                 <div class="shrink-0 px-4 md:pl-4 md:pr-6 py-1 border-t border-border-base bg-bg-elev-1 text-xs text-state-warn truncate">
                     {move || tr().guider_ekos_autostar_warning}
+                </div>
+            </Show>
+            <Show when=move || ga_running.get() && !matches!(open.get(), Some(Sheet::Assistant))>
+                <div class="shrink-0 flex items-center gap-2 px-4 md:pl-4 md:pr-6 py-1.5 border-t border-state-warn bg-bg-elev-1">
+                    <span class="flex-1 min-w-0 text-xs text-state-warn">{move || tr().guider_ga_banner}</span>
+                    <button class="btn btn-ghost h-9 px-3 shrink-0" on:click=move |_| open.set(Some(Sheet::Assistant))>
+                        {move || tr().guider_ga_banner_open}
+                    </button>
+                    <button class="btn btn-danger h-9 px-3 shrink-0" on:click=ga_stop.clone()>{move || tr().guider_btn_stop}</button>
                 </div>
             </Show>
             <div class=format!("{FOOTER} px-4 md:pl-4 md:pr-6")>

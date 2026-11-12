@@ -1,6 +1,7 @@
 //! Guiding Assistant sheet: PHD2's dialog (`guiding_assistant.cpp`) over
 //! `guider_ga`. Opening the sheet opens the assistant (`ga_open`); closing
-//! the sheet leaves it running, Close assistant is PHD2's window close
+//! the sheet leaves it running (while it measures, with the guide output
+//! off, the tab shows a banner with Open and Stop), Close assistant is PHD2's window close
 //! (`ga_close`: ends a run, restores the guide outputs). Start needs
 //! guiding, as PHD2's; a Stop before 2 min opens the countdown
 //! (`window.wait`) with Cancel and Use samples now (`ga_end_wait`). The

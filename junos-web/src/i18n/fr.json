@@ -1964,5 +1964,7 @@
   "guider_restart_profile": "Redémarrez le profil Ekos pour l'appliquer : Ekos ne lit son guideur qu'au démarrage d'un profil.",
   "guider_pier_unknown": "Inconnu",
   "guider_frame_alt": "Image de guidage",
-  "guider_unknown_error": "Erreur inconnue"
+  "guider_unknown_error": "Erreur inconnue",
+  "guider_ga_banner": "Assistant de guidage en cours — corrections de guidage coupées",
+  "guider_ga_banner_open": "Ouvrir"
 }
