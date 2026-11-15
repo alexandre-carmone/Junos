@@ -35,6 +35,10 @@
 //! ([`Control::on_capture_error`]), after the debug line `Error thrown from
 //! worker_thread.cpp:184->Time lapse interrupted`.
 //!
+//! One deliberate addition: a guide that finds the guider SELECTED with no
+//! valid star selects one again instead of calibrating, where PHD2 waits in
+//! CALIBRATED for good (the attempt-start state).
+//!
 //! The guider and the mounts come in through a [`ControlCx`]; what PHD2
 //! tells the outside comes back as [`ControlEvent`]s, in PHD2's order.
 //!
@@ -701,7 +705,13 @@ impl Control {
                         self.start_capturing(cx, ev);
                         self.set_state(State::SelectStar, ev);
                         return;
-                    } else if cx.guider.state() == GuiderState::Selected {
+                    } else if cx.guider.state() == GuiderState::Selected && cx.guider.current_position().is_some() {
+                        // Deliberate addition: PHD2 (phdcontrol.cpp:374)
+                        // checks the state only. A multi-star switch whose
+                        // forced AutoSelect failed (a subframe) leaves
+                        // SELECTED with no star; calibrating or guiding from
+                        // there sits in CALIBRATED forever, every frame "No
+                        // star selected". Such a guide selects a star again.
                         self.set_state(State::Calibrate, ev);
                     } else {
                         // Capturing with no star selected.

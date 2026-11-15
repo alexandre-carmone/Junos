@@ -14,6 +14,7 @@ use crate::engine::algo::AlgoKind;
 use crate::engine::camera::{CameraSettings, CaptureError};
 use crate::engine::control::SettleParams;
 use crate::engine::darks::DarkLibrary;
+use crate::engine::guider::GuiderState;
 use crate::engine::traits::CancelToken;
 use crate::profile::ProfileStore;
 use crate::sim::{SimCamera, SimParams, SimTime};
@@ -1259,4 +1260,34 @@ fn a_setting_applies_to_the_gear_in_place() {
     let snap = r.e.snapshot();
     assert!(snap.connected && !snap.calibrated);
     assert!(r.debug_log().contains("Image scale has changed via AD UI"));
+}
+
+#[test]
+fn a_guide_right_after_switching_to_multi_star_selects_again() {
+    // Subframes on (the rig's default): the switch's forced AutoSelect runs
+    // on the last guiding subframe, which AutoFind refuses.
+    let mut r = Rig::guiding(SimParams::new(scale()), false, |_| {});
+    for _ in 0..5 {
+        r.step();
+    }
+    r.e.store().profile().set_bool("/guider/multistar/enabled", true);
+    r.cmd(Command::SettingsChanged("/guider/multistar/enabled".into())).unwrap();
+    assert!(r.debug_log().contains("MultiStar mode enabled\n"));
+    assert_eq!(r.e.guider.state(), GuiderState::Selected);
+    assert!(r.e.guider.current_position().is_none());
+
+    // The guide comes before the next frame (both queued during one
+    // exposure). PHD2 would calibrate from there and sit in CALIBRATED;
+    // the controller selects a star again on the next, full, frame.
+    let mark = r.ev.len();
+    r.cmd(Command::Guide { settle: settle(1.5, 10, 60), recalibrate: false, roi: None }).unwrap();
+    r.run_until(500, |e| matches!(e, EngineEvent::SettleDone { .. }));
+    let error = r.ev[mark..].iter().find_map(|e| match e {
+        EngineEvent::SettleDone { error, .. } => Some(error.clone()),
+        _ => None,
+    });
+    assert_eq!(error, Some(None));
+    assert!(r.debug_log().contains("auto find star failed, attempts remaining = 3"));
+    assert_eq!(r.e.guider.state(), GuiderState::Guiding);
+    assert_eq!(r.e.snapshot().app_state.unwrap().as_str(), "Guiding");
 }
