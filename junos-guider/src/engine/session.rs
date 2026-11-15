@@ -42,7 +42,7 @@ use super::control::{Control, ControlEvent};
 use super::darks::{self, DefectMap, FileGeometry};
 use super::event::{EngineEvent, SettleView};
 use super::fits::{CameraCards, SaveHeader, write_fits};
-use super::guider::{GuiderEvent, MountRole};
+use super::guider::{GuideUpdate, GuiderEvent, MountRole};
 use super::image::{NoiseReduction, UsImage};
 use super::log::debug_log::{self, PHD2_VERSION, execution_banner};
 use super::log::guide_log::{
@@ -300,13 +300,7 @@ impl Engine {
                         self.darks.select_dark(ms);
                     }
                 }
-                ControlEvent::SaturationAdu(adu) => {
-                    let mut lines = Vec::new();
-                    self.cam.set_saturation_by_adu(true, adu, &mut self.store.profile(), &mut lines);
-                    for l in lines {
-                        self.debug(&l);
-                    }
-                }
+                ControlEvent::SaturationAdu(adu) => self.set_saturation_adu(adu),
                 ControlEvent::Status(s) => self.status(&s),
                 ControlEvent::Debug(l) => self.debug(&l),
             }
@@ -588,6 +582,31 @@ impl Engine {
             ImageLogCall::Deselected => ilog.log_star_deselected(&img, &mut cx),
         };
         self.write_image_log(out);
+    }
+
+    /// AutoFind's `SetSaturationByADU(true, adu)`, saved to the profile.
+    fn set_saturation_adu(&mut self, adu: u16) {
+        let mut lines = Vec::new();
+        self.cam.set_saturation_by_adu(true, adu, &mut self.store.profile(), &mut lines);
+        for l in lines {
+            self.debug(&l);
+        }
+    }
+
+    /// The rest of a call that can switch the multi-star mode on
+    /// ([`Guider::set_multi_star_mode`](super::guider::Guider::set_multi_star_mode)):
+    /// its moves queued and, after its forced AutoSelect, what PHD2 does
+    /// inside AutoSelect — AutoFind's saturation level saved and the image
+    /// logged — as [`Engine::auto_select_star`] does after a client's.
+    pub(super) fn multi_star_update(&mut self, upd: GuideUpdate) {
+        self.queue_moves(&upd.moves);
+        if let Some(adu) = upd.saturation_adu {
+            self.set_saturation_adu(adu);
+        }
+        if let Some(found) = upd.auto_selected {
+            let img = self.guider.current_image().clone();
+            self.log_auto_select_image(&img, found);
+        }
     }
 
     /// `ImageLogger::LogAutoSelectImage`.
@@ -1026,7 +1045,7 @@ impl Engine {
             c.forward(gev, cx, ev);
             upd
         });
-        self.queue_moves(&upd.moves);
+        self.multi_star_update(upd);
         let now = self.clock.mono();
         let using_ao = self.ao.is_some();
         let algo = algorithm_axis(key);

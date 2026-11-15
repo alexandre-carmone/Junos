@@ -1291,3 +1291,20 @@ fn a_guide_right_after_switching_to_multi_star_selects_again() {
     assert_eq!(r.e.guider.state(), GuiderState::Guiding);
     assert_eq!(r.e.snapshot().app_state.unwrap().as_str(), "Guiding");
 }
+
+#[test]
+fn switching_to_multi_star_saves_the_auto_find_saturation_level() {
+    // Full frames: the switch's forced AutoSelect finds the stars again.
+    let mut r = Rig::new(SimParams::new(scale()), false, |p| p.set_i32("/camera/UseSubframes", 0));
+    r.cmd(Command::Loop).unwrap();
+    r.step();
+    r.cmd(Command::FindStar { roi: None }).unwrap();
+    r.step();
+    assert_eq!(r.e.guider.state(), GuiderState::Selected);
+    r.e.store().profile().set_i32("/camera/SaturationADU", 0);
+    r.e.store().profile().set_bool("/guider/multistar/enabled", true);
+    r.cmd(Command::SettingsChanged("/guider/multistar/enabled".into())).unwrap();
+    assert!(r.debug_log().contains("MultiStar mode enabled, AutoFind forced"));
+    // AutoFind's `SetSaturationByADU`, as after a client's auto-select.
+    assert!(r.e.store().profile().get_i32("/camera/SaturationADU", 0) > 0);
+}

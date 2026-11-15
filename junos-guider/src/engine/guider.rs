@@ -222,6 +222,10 @@ pub struct GuideUpdate {
     /// (`SetSaturationByADU(true, level)`), even when no star was found:
     /// the caller saves it to `/camera/SaturationADU`.
     pub saturation_adu: Option<u16>,
+    /// A multi-star switch ran AutoSelect on an image with data: whether it
+    /// found a star. The caller hands the current image to the image logger
+    /// (`ImageLogger::LogAutoSelectImage`, guider_multistar.cpp:522).
+    pub auto_selected: Option<bool>,
 }
 
 /// PHD2's `FrameDroppedInfo`: a frame whose star was not accepted, for the
@@ -1213,6 +1217,9 @@ impl Guider {
             self.multistar.invalidate_current_position(true);
             let (star, upd) = self.auto_select(None, cx, ev);
             out = upd;
+            if !self.current_image.data.is_empty() {
+                out.auto_selected = Some(star.is_some());
+            }
             if star.is_some() {
                 if active {
                     self.start_guiding(cx, ev);

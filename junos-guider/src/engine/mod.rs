@@ -1235,7 +1235,7 @@ impl Engine {
                     c.forward(gev, cx, ev);
                     upd
                 });
-                self.queue_moves(&upd.moves);
+                self.multi_star_update(upd);
                 self.load_tool_settings();
                 // `SetProfile` then closes the dialog.
                 self.end_modal();

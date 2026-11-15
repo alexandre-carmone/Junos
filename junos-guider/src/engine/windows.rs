@@ -285,7 +285,7 @@ impl Engine {
                         c.forward(gev, cx, ev);
                         upd
                     });
-                    self.queue_moves(&upd.moves);
+                    self.multi_star_update(upd);
                 }
                 GaEvent::VariableDelay(v) => {
                     let mut cev = Vec::new();
