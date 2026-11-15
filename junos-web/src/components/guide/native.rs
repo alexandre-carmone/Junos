@@ -160,6 +160,21 @@ pub fn NativeGuide(
     let scale = Memo::new(move |_| pixel_scale.get().filter(|_| !in_px.get()));
     let unit = Memo::new(move |_| if scale.get().is_some() { "\u{2033}" } else { " px" });
     let (steps, markers, states) = (guider.steps, guider.markers, guider.states);
+    // A guide that never starts or a dither that never settles ends only in
+    // a failed SettleDone: its error shows in the footer until the next
+    // settle begins. Failures from before the tab opened are left out.
+    let newest_settle = move || {
+        use crate::ws::GuiderMarkerKind as K;
+        markers.with(|m| {
+            m.iter().rev().find(|m| matches!(m.kind, K::SettleBegin | K::Settled | K::SettleFailed)).map(|m| (m.t_ms, m.kind, m.text.clone()))
+        })
+    };
+    let opened_at = untrack(|| newest_settle().map(|s| s.0));
+    let settle_failed = Memo::new(move |_| {
+        newest_settle()
+            .filter(|(t, k, _)| *k == crate::ws::GuiderMarkerKind::SettleFailed && opened_at.is_none_or(|o| *t > o))
+            .map(|(_, _, text)| text)
+    });
     let series = Memo::new(move |_| {
         let (w, k) = (window_ms.get(), scale.get());
         steps.with(|s| markers.with(|m| states.with(|st| DriftSeries::native(s, m, st, w, k))))
@@ -450,7 +465,7 @@ pub fn NativeGuide(
                 </div>
             </Show>
             <div class=format!("{FOOTER} px-4 md:pl-4 md:pr-6")>
-                {move || match note.get() {
+                {move || match note.get().or_else(|| settle_failed.get().map(|e| (format!("{} {e}", tr().guider_settle_failed), true))) {
                     Some((text, is_err)) => view! {
                         <span class=format!("flex-1 min-w-0 truncate text-xs {}", if is_err { "text-state-err" } else { "text-text-muted" })
                               title=text.clone()>{text.clone()}</span>

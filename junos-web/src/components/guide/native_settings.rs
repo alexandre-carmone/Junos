@@ -233,6 +233,7 @@ pub fn native_settings_sheet(
         (1, |t| t.guider_noise_mean),
         (2, |t| t.guider_noise_median),
     ]);
+    let values = r.values;
     let star_body = view! {
         {num_row(r, "/guider/onestar/SearchRegion", |t| t.guider_search_region, 7.0, 50.0, 1.0)}
         {num_row(r, "/guider/StarMinSNR", |t| t.guider_min_snr, 6.0, 200.0, 0.5)}
@@ -243,6 +244,13 @@ pub fn native_settings_sheet(
         {bool_row(r, "/guider/onestar/TolerateJumpsEnabled", |t| t.guider_tolerate_jumps)}
         {num_row(r, "/guider/onestar/TolerateJumpsThreshold", |t| t.guider_tolerate_jumps_px, 1.0, 1000.0, 0.5)}
         {bool_row(r, "/guider/multistar/enabled", |t| t.guider_multistar)}
+        // PHD2 auto-selects one star when subframes are on (guider_multistar.cpp:472).
+        <Show when=move || {
+            let on = |k: &str| values.with(|v| v.get(k).and_then(as_flag).unwrap_or(false));
+            on("/guider/multistar/enabled") && on("/camera/UseSubframes")
+        }>
+            <span class="text-xs text-state-warn pb-1">{move || tr().guider_multistar_subframes}</span>
+        </Show>
         {int_select(r, "/guider/AutoSelDownsample", |t| t.guider_downsample, &[
             (0, |t| t.guider_downsample_auto),
             (1, |_| "1\u{00d7}1"),

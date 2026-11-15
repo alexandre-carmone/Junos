@@ -1793,6 +1793,8 @@
   "guider_tolerate_jumps": "Tolerate star jumps",
   "guider_tolerate_jumps_px": "Jump threshold (px)",
   "guider_multistar": "Use multiple stars",
+  "guider_multistar_subframes": "With subframes on, PHD2 auto-selects a single star: turn subframes off in Equipment to guide on several.",
+  "guider_settle_failed": "Settle failed:",
   "guider_downsample": "Auto-select downsampling",
   "guider_downsample_auto": "Auto",
   "guider_fast_recenter": "Fast recenter after calibration or dither",

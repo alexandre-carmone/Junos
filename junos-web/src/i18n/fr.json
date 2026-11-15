@@ -1883,6 +1883,8 @@
   "guider_tolerate_jumps": "Tolérer les sauts d'étoile",
   "guider_tolerate_jumps_px": "Seuil de saut (px)",
   "guider_multistar": "Utiliser plusieurs étoiles",
+  "guider_multistar_subframes": "Avec les sous-trames, PHD2 ne sélectionne qu'une étoile : désactivez-les dans Équipement pour guider sur plusieurs.",
+  "guider_settle_failed": "Stabilisation échouée :",
   "guider_downsample": "Sous-échantillonnage de l'auto-sélection",
   "guider_downsample_auto": "Auto",
   "guider_fast_recenter": "Recentrage rapide après calibration ou dithering",

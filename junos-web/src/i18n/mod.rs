@@ -259,7 +259,7 @@ translations! {
     guider_noise_title, guider_noise, guider_noise_none, guider_noise_mean, guider_noise_median,
     guider_star_title, guider_search_region, guider_min_snr, guider_min_hfd, guider_max_hfd,
     guider_mass_change, guider_mass_change_pct, guider_tolerate_jumps, guider_tolerate_jumps_px,
-    guider_multistar, guider_downsample, guider_downsample_auto, guider_fast_recenter, guider_sticky_lock,
+    guider_multistar, guider_multistar_subframes, guider_settle_failed, guider_downsample, guider_downsample_auto, guider_fast_recenter, guider_sticky_lock,
     guider_dither_title, guider_dither_random, guider_dither_spiral, guider_dither_ra_only,
     guider_dither_scale, guider_settle_note, guider_dither_amount, guider_settle_px, guider_settle_time,
     guider_settle_timeout, guider_ao_title, guider_ao_samples, guider_ao_bump_pct, guider_ao_bump_steps,
