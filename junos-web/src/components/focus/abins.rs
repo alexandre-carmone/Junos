@@ -13,6 +13,13 @@
 //! The tilt plate card is recomputed from the settings echo on every change
 //! (`tilt_calc.rs`), like the desktop Tilt Correction Advisory; the result's
 //! own `tiltPlate` is only the fallback before the settings have loaded.
+//!
+//! Once a run has finished (`canReanalyse`), `focus_abins_reanalyse` redoes
+//! its analysis with other tiles excluded, another tile selection or
+//! optCentres — KStars pushes the new result, same run, `reanalysed: true`.
+//! A tap on the tile map selects a tile (shared with the other cards), the
+//! Exclude / Include button toggles it, and a tile selection or optCentres
+//! change in the settings re-analyses too.
 
 use leptos::prelude::*;
 use serde_json::{json, Value};
@@ -127,6 +134,30 @@ fn delta_class(delta: f64, cfz: f64) -> &'static str {
     }
 }
 
+/// The re-analysis refusal codes (focus.cpp `reanalyseAbIns`); any other
+/// text is shown as it is.
+fn reanalyse_error_text(code: &str, tr: &'static Translations) -> String {
+    match code {
+        "running" => tr.abins_rerr_running.to_string(),
+        "noResult" => tr.abins_rerr_no_result.to_string(),
+        other => format!("{} {other}", tr.abins_rerr_refused),
+    }
+}
+
+/// Redo the last run's analysis with these settings (KStars' `Options` stay
+/// as they are); the reply is the pushed result, or a refused status.
+fn reanalyse(send: &SendCmd, exclude: Vec<i64>, tile_selection: &str, opt_centres: bool) {
+    send_cmd(send, "focus_abins_reanalyse", json!({
+        "exclude": exclude,
+        "tileSelection": tile_selection,
+        "optCentres": opt_centres,
+    }));
+}
+
+fn excluded_ids(r: &AbInsResult) -> Vec<i64> {
+    r.tiles.iter().filter(|t| t.excluded).map(|t| t.id).collect()
+}
+
 // ── Card ─────────────────────────────────────────────────────────────────
 
 /// The Focus tab's card: state badge, Start (disabled with the blockers as a
@@ -201,6 +232,7 @@ pub fn abins_card(
 
 /// The sheet: the result's cards, then the settings.
 pub fn abins_sheet(
+    status: Memo<Option<AbInsStatus>>,
     result: Memo<Option<AbInsResult>>,
     settings: Memo<Value>,
     send: SendCmd,
@@ -208,7 +240,11 @@ pub fn abins_sheet(
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let tr = move || t(lang.get());
-    let form = Form { settings, send, lang };
+    // Out here, not in `result_cards`: those are rebuilt on every result or
+    // settings echo, and the selected tile must outlive them.
+    let selected = RwSignal::new(None::<i64>);
+    let form = Form { settings, status, result, send: send.clone(), lang };
+    let send_sv = StoredValue::new(send);
 
     view! {
         <Show when=move || open.get()>
@@ -216,7 +252,7 @@ pub fn abins_sheet(
                 <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 \
                             pb-[max(0.75rem,env(safe-area-inset-bottom))] flex flex-col gap-3 text-sm">
                     {move || result.with(|r| match r {
-                        Some(r) => result_cards(r, &settings.get(), tr()).into_any(),
+                        Some(r) => result_cards(r, &settings.get(), tr(), status, selected, send_sv.get_value()).into_any(),
                         None => view! { <div class="text-text-faint py-2">{tr().abins_no_result}</div> }.into_any(),
                     })}
                     {form.card()}
@@ -236,7 +272,14 @@ fn fact(label: &'static str, value: String) -> impl IntoView {
     }
 }
 
-fn result_cards(r: &AbInsResult, settings: &Value, tr: &'static Translations) -> impl IntoView + use<> {
+fn result_cards(
+    r: &AbInsResult,
+    settings: &Value,
+    tr: &'static Translations,
+    status: Memo<Option<AbInsStatus>>,
+    selected: RwSignal<Option<i64>>,
+    send: SendCmd,
+) -> impl IntoView + use<> {
     let cfz = r.cfz_microns();
 
     // Header: run, train, time, fit, datapoints, CFZ, warnings.
@@ -247,10 +290,16 @@ fn result_cards(r: &AbInsResult, settings: &Value, tr: &'static Translations) ->
         <div class=CARD>
             <div class="flex items-center gap-2">
                 <span class=format!("{CARD_TITLE} flex-1")>{format!("{} · {} {}", tr.abins_result_section, tr.abins_run, r.run)}</span>
+                {r.reanalysed.then(|| view! {
+                    <span class="badge" title=tr.abins_reanalysed_hint>{tr.abins_reanalysed}</span>
+                })}
                 <span class=if r.results_ok { "badge badge--ok" } else { "badge badge--warn" }>
                     {if r.results_ok { tr.abins_results_ok } else { tr.abins_results_not_ok }}
                 </span>
             </div>
+            {r.reanalysed.then(|| view! {
+                <div class="text-xs text-text-muted leading-tight">{tr.abins_reanalysed_hint}</div>
+            })}
             {fact(tr.abins_train, r.train.clone())}
             {fact(tr.abins_time, local_time(&r.timestamp))}
             {fact(tr.abins_curve_fit, r.curve_fit.clone())}
@@ -261,26 +310,86 @@ fn result_cards(r: &AbInsResult, settings: &Value, tr: &'static Translations) ->
     };
 
     // Tile map: 3×3 in `id` order (row * 3 + col), the centre is the reference.
+    // A tap selects a tile (again: deselects); excluded tiles are dashed.
     let mut tiles = r.tiles.clone();
     tiles.sort_by_key(|t| t.id);
     let cells = tiles.iter().map(|t| {
-        let centre = t.id == 4;
-        let cls = if !t.used { "opacity-40" } else if !t.fit { "line-through opacity-60" } else { "" };
+        let id = t.id;
+        let centre = id == 4;
+        let cls = if !t.used { "opacity-40" } else if !t.fit || t.excluded { "opacity-60" } else { "" };
+        let border = if t.excluded { "border-dashed" } else { "" };
+        let name_cls = if !t.fit || t.excluded { "line-through" } else { "" };
         let delta = if centre { tr.abins_ref.to_string() } else { format!("{:+.0} µm", t.delta_microns) };
         let delta_cls = if centre || !t.fit { "text-text-muted" } else { delta_class(t.delta_microns, cfz) };
+        let ring = move || if selected.get() == Some(id) { "border-accent-cyan ring-1 ring-accent-cyan" } else { "border-border-base" };
         view! {
-            <div class=format!("rounded-lg bg-bg-elev-1 border border-border-base px-2 py-1.5 flex flex-col items-center {cls}")>
-                <span class="text-xs uppercase tracking-[0.06em] text-text-muted">{t.name.clone()}</span>
+            <button type="button"
+                    class=move || format!("rounded-lg bg-bg-elev-1 border {} {border} px-2 py-1.5 flex flex-col items-center {cls}", ring())
+                    on:click=move |_| selected.update(|s| *s = if *s == Some(id) { None } else { Some(id) })>
+                <span class=format!("text-xs uppercase tracking-[0.06em] text-text-muted {name_cls}")>{t.name.clone()}</span>
                 <span class="font-mono text-base leading-tight text-text-blue-bright">{t.solution.to_string()}</span>
                 <span class=format!("font-mono text-xs {delta_cls}")>{delta}</span>
-            </div>
+                {t.excluded.then(|| view! { <span class="text-[10px] text-state-warn">{tr.abins_excluded}</span> })}
+            </button>
         }
     }).collect_view();
+
+    // Exclude / Include the selected tile, Reset: re-analyse the same run.
+    let can = move || status.with(|s| s.as_ref().is_some_and(|s| s.can_reanalyse));
+    let excluded = excluded_ids(r);
+    let names: Vec<(i64, String, bool)> = tiles.iter().map(|t| (t.id, t.name.clone(), t.excluded)).collect();
+    let pick = move || selected.get().and_then(|id| names.iter().find(|n| n.0 == id).cloned());
+    let toggle_label = {
+        let pick = pick.clone();
+        move || match pick() {
+            Some((_, name, true)) => format!("{} {name}", tr.abins_include),
+            Some((_, name, false)) => format!("{} {name}", tr.abins_exclude),
+            None => tr.abins_exclude.to_string(),
+        }
+    };
+    let on_toggle = {
+        let (send, excluded, sel, opt) = (send.clone(), excluded.clone(), r.tile_selection.clone(), r.opt_centres);
+        move |_| {
+            let Some(id) = selected.get_untracked() else { return };
+            let mut ex = excluded.clone();
+            match ex.iter().position(|&e| e == id) {
+                Some(i) => { ex.remove(i); }
+                None => { ex.push(id); ex.sort(); }
+            }
+            reanalyse(&send, ex, &sel, opt);
+        }
+    };
+    let on_reset = {
+        let (send, sel, opt) = (send.clone(), r.tile_selection.clone(), r.opt_centres);
+        move |_| reanalyse(&send, Vec::new(), &sel, opt)
+    };
+    let any_excluded = !excluded.is_empty();
+    // The status is sticky: a refusal replayed after the run became
+    // re-analysable again is stale, so it shows only while it still holds.
+    let reanalyse_error = move || status.with(|s| {
+        s.as_ref().filter(|s| s.running || !s.can_reanalyse).and_then(|s| s.reanalyse_error.as_deref()).map(|e| reanalyse_error_text(e, tr))
+    });
     let tile_map = view! {
         <div class=CARD>
             <span class=CARD_TITLE>{tr.abins_tile_map}</span>
             <div class="grid grid-cols-3 gap-2">{cells}</div>
-            <div class="text-xs text-text-muted leading-tight">{tr.abins_tile_map_hint}</div>
+            <div class="flex items-center gap-2">
+                <button type="button" class="btn btn-ghost h-9 md:h-7 px-3 flex-1 min-w-0 truncate"
+                        disabled=move || !can() || pick().is_none()
+                        on:click=on_toggle>
+                    {toggle_label}
+                </button>
+                <button type="button" class="btn btn-ghost h-9 md:h-7 px-3 shrink-0"
+                        disabled=move || !can() || !any_excluded
+                        on:click=on_reset>
+                    {tr.reset}
+                </button>
+            </div>
+            {move || reanalyse_error().map(|e| view! { <div class="text-xs text-state-err leading-tight">{e}</div> })}
+            <div class="text-xs text-text-muted leading-tight">
+                {tr.abins_tile_map_hint} " "
+                {move || if can() { tr.abins_exclude_hint } else { tr.abins_reanalyse_off }}
+            </div>
         </div>
     };
 
@@ -374,8 +483,11 @@ fn result_cards(r: &AbInsResult, settings: &Value, tr: &'static Translations) ->
 
     // Per-tile table.
     let rows = tiles.iter().map(|t| view! {
-        <tr class=if t.used { "" } else { "opacity-40" }>
-            <td class="py-1 pr-2 font-mono">{t.name.clone()}</td>
+        <tr class=if t.used && !t.excluded { "" } else { "opacity-40" }>
+            <td class="py-1 pr-2 font-mono">
+                <span class=if t.excluded { "line-through" } else { "" }>{t.name.clone()}</span>
+                {t.excluded.then(|| view! { <span class="ml-1 text-[10px] text-state-warn">{tr.abins_excluded}</span> })}
+            </td>
             <td class="py-1 pr-2 text-center">{if t.fit { "\u{2713}" } else { "\u{2014}" }}</td>
             <td class="py-1 pr-2 font-mono text-right">{t.solution.to_string()}</td>
             <td class="py-1 pr-2 font-mono text-right">{format!("{:+}", t.delta_ticks)}</td>
@@ -417,13 +529,33 @@ fn result_cards(r: &AbInsResult, settings: &Value, tr: &'static Translations) ->
 #[derive(Clone)]
 struct Form {
     settings: Memo<Value>,
+    status: Memo<Option<AbInsStatus>>,
+    result: Memo<Option<AbInsResult>>,
     send: SendCmd,
     lang: RwSignal<Lang>,
 }
 
 impl Form {
+    /// Send a setting; a tile selection or optCentres change also
+    /// re-analyses the last run, keeping its exclusions, when KStars can.
     fn put(&self, payload: Value) {
-        send_cmd(&self.send, "focus_abins_set_all_settings", payload);
+        send_cmd(&self.send, "focus_abins_set_all_settings", payload.clone());
+        if payload.get("abInsTileSelection").is_none() && payload.get("abInsOptCentres").is_none() {
+            return;
+        }
+        if !self.status.with_untracked(|s| s.as_ref().is_some_and(|s| s.can_reanalyse)) {
+            return;
+        }
+        let Some((exclude, sel, opt)) = self.result.with_untracked(|r| {
+            r.as_ref().map(|r| (excluded_ids(r), r.tile_selection.clone(), r.opt_centres))
+        }) else { return };
+        let (sel, opt) = self.settings.with_untracked(|v| (
+            v["abInsTileSelection"].as_str().map(str::to_string).unwrap_or(sel),
+            v["abInsOptCentres"].as_bool().unwrap_or(opt),
+        ));
+        let sel = payload["abInsTileSelection"].as_str().map(str::to_string).unwrap_or(sel);
+        let opt = payload["abInsOptCentres"].as_bool().unwrap_or(opt);
+        reanalyse(&self.send, exclude, &sel, opt);
     }
 
     fn label(&self, label: Label) -> impl Fn() -> &'static str + Copy + Send + 'static + use<> {

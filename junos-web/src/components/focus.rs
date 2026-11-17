@@ -964,7 +964,7 @@ pub fn FocusTab(
                 </div>
             </Show>
             <FilterSettingsSheet open=filters_open send=send_sv.get_value() />
-            {abins::abins_sheet(abins_result, abins_settings, send_sv.get_value(), abins_open)}
+            {abins::abins_sheet(abins_status, abins_result, abins_settings, send_sv.get_value(), abins_open)}
         </div>
     }
 }

@@ -271,9 +271,16 @@ fn str_of(v: &serde_json::Value, key: &str) -> String {
     v[key].as_str().unwrap_or("").to_string()
 }
 
+/// A number array; a `null` entry stays as NaN so that arrays read side by
+/// side keep their positions. Empty when absent (an older fork).
+fn f64_vec(v: &serde_json::Value, key: &str) -> Vec<f64> {
+    v[key].as_array().map(|a| a.iter().map(|x| x.as_f64().unwrap_or(f64::NAN)).collect()).unwrap_or_default()
+}
+
 /// `focus_abins_status`: pushed on start / after analysis / at end, sent in
 /// `get_states`, and the reply to `focus_abins_start` (then with
-/// `startAccepted` and, when refused, `error`).
+/// `startAccepted` and, when refused, `error`) and to a refused
+/// `focus_abins_reanalyse` (`reanalyseAccepted: false` and `error`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AbInsStatus {
     pub can_start: bool,
@@ -289,11 +296,18 @@ pub struct AbInsStatus {
     /// The `error` of a refused `focus_abins_start` reply; cleared by the
     /// next plain status push.
     pub start_error: Option<String>,
+    /// The last run's analysis is kept and no run is going: true only from
+    /// the `stop()` push on, after the `complete` one.
+    pub can_reanalyse: bool,
+    /// The `error` of a refused `focus_abins_reanalyse` (`running`,
+    /// `noResult`, `invalidExclude`, `invalidTileSelection`, …).
+    pub reanalyse_error: Option<String>,
 }
 
 impl AbInsStatus {
     pub fn from_json(v: &serde_json::Value) -> Self {
         let refused = v["startAccepted"].as_bool() == Some(false);
+        let reanalyse_refused = v["reanalyseAccepted"].as_bool() == Some(false);
         Self {
             can_start: v["canStart"].as_bool().unwrap_or(false),
             reasons: v["reasons"].as_array().map(|a| a.iter().filter_map(|r| r.as_str().map(str::to_string)).collect()).unwrap_or_default(),
@@ -303,6 +317,8 @@ impl AbInsStatus {
             has_result: v["hasResult"].as_bool().unwrap_or(false),
             dialog_available: v["dialogAvailable"].as_bool().unwrap_or(false),
             start_error: refused.then(|| str_of(v, "error")),
+            can_reanalyse: v["canReanalyse"].as_bool().unwrap_or(false),
+            reanalyse_error: reanalyse_refused.then(|| str_of(v, "error")),
         }
     }
 }
@@ -335,6 +351,15 @@ pub struct AbInsTile {
     pub max_stars: i64,
     pub r2: f64,
     pub min_measure: f64,
+    /// The run's raw measures, one per focuser position (`positions`); the
+    /// two lengths may differ (`datapointMismatch`), so pair them with zip.
+    pub measures: Vec<f64>,
+    /// The fit sampled at the result's `curve_x`, raw units; empty when the
+    /// tile was not fit.
+    pub curve: Vec<f64>,
+    /// Tile centre on the sensor, from its centre: x right, y up.
+    pub centre_x_microns: f64,
+    pub centre_y_microns: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -414,6 +439,16 @@ pub struct AbInsResult {
     pub plate_present: bool,
     pub eta_connected: bool,
     pub tilt_plate: Option<AbInsTiltPlate>,
+    /// The run's focuser positions.
+    pub positions: Vec<f64>,
+    /// Where every tile's `curve` is sampled.
+    pub curve_x: Vec<f64>,
+    /// Raw measure × `star_units` = the `y_axis_label` unit; 1 when absent.
+    pub star_units: f64,
+    /// `minimise` | `maximise` (the measure's best end).
+    pub opt_dir: String,
+    /// Recomputed by `focus_abins_reanalyse` from the same run's data.
+    pub reanalysed: bool,
 }
 
 impl AbInsResult {
@@ -434,6 +469,10 @@ impl AbInsResult {
             max_stars: t["maxStars"].as_i64().unwrap_or(0),
             r2: f64_or(t, "r2", 0.0),
             min_measure: f64_or(t, "minMeasure", 0.0),
+            measures: f64_vec(t, "measures"),
+            curve: f64_vec(t, "curve"),
+            centre_x_microns: f64_or(t, "centreXMicrons", 0.0),
+            centre_y_microns: f64_or(t, "centreYMicrons", 0.0),
         }).collect();
         let s = &v["sensor"];
         let b = &v["backfocus"];
@@ -496,6 +535,11 @@ impl AbInsResult {
             plate_present: p["present"].as_bool().unwrap_or(false),
             eta_connected: p["etaConnected"].as_bool().unwrap_or(false),
             tilt_plate,
+            positions: f64_vec(v, "positions"),
+            curve_x: f64_vec(v, "curveX"),
+            star_units: Some(f64_or(v, "starUnits", 1.0)).filter(|u| *u > 0.0).unwrap_or(1.0),
+            opt_dir: str_of(v, "optDir"),
+            reanalysed: v["reanalysed"].as_bool().unwrap_or(false),
         })
     }
 
