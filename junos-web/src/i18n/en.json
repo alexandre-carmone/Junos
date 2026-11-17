@@ -1741,6 +1741,7 @@
   "guider_cal_distance": "Calibration distance (px)",
   "guider_smart_min_move": "Smart min-move",
   "guider_smart_min_move_hint": "Suggested minimum move:",
+  "guider_harmonic_preset": "Harmonic preset",
   "guider_cal_review": "Calibration steps",
   "guider_cal_none": "Not calibrated",
   "guider_cal_ra_angle": "RA angle",

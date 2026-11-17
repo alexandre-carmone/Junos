@@ -244,7 +244,7 @@ translations! {
     guider_dec_comp, guider_assume_ortho, guider_flip_dec, guider_stop_slewing, guider_hires_encoders,
     guider_backlash_title, guider_blc_enabled, guider_blc_pulse, guider_blc_floor, guider_blc_ceiling,
     guider_calibration_title, guider_cal_step, guider_cal_distance, guider_smart_min_move,
-    guider_smart_min_move_hint,
+    guider_smart_min_move_hint, guider_harmonic_preset,
     // Guide tab — junos-guider calibration
     guider_cal_review, guider_cal_none, guider_cal_ra_angle, guider_cal_ra_rate, guider_cal_ra_parity,
     guider_cal_dec_angle, guider_cal_dec_rate, guider_cal_dec_parity, guider_cal_ortho,

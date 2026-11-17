@@ -1831,6 +1831,7 @@
   "guider_cal_distance": "Distance de calibration (px)",
   "guider_smart_min_move": "Déplacement min. conseillé",
   "guider_smart_min_move_hint": "Déplacement minimal conseillé :",
+  "guider_harmonic_preset": "Préréglage harmonique",
   "guider_cal_review": "Pas de calibration",
   "guider_cal_none": "Non calibré",
   "guider_cal_ra_angle": "Angle AD",

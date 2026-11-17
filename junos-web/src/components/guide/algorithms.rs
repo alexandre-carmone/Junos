@@ -6,8 +6,9 @@
 //! (`protocol::ALGOS`), the Predictive PEC expert ones folded; then the
 //! mount's rows (max durations, Dec guide mode, the calibration step,
 //! backlash compensation and the flags of PHD2's Mount tab). Smart
-//! min-move writes PHD2's suggested minimum move for the image scale, and
-//! Reset puts an axis's parameters back to PHD2's defaults.
+//! min-move writes PHD2's suggested minimum move for the image scale,
+//! Reset puts an axis's parameters back to PHD2's defaults, and Harmonic
+//! preset writes `HARMONIC_PRESET` into the profile.
 //!
 //! The event server's setters act on PHD2's `pMount`, the AO when there is
 //! one: its axes go through `set_algorithm` / `set_algo_param` (live),
@@ -35,6 +36,27 @@ use super::rows::{as_flag, bool_row, num_row, num_row_with, section, LabelFn, Nu
 /// PHD2's `DEC_GUIDE_MODE` order (`/scope/DecGuideMode`), as
 /// `set_dec_guide_mode` spells them.
 const DEC_MODES: [&str; 4] = ["Off", "Auto", "North", "South"];
+
+/// Starting values for a strain-wave (harmonic) mount, guided at a fine
+/// image scale: no backlash, so Dec gets Hysteresis in both directions
+/// rather than Resist Switch and no backlash compensation; the periodic
+/// error is large and fast, so corrections are frequent (1 s exposures or
+/// shorter), small (a low min-move) and capped at one exposure. Not PHD2
+/// defaults: the user's choice, written by the Harmonic preset button.
+const HARMONIC_PRESET: [(&str, f64); 12] = [
+    ("/scope/XGuideAlgorithm", 1.0),
+    ("/scope/GuideAlgorithm/X/Hysteresis/aggression", 0.7),
+    ("/scope/GuideAlgorithm/X/Hysteresis/hysteresis", 0.1),
+    ("/scope/GuideAlgorithm/X/Hysteresis/minMove", 0.15),
+    ("/scope/YGuideAlgorithm", 1.0),
+    ("/scope/GuideAlgorithm/Y/Hysteresis/aggression", 0.6),
+    ("/scope/GuideAlgorithm/Y/Hysteresis/hysteresis", 0.1),
+    ("/scope/GuideAlgorithm/Y/Hysteresis/minMove", 0.15),
+    (KEY_MAX_RA_DURATION, 1000.0),
+    (KEY_MAX_DEC_DURATION, 1000.0),
+    (KEY_DEC_GUIDE_MODE, 1.0),
+    ("/scope/BacklashCompEnabled", 0.0),
+];
 
 /// A profile key built at run time, kept for the life of the page (the
 /// rows key their values by `&'static str`; the set is small and fixed).
@@ -199,6 +221,7 @@ pub fn algorithms_sheet(
     // the other mount's.
     let resets = error_sink(err);
 
+    let preset_rpc = rpc.clone();
     let block_rows = rows.clone();
     let axis_block = move |a: AxisDef| {
         let rows = block_rows.clone();
@@ -280,6 +303,28 @@ pub fn algorithms_sheet(
         }
     };
 
+    // Harmonic preset: straight into the profile, which the engine reads
+    // again key by key, so the order of the calls doesn't matter (the live
+    // `set_algo_param` would act on whichever algorithm is current).
+    let preset_armed = RwSignal::new(false);
+    let preset = {
+        let rpc = preset_rpc;
+        move |_| {
+            if !second_tap(preset_armed) {
+                return;
+            }
+            for (key, x) in HARMONIC_PRESET {
+                let v = match key {
+                    "/scope/BacklashCompEnabled" => json!(x != 0.0),
+                    k if k.contains("/GuideAlgorithm/") => json!(x),
+                    _ => json!(x as i64),
+                };
+                let r = rpc.set_profile_value(key, v);
+                resets.update(|c| c.push(r));
+            }
+        }
+    };
+
     let dec_mode = {
         let set = rows.set.clone();
         let cur = Memo::new(move |_| values.with(|v| v.get(KEY_DEC_GUIDE_MODE).and_then(Value::as_i64).unwrap_or(1)));
@@ -353,6 +398,10 @@ pub fn algorithms_sheet(
                     |k| format!("{} {:.2} px", tr().guider_smart_min_move_hint, (0.1515 + 0.1548 / k).max(0.15)),
                 )}
             </span>
+            <button class=move || if preset_armed.get() { "btn btn-danger h-11 px-4" } else { "btn btn-ghost h-11 px-4" }
+                    on:click=preset>
+                {move || if preset_armed.get() { tr().guider_tap_to_confirm } else { tr().guider_harmonic_preset }}
+            </button>
             <button class="btn btn-ghost h-11 px-4" disabled=move || scale.with(Option::is_none) on:click=smart>
                 {move || tr().guider_smart_min_move}
             </button>
