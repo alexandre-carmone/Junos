@@ -1045,6 +1045,8 @@
   "apps_stop": "Stop",
   "apps_running": "Running",
   "apps_stopped": "Stopped",
+  "apps_restart": "Restart",
+  "apps_confirm_restart": "Restart junos-guider? A guiding or calibration in progress stops.",
   "apps_host": "Computer",
   "apps_poweroff": "Power off",
   "apps_reboot": "Reboot",

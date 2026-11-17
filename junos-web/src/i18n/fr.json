@@ -1135,6 +1135,8 @@
   "apps_stop": "Arrêter",
   "apps_running": "En cours",
   "apps_stopped": "Arrêté",
+  "apps_restart": "Redémarrer",
+  "apps_confirm_restart": "Redémarrer junos-guider ? Un guidage ou un calibrage en cours s'arrête.",
   "apps_host": "Ordinateur",
   "apps_poweroff": "Éteindre",
   "apps_reboot": "Redémarrer",

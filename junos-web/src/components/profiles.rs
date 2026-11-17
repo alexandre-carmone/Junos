@@ -180,9 +180,9 @@ pub fn ProfilesTab(
                     <div class="flex flex-col gap-3">
                         <div class=CARD>
                             <span class=CARD_TITLE>{move || tr().apps_section}</span>
-                            {app_row(move || tr().apps_kstars, "kstars", kstars_running, lang)}
-                            {app_row(move || tr().apps_phd2, "phd2", phd2_running, lang)}
-                            {app_row(move || tr().apps_junos_guider, "junos-guider", junos_guider_running, lang)}
+                            {app_row(move || tr().apps_kstars, "kstars", kstars_running, false, lang)}
+                            {app_row(move || tr().apps_phd2, "phd2", phd2_running, false, lang)}
+                            {app_row(move || tr().apps_junos_guider, "junos-guider", junos_guider_running, true, lang)}
                             {power_row(lang)}
                         </div>
 
@@ -287,19 +287,24 @@ pub fn ProfilesTab(
 // ── Cards ─────────────────────────────────────────────────────────────────────
 
 /// KStars, PHD2 or junos-guider on the server host: state, then Launch /
-/// Stop. The state comes back over `/ws`; only a failure needs the HTTP
-/// reply (e.g. PHD2 and junos-guider refusing each other's :4400).
+/// Stop, and Restart while it runs when `restartable` (junos-guider: the
+/// server goes through its systemd unit when one runs it). The state comes
+/// back over `/ws`; only a failure needs the HTTP reply (e.g. PHD2 and
+/// junos-guider refusing each other's :4400, polkit refusing the unit).
 fn app_row(
     label: impl Fn() -> &'static str + Send + 'static,
     app: &'static str,
     running: RwSignal<bool>,
+    restartable: bool,
     lang: RwSignal<Lang>,
 ) -> impl IntoView {
     let tr = move || t(lang.get());
     let error = RwSignal::new(None::<String>);
-    let toggle = move |_| {
-        let endpoint = if running.get_untracked() { "/api/apps/stop" } else { "/api/apps/launch" };
+    // A stop or restart waits for the process (up to 5 s, or systemd's job).
+    let pending = RwSignal::new(false);
+    let post = move |endpoint: &'static str| {
         error.set(None);
+        pending.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             let result = async {
                 let resp = gloo_net::http::Request::post(endpoint)
@@ -314,10 +319,17 @@ fn app_row(
                     _ => Err(body["error"].as_str().unwrap_or("unknown error").to_string()),
                 }
             }.await;
+            pending.set(false);
             if let Err(e) = result {
                 error.set(Some(e));
             }
         });
+    };
+    let toggle = move |_| post(if running.get_untracked() { "/api/apps/stop" } else { "/api/apps/launch" });
+    let restart = move |_| {
+        if confirm(t(lang.get_untracked()).apps_confirm_restart) {
+            post("/api/apps/restart");
+        }
     };
     view! {
         <div class=ROW>
@@ -330,8 +342,14 @@ fn app_row(
             <span class="text-xs text-text-muted">
                 {move || if running.get() { tr().apps_running } else { tr().apps_stopped }}
             </span>
+            {move || (restartable && running.get()).then(|| view! {
+                <button class="btn btn-ghost h-10 md:h-9 w-10 md:w-9 shrink-0" disabled=move || pending.get()
+                        title=move || tr().apps_restart aria-label=move || tr().apps_restart on:click=restart>
+                    "\u{21bb}"
+                </button>
+            })}
             <button class=move || if running.get() { format!("{ACTION} btn-danger") } else { format!("{ACTION} btn-primary") }
-                    on:click=toggle>
+                    disabled=move || pending.get() on:click=toggle>
                 {move || if running.get() { tr().apps_stop } else { tr().apps_launch }}
             </button>
         </div>
