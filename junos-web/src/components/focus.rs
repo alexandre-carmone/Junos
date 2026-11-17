@@ -17,7 +17,8 @@
 //!     handlers: `kstars/kstars/ekos/ekoslive/message.cpp:709-739`.
 //!   - The Aberration Inspector (`focus_abins_*`, a KStars fork): `abins.rs`,
 //!     its per-tile V-curves `abins_curves.rs`, the sensor's focal plane and
-//!     side profiles `abins_sensor.rs`.
+//!     side profiles `abins_sensor.rs`, the tilt plate's rear view
+//!     `abins_plate.rs`.
 
 use leptos::prelude::*;
 use leptos::html;
@@ -34,6 +35,7 @@ use crate::Tab;
 
 mod abins;
 mod abins_curves;
+mod abins_plate;
 mod abins_sensor;
 mod tilt_calc;
 mod vcurve;

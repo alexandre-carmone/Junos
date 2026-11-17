@@ -1,7 +1,7 @@
 //! Focus tab: the Aberration Inspector — a card (state, Start/Stop, the last
 //! run's one-line verdict) and a sheet with the full result: the 3×3 tile
-//! map, backfocus, sensor tilt, the tilt plate's screw turns, the per-tile
-//! table and the settings.
+//! map, backfocus, sensor tilt, the tilt plate's screw turns (drawn in
+//! `abins_plate.rs`), the per-tile table and the settings.
 //!
 //! The wire is a KStars fork's `focus_abins_*` (see CLAUDE.md): the status
 //! and result land in `FocusSnapshot` through the store; a setting is sent
@@ -30,7 +30,7 @@ use crate::i18n::{t, Lang, Translations};
 use crate::ws::{AbInsResult, AbInsStatus, SendCmd};
 use crate::ws_helpers::send_cmd;
 
-use super::{abins_curves, abins_sensor, tilt_calc};
+use super::{abins_curves, abins_plate, abins_sensor, tilt_calc};
 
 type Label = fn(&'static Translations) -> &'static str;
 
@@ -76,21 +76,6 @@ fn advice_text(advice: &str, tr: &'static Translations) -> &'static str {
         "nearer" => tr.abins_advice_nearer,
         "away" => tr.abins_advice_away,
         _ => tr.abins_advice_none,
-    }
-}
-
-/// A screw's position on the plate, rear view (tiltcorrectioncalc.cpp).
-fn position_text(pos: &str, tr: &'static Translations) -> &'static str {
-    match pos {
-        "right" => tr.abins_pos_right,
-        "upperRight" => tr.abins_pos_upper_right,
-        "top" => tr.abins_pos_top,
-        "upperLeft" => tr.abins_pos_upper_left,
-        "left" => tr.abins_pos_left,
-        "lowerLeft" => tr.abins_pos_lower_left,
-        "bottom" => tr.abins_pos_bottom,
-        "lowerRight" => tr.abins_pos_lower_right,
-        other => Box::leak(other.to_string().into_boxed_str()),
     }
 }
 
@@ -275,7 +260,7 @@ pub fn abins_sheet(
 }
 
 /// A label · value line inside a card.
-fn fact(label: &'static str, value: String) -> impl IntoView {
+pub(super) fn fact(label: &'static str, value: String) -> impl IntoView {
     view! {
         <div class="flex items-baseline justify-between gap-3 min-h-7">
             <span class=LABEL>{label}</span>
@@ -453,48 +438,7 @@ fn result_cards(
     // result's own advice only until the settings echo has arrived).
     let advice = tilt_calc::plate_advice(r, settings).or_else(|| r.tilt_plate.clone());
     let plate_present = settings["tiltPlatePresent"].as_bool().unwrap_or(r.plate_present);
-    let plate = view! {
-        <div class=CARD>
-            <span class=CARD_TITLE>{tr.abins_tilt_plate}</span>
-            {match &advice {
-                Some(p) => {
-                    let screws = p.points.iter().map(|s| view! {
-                        <tr>
-                            <td class="py-1 pr-2 font-mono">{format!("#{}", s.index)}</td>
-                            <td class="py-1 pr-2">{position_text(&s.position, tr)}</td>
-                            <td class="py-1 pr-2 font-mono text-right">{format!("{:+.3}", s.adjustment_mm)}</td>
-                            <td class="py-1 font-mono text-right">{format!("{:+.2}", s.turns)}</td>
-                        </tr>
-                    }).collect_view();
-                    view! {
-                        {fact(tr.abins_plate_type, format!("{} · {}",
-                            if p.plate_type == 1 { tr.abins_plate_4 } else { tr.abins_plate_3 },
-                            if p.mode == 1 { tr.abins_mode_push } else { tr.abins_mode_relative }))}
-                        {fact(tr.abins_geometry, format!("r {:.0} mm · {:.2} mm/turn · {:.0}°", p.radius_mm, p.screw_pitch_mm, p.plate_angle_deg))}
-                        {fact(tr.abins_total_tilt, format!("{:.0} µm", p.total_tilt_microns))}
-                        {fact(tr.abins_max_adj, format!("{:.3} mm", p.max_adjustment_mm))}
-                        <table class="w-full text-sm">
-                            <thead class="text-xs uppercase tracking-[0.06em] text-text-muted">
-                                <tr>
-                                    <th class="text-left font-normal pr-2">{tr.abins_screw}</th>
-                                    <th class="text-left font-normal pr-2">{tr.abins_position}</th>
-                                    <th class="text-right font-normal pr-2">"mm"</th>
-                                    <th class="text-right font-normal">{tr.abins_turns}</th>
-                                </tr>
-                            </thead>
-                            <tbody>{screws}</tbody>
-                        </table>
-                        <div class="text-xs text-text-muted leading-tight">{tr.abins_plate_hint}</div>
-                    }.into_any()
-                }
-                None => view! {
-                    <div class="text-text-faint">
-                        {if !r.tilt.ok { tr.abins_plate_no_tilt } else if !plate_present { tr.abins_no_plate } else { tr.abins_not_ok }}
-                    </div>
-                }.into_any(),
-            }}
-        </div>
-    };
+    let plate = abins_plate::plate_card(advice.as_ref(), r.tilt.ok, plate_present, tr);
 
     // Per-tile table.
     let rows = tiles.iter().map(|t| view! {
