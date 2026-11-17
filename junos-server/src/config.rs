@@ -76,6 +76,18 @@ pub struct Config {
     /// tab launches gets its `host:port` as `--ws-addr` (`apps.rs`).
     #[arg(long, default_value = "ws://127.0.0.1:4410", env = "GUIDER_WS")]
     pub guider_ws: String,
+
+    /// The systemd unit that runs junos-guider (e.g. `junos-guider.service`).
+    /// The Profiles tab's Launch / Stop / Restart then go through
+    /// `systemctl start|stop|restart` instead of spawning or signalling the
+    /// process, so the service manager keeps owning it (`apps.rs`). A system
+    /// unit needs a polkit rule letting this server's user manage it.
+    #[arg(long, env = "GUIDER_UNIT")]
+    pub guider_unit: Option<String>,
+
+    /// --guider-unit is a unit of the user's service manager (`systemctl --user`).
+    #[arg(long, env = "GUIDER_USER_UNIT")]
+    pub guider_user_unit: bool,
 }
 
 impl Config {

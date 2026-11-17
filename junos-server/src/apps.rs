@@ -11,7 +11,16 @@
 //!   from the relay's `--guider-ws`, so the two meet whatever the address.
 //! - **Stop**: `POST /api/apps/stop {"app": …}` — sends SIGTERM (junos-guider
 //!   then closes its guide log and disconnects the gear), waits up to 5 s for
-//!   a child of ours to exit, then kills it; clears the handle.
+//!   the process to exit, then kills it; clears the handle.
+//! - **Restart**: `POST /api/apps/restart {"app": …}` — Stop, then Launch.
+//! - **junos-guider under systemd**: with `--guider-unit` (the NixOS module
+//!   and the Arch unit set it), Launch / Stop / Restart of junos-guider run
+//!   `systemctl [--user] start|stop|restart <unit>` instead: a process we
+//!   spawned would run outside the unit (another user, another data dir), and
+//!   one we signalled would stay down, a clean exit being no failure to
+//!   `Restart=on-failure`. A system unit needs polkit's consent
+//!   (`org.freedesktop.systemd1.manage-units` for that unit), which the
+//!   module and `packaging/arch/` grant to the server's user.
 //! - **Monitor**: a background task polls every 2 s; when a process that was
 //!   running exits (whether by our stop or externally), it broadcasts an
 //!   `app_state` message to all browsers.
@@ -131,9 +140,8 @@ impl AppEntry {
         match &mut self.handle {
             None => Ok(()),
             Some(ProcessHandle::Owned(child)) => {
-                #[cfg(unix)]
                 if let Some(pid) = child.id() {
-                    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+                    let _ = signal(pid, libc::SIGTERM);
                 }
                 // Reaped either way, so we don't leave zombies.
                 if tokio::time::timeout(STOP_GRACE, child.wait()).await.is_err() {
@@ -144,16 +152,53 @@ impl AppEntry {
                 Ok(())
             }
             Some(ProcessHandle::External(pid)) => {
+                // Not our child: SIGTERM, then watch /proc for it to go, so
+                // that a Restart doesn't find it still running.
                 let pid = *pid;
-                // SIGTERM via kill(2).
-                #[cfg(unix)]
-                {
-                    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+                let alive = || std::path::Path::new(&format!("/proc/{pid}")).exists();
+                signal(pid, libc::SIGTERM)?;
+                let deadline = tokio::time::Instant::now() + STOP_GRACE;
+                while alive() && tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                if alive() {
+                    signal(pid, libc::SIGKILL)?;
                 }
                 self.handle = None;
                 Ok(())
             }
         }
+    }
+}
+
+/// kill(2); a process already gone is no error, one of another user
+/// (EPERM: a system unit's DynamicUser) is.
+fn signal(pid: u32, sig: libc::c_int) -> std::io::Result<()> {
+    if unsafe { libc::kill(pid as libc::pid_t, sig) } == 0 {
+        return Ok(());
+    }
+    let err = std::io::Error::last_os_error();
+    if err.raw_os_error() == Some(libc::ESRCH) { Ok(()) } else { Err(err) }
+}
+
+/// The systemd unit running junos-guider (`--guider-unit`).
+#[derive(Clone)]
+pub struct GuiderUnit {
+    pub name: String,
+    /// A unit of the user's manager: `systemctl --user`.
+    pub user: bool,
+}
+
+impl GuiderUnit {
+    /// `systemctl [--user] <verb> <unit>`; waits for the job to finish.
+    async fn run(&self, verb: &str) -> Result<(), String> {
+        let mut args = vec!["--no-ask-password", verb, &self.name];
+        if self.user {
+            args.insert(0, "--user");
+        }
+        systemctl(&args).await?;
+        info!("apps: systemctl {verb} {}", self.name);
+        Ok(())
     }
 }
 
@@ -168,6 +213,8 @@ pub struct AppManager {
     guider: GuiderLink,
     /// junos-guider's arguments when we launch it.
     guider_args: Vec<String>,
+    /// The unit that runs junos-guider, if any: then systemd starts it.
+    guider_unit: Option<GuiderUnit>,
 }
 
 struct Inner {
@@ -226,13 +273,14 @@ fn guider_args(guider_ws: &str) -> Vec<String> {
 }
 
 impl AppManager {
-    pub fn new(hub: Hub, guider: GuiderLink, guider_ws: &str) -> Self {
+    pub fn new(hub: Hub, guider: GuiderLink, guider_ws: &str, guider_unit: Option<GuiderUnit>) -> Self {
         let apps = APPS.iter().map(|app| (app.to_string(), AppEntry::new_idle())).collect();
         Self {
             inner: Arc::new(Mutex::new(Inner { apps })),
             hub,
             guider,
             guider_args: guider_args(guider_ws),
+            guider_unit,
         }
     }
 
@@ -281,6 +329,9 @@ impl AppManager {
         if is_running(app) {
             return Ok(()); // already up
         }
+        if let Some(unit) = self.unit_of(app) {
+            return unit.run("start").await;
+        }
         let entry = g.apps.get_mut(app).ok_or_else(|| format!("unknown app: {app}"))?;
         let args: &[String] = if app == APP_GUIDER { &self.guider_args } else { &[] };
         let child = Command::new(app)
@@ -295,7 +346,34 @@ impl AppManager {
     async fn stop_app(&self, app: &str) -> Result<(), String> {
         let mut g = self.inner.lock().await;
         let entry = g.apps.get_mut(app).ok_or_else(|| format!("unknown app: {app}"))?;
+        if let Some(unit) = self.unit_of(app) {
+            unit.run("stop").await?;
+            entry.handle = None;
+            return Ok(());
+        }
         entry.kill().await.map_err(|e| format!("kill {app}: {e}"))
+    }
+
+    async fn restart_app(&self, app: &str) -> Result<(), String> {
+        let Some(unit) = self.unit_of(app) else {
+            self.stop_app(app).await?;
+            return self.launch_app(app).await;
+        };
+        let mut g = self.inner.lock().await;
+        if self.running(&mut g)[1] {
+            return Err(rival(APP_GUIDER).map(|(_, refusal)| refusal).unwrap_or_default().to_string());
+        }
+        unit.run("restart").await?;
+        // The old PID is gone; the next scan finds the new one.
+        if let Some(entry) = g.apps.get_mut(app) {
+            entry.handle = None;
+        }
+        Ok(())
+    }
+
+    /// The systemd unit that runs `app`: junos-guider's, when configured.
+    fn unit_of(&self, app: &str) -> Option<&GuiderUnit> {
+        self.guider_unit.as_ref().filter(|_| app == APP_GUIDER)
     }
 }
 
@@ -360,6 +438,23 @@ pub async fn stop_handler(
     }
 }
 
+pub async fn restart_handler(
+    State(state): State<AppState>,
+    Json(body): Json<AppRequest>,
+) -> Json<serde_json::Value> {
+    let app = body.app.to_lowercase();
+    match state.app_manager.restart_app(&app).await {
+        Ok(()) => {
+            push_status(&state).await;
+            Json(serde_json::json!({ "ok": true }))
+        }
+        Err(e) => {
+            warn!("apps/restart error: {e}");
+            Json(serde_json::json!({ "ok": false, "error": e }))
+        }
+    }
+}
+
 pub async fn state_handler(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
@@ -393,18 +488,25 @@ async fn host_power(action: &str) -> Result<(), String> {
     if !matches!(action, "poweroff" | "reboot") {
         return Err(format!("unknown action: {action}"));
     }
+    systemctl(&[action]).await?;
+    info!("apps: host {action} requested");
+    Ok(())
+}
+
+/// Runs `systemctl <args>`; a refusal (polkit's "Access denied", "Interactive
+/// authentication required") comes back as systemctl's stderr.
+async fn systemctl(args: &[&str]) -> Result<(), String> {
     let output = Command::new("systemctl")
-        .arg(action)
+        .args(args)
         .output()
         .await
         .map_err(|e| format!("failed to run systemctl: {e}"))?;
     if output.status.success() {
-        info!("apps: host {action} requested");
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     Err(if stderr.is_empty() {
-        format!("systemctl {action} exited with {}", output.status)
+        format!("systemctl {} exited with {}", args.join(" "), output.status)
     } else {
         stderr
     })

@@ -91,7 +91,8 @@ async fn main() -> anyhow::Result<()> {
     info!("junos-guider link → {}", config.guider_ws);
     let guider = guider::GuiderLink::spawn(hub.clone(), config.guider_ws.clone());
 
-    let app_manager = AppManager::new(hub.clone(), guider.clone(), &config.guider_ws);
+    let guider_unit = config.guider_unit.clone().map(|name| apps::GuiderUnit { name, user: config.guider_user_unit });
+    let app_manager = AppManager::new(hub.clone(), guider.clone(), &config.guider_ws, guider_unit);
     app_manager.clone().start_monitor();
 
     let stack = stack::StackWatch::new();
@@ -127,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/authenticate", post(auth::authenticate))
         .route("/api/apps/launch", post(apps::launch_handler))
         .route("/api/apps/stop",   post(apps::stop_handler))
+        .route("/api/apps/restart", post(apps::restart_handler))
         .route("/api/apps/state",  get(apps::state_handler))
         .route("/api/apps/power",  post(apps::power_handler))
         .route("/api/apps/guider", post(apps::guider_handler))
