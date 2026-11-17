@@ -12,7 +12,10 @@ Wants=network-online.target
 # to use a mirror stored elsewhere, and SKYMAP_ONLINE=1 to let the server
 # fetch missing tiles from CDS on demand:
 #Environment=SKYMAP_ONLINE=1
-ExecStart=/usr/bin/junos-server --http-addr 0.0.0.0:8090 --https-addr 0.0.0.0:8443 --dist-dir /usr/share/junos-web/dist --captures-dir /home/astronaut/Pictures
+# --guider-unit: the Profiles tab's Launch / Stop / Restart of junos-guider run
+# `systemctl start|stop|restart junos-guider.service` (allowed by the polkit
+# rule below).
+ExecStart=/usr/bin/junos-server --http-addr 0.0.0.0:8090 --https-addr 0.0.0.0:8443 --dist-dir /usr/share/junos-web/dist --captures-dir /home/astronaut/Pictures --guider-unit junos-guider.service
 WorkingDirectory=/var/lib/junos-web
 StateDirectory=junos-web
 StateDirectoryMode=0750
@@ -34,9 +37,11 @@ ReadWritePaths=-/home/astronaut/.local/share/kstars
 PrivateTmp=true
 NoNewPrivileges=true
 # AF_UNIX is the system D-Bus socket: the Profiles tab's Power off / Reboot
-# buttons run `systemctl poweroff` / `reboot` as this user, authorised by the
-# polkit rule in /usr/share/polkit-1/rules.d/50-junos-web-power.rules (match
-# its user name to User= above). Drop AF_UNIX to forbid host power control.
+# buttons run `systemctl poweroff` / `reboot`, and its junos-guider buttons
+# `systemctl start|stop|restart junos-guider.service`, as this user,
+# authorised by the polkit rules in
+# /usr/share/polkit-1/rules.d/50-junos-web-power.rules (match their user name
+# to User= above). Drop AF_UNIX to forbid both.
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]

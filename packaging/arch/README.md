@@ -116,6 +116,11 @@ D-Bus socket. If you changed `User=`, edit the user name in the rule; delete
 the rule (or drop `AF_UNIX` from `RestrictAddressFamilies`) to forbid it — the
 buttons then show polkit's refusal instead of acting.
 
+The same file lets `astronaut` start, stop and restart `junos-guider.service`
+(that unit only): `junos-web.service` passes `--guider-unit
+junos-guider.service`, so the Profiles tab's junos-guider Launch / Stop / ↻
+Restart go through `systemctl` and the guider stays under its unit.
+
 ### LAN access / firewall
 
 Both ports bind `0.0.0.0`. If a firewall is active, open them:

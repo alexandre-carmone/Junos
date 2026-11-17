@@ -12,3 +12,15 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.YES;
     }
 });
+
+// Let the same user start, stop and restart junos-guider.service, and only
+// that unit (junos-server runs `systemctl start|stop|restart` for the Profiles
+// tab's junos-guider row, with --guider-unit in junos-web.service).
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "astronaut" &&
+        action.lookup("unit") == "junos-guider.service" &&
+        ["start", "stop", "restart"].indexOf(action.lookup("verb")) >= 0) {
+        return polkit.Result.YES;
+    }
+});
