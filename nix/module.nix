@@ -57,7 +57,17 @@ let
   # on the relay's socket 4410 + instance - 1 (junos-guider/src/config.rs).
   gcfg = cfg.guider;
   guiderEventPort = 4399 + gcfg.instance;
-  guiderArgs = optionals gcfg.enable [ "--guider-ws" "ws://127.0.0.1:${toString (4409 + gcfg.instance)}" ];
+  # The Profiles tab's Launch / Stop / Restart of junos-guider then go through
+  # `systemctl [--user] start|stop|restart junos-guider.service`.
+  guiderArgs = optionals gcfg.enable (
+    [ "--guider-ws" "ws://127.0.0.1:${toString (4409 + gcfg.instance)}"
+      "--guider-unit" "junos-guider.service"
+    ]
+    ++ optional cfg.apps.enable "--guider-user-unit"
+  );
+  # The system unit's user as polkit sees it: a DynamicUser is named after
+  # its unit.
+  serverUser = if cfg.user != null then cfg.user else "junos-web";
 
   # The system unit keeps profiles and darks in its StateDirectory and the
   # guide logs there too unless logDir names another folder; the user unit
@@ -338,7 +348,10 @@ in
         tab's native mode through the relay, which is pointed at it. It runs
         as a user unit next to the relay when apps.enable is set, else as a
         hardened system unit. Needs services.junos-web.enable. Do not run
-        PHD2 at the same time: both listen on the same port'';
+        PHD2 at the same time: both listen on the same port. The Profiles
+        tab's Launch / Stop / Restart of junos-guider act on this unit
+        through systemctl (a polkit rule lets the relay's user do it for the
+        system unit)'';
 
       package = mkOption {
         type = types.package;
@@ -490,9 +503,11 @@ in
             ProtectSystem = "strict";
             ProtectHome = if anyUnderHome then "tmpfs" else true;
             NoNewPrivileges = true;
-            # AF_UNIX only for hostPower: the system D-Bus socket behind
-            # `systemctl poweroff` / `reboot`.
-            RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ] ++ optional cfg.hostPower.enable "AF_UNIX";
+            # AF_UNIX only for hostPower and the guider: the system D-Bus
+            # socket behind `systemctl poweroff` / `reboot` and
+            # `systemctl restart junos-guider.service`.
+            RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ]
+              ++ optional (cfg.hostPower.enable || gcfg.enable) "AF_UNIX";
           }
           // optionalAttrs (cfg.user  != null) { User  = cfg.user;  }
           // optionalAttrs (cfg.group != null) { Group = cfg.group; };
@@ -536,6 +551,22 @@ in
     })
 
     (mkIf (gcfg.enable && !cfg.apps.enable) {
+      # The Profiles tab starts, stops and restarts the guider's system unit
+      # with systemctl, as the relay's user; this unit only, these verbs only.
+      security.polkit = {
+        enable = true;
+        extraConfig = ''
+          polkit.addRule(function(action, subject) {
+            if (action.id == "org.freedesktop.systemd1.manage-units" &&
+                subject.user == "${serverUser}" &&
+                action.lookup("unit") == "junos-guider.service" &&
+                ["start", "stop", "restart"].indexOf(action.lookup("verb")) >= 0) {
+              return polkit.Result.YES;
+            }
+          });
+        '';
+      };
+
       systemd.services.junos-guider = {
         description = "junos-guider PHD2-compatible autoguider";
         wantedBy = [ "multi-user.target" ];
