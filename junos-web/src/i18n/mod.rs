@@ -422,6 +422,7 @@ translations! {
     abins_reanalysed, abins_reanalysed_hint, abins_excluded, abins_exclude, abins_include,
     abins_exclude_hint, abins_reanalyse_off, abins_rerr_running, abins_rerr_no_result, abins_rerr_refused,
     abins_curves, abins_curves_hint,
+    abins_sensor, abins_sensor_hint, abins_profile_lr, abins_profile_tb,
     // Guide tab — junos-guider with Ekos
     guider_connect_ekos, guider_ekos_autostar_warning, guider_cal_ekos_reset_note,
     // Guide tab — Ekos settings, Use junos guider

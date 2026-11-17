@@ -30,7 +30,7 @@ use crate::i18n::{t, Lang, Translations};
 use crate::ws::{AbInsResult, AbInsStatus, SendCmd};
 use crate::ws_helpers::send_cmd;
 
-use super::{abins_curves, tilt_calc};
+use super::{abins_curves, abins_sensor, tilt_calc};
 
 type Label = fn(&'static Translations) -> &'static str;
 
@@ -406,6 +406,7 @@ fn result_cards(
     };
 
     let curves = abins_curves::curves_card(r, tr, selected);
+    let sensor = abins_sensor::sensor_card(r, tr, selected);
 
     // Backfocus.
     let b = &r.backfocus;
@@ -534,7 +535,7 @@ fn result_cards(
         </div>
     };
 
-    view! { {header} {tile_map} {curves} {backfocus} {tilt} {plate} {table} }
+    view! { {header} {tile_map} {curves} {backfocus} {tilt} {sensor} {plate} {table} }
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────
