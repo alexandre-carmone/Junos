@@ -15,7 +15,8 @@
 //!     `focus_set_all_settings{…}`, `focus_set_crosshair{x,y}`.
 //!     Command list: `kstars/kstars/ekos/ekoslive/commands.h`,
 //!     handlers: `kstars/kstars/ekos/ekoslive/message.cpp:709-739`.
-//!   - The Aberration Inspector (`focus_abins_*`, a KStars fork): `abins.rs`.
+//!   - The Aberration Inspector (`focus_abins_*`, a KStars fork): `abins.rs`,
+//!     its per-tile V-curves `abins_curves.rs`.
 
 use leptos::prelude::*;
 use leptos::html;
@@ -31,6 +32,7 @@ use crate::ws_helpers::{send_cmd, dispatch_setting};
 use crate::Tab;
 
 mod abins;
+mod abins_curves;
 mod tilt_calc;
 mod vcurve;
 use crate::dom::{event_target_checked, event_target_value};

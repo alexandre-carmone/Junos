@@ -1692,6 +1692,8 @@
   "abins_rerr_running": "Réanalyse refusée : une passe est en cours.",
   "abins_rerr_no_result": "Réanalyse refusée : KStars n’a aucune passe à réanalyser.",
   "abins_rerr_refused": "Réanalyse refusée :",
+  "abins_curves": "Courbes en V",
+  "abins_curves_hint": "La courbe ajustée et les points de chaque tuile utilisée, un trait à sa meilleure mise au point ; la bande verte est la zone critique de mise au point du centre. Touchez une tuile pour la mettre en avant.",
   "guider_marker_dither": "Dithering",
   "guider_marker_settle_begin": "Stabilisation",
   "guider_marker_settled": "Stabilisé",

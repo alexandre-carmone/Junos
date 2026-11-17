@@ -30,7 +30,7 @@ use crate::i18n::{t, Lang, Translations};
 use crate::ws::{AbInsResult, AbInsStatus, SendCmd};
 use crate::ws_helpers::send_cmd;
 
-use super::tilt_calc;
+use super::{abins_curves, tilt_calc};
 
 type Label = fn(&'static Translations) -> &'static str;
 
@@ -109,7 +109,7 @@ fn state_of(status: &Option<AbInsStatus>, tr: &'static Translations) -> (String,
 }
 
 /// The ISO UTC timestamp in the browser's locale.
-fn local_time(iso: &str) -> String {
+pub(super) fn local_time(iso: &str) -> String {
     if iso.is_empty() {
         return String::new();
     }
@@ -122,7 +122,7 @@ fn local_time(iso: &str) -> String {
 
 /// Colour of a tile's delta against the CFZ: within half of it, within it,
 /// beyond. Neutral when the run has no CFZ.
-fn delta_class(delta: f64, cfz: f64) -> &'static str {
+pub(super) fn delta_class(delta: f64, cfz: f64) -> &'static str {
     if cfz <= 0.0 {
         "text-text-blue"
     } else if delta.abs() <= cfz / 2.0 {
@@ -132,6 +132,18 @@ fn delta_class(delta: f64, cfz: f64) -> &'static str {
     } else {
         "text-state-err"
     }
+}
+
+/// Each tile's colour in the charts, by `id` (TL T TR / L C R / BL B BR):
+/// accents only, the `state-*` colours keep their CFZ meaning.
+const TILE_COLORS: [&str; 9] = [
+    "var(--accent-cyan)", "var(--text-blue)", "var(--accent-amber)",
+    "var(--accent-violet)", "var(--text-blue-bright)", "var(--accent-green)",
+    "var(--band-sii)", "var(--accent-cyan-dim)", "var(--accent-green-soft)",
+];
+
+pub(super) fn tile_color(id: i64) -> &'static str {
+    usize::try_from(id).ok().and_then(|i| TILE_COLORS.get(i)).copied().unwrap_or("var(--text-muted)")
 }
 
 /// The re-analysis refusal codes (focus.cpp `reanalyseAbIns`); any other
@@ -393,6 +405,8 @@ fn result_cards(
         </div>
     };
 
+    let curves = abins_curves::curves_card(r, tr, selected);
+
     // Backfocus.
     let b = &r.backfocus;
     let backfocus = view! {
@@ -520,7 +534,7 @@ fn result_cards(
         </div>
     };
 
-    view! { {header} {tile_map} {backfocus} {tilt} {plate} {table} }
+    view! { {header} {tile_map} {curves} {backfocus} {tilt} {plate} {table} }
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────

@@ -1602,6 +1602,8 @@
   "abins_rerr_running": "Re-analysis refused: a run is in progress.",
   "abins_rerr_no_result": "Re-analysis refused: KStars has no run to re-analyse.",
   "abins_rerr_refused": "Re-analysis refused:",
+  "abins_curves": "V-curves",
+  "abins_curves_hint": "Each used tile's fitted curve and datapoints, a tick at its best focus; the green band is the centre's critical focus zone. Tap a tile to highlight it.",
   "guider_marker_dither": "Dither",
   "guider_marker_settle_begin": "Settling",
   "guider_marker_settled": "Settled",
