@@ -34,10 +34,10 @@ const SW: f64 = 60.0;
 const SH: f64 = 40.0;
 
 /// KStars' "no change" threshold (tiltcorrectioncalc.h `NO_CHANGE_MM`).
-const NO_CHANGE_MM: f64 = 0.001;
+pub(super) const NO_CHANGE_MM: f64 = 0.001;
 
 /// A screw's position on the plate, rear view (tiltcorrectioncalc.cpp).
-fn position_text(pos: &str, tr: &'static Translations) -> &'static str {
+pub(super) fn position_text(pos: &str, tr: &'static Translations) -> &'static str {
     match pos {
         "right" => tr.abins_pos_right,
         "upperRight" => tr.abins_pos_upper_right,
@@ -52,7 +52,7 @@ fn position_text(pos: &str, tr: &'static Translations) -> &'static str {
 }
 
 /// Disc colour, table class and direction of a screw's adjustment.
-fn direction(mm: f64, tr: &'static Translations) -> (&'static str, &'static str, &'static str) {
+pub(super) fn direction(mm: f64, tr: &'static Translations) -> (&'static str, &'static str, &'static str) {
     if mm.abs() < NO_CHANGE_MM {
         ("var(--text-faint)", "text-text-faint", "\u{2014}")
     } else if mm > 0.0 {

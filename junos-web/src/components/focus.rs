@@ -18,7 +18,7 @@
 //!   - The Aberration Inspector (`focus_abins_*`, a KStars fork): `abins.rs`,
 //!     its per-tile V-curves `abins_curves.rs`, the sensor's focal plane and
 //!     side profiles `abins_sensor.rs`, the tilt plate's rear view
-//!     `abins_plate.rs`.
+//!     `abins_plate.rs`, what to do next `abins_steps.rs`.
 
 use leptos::prelude::*;
 use leptos::html;
@@ -37,6 +37,7 @@ mod abins;
 mod abins_curves;
 mod abins_plate;
 mod abins_sensor;
+mod abins_steps;
 mod tilt_calc;
 mod vcurve;
 use crate::dom::{event_target_checked, event_target_value};
@@ -908,7 +909,7 @@ pub fn FocusTab(
                         </div>
 
                         // Aberration Inspector (a KStars fork)
-                        {abins::abins_card(abins_status, abins_result, send_sv.get_value(), abins_open)}
+                        {abins::abins_card(abins_status, abins_result, abins_settings, send_sv.get_value(), abins_open)}
                     </div>
 
                     // HFR V-curve — under the frame on md+. Title and caption

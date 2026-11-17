@@ -1,7 +1,8 @@
 //! Focus tab: the Aberration Inspector — a card (state, Start/Stop, the last
 //! run's one-line verdict) and a sheet with the full result: the 3×3 tile
 //! map, backfocus, sensor tilt, the tilt plate's screw turns (drawn in
-//! `abins_plate.rs`), the per-tile table and the settings.
+//! `abins_plate.rs`), the per-tile table and the settings. What to do next
+//! (`abins_steps.rs`) opens the sheet and gives the card its "Next" line.
 //!
 //! The wire is a KStars fork's `focus_abins_*` (see CLAUDE.md): the status
 //! and result land in `FocusSnapshot` through the store; a setting is sent
@@ -27,10 +28,10 @@ use serde_json::{json, Value};
 use crate::components::form::{setting_row, sheet, CARD, CARD_TITLE, CHECK, LABEL, NUM, SELECT};
 use crate::dom::{event_target_checked, event_target_value};
 use crate::i18n::{t, Lang, Translations};
-use crate::ws::{AbInsResult, AbInsStatus, SendCmd};
+use crate::ws::{AbInsResult, AbInsStatus, AbInsTiltPlate, SendCmd};
 use crate::ws_helpers::send_cmd;
 
-use super::{abins_curves, abins_plate, abins_sensor, tilt_calc};
+use super::{abins_curves, abins_plate, abins_sensor, abins_steps, tilt_calc};
 
 type Label = fn(&'static Translations) -> &'static str;
 
@@ -151,6 +152,19 @@ fn reanalyse(send: &SendCmd, exclude: Vec<i64>, tile_selection: &str, opt_centre
     }));
 }
 
+/// The screws to turn under the current settings (the result's own advice
+/// only until the settings echo has arrived), and whether a plate is fitted.
+fn plate_of(r: &AbInsResult, settings: &Value) -> (Option<AbInsTiltPlate>, bool) {
+    let advice = tilt_calc::plate_advice(r, settings).or_else(|| r.tilt_plate.clone());
+    (advice, settings["tiltPlatePresent"].as_bool().unwrap_or(r.plate_present))
+}
+
+/// What to do next, the screws only when a plate is fitted.
+fn steps_of(r: &AbInsResult, settings: &Value) -> Vec<abins_steps::Step> {
+    let (advice, present) = plate_of(r, settings);
+    abins_steps::steps(r, advice.as_ref().filter(|_| present))
+}
+
 fn excluded_ids(r: &AbInsResult) -> Vec<i64> {
     r.tiles.iter().filter(|t| t.excluded).map(|t| t.id).collect()
 }
@@ -158,10 +172,12 @@ fn excluded_ids(r: &AbInsResult) -> Vec<i64> {
 // ── Card ─────────────────────────────────────────────────────────────────
 
 /// The Focus tab's card: state badge, Start (disabled with the blockers as a
-/// hint) or Stop, the refusal text, the last result's verdict and Details.
+/// hint) or Stop, the refusal text, the last result's verdict, the next step
+/// and Details.
 pub fn abins_card(
     status: Memo<Option<AbInsStatus>>,
     result: Memo<Option<AbInsResult>>,
+    settings: Memo<Value>,
     send: SendCmd,
     open: RwSignal<bool>,
 ) -> impl IntoView {
@@ -189,6 +205,12 @@ pub fn abins_card(
             parts.push(format!("{} {:.2} %", tr.abins_tilt, r.tilt.diagonal_percent));
         }
         parts.join(" · ")
+    });
+    let next = move || result.with(|r| {
+        let r = r.as_ref()?;
+        let tr = tr();
+        let step = settings.with(|s| steps_of(r, s)).into_iter().next()?;
+        Some((format!("{} {}", tr.abins_next, abins_steps::title(&step, tr)), abins_steps::severity_class(step.severity())))
     });
 
     view! {
@@ -221,6 +243,9 @@ pub fn abins_card(
                     {move || tr().abins_details}
                 </button>
             </div>
+            {move || next().map(|(text, cls)| view! {
+                <div class=format!("text-xs leading-tight {cls}")>{text}</div>
+            })}
         </div>
     }
 }
@@ -390,6 +415,7 @@ fn result_cards(
         </div>
     };
 
+    let todo = abins_steps::steps_card(&steps_of(r, settings), tr);
     let curves = abins_curves::curves_card(r, tr, selected);
     let sensor = abins_sensor::sensor_card(r, tr, selected);
 
@@ -436,8 +462,7 @@ fn result_cards(
 
     // Tilt plate: the screws to turn, under the current settings (the
     // result's own advice only until the settings echo has arrived).
-    let advice = tilt_calc::plate_advice(r, settings).or_else(|| r.tilt_plate.clone());
-    let plate_present = settings["tiltPlatePresent"].as_bool().unwrap_or(r.plate_present);
+    let (advice, plate_present) = plate_of(r, settings);
     let plate = abins_plate::plate_card(advice.as_ref(), r.tilt.ok, plate_present, tr);
 
     // Per-tile table.
@@ -479,7 +504,7 @@ fn result_cards(
         </div>
     };
 
-    view! { {header} {tile_map} {curves} {backfocus} {tilt} {sensor} {plate} {table} }
+    view! { {header} {todo} {tile_map} {curves} {backfocus} {tilt} {sensor} {plate} {table} }
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────
