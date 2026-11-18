@@ -1717,6 +1717,8 @@
   "abins_do_step_size": "Renseigner la taille de pas du focuser (µm) et la CFZ dans les réglages Focus : sans elles, les écarts n’ont pas d’échelle",
   "abins_do_screws": "Tourner les vis de la platine de tilt",
   "abins_do_tilt": "Corriger le tilt du capteur",
+  "abins_do_no_backfocus": "Le backfocus n’a pas pu être mesuré : aucune tuile utilisable autour du centre. Inclure ou ajuster d’autres tuiles, ou changer la sélection de tuiles",
+  "abins_do_no_tilt": "Le tilt n’a pas pu être mesuré : un côté (gauche, droite, haut ou bas) n’a aucune tuile utilisable. Inclure ou ajuster une tuile de chaque côté, ou changer la sélection de tuiles",
   "abins_do_rerun": "Relancer l’inspecteur pour vérifier",
   "abins_do_all_good": "Backfocus et tilt dans la moitié de la CFZ : rien à régler",
   "abins_history": "Historique des passes",

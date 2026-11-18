@@ -1627,6 +1627,8 @@
   "abins_do_step_size": "Set the focuser step size (µm) and the CFZ in the Focus settings: without them the offsets have no scale",
   "abins_do_screws": "Turn the tilt plate screws",
   "abins_do_tilt": "Correct the sensor tilt",
+  "abins_do_no_backfocus": "The backfocus could not be measured: no usable tile around the centre. Include or fit more tiles, or change the tile selection",
+  "abins_do_no_tilt": "The tilt could not be measured: a side (left, right, top or bottom) has no usable tile. Include or fit a tile on every side, or change the tile selection",
   "abins_do_rerun": "Run the inspector again to check",
   "abins_do_all_good": "Backfocus and tilt are within half the CFZ: nothing to adjust",
   "abins_history": "Run history",

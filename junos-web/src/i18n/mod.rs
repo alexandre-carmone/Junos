@@ -426,7 +426,7 @@ translations! {
     abins_direction, abins_dir_push, abins_dir_back, abins_image_l, abins_image_r, abins_sensor_rear,
     abins_camera_top, abins_plate_view, abins_plate_cw, abins_plate_ccw,
     abins_todo, abins_todo_hint, abins_next, abins_optional, abins_do_fix_data, abins_do_centre,
-    abins_do_step_size, abins_do_screws, abins_do_tilt, abins_do_rerun, abins_do_all_good,
+    abins_do_step_size, abins_do_screws, abins_do_tilt, abins_do_no_backfocus, abins_do_no_tilt, abins_do_rerun, abins_do_all_good,
     abins_history, abins_history_hint, abins_history_tilt, abins_history_prev, abins_history_clear,
     // Guide tab — junos-guider with Ekos
     guider_connect_ekos, guider_ekos_autostar_warning, guider_cal_ekos_reset_note,

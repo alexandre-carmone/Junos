@@ -41,6 +41,11 @@ pub(super) enum Step {
     Screws { screws: Vec<AbInsScrew>, severity: Severity },
     /// The tilt, without a plate to correct it with.
     Tilt { lr: f64, tb: f64, severity: Severity },
+    /// The backfocus could not be measured: no usable tile around the centre.
+    NoBackfocus,
+    /// The tilt could not be measured: a side (left, right, top or bottom)
+    /// without a usable tile.
+    NoTilt,
     Rerun,
     AllGood,
 }
@@ -48,7 +53,7 @@ pub(super) enum Step {
 impl Step {
     pub(super) fn severity(&self) -> Severity {
         match self {
-            Step::FixData | Step::CentreUnusable | Step::SetStepSize => Severity::Needed,
+            Step::FixData | Step::CentreUnusable | Step::SetStepSize | Step::NoBackfocus | Step::NoTilt => Severity::Needed,
             Step::Spacing { severity, .. } | Step::Screws { severity, .. } | Step::Tilt { severity, .. } => *severity,
             Step::Rerun => Severity::Info,
             Step::AllGood => Severity::Good,
@@ -101,6 +106,14 @@ pub(super) fn steps(r: &AbInsResult, plate: Option<&AbInsTiltPlate>) -> Vec<Step
         });
     }
 
+    // A measure that failed is not a good one: say so rather than "all good".
+    if !b.ok {
+        out.push(Step::NoBackfocus);
+    }
+    if !t.ok {
+        out.push(Step::NoTilt);
+    }
+
     out.push(if out.is_empty() { Step::AllGood } else { Step::Rerun });
     out
 }
@@ -125,6 +138,8 @@ pub(super) fn title(step: &Step, tr: &'static Translations) -> String {
         Step::Screws { .. } => tr.abins_do_screws.to_string(),
         Step::Tilt { lr, tb, .. } => format!("{} · {} {lr:+.0} µm · {} {tb:+.0} µm",
             tr.abins_do_tilt, tr.abins_tilt_lr, tr.abins_tilt_tb),
+        Step::NoBackfocus => tr.abins_do_no_backfocus.to_string(),
+        Step::NoTilt => tr.abins_do_no_tilt.to_string(),
         Step::Rerun => tr.abins_do_rerun.to_string(),
         Step::AllGood => tr.abins_do_all_good.to_string(),
     }
@@ -235,6 +250,22 @@ mod tests {
         r.tiles[4].fit = true;
         r.tiles[4].excluded = true;
         assert_eq!(steps(&r, None), vec![Step::CentreUnusable, Step::Rerun]);
+    }
+
+    #[test]
+    fn unmeasured_is_not_all_good() {
+        let mut r = run();
+        r.tilt.ok = false;
+        assert_eq!(steps(&r, None), vec![Step::NoTilt, Step::Rerun]);
+        r.backfocus.delta_microns = 120.0;
+        assert_eq!(steps(&r, None), vec![
+            Step::Spacing { nearer: false, microns: 120.0, severity: Severity::Needed },
+            Step::NoTilt,
+            Step::Rerun,
+        ]);
+        let mut r = run();
+        r.backfocus.ok = false;
+        assert_eq!(steps(&r, None), vec![Step::NoBackfocus, Step::Rerun]);
     }
 
     #[test]
