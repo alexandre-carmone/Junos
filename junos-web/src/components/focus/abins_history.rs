@@ -216,8 +216,8 @@ fn chart(h: &[HistRun], tr: &'static Translations) -> Option<impl IntoView + use
             <div class="relative h-40 rounded-md bg-bg-input-deep border border-border-base overflow-hidden \
                         font-mono text-[10px] leading-none text-text-faint">
                 <svg viewBox=format!("0 0 {W} {H}") preserveAspectRatio="none" class="absolute inset-0 w-full h-full">
-                    {zone}
                     {hlines}
+                    {zone}
                     {series(&bf, "var(--accent-cyan)")}
                     {series(&diag, "var(--accent-amber)")}
                 </svg>

@@ -97,8 +97,8 @@ fn profile(
     view! {
         <svg viewBox=format!("0 0 {PW} {PH}")
              class="block w-full rounded-md bg-bg-input-deep border border-border-base font-mono">
-            {cfz_marks}
             {ticks}
+            {cfz_marks}
             <line x1=px(0.0) x2=px(0.0) y1=T y2=B stroke="var(--border-mid)" stroke-width="1" stroke-dasharray="2 2" />
             <line x1=px(-e) x2=px(e) y1=py(-k * e) y2=py(k * e) stroke="var(--text-blue-bright)" stroke-width="1.5" />
             {dots}

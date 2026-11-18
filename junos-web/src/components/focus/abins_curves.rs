@@ -157,9 +157,9 @@ pub(super) fn curves_card(
                 <div class="relative h-48 md:h-56 rounded-md bg-bg-input-deep border border-border-base overflow-hidden \
                             font-mono text-[10px] leading-none text-text-faint">
                     <svg viewBox=format!("0 0 {W} {H}") preserveAspectRatio="none" class="absolute inset-0 w-full h-full">
-                        {cfz}
                         {vlines}
                         {hlines}
+                        {cfz}
                         {groups}
                     </svg>
                     {y_labels}
