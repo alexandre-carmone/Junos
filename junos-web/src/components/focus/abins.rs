@@ -498,7 +498,7 @@ fn result_cards(
                             <th class="text-center font-normal pr-2">{tr.abins_col_fit}</th>
                             <th class="text-right font-normal pr-2">{tr.abins_col_solution}</th>
                             <th class="text-right font-normal pr-2">{tr.abins_col_dticks}</th>
-                            <th class="text-right font-normal pr-2">"Δ µm"</th>
+                            <th class="text-right font-normal pr-2 normal-case">"Δ µm"</th>
                             <th class="text-right font-normal pr-2">{tr.abins_col_stars}</th>
                             <th class="text-right font-normal pr-2">"R²"</th>
                             <th class="text-right font-normal">{r.y_axis_label.clone()}</th>
