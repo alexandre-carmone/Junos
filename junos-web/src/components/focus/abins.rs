@@ -403,10 +403,14 @@ fn result_cards(
         move |_| reanalyse(&send, Vec::new(), &sel, opt)
     };
     let any_excluded = !excluded.is_empty();
-    // The status is sticky: a refusal replayed after the run became
-    // re-analysable again is stale, so it shows only while it still holds.
+    // The status is sticky: a `running` / `noResult` refusal replayed after
+    // the run became re-analysable again is stale, so it shows only while it
+    // still holds. An `invalid*` one comes with `canReanalyse` true and stays
+    // until the next plain status push clears it.
     let reanalyse_error = move || status.with(|s| {
-        s.as_ref().filter(|s| s.running || !s.can_reanalyse).and_then(|s| s.reanalyse_error.as_deref()).map(|e| reanalyse_error_text(e, tr))
+        s.as_ref()
+            .and_then(|s| s.reanalyse_error.as_deref().filter(|e| e.starts_with("invalid") || s.running || !s.can_reanalyse))
+            .map(|e| reanalyse_error_text(e, tr))
     });
     let tile_map = view! {
         <div class=CARD>
