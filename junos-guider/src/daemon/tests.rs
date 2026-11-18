@@ -335,7 +335,20 @@ async fn an_indi_mount_connects_drops_and_comes_back() {
     assert_eq!(kept, Some(true));
 
     // The server goes: PHD2's alert, the mount disconnected; then the
-    // client redials and the daemon connects the mount again.
+    // client redials and the daemon connects the mount again. The redial
+    // takes 250 ms and the tick that raises the alert also starts the
+    // reconnect, so a loaded runner may see the mount back before it reads
+    // the snapshot: watch every snapshot from before the drop instead.
+    let mut snaps = d.snapshots();
+    snaps.mark_unchanged();
+    let went_down = tokio::spawn(async move {
+        while snaps.changed().await.is_ok() {
+            if snaps.borrow_and_update().mount.as_ref().is_some_and(|m| !m.connected) {
+                return true;
+            }
+        }
+        false
+    });
     fake.drop_conns();
     let seen = wait_for(&mut ev, 30, |e| matches!(e, EngineEvent::Alert { .. })).await;
     let Some(EngineEvent::Alert { msg, .. }) = seen.last().map(|e| &**e) else { unreachable!() };
@@ -344,7 +357,8 @@ async fn an_indi_mount_connects_drops_and_comes_back() {
     // from the reconnect's attach on, before that connect lets go of the
     // gear dialog: wait for all of it, generously (the whole suite at once
     // slows the redial).
-    assert!(!mount().connected);
+    let down = tokio::time::timeout(Duration::from_secs(30), went_down).await;
+    assert!(matches!(down, Ok(Ok(true))), "no snapshot showed the mount disconnected");
     let t = Instant::now();
     while !mount().connected || d.0.connecting.load(std::sync::atomic::Ordering::SeqCst) || fake.accepted() < 2 {
         assert!(t.elapsed() < Duration::from_secs(30), "the mount did not come back");
