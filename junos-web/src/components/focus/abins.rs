@@ -168,6 +168,16 @@ fn steps_of(r: &AbInsResult, settings: &Value) -> Vec<abins_steps::Step> {
     abins_steps::steps(r, advice.as_ref().filter(|_| present))
 }
 
+/// The tile selection and optCentres a re-analysis goes with: the settings
+/// echo first, then the run's. Not the result's optCentres alone: KStars
+/// turns it off when the run had no tile offsets (`tileOffsetsUnavailable`).
+fn reanalyse_settings(r: &AbInsResult, settings: &Value) -> (String, bool) {
+    (
+        settings["abInsTileSelection"].as_str().map(str::to_string).unwrap_or_else(|| r.tile_selection.clone()),
+        settings["abInsOptCentres"].as_bool().unwrap_or(r.opt_centres),
+    )
+}
+
 fn excluded_ids(r: &AbInsResult) -> Vec<i64> {
     r.tiles.iter().filter(|t| t.excluded).map(|t| t.id).collect()
 }
@@ -375,8 +385,9 @@ fn result_cards(
             None => tr.abins_exclude.to_string(),
         }
     };
+    let (sel, opt) = reanalyse_settings(r, settings);
     let on_toggle = {
-        let (send, excluded, sel, opt) = (send.clone(), excluded.clone(), r.tile_selection.clone(), r.opt_centres);
+        let (send, excluded, sel) = (send.clone(), excluded.clone(), sel.clone());
         move |_| {
             let Some(id) = selected.get_untracked() else { return };
             let mut ex = excluded.clone();
@@ -388,7 +399,7 @@ fn result_cards(
         }
     };
     let on_reset = {
-        let (send, sel, opt) = (send.clone(), r.tile_selection.clone(), r.opt_centres);
+        let send = send.clone();
         move |_| reanalyse(&send, Vec::new(), &sel, opt)
     };
     let any_excluded = !excluded.is_empty();
@@ -548,13 +559,9 @@ impl Form {
         if !self.status.with_untracked(|s| s.as_ref().is_some_and(|s| s.can_reanalyse)) {
             return;
         }
-        let Some((exclude, sel, opt)) = self.result.with_untracked(|r| {
-            r.as_ref().map(|r| (excluded_ids(r), r.tile_selection.clone(), r.opt_centres))
+        let Some((exclude, (sel, opt))) = self.result.with_untracked(|r| {
+            r.as_ref().map(|r| (excluded_ids(r), self.settings.with_untracked(|v| reanalyse_settings(r, v))))
         }) else { return };
-        let (sel, opt) = self.settings.with_untracked(|v| (
-            v["abInsTileSelection"].as_str().map(str::to_string).unwrap_or(sel),
-            v["abInsOptCentres"].as_bool().unwrap_or(opt),
-        ));
         let sel = payload["abInsTileSelection"].as_str().map(str::to_string).unwrap_or(sel);
         let opt = payload["abInsOptCentres"].as_bool().unwrap_or(opt);
         reanalyse(&self.send, exclude, &sel, opt);
