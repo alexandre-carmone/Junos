@@ -22,7 +22,7 @@ const W: f64 = 400.0;
 const H: f64 = 200.0;
 
 /// `(x, y)` points as one path, lifting the pen over a non-finite `y`.
-fn path(pts: impl Iterator<Item = (f64, f64)>) -> String {
+pub(super) fn path(pts: impl Iterator<Item = (f64, f64)>) -> String {
     let mut d = String::new();
     let mut pen = false;
     for (x, y) in pts {

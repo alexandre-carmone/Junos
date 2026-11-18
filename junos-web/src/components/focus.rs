@@ -18,7 +18,9 @@
 //!   - The Aberration Inspector (`focus_abins_*`, a KStars fork): `abins.rs`,
 //!     its per-tile V-curves `abins_curves.rs`, the sensor's focal plane and
 //!     side profiles `abins_sensor.rs`, the tilt plate's rear view
-//!     `abins_plate.rs`, what to do next `abins_steps.rs`.
+//!     `abins_plate.rs`, what to do next `abins_steps.rs`, the run history
+//!     `abins_history.rs` (localStorage; only the results seen while this
+//!     tab is mounted are recorded).
 
 use leptos::prelude::*;
 use leptos::html;
@@ -35,6 +37,7 @@ use crate::Tab;
 
 mod abins;
 mod abins_curves;
+mod abins_history;
 mod abins_plate;
 mod abins_sensor;
 mod abins_steps;
@@ -152,6 +155,14 @@ pub fn FocusTab(
     let abins_status = Memo::new(move |_| focus.with(|f| f.abins_status.clone()));
     let abins_result = Memo::new(move |_| focus.with(|f| f.abins_result.clone()));
     let abins_settings = Memo::new(move |_| focus.with(|f| f.abins_settings.clone()));
+    // Each result goes into the run history (its train's list comes back);
+    // a replayed or unchanged one writes nothing.
+    let abins_hist = RwSignal::new(Vec::new());
+    Effect::new(move |_| abins_result.with(|r| {
+        if let Some(r) = r {
+            abins_hist.set(abins_history::record(r));
+        }
+    }));
 
     // Detected-stars overlay: on by default. `resize_tick` is bumped whenever
     // the preview box can change size (the window `resize` listener below and
@@ -971,7 +982,7 @@ pub fn FocusTab(
                 </div>
             </Show>
             <FilterSettingsSheet open=filters_open send=send_sv.get_value() />
-            {abins::abins_sheet(abins_status, abins_result, abins_settings, send_sv.get_value(), abins_open)}
+            {abins::abins_sheet(abins_status, abins_result, abins_settings, abins_hist, send_sv.get_value(), abins_open)}
         </div>
     }
 }

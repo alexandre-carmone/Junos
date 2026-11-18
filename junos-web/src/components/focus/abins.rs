@@ -1,8 +1,10 @@
 //! Focus tab: the Aberration Inspector — a card (state, Start/Stop, the last
 //! run's one-line verdict) and a sheet with the full result: the 3×3 tile
 //! map, backfocus, sensor tilt, the tilt plate's screw turns (drawn in
-//! `abins_plate.rs`), the per-tile table and the settings. What to do next
-//! (`abins_steps.rs`) opens the sheet and gives the card its "Next" line.
+//! `abins_plate.rs`), the run history (`abins_history.rs`), the per-tile
+//! table and the settings. What to do next (`abins_steps.rs`) opens the
+//! sheet and gives the card its "Next" line. From `md` the charts go two by
+//! two: tile map | V-curves, sensor | plate, backfocus | tilt.
 //!
 //! The wire is a KStars fork's `focus_abins_*` (see CLAUDE.md): the status
 //! and result land in `FocusSnapshot` through the store; a setting is sent
@@ -31,6 +33,7 @@ use crate::i18n::{t, Lang, Translations};
 use crate::ws::{AbInsResult, AbInsStatus, AbInsTiltPlate, SendCmd};
 use crate::ws_helpers::send_cmd;
 
+use super::abins_history::{self, HistRun};
 use super::{abins_curves, abins_plate, abins_sensor, abins_steps, tilt_calc};
 
 type Label = fn(&'static Translations) -> &'static str;
@@ -252,11 +255,13 @@ pub fn abins_card(
 
 // ── Sheet ────────────────────────────────────────────────────────────────
 
-/// The sheet: the result's cards, then the settings.
+/// The sheet: the result's cards, then the settings. `history` is the
+/// result's train's run history (`focus.rs` records it).
 pub fn abins_sheet(
     status: Memo<Option<AbInsStatus>>,
     result: Memo<Option<AbInsResult>>,
     settings: Memo<Value>,
+    history: RwSignal<Vec<HistRun>>,
     send: SendCmd,
     open: RwSignal<bool>,
 ) -> impl IntoView {
@@ -274,7 +279,7 @@ pub fn abins_sheet(
                 <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 \
                             pb-[max(0.75rem,env(safe-area-inset-bottom))] flex flex-col gap-3 text-sm">
                     {move || result.with(|r| match r {
-                        Some(r) => result_cards(r, &settings.get(), tr(), status, selected, send_sv.get_value()).into_any(),
+                        Some(r) => result_cards(r, &settings.get(), tr(), status, selected, history, send_sv.get_value()).into_any(),
                         None => view! { <div class="text-text-faint py-2">{tr().abins_no_result}</div> }.into_any(),
                     })}
                     {form.card()}
@@ -300,6 +305,7 @@ fn result_cards(
     tr: &'static Translations,
     status: Memo<Option<AbInsStatus>>,
     selected: RwSignal<Option<i64>>,
+    history: RwSignal<Vec<HistRun>>,
     send: SendCmd,
 ) -> impl IntoView + use<> {
     let cfz = r.cfz_microns();
@@ -504,7 +510,19 @@ fn result_cards(
         </div>
     };
 
-    view! { {header} {todo} {tile_map} {curves} {backfocus} {tilt} {sensor} {plate} {table} }
+    let history = abins_history::history_card(history, r.train.clone(), tr);
+
+    // One column on phones, the pairs side by side from `md`.
+    const PAIR: &str = "grid gap-3 md:grid-cols-2 items-start";
+    view! {
+        {header}
+        {todo}
+        <div class=PAIR>{tile_map} {curves}</div>
+        <div class=PAIR>{sensor} {plate}</div>
+        <div class=PAIR>{backfocus} {tilt}</div>
+        {history}
+        {table}
+    }
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────
