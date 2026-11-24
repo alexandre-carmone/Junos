@@ -240,11 +240,6 @@ pub fn ImagingTab(
     });
 
     // ── Actions ──────────────────────────────────────────────────────────
-    let s_plain = send.clone();
-    let plain = move |ty: &'static str| {
-        let s = s_plain.clone();
-        move |_| send_cmd(&s, ty, json!({}))
-    };
     // Preview and Loop: one-shot frames, at whatever temperature the Cooling
     // card left the camera.
     let s_frame = send.clone();
@@ -436,6 +431,10 @@ pub fn ImagingTab(
     let on_file = move |ev: web_sys::SubmitEvent| {
         ev.prevent_default();
         let path = file_path.get_untracked().trim().to_string();
+        // Loading empties the queue first, mid-run included (camera_jobs.cpp:361).
+        if file_cmd.get_untracked() == LOAD && busy.get_untracked() {
+            return;
+        }
         if !path.is_empty() {
             send_cmd(&s_file, file_cmd.get_untracked(), json!({ "filepath": path }));
             refresh_queue_soon(s_file.clone());
@@ -443,6 +442,17 @@ pub fn ImagingTab(
         }
     };
     let toggle_file = move |cmd: &'static str| file_cmd.update(|c| *c = if *c == cmd { "" } else { cmd });
+    // Clear empties the whole queue: a second tap within 5 s confirms.
+    let clear_armed = RwSignal::new(false);
+    let s_clear = send.clone();
+    let on_clear = move |_| {
+        if clear_armed.get_untracked() {
+            clear_armed.set(false);
+            send_cmd(&s_clear, "capture_clear_sequences", json!({}));
+        } else {
+            crate::horizon::arm_confirm(clear_armed);
+        }
+    };
     let s_rm = send.clone();
     let remove = Callback::new(move |i: usize| send_cmd(&s_rm, "capture_remove_sequence", json!({ "index": i })));
     let open_job = Callback::new(move |i: usize| detail.set(Some(i)));
@@ -473,6 +483,7 @@ pub fn ImagingTab(
         </div>
         <div class=FOOTER>
             <button class="btn btn-danger h-11 px-5 ml-auto"
+                    disabled=move || busy.get()
                     on:click=move |_| {
                         if let Some(i) = detail.get_untracked() { remove.run(i); }
                         detail.set(None);
@@ -660,17 +671,19 @@ pub fn ImagingTab(
                                 q.iter().enumerate()
                                     .map(|(i, job)| {
                                         let hint = filter_ctx.and_then(|c| c.hint(job["Filter"].as_str().unwrap_or("")));
-                                        jobs::job_card(i, job, live, hint, tr, open_job, remove)
+                                        jobs::job_card(i, job, live, hint, tr, open_job, remove, !busy.get())
                                     })
                                     .collect::<Vec<_>>()
                                     .into_any()
                             })
                         }}
                         <div class="grid grid-cols-4 gap-2">
-                            <button class="btn btn-ghost h-11 md:h-9 px-1" on:click=move |_| editor_open.set(true)>
+                            <button class="btn btn-ghost h-11 md:h-9 px-1" disabled=move || busy.get()
+                                    on:click=move |_| editor_open.set(true)>
                                 {move || tr().imaging_editor}
                             </button>
                             <button class=move || if file_cmd.get() == LOAD { "btn btn-ghost btn--active h-11 md:h-9 px-1" } else { "btn btn-ghost h-11 md:h-9 px-1" }
+                                    disabled=move || busy.get()
                                     on:click=move |_| toggle_file(LOAD)>
                                 {move || tr().imaging_load}
                             </button>
@@ -679,12 +692,17 @@ pub fn ImagingTab(
                                     on:click=move |_| toggle_file(SAVE)>
                                 {move || tr().imaging_save}
                             </button>
-                            <button class="btn btn-ghost h-11 md:h-9 px-1 text-state-err"
-                                    disabled=move || queue.with(Vec::is_empty)
-                                    on:click=plain("capture_clear_sequences")>
-                                {move || tr().seq_clear}
+                            <button class=move || if clear_armed.get() { "btn btn-danger h-11 md:h-9 px-1" } else { "btn btn-ghost h-11 md:h-9 px-1 text-state-err" }
+                                    disabled=move || busy.get() || queue.with(Vec::is_empty)
+                                    on:click=on_clear>
+                                {move || if clear_armed.get() { tr().imaging_clear_confirm } else { tr().seq_clear }}
                             </button>
                         </div>
+                        // KStars doesn't guard these while capturing (camera_jobs.cpp:350, 444);
+                        // the desktop disables them (camera_actions.cpp:304).
+                        <Show when=move || busy.get() && queue.with(|q| !q.is_empty())>
+                            <span class="text-xs text-text-faint">{move || tr().imaging_queue_locked}</span>
+                        </Show>
                         // Paths are on the KStars host.
                         <Show when=move || !file_cmd.get().is_empty()>
                             <form class="flex items-center gap-2" on:submit=on_file.clone()>

@@ -33,6 +33,8 @@ pub(super) fn job_card(
     tr: &'static Translations,
     open: Callback<usize>,
     remove: Callback<usize>,
+    // False while capturing: KStars refuses a remove then (camera_jobs.cpp:74).
+    editable: bool,
 ) -> impl IntoView + use<> {
     let status = job["Status"].as_str().unwrap_or("Idle").to_string();
     let running = status == "In Progress";
@@ -73,10 +75,12 @@ pub(super) fn job_card(
                     {summary}
                     {hint.map(|h| view! { <span class="text-xs text-text-muted">{format!(" ({h})")}</span> })}
                 </span>
-                <button class="btn-icon shrink-0 -mr-1 text-text-muted" title=tr.imaging_remove_job
-                        on:click=move |ev| { ev.stop_propagation(); remove.run(i); }>
-                    "\u{2716}"
-                </button>
+                {editable.then(|| view! {
+                    <button class="btn-icon shrink-0 -mr-1 text-text-muted" title=tr.imaging_remove_job
+                            on:click=move |ev| { ev.stop_propagation(); remove.run(i); }>
+                        "\u{2716}"
+                    </button>
+                })}
             </div>
             <div class="flex items-center gap-2">
                 <span class=status_cls>{status}</span>

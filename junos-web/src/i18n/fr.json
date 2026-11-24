@@ -533,6 +533,8 @@
   "imaging_add_job": "+ Ajouter un job",
   "imaging_empty_queue": "Aucun job — créez une séquence dans l'Éditeur, ou chargez-en une.",
   "imaging_remove_job": "Retirer le job",
+  "imaging_clear_confirm": "Effacer ?",
+  "imaging_queue_locked": "La file ne peut pas changer pendant la capture.",
   "imaging_one_shot": "Prise unique",
   "imaging_add_exposure": "+ Ajouter une pose",
   "imaging_send_sequence": "Envoyer",
