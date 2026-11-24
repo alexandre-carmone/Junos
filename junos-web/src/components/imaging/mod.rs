@@ -56,8 +56,8 @@ use crate::components::zoom::frame_zoom;
 use crate::dom::event_target_value;
 use crate::components::files::api::mkdir;
 use crate::i18n::{t, Lang, Translations};
-use crate::ws::{LiveStackerState, SendCmd};
-use crate::ws_helpers::{send_cmd, send_device_property_set};
+use crate::ws::{FileReply, LiveStackerState, SendCmd};
+use crate::ws_helpers::{file_command, send_cmd, send_device_property_set};
 use histogram::{clip_overlay, histogram_panel, toggle_button, Histogram};
 use crate::{ActiveTabCtx, CaptureDirCtx, RevealInFilesCtx, Tab};
 
@@ -163,6 +163,8 @@ pub fn ImagingTab(
     #[prop(into)] online: Signal<bool>,
     /// Global KStars `Options::` (`option_get`), for `alwaysResetSequenceWhenStarting`.
     options: RwSignal<Value>,
+    /// The answer to Save / Load (`DeviceStore::file_reply`).
+    file_reply: RwSignal<Option<FileReply>>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -436,19 +438,37 @@ pub fn ImagingTab(
     // The Save / Load path row: the command it runs, "" while hidden.
     let file_cmd = RwSignal::new("");
     let file_path = RwSignal::new(String::new());
+    // The last Save / Load outcome: (ok, message).
+    let file_status = RwSignal::new(None::<(bool, &'static str)>);
     let s_file = send.clone();
     let on_file = move |ev: web_sys::SubmitEvent| {
         ev.prevent_default();
         let path = file_path.get_untracked().trim().to_string();
+        let cmd = file_cmd.get_untracked();
         // Loading empties the queue first, mid-run included (camera_jobs.cpp:361).
-        if file_cmd.get_untracked() == LOAD && busy.get_untracked() {
+        if path.is_empty() || (cmd == LOAD && busy.get_untracked()) {
             return;
         }
-        if !path.is_empty() {
-            send_cmd(&s_file, file_cmd.get_untracked(), json!({ "filepath": path }));
-            refresh_queue_soon(s_file.clone());
-            file_cmd.set("");
-        }
+        file_cmd.set("");
+        file_status.set(None);
+        let send = s_file.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            // A failed save answers nothing; a load answers {result}.
+            let ok = file_command(&send, file_reply, cmd, json!({ "filepath": path }), 5_000)
+                .await
+                .is_some_and(|r| r.ok);
+            let tr = t(lang.get_untracked());
+            let msg = match (cmd == SAVE, ok) {
+                (true, true) => tr.imaging_file_saved,
+                (true, false) => tr.imaging_file_save_failed,
+                (false, true) => tr.imaging_file_loaded,
+                (false, false) => tr.imaging_file_load_failed,
+            };
+            file_status.try_set(Some((ok, msg)));
+            if cmd == LOAD {
+                refresh_queue_soon(send);
+            }
+        });
     };
     let toggle_file = move |cmd: &'static str| file_cmd.update(|c| *c = if *c == cmd { "" } else { cmd });
     // Clear empties the whole queue: a second tap within 5 s confirms.
@@ -712,6 +732,9 @@ pub fn ImagingTab(
                         <Show when=move || busy.get() && queue.with(|q| !q.is_empty())>
                             <span class="text-xs text-text-faint">{move || tr().imaging_queue_locked}</span>
                         </Show>
+                        {move || file_status.get().map(|(ok, msg)| view! {
+                            <span class=if ok { "text-xs text-state-ok" } else { "text-xs text-state-err" }>{msg}</span>
+                        })}
                         <Show when=move || !busy.get() && queue_done.get()>
                             <span class="text-xs text-state-warn">{move || tr().imaging_queue_done}</span>
                         </Show>

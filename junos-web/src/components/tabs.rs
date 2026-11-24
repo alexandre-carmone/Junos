@@ -147,7 +147,8 @@ pub fn TabContent(
             <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <ImagingTab capture=capture_snapshot camera=camera filter_wheel=filter_wheel
                             livestacker_state=store.livestacker_state livestacker_settings=store.livestacker_settings
-                            online=store.online options=store.options send=Arc::clone(&send_imaging) />
+                            online=store.online options=store.options file_reply=store.file_reply
+                            send=Arc::clone(&send_imaging) />
             </div>
         </Show>
         <Show when=files_visible>

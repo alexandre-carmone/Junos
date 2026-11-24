@@ -1267,10 +1267,9 @@ impl DeviceStore {
                     if let Some(v) = payload["expr"].as_f64() {
                         c.exposure_total = Some(v);
                     }
+                    // The whole log text; "" once cleared (capture.cpp:367).
                     if let Some(l) = payload["log"].as_str() {
-                        if !l.is_empty() {
-                            c.log = l.to_string();
-                        }
+                        c.log = l.to_string();
                     }
                 });
             }
@@ -1722,14 +1721,16 @@ impl DeviceStore {
             }
 
             // File commands (message.cpp:683, 1205, 1240): `{result, path}`,
-            // except the save, which answers with the file's text.
+            // except the saves.
             "scheduler_load_file" | "capture_load_sequence_file" => {
                 self.file_reply.set(Some(FileReply {
                     cmd: type_str.to_string(),
                     ok: payload["result"].as_bool().unwrap_or(false),
                 }));
             }
-            "scheduler_save_file" => {
+            // Both answer only once written (capture: the file's text,
+            // message.cpp:681-691).
+            "scheduler_save_file" | "capture_save_sequence_file" => {
                 self.file_reply.set(Some(FileReply { cmd: type_str.to_string(), ok: true }));
             }
 

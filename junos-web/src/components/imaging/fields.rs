@@ -18,7 +18,6 @@ use crate::ws::SendCmd;
 use crate::ws_helpers::{dispatch_setting, send_device_property_set};
 
 const SET_ALL: &str = "capture_set_all_settings";
-const DEFAULT_GAIN: i64 = 100;
 /// One-tap exposures in seconds, from focus frames (1 ms) to long subs.
 const EXPOSURE_PRESETS: [f64; 8] = [0.001, 0.01, 0.1, 1.0, 5.0, 30.0, 60.0, 300.0];
 
@@ -60,27 +59,12 @@ impl Settings {
                 s.pinned.update(|m| echoed.iter().for_each(|k| { m.remove(k); }));
             }
         });
-        // The first snapshot without a real gain gets the default, so the
-        // sequence jobs KStars builds from the form have one.
-        let primed = StoredValue::new(false);
-        Effect::new(move |_| {
-            let missing = s.snapshot.with(|snap| {
-                let obj = snap.as_object().filter(|o| !o.is_empty())?;
-                Some(obj.get("captureGainN").and_then(Value::as_f64).is_none_or(|g| g < 0.0))
-            });
-            let Some(missing) = missing else { return };
-            if !primed.get_value() {
-                primed.set_value(true);
-                if missing {
-                    s.send.with_value(|send| dispatch_setting(send, SET_ALL, None, "captureGainN", DEFAULT_GAIN.into()));
-                }
-            }
-        });
         s
     }
 
     /// The user's edit, else KStars' value, else a default. A negative gain is
-    /// KStars' "no value" sentinel (`min - step`).
+    /// KStars' "no value" sentinel (`min - step`): the camera's own gain,
+    /// shown empty and left alone.
     pub(super) fn get(&self, key: &'static str) -> Value {
         if let Some(v) = self.pinned.with(|m| m.get(key).cloned()) {
             return v;
@@ -91,7 +75,6 @@ impl Settings {
             .unwrap_or_else(|| match key {
                 "captureExposureN" => Value::from(1.0),
                 "captureTypeS" => Value::from("Light"),
-                "captureGainN" => Value::from(DEFAULT_GAIN),
                 _ => Value::Null,
             })
     }
@@ -151,7 +134,7 @@ pub(super) fn capture_form(
         </Show>
         {move || if isos.with(Vec::is_empty) {
             setting_row(move || tr().field_gain, view! {
-                <input type="number" min="0" step="1" inputmode="numeric" class=NUM
+                <input type="number" min="0" step="1" inputmode="numeric" class=NUM placeholder="--"
                        prop:value=move || s.str("captureGainN")
                        on:change=move |ev| {
                            if let Ok(g) = event_target_value(&ev).trim().parse::<i64>() {
