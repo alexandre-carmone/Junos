@@ -81,6 +81,10 @@ pub struct DeviceStore {
     pub align_frame_pending: StoredValue<Option<AlignFrame>>,
     pub guide_status: RwSignal<Option<GuideStatusData>>,
     pub guide_settings: RwSignal<serde_json::Value>,
+    /// Ekos' Dark Library settings map. KStars pushes it under
+    /// `guide_get_all_settings` (manager.cpp:3683 wires DarkLibrary's
+    /// settingsUpdated to sendGuideSettings), so it is told apart by its keys.
+    pub dark_library_settings: RwSignal<serde_json::Value>,
     /// Global KStars `Options::` entries, `{name: value, …}` — every entry an
     /// `option_get` reply ever carried (the guider backend and its hosts, the
     /// plate solver's type / profile / astrometry hints, …).
@@ -300,6 +304,7 @@ impl DeviceStore {
             align_frame_pending: StoredValue::new(None),
             guide_status: RwSignal::new(None),
             guide_settings: RwSignal::new(serde_json::Value::Null),
+            dark_library_settings: RwSignal::new(serde_json::Value::Null),
             options: RwSignal::new(serde_json::Value::Null),
             stellarsolver_profiles: RwSignal::new(Vec::new()),
             guide_preview_url: RwSignal::new(None),
@@ -1497,7 +1502,12 @@ impl DeviceStore {
             // Guide settings snapshot — debounced reply to
             // guide_get_all_settings (message.cpp:585-590). Flat widget map.
             "guide_get_all_settings" => {
-                self.guide_settings.set(payload.clone());
+                // `countSpin` (frames per dark) is a Dark Library widget only.
+                if payload.get("countSpin").is_some() {
+                    self.dark_library_settings.set(payload.clone());
+                } else {
+                    self.guide_settings.set(payload.clone());
+                }
             }
 
             // junos-guider, through the relay (`junos-server/src/guider.rs`).
