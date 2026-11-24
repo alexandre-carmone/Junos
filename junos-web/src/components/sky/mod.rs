@@ -497,6 +497,8 @@ pub fn SkyTab(
     set_site_location: Arc<dyn Fn(f64, f64) + Send + Sync>,
     #[prop(into)] mount_device: Signal<Option<String>>,
     #[prop(into)] solve: Signal<SolveSnapshot>,
+    /// Align's settings map, for the post-solve action Goto & Align restores.
+    #[prop(into)] align_settings: Signal<serde_json::Value>,
     #[prop(into)] focal_length_mm: Signal<Option<f64>>,
     #[prop(into)] scheduler: Signal<SchedulerSnapshot>,
     #[prop(into)] mosaic: Signal<MosaicSnapshot>,
@@ -669,6 +671,21 @@ pub fn SkyTab(
     // position.
     let pending_solve_after_slew = RwSignal::new(false);
     let was_slewing = StoredValue::new(false);
+    // A goto that never slews (already there, refused while parked) mustn't
+    // leave the solve armed for some later, unrelated slew.
+    Effect::new(move |_| {
+        if pending_solve_after_slew.get() {
+            set_timeout(move || {
+                let still_idle = mount.try_with_untracked(|m| !m.slewing).unwrap_or(true);
+                if still_idle {
+                    pending_solve_after_slew.try_set(false);
+                }
+            }, std::time::Duration::from_secs(15));
+        }
+    });
+    // The post-solve radio Goto & Align replaced, put back once the solve ends.
+    let restore_action = StoredValue::new(None::<&'static str>);
+    let align_status = Memo::new(move |_| solve.with(|s| s.status.clone().unwrap_or_default()));
 
     // Pinch-to-zoom state
     let pinch_start_dist = StoredValue::new(0.0_f64);
@@ -1272,6 +1289,12 @@ pub fn SkyTab(
             // goto+solve flow re-centers the mount after solving, regardless of
             // whatever GOTO mode is currently selected in Ekos' Align tab.
             // `slewR` is the object name of the align "Slew to target" radio.
+            // Align saves the radios to Options (align_settings.cpp:619), so
+            // the user's choice is put back afterwards.
+            let current = align_settings.with_untracked(|s| {
+                ["syncR", "slewR", "nothingR"].into_iter().find(|k| s[*k].as_bool() == Some(true))
+            });
+            restore_action.set_value(current.filter(|k| *k != "slewR"));
             send_for_align_after_slew(
                 serde_json::json!({"type":"align_set_all_settings","payload":{"slewR":true}})
                     .to_string(),
@@ -1279,6 +1302,18 @@ pub fn SkyTab(
             send_for_align_after_slew(
                 serde_json::json!({"type":"align_solve","payload":{}}).to_string(),
             );
+        }
+    });
+    let send_for_restore = Arc::clone(&send);
+    Effect::new(move |_| {
+        let done = matches!(align_status.get().as_str(), "Complete" | "Failed" | "Aborted");
+        if done {
+            if let Some(key) = restore_action.get_value() {
+                restore_action.set_value(None);
+                send_for_restore(
+                    serde_json::json!({"type":"align_set_all_settings","payload":{key: true}}).to_string(),
+                );
+            }
         }
     });
 

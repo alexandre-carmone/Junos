@@ -116,6 +116,7 @@ pub fn TabContent(
                 set_site_location=set_site_location
                 mount_device=mount_device
                 solve=solve
+                align_settings=store.align_settings
                 focal_length_mm=focal_length_mm
                 scheduler=scheduler_snapshot
                 mosaic=mosaic
