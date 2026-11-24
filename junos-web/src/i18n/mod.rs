@@ -184,7 +184,7 @@ translations! {
     livestack_button, livestack_source, livestack_mode_auto, livestack_mode_sequence, livestack_mode_loop, livestack_restarted, livestack_mkdir_failed, livestack_snr_range,
     files_subtab_preview, files_subtab_controls, files_subtab_settings, files_folder_hint, files_close_preview,
     files_prev, files_next, files_section_file, focus_param_exposure, focus_param_binning, focus_param_iso, focus_param_iterations,
-    focus_param_max_step, focus_param_max_travel, focus_param_auto_star,
+    focus_param_max_step, focus_param_max_travel, focus_param_initial_step, focus_param_auto_star,
     focus_param_suspend_guiding, focus_param_use_full_field,
     mount_solve_section, mount_solve_capture, mount_solve_stop, mount_solve_load_fits,
     mount_solve_params, mount_solve_status, mount_solve_pa, mount_solve_pixscale,

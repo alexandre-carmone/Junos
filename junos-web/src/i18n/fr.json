@@ -1161,6 +1161,7 @@
   "focus_param_iterations": "Itérations",
   "focus_param_max_step": "Pas max",
   "focus_param_max_travel": "Course max",
+  "focus_param_initial_step": "Pas initial",
   "focus_param_auto_star": "Étoile auto",
   "focus_param_suspend_guiding": "Susp. guidage",
   "focus_param_use_full_field": "Champ entier",

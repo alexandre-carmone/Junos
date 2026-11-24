@@ -118,9 +118,9 @@ const SETTINGS: &[(&str, fn(&Translations) -> &'static str)] = &[
     ("focusBinning",         |t| t.focus_param_binning),
     ("focusGain",            |t| t.gain),
     ("focusISO",             |t| t.focus_param_iso),
-    ("focusIterations",      |t| t.focus_param_iterations),
-    ("focusStepSize",        |t| t.focus_step_size),
-    ("focusMaxStep",         |t| t.focus_param_max_step),
+    // Focus Mechanics (opsfocusmechanics.ui): the initial and largest step.
+    ("focusTicks",           |t| t.focus_param_initial_step),
+    ("focusMaxSingleStep",   |t| t.focus_param_max_step),
     ("focusMaxTravel",       |t| t.focus_param_max_travel),
     ("focusTolerance",       |t| t.focus_tolerance),
     ("focusBacklash",        |t| t.focus_backlash),
@@ -150,6 +150,15 @@ pub fn FocusTab(
     // A Memo so the open settings sheet only re-renders when the settings
     // change, not on every HFR update (which would eat a half-typed value).
     let settings = Memo::new(move |_| focus.with(|f| f.settings.clone()));
+    // The manual moves start from KStars' initial step size, once known.
+    let step_seeded = StoredValue::new(false);
+    Effect::new(move |_| {
+        if step_seeded.get_value() { return; }
+        if let Some(n) = settings.with(|s| s["focusTicks"].as_i64()).filter(|n| *n > 0) {
+            step_size.set(n);
+            step_seeded.set_value(true);
+        }
+    });
     // The Aberration Inspector's card and sheet, likewise memoized.
     let abins_open = RwSignal::new(false);
     let abins_status = Memo::new(move |_| focus.with(|f| f.abins_status.clone()));
@@ -1012,6 +1021,12 @@ fn setting_row(key: &'static str, label: &'static str, val: serde_json::Value, o
     use serde_json::Value;
     const INPUT: &str = "input input--sm font-mono w-[150px] shrink-0 max-md:h-9";
     let set = move |v: Value| {
+        // Full field and subframe are radio buttons, and KStars only applies
+        // a radio set to true (focus.cpp:8391): unchecking one checks the other.
+        if key == "focusUseFullField" && v == Value::Bool(false) {
+            dispatch_setting(&send, "focus_set_all_settings", None, "focusSubFrame", Value::Bool(true));
+            return;
+        }
         dispatch_setting(&send, "focus_set_all_settings", None, key, v);
         if key == "focusFilter" {
             let s = send.clone();
