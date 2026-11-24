@@ -32,7 +32,11 @@ use super::rows::{bool_row, num_row, section, select_row, value_str, LabelFn, Ro
 // Combo option lists (sourced from kstars/ekos/guide/*.ui).
 const BINNING_OPTIONS: &[&str] = &["1x1", "2x2", "3x3", "4x4"];
 const SQUARE_OPTIONS: &[&str] = &["8", "16", "32", "64", "128"];
-const PULSE_ALGO_OPTS: &[&str] = &["Standard", "Hysteresis", "Linear", "GPG"];
+// RA and DEC differ: DEC has no GPG (opsguide.ui:81, 122; gmath.cpp:47).
+const RA_PULSE_ALGO_OPTS: &[&str] = &["Standard", "Hysteresis", "Linear", "GPG", "AI Guider"];
+const DEC_PULSE_ALGO_OPTS: &[&str] = &["Standard", "Hysteresis", "Linear", "AI Guider"];
+// guide.ui:237, set by text.
+const STREAM_OPTS: &[&str] = &["Stream OFF", "Stream 16-bit", "Stream 8-bit"];
 const GUIDE_ALGO_OPTS: &[&str] = &[
     "Smart",
     "SEP",
@@ -223,7 +227,7 @@ pub fn GuideSettings(
                 {bool_row  (&c, "guideDarkFrame",   |t| t.guide_f_dark_frame)}
                 {bool_row  (&c, "guideSubframe",    |t| t.guide_f_subframe)}
                 {bool_row  (&c, "guideAutoStar",    |t| t.guide_f_auto_star)}
-                {bool_row  (&c, "guideStreamingEnabled", |t| t.guide_f_stream)}
+                {select_row(&c, "guideStreamMode",  |t| t.guide_f_stream,       STREAM_OPTS)}
             })}
 
             {section(c.label(|t| t.guide_ra_dec_corrections), false, view! {
@@ -235,10 +239,13 @@ pub fn GuideSettings(
                 {bool_row(&c, "southDECGuideEnabled", |t| t.guide_f_south_pulses)}
             })}
 
+            // Number ranges: the KStars widgets' (opscalibration.ui, opsdither.ui,
+            // opsguide.ui, opsgpg.ui). setAllSettings also writes the raw value to
+            // Options (ksutils.cpp:2177), so an out-of-range one would stick there.
             {section(c.label(|t| t.guide_calibration), false, view! {
-                {num_row (&c, "kcfg_AutoModeIterations",         |t| t.guide_f_iterations,       1.0, 100.0, 1.0)}
-                {num_row (&c, "kcfg_CalibrationPulseDuration",   |t| t.guide_f_pulse_duration,   100.0, 10000.0, 100.0)}
-                {num_row (&c, "kcfg_CalibrationMaxMove",         |t| t.guide_f_max_move,         1.0, 200.0, 1.0)}
+                {num_row (&c, "kcfg_AutoModeIterations",         |t| t.guide_f_iterations,       3.0, 10.0, 1.0)}
+                {num_row (&c, "kcfg_CalibrationPulseDuration",   |t| t.guide_f_pulse_duration,   100.0, 5000.0, 100.0)}
+                {num_row (&c, "kcfg_CalibrationMaxMove",         |t| t.guide_f_max_move,         5.0, 100.0, 1.0)}
                 {bool_row(&c, "kcfg_TwoAxisEnabled",             |t| t.guide_f_two_axis)}
                 {bool_row(&c, "kcfg_GuideAutoSquareSizeEnabled", |t| t.guide_f_auto_box_size)}
                 {bool_row(&c, "kcfg_GuideCalibrationBacklash",   |t| t.guide_f_dec_backlash)}
@@ -263,37 +270,37 @@ pub fn GuideSettings(
                 <div class="text-xs text-text-faint leading-snug pb-1">{move || tr().guide_dither_note}</div>
                 {bool_row(&c, "kcfg_DitherEnabled",             |t| t.guide_f_dither_enabled)}
                 {num_row (&c, "kcfg_DitherPixels",              |t| t.guide_f_dither_amount,         0.1, 30.0, 0.1)}
-                {num_row (&c, "kcfg_DitherFrames",              |t| t.guide_f_dither_frames,         1.0, 100.0, 1.0)}
-                {num_row (&c, "kcfg_DitherThreshold",           |t| t.guide_f_dither_settle_thr,     0.1, 10.0, 0.1)}
+                {num_row (&c, "kcfg_DitherFrames",              |t| t.guide_f_dither_frames,         1.0, 60.0, 1.0)}
+                {num_row (&c, "kcfg_DitherThreshold",           |t| t.guide_f_dither_settle_thr,     0.0, 50.0, 0.1)}
                 {num_row (&c, "kcfg_DitherSettle",              |t| t.guide_f_dither_settle_t,       0.0, 300.0, 1.0)}
                 {num_row (&c, "kcfg_DitherTimeout",             |t| t.guide_f_dither_timeout,        1.0, 600.0, 1.0)}
-                {num_row (&c, "kcfg_DitherMaxIterations",       |t| t.guide_f_dither_max_iter,       1.0, 100.0, 1.0)}
+                {num_row (&c, "kcfg_DitherMaxIterations",       |t| t.guide_f_dither_max_iter,       1.0, 30.0, 1.0)}
                 {bool_row(&c, "kcfg_DitherWithOnePulse",        |t| t.guide_f_dither_one_pulse)}
                 {bool_row(&c, "kcfg_DitherFailAbortsAutoGuide", |t| t.guide_f_dither_fail_abort)}
                 {bool_row(&c, "kcfg_DitherNoGuiding",           |t| t.guide_f_dither_no_guiding)}
-                {num_row (&c, "kcfg_DitherNoGuidingPulse",      |t| t.guide_f_dither_no_guide_pulse, 100.0, 10000.0, 100.0)}
+                {num_row (&c, "kcfg_DitherNoGuidingPulse",      |t| t.guide_f_dither_no_guide_pulse, 10.0, 10000.0, 100.0)}
             })}
 
             {section(c.label(|t| t.guide_algorithms), false, view! {
                 {select_row(&c, "kcfg_GuideAlgorithm",            |t| t.guide_f_detection,      GUIDE_ALGO_OPTS)}
-                {select_row(&c, "kcfg_RAGuidePulseAlgorithm",     |t| t.guide_f_ra_pulse_algo,  PULSE_ALGO_OPTS)}
-                {select_row(&c, "kcfg_DECGuidePulseAlgorithm",    |t| t.guide_f_dec_pulse_algo, PULSE_ALGO_OPTS)}
+                {select_row(&c, "kcfg_RAGuidePulseAlgorithm",     |t| t.guide_f_ra_pulse_algo,  RA_PULSE_ALGO_OPTS)}
+                {select_row(&c, "kcfg_DECGuidePulseAlgorithm",    |t| t.guide_f_dec_pulse_algo, DEC_PULSE_ALGO_OPTS)}
                 {num_row   (&c, "kcfg_RAProportionalGain",        |t| t.guide_f_ra_kp,          0.0, 1.0, 0.01)}
                 {num_row   (&c, "kcfg_RAIntegralGain",            |t| t.guide_f_ra_ki,          0.0, 1.0, 0.01)}
-                {num_row   (&c, "kcfg_RAMinimumPulseArcSec",      |t| t.guide_f_ra_min_pulse,   0.0, 10.0, 0.01)}
-                {num_row   (&c, "kcfg_RAMaximumPulseArcSec",      |t| t.guide_f_ra_max_pulse,   0.0, 30.0, 0.1)}
-                {num_row   (&c, "kcfg_RAHysteresis",              |t| t.guide_f_ra_hysteresis,  0.0, 1.0, 0.01)}
+                {num_row   (&c, "kcfg_RAMinimumPulseArcSec",      |t| t.guide_f_ra_min_pulse,   0.0, 1000.0, 0.1)}
+                {num_row   (&c, "kcfg_RAMaximumPulseArcSec",      |t| t.guide_f_ra_max_pulse,   0.0, 3600.0, 10.0)}
+                {num_row   (&c, "kcfg_RAHysteresis",              |t| t.guide_f_ra_hysteresis,  0.0, 0.9, 0.1)}
                 {num_row   (&c, "kcfg_DECProportionalGain",       |t| t.guide_f_dec_kp,         0.0, 1.0, 0.01)}
                 {num_row   (&c, "kcfg_DECIntegralGain",           |t| t.guide_f_dec_ki,         0.0, 1.0, 0.01)}
-                {num_row   (&c, "kcfg_DECMinimumPulseArcSec",     |t| t.guide_f_dec_min_pulse,  0.0, 10.0, 0.01)}
-                {num_row   (&c, "kcfg_DECMaximumPulseArcSec",     |t| t.guide_f_dec_max_pulse,  0.0, 30.0, 0.1)}
-                {num_row   (&c, "kcfg_DECHysteresis",             |t| t.guide_f_dec_hysteresis, 0.0, 1.0, 0.01)}
+                {num_row   (&c, "kcfg_DECMinimumPulseArcSec",     |t| t.guide_f_dec_min_pulse,  0.0, 1000.0, 0.1)}
+                {num_row   (&c, "kcfg_DECMaximumPulseArcSec",     |t| t.guide_f_dec_max_pulse,  0.0, 3600.0, 10.0)}
+                {num_row   (&c, "kcfg_DECHysteresis",             |t| t.guide_f_dec_hysteresis, 0.0, 0.9, 0.1)}
                 {num_row   (&c, "kcfg_GuideMaxDeltaRMS",          |t| t.guide_f_max_drms,       0.0, 30.0, 0.1)}
                 {num_row   (&c, "kcfg_GuideMaxHFR",               |t| t.guide_f_max_hfr,        0.0, 30.0, 0.1)}
                 {num_row   (&c, "kcfg_GuideLostStarTimeout",      |t| t.guide_f_lost_star_to,   1.0, 600.0, 1.0)}
                 {num_row   (&c, "kcfg_GuideCalibrationTimeout",   |t| t.guide_f_cal_timeout,    1.0, 600.0, 1.0)}
-                {num_row   (&c, "kcfg_MinDetectionsSEPMultistar", |t| t.guide_f_sep_min,        1.0, 200.0, 1.0)}
-                {num_row   (&c, "kcfg_MaxMultistarReferenceStars",|t| t.guide_f_sep_max_ref,    1.0, 200.0, 1.0)}
+                {num_row   (&c, "kcfg_MinDetectionsSEPMultistar", |t| t.guide_f_sep_min,        1.0, 20.0, 1.0)}
+                {num_row   (&c, "kcfg_MaxMultistarReferenceStars",|t| t.guide_f_sep_max_ref,    1.0, 100.0, 1.0)}
             })}
 
             {section(c.label(|t| t.guide_advanced), false, view! {
@@ -309,11 +316,11 @@ pub fn GuideSettings(
                 {num_row (&c, "kcfg_GPGDarkGuidingInterval",         |t| t.guide_f_gpg_dark_interval,      1.0, 600.0, 1.0)}
                 {num_row (&c, "kcfg_GPGpWeight",                     |t| t.guide_f_gpg_p_weight,           0.0, 1.0, 0.01)}
                 {num_row (&c, "kcfg_GPGSE0KLengthScale",             |t| t.guide_f_gpg_se0_length,         0.0, 1000.0, 1.0)}
-                {num_row (&c, "kcfg_GPGSE0KSignalVariance",          |t| t.guide_f_gpg_se0_signal,         0.0, 10.0, 0.01)}
+                {num_row (&c, "kcfg_GPGSE0KSignalVariance",          |t| t.guide_f_gpg_se0_signal,         0.0, 1000.0, 0.1)}
                 {num_row (&c, "kcfg_GPGPKLengthScale",               |t| t.guide_f_gpg_pk_length,          0.0, 1000.0, 1.0)}
-                {num_row (&c, "kcfg_GPGPKSignalVariance",            |t| t.guide_f_gpg_pk_signal,          0.0, 10.0, 0.01)}
+                {num_row (&c, "kcfg_GPGPKSignalVariance",            |t| t.guide_f_gpg_pk_signal,          0.0, 1000.0, 0.1)}
                 {num_row (&c, "kcfg_GPGSE1KLengthScale",             |t| t.guide_f_gpg_se1_length,         0.0, 1000.0, 1.0)}
-                {num_row (&c, "kcfg_GPGSE1KSignalVariance",          |t| t.guide_f_gpg_se1_signal,         0.0, 10.0, 0.01)}
+                {num_row (&c, "kcfg_GPGSE1KSignalVariance",          |t| t.guide_f_gpg_se1_signal,         0.0, 1000.0, 0.1)}
                 {num_row (&c, "kcfg_GPGPointsForApproximation",      |t| t.guide_f_gpg_points_approx,      1.0, 10000.0, 10.0)}
                 {num_row (&c, "kcfg_GPGMinPeriodsForInference",      |t| t.guide_f_gpg_min_periods_inf,    1.0, 100.0, 1.0)}
                 {num_row (&c, "kcfg_GPGMinPeriodsForPeriodEstimate", |t| t.guide_f_gpg_min_periods_period, 1.0, 100.0, 1.0)}
