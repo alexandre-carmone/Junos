@@ -66,10 +66,14 @@ const SAVE: &str = "capture_save_sequence_file";
 const LOAD: &str = "capture_load_sequence_file";
 
 /// The camera is working. Also the `camera_busy` interlock (`compat.rs`), so
-/// the Sky's Goto and this tab agree.
+/// the Sky's Goto and this tab agree. A paused or suspended sequence still
+/// holds the queue: Stop aborts it (ekos.h:71, CAPTURE_PAUSE_PLANNED …
+/// CAPTURE_SUSPENDED).
 pub(crate) fn status_is_active(status: &str) -> bool {
     let s = status.to_lowercase();
     s.contains("capturing")
+        || s.contains("pause")
+        || s.contains("suspended")
         || s.contains("progress")
         || s.contains("dither")
         || s.contains("focus")
@@ -174,9 +178,16 @@ pub fn ImagingTab(
     let cooler_on = Memo::new(move |_| camera.with(|c| c.cooler_on));
     let settings = fields::Settings::new(capture, send.clone());
     // KStars rests on "Image Received" between frames and after a lone
-    // preview, so a running queue job counts as busy too.
+    // preview, so a running queue job counts as busy too, and so does Loop,
+    // which is no queue job: `looping` is set when this tab starts it and
+    // cleared on Stop or once the capture is over.
+    let looping = RwSignal::new(false);
+    let ended = Memo::new(move |_| status.with(|s| matches!(s.to_lowercase().as_str(), "idle" | "aborted" | "complete")));
+    Effect::new(move |_| if ended.get() { looping.set(false) });
     let busy = Memo::new(move |_| {
-        status.with(|s| status_is_active(s)) || queue.with(|q| q.iter().any(|j| j["Status"] == "In Progress"))
+        looping.get()
+            || status.with(|s| status_is_active(s))
+            || queue.with(|q| q.iter().any(|j| j["Status"] == "In Progress"))
     });
     // The live stack: its state, and its image in place of the capture
     // preview while it runs (nothing else arrives meanwhile).
@@ -242,12 +253,16 @@ pub fn ImagingTab(
         move |_| {
             settings.clear_temperature_target();
             send_cmd(&s, ty, json!({}));
+            if ty == "capture_loop" {
+                looping.set(true);
+            }
         }
     };
     let s_run = send.clone();
     let on_run = move |_| {
         let ty = if busy.get_untracked() { "capture_stop" } else { "capture_start" };
         send_cmd(&s_run, ty, json!({}));
+        looping.set(false);
     };
 
     // One tap: a fresh stacker (initialize closes the previous viewer; a bare
@@ -263,6 +278,7 @@ pub fn ImagingTab(
             if loop_started.get_untracked() {
                 send_cmd(&send, "capture_stop", json!({}));
                 loop_started.set(false);
+                looping.set(false);
             }
             return;
         }
@@ -302,6 +318,7 @@ pub fn ImagingTab(
                 settings.clear_temperature_target();
                 send_cmd(&send, "capture_loop", json!({}));
                 loop_started.set(true);
+                looping.set(true);
             }
         });
     };
