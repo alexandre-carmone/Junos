@@ -177,7 +177,8 @@ pub fn TabContent(
         <Show when=scheduler_visible>
             <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <SchedulerTab scheduler=scheduler_snapshot site=site camera=camera filter_wheel=filter_wheel
-                              capture_settings=store.capture_settings online=store.online file_reply=store.file_reply devices=store.devices
+                              capture_settings=store.capture_settings online=store.online file_reply=store.file_reply
+                              options=store.options devices=store.devices
                               indi_properties=store.indi_properties send=Arc::clone(&send_scheduler) />
             </div>
         </Show>

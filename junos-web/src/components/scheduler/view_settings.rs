@@ -9,9 +9,17 @@ use super::queue_model::QueueSlot;
 use crate::components::form::{check_row, CARD, CARD_TITLE, LABEL};
 use crate::i18n::{t, Lang};
 use crate::ws::SendCmd;
-use crate::ws_helpers::send_cmd;
+use crate::ws_helpers::{option_get, option_set, send_cmd};
 
-/// Scheduler-wide settings, seeded once from `scheduler_get_all_settings`.
+/// The global `Options::` behind the Greedy and Remember-progress checkboxes.
+/// Those checkboxes live in the scheduler's KConfigDialog, which writes
+/// `Options` only on Apply: `scheduler_set_all_settings` ticks them and
+/// nothing reads the tick (scheduler.cpp:584, greedyscheduler.cpp:420, 601).
+pub const SCHEDULER_OPTIONS: &[&str] = &["greedyScheduling", "rememberJobProgress"];
+
+/// Scheduler-wide settings: the flags follow KStars' echoes, the procedure
+/// paths are seeded once from `scheduler_get_all_settings` (they are edited
+/// as text).
 #[derive(Clone, Copy)]
 pub struct SchedulerSettings {
     pub greedy: RwSignal<bool>,
@@ -40,15 +48,23 @@ impl SchedulerSettings {
         }
     }
 
-    /// Copy the keys KStars sent; missing ones keep their value.
-    pub fn seed(&self, s: &Value) {
+    /// Copy the flags KStars sent; missing ones keep their value.
+    pub fn follow(&self, s: &Value) {
         let flag = |key: &str, sig: RwSignal<bool>| if let Some(v) = s[key].as_bool() { sig.set(v) };
-        let path = |key: &str, sig: RwSignal<String>| if let Some(v) = s[key].as_str() { sig.set(v.to_string()) };
-        flag("kcfg_GreedyScheduling", self.greedy);
-        flag("kcfg_RememberJobProgress", self.remember_progress);
         flag("errorHandlingRescheduleErrorsCB", self.reschedule_errors);
         flag("schedulerStartupEnabled", self.startup_enabled);
         flag("schedulerShutdownEnabled", self.shutdown_enabled);
+    }
+
+    /// Copy Greedy and Remember-progress from KStars' `Options` (`option_get`).
+    pub fn follow_options(&self, o: &Value) {
+        if let Some(v) = o["greedyScheduling"].as_bool() { self.greedy.set(v) }
+        if let Some(v) = o["rememberJobProgress"].as_bool() { self.remember_progress.set(v) }
+    }
+
+    /// Copy the procedure paths KStars sent; missing ones keep their value.
+    pub fn seed(&self, s: &Value) {
+        let path = |key: &str, sig: RwSignal<String>| if let Some(v) = s[key].as_str() { sig.set(v.to_string()) };
         path("schedulerPreStartupScript", self.pre_startup);
         path("schedulerPostStartupScript", self.post_startup);
         path("schedulerPreShutdownScript", self.pre_shutdown);
@@ -86,13 +102,21 @@ pub fn SchedulerSettingsSheet(
             send_cmd(&send, "scheduler_set_all_settings", Value::Object(m));
         }
     };
+    // A global option: set it, then read it back (`option_set` answers nothing).
+    let global = |name: &'static str| {
+        let send = send.clone();
+        move |v: bool| {
+            option_set(&send, name, v.into());
+            option_get(&send, SCHEDULER_OPTIONS);
+        }
+    };
 
     view! {
         <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 flex flex-col gap-3">
             <div class=CARD>
                 <span class=CARD_TITLE>{move || tr().sched_settings_section}</span>
-                {check_row(st.greedy, move || tr().sched_greedy, option("kcfg_GreedyScheduling"))}
-                {check_row(st.remember_progress, move || tr().sched_remember_progress, option("kcfg_RememberJobProgress"))}
+                {check_row(st.greedy, move || tr().sched_greedy, global("greedyScheduling"))}
+                {check_row(st.remember_progress, move || tr().sched_remember_progress, global("rememberJobProgress"))}
                 {check_row(st.reschedule_errors, move || tr().sched_reschedule_error, option("errorHandlingRescheduleErrorsCB"))}
             </div>
             <button type="button" class="panel w-full p-3 flex items-center gap-2 min-h-[44px] text-left cursor-pointer"

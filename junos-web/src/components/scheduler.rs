@@ -84,6 +84,8 @@ pub fn SchedulerTab(
     #[prop(into)] capture_settings: Signal<serde_json::Value>,
     #[prop(into)] online: Signal<bool>,
     file_reply: RwSignal<Option<FileReply>>,
+    /// Global KStars `Options::` (`option_get`): Greedy and Remember progress.
+    options: RwSignal<serde_json::Value>,
     /// Suggestions for the queue editor's custom INDI steps.
     devices: RwSignal<Vec<DeviceInfo>>,
     indi_properties: RwSignal<HashMap<String, Vec<IndiProperty>>>,
@@ -134,8 +136,10 @@ pub fn SchedulerTab(
         pctx.0.set(None);  // consume
     });
 
-    // ── Settings, seeded once from KStars ───────────────────────────────────
+    // ── Settings: flags follow KStars, paths seeded once ────────────────────
     let settings = SchedulerSettings::new();
+    Effect::new(move |_| scheduler.with(|s| if s.settings.is_object() { settings.follow(&s.settings) }));
+    Effect::new(move |_| options.with(|o| settings.follow_options(o)));
     let seeded = RwSignal::new(false);
     // After a schedule load (Files › Planning), the settings KStars held before
     // it: re-seed from the next ones that differ, which the load brings.

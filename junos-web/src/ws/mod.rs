@@ -76,11 +76,12 @@ pub(crate) const BOOTSTRAP_CMDS: &[&str] = &[
     // FlatSyncFocus (the Filter Settings dialog's "flats at the lights'
     // focus" checkbox), and the plate solver's type, StellarSolver profile
     // and astrometry hints (read by Align at solve time, align_solver.cpp:553),
-    // and whether Capture resets a finished queue on Start without asking.
+    // whether Capture resets a finished queue on Start without asking, and the
+    // scheduler's Greedy / Remember-progress (view_settings.rs SCHEDULER_OPTIONS).
     // `option_get` / `option_set` take the Q_PROPERTY name kconfig_compiler
     // generates: the kcfg entry with its first letter lowercased (`PHD2Host`
     // → `pHD2Host`). A wrong name reads null and writes nowhere, silently.
-    r#"{"type":"option_get","payload":{"options":[{"name":"guiderType"},{"name":"pHD2Host"},{"name":"pHD2Port"},{"name":"linGuiderHost"},{"name":"linGuiderPort"},{"name":"flatSyncFocus"},{"name":"solverType"},{"name":"solveOptionsProfile"},{"name":"astrometryUseImageScale"},{"name":"astrometryUsePosition"},{"name":"astrometryRotatorThreshold"},{"name":"astrometryUseRotator"},{"name":"alwaysResetSequenceWhenStarting"}]}}"#,
+    r#"{"type":"option_get","payload":{"options":[{"name":"guiderType"},{"name":"pHD2Host"},{"name":"pHD2Port"},{"name":"linGuiderHost"},{"name":"linGuiderPort"},{"name":"flatSyncFocus"},{"name":"solverType"},{"name":"solveOptionsProfile"},{"name":"astrometryUseImageScale"},{"name":"astrometryUsePosition"},{"name":"astrometryRotatorThreshold"},{"name":"astrometryUseRotator"},{"name":"alwaysResetSequenceWhenStarting"},{"name":"greedyScheduling"},{"name":"rememberJobProgress"}]}}"#,
 ];
 
 pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
