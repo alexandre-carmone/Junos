@@ -840,7 +840,7 @@ pub struct ProfileInfo {
     pub mode:                String,    // "local" | "remote"
     pub remote_host:         String,
     pub remote_port:         u16,
-    pub guiding:             i32,       // 0=Internal 1=PHD2 2=LinGuider 3=SEP
+    pub guiding:             i32,       // 0=Internal 1=PHD2 2=LinGuider
     pub remote_guiding_host: String,
     pub remote_guiding_port: u16,
     pub use_web_manager:     bool,

@@ -38,7 +38,8 @@ type LabelFn = fn(&Translations) -> &'static str;
 type Getter<T> = fn(&T) -> String;
 type Setter<T> = fn(&mut T, String);
 
-const GUIDING: [&str; 4] = ["Internal", "PHD2", "LinGuider", "SEP"];
+/// The profile editor's guider combo, by index (profileeditor.ui:254-264).
+const GUIDING: [&str; 3] = ["Internal", "PHD2", "LinGuider"];
 const SCOPE_TYPES: [&str; 3] = ["Refractor", "Reflector", "Catadioptric"];
 
 /// Profile driver slots. A slot holds a driver `label` (profileeditor.cpp:531)
@@ -64,7 +65,9 @@ const DRIVERS: [(&str, &[&str], Getter<ProfileInfo>, Setter<ProfileInfo>); 12] =
 const TRAIN_ROLES: [(LabelFn, i64, Getter<OpticalTrain>, Setter<OpticalTrain>); 6] = [
     (|t| t.rig_role_mount,   1 << 0,  |t| t.mount.clone(),       |t, v| t.mount = v),
     (|t| t.rig_role_camera,  1 << 1,  |t| t.camera.clone(),      |t, v| t.camera = v),
-    (|t| t.rig_role_guider,  1 << 1,  |t| t.guider.clone(),      |t, v| t.guider = v),
+    // GUIDER_INTERFACE: the ST-4 "guide via" device, often the mount
+    // (opticaltrainmanager.cpp:756).
+    (|t| t.rig_role_guider,  1 << 2,  |t| t.guider.clone(),      |t, v| t.guider = v),
     (|t| t.rig_role_focuser, 1 << 3,  |t| t.focuser.clone(),     |t, v| t.focuser = v),
     (|t| t.rig_role_filter,  1 << 4,  |t| t.filterwheel.clone(), |t, v| t.filterwheel = v),
     (|t| t.rig_role_rotator, 1 << 12, |t| t.rotator.clone(),     |t, v| t.rotator = v),
@@ -543,6 +546,8 @@ fn profile_sheet(
     let title: LabelFn = if orig.is_none() { |t| t.profiles_new } else { |t| t.profiles_edit };
     let original = orig.as_ref().map(|p| p.name.clone());
     let p = RwSignal::new(orig.unwrap_or_else(|| ProfileInfo {
+        // The desktop editor's defaults (profileeditor.cpp:534).
+        auto_connect: true,
         mode: "local".into(),
         driver_source: "system".into(),
         ..Default::default()
