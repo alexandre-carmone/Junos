@@ -125,11 +125,19 @@ fn is_guider_message(text: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The largest message a browser may send. Mount › Load & Slew sends a whole
+/// FITS as one base64 text frame (`align_load_and_slew {data, ext}`), a third
+/// larger than the file: tungstenite's 16 MiB frame / 64 MiB message
+/// defaults dropped the socket on any sub over ~12 MB.
+const MAX_BROWSER_MESSAGE: usize = 256 << 20;
+
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_browser_ws(socket, state))
+    ws.max_message_size(MAX_BROWSER_MESSAGE)
+        .max_frame_size(MAX_BROWSER_MESSAGE)
+        .on_upgrade(move |socket| handle_browser_ws(socket, state))
 }
 
 async fn handle_browser_ws(socket: WebSocket, state: AppState) {
