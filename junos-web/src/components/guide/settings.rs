@@ -70,23 +70,6 @@ pub fn refresh_options(send: &SendCmd) {
     option_get(send, GUIDE_OPTIONS);
 }
 
-/// `guide_set_calibration_settings` with the 8 fields its handler reads
-/// (message.cpp:679-690), taken from the current `kcfg_*` widget map.
-fn save_calibration(send: &SendCmd, s: &Value) {
-    let int = |k: &str, d: i64| settings_i64(s, k).unwrap_or(d);
-    let flag = |k: &str, d: bool| s.get(k).and_then(Value::as_bool).unwrap_or(d);
-    send_cmd(send, "guide_set_calibration_settings", serde_json::json!({
-        "pulse":               int("kcfg_CalibrationPulseDuration", 1000),
-        "max_move":            int("kcfg_CalibrationMaxMove", 20),
-        "two_axis":            flag("kcfg_TwoAxisEnabled", true),
-        "square_size":         flag("kcfg_GuideAutoSquareSizeEnabled", false),
-        "calibrationBacklash": flag("kcfg_GuideCalibrationBacklash", false),
-        "resetCalibration":    flag("kcfg_ResetGuideCalibration", false),
-        "reuseCalibration":    flag("kcfg_ReuseGuideCalibration", false),
-        "reverseCalibration":  flag("kcfg_ReverseDecOnPierSideChange", false),
-    }));
-}
-
 /// Host (text) or port (1–65535) row for an `Options::` entry.
 fn option_row(r: &Rows, send: &SendCmd, options: Memo<Value>, name: &'static str, label: LabelFn, port: bool) -> impl IntoView + use<> {
     let send = send.clone();
@@ -182,8 +165,6 @@ pub fn GuideSettings(
     };
     let guider = Memo::new(move |_| options.with(|o| settings_i64(o, "guiderType").unwrap_or(0)));
 
-    let s_save = send.clone();
-    let on_save_cal = move |_| save_calibration(&s_save, &settings.get_untracked());
     let s_clear = send.clone();
     let on_clear_cal = move |_| send_cmd(&s_clear, "guide_clear", serde_json::json!({}));
     let s_refresh = send.clone();
@@ -195,18 +176,15 @@ pub fn GuideSettings(
     view! {
         <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] p-3 flex flex-col gap-3">
             {section(c.label(|t| t.guide_backend), true, view! {
-                <div class="flex flex-wrap gap-1.5 py-1">
-                    {GUIDERS.map(|(v, label)| {
-                        let send = send.clone();
-                        view! {
-                            <button type="button"
-                                    class=move || if guider.get() == v { format!("{CHIP} btn--active") } else { CHIP.to_string() }
-                                    on:click=move |_| set_option(&send, "guiderType", Value::from(v))>
-                                {c.label(label)}
-                            </button>
-                        }
-                    })}
+                // Read only: `option_set guiderType` changes nothing live
+                // (Guide reads it once, guide.cpp:170) and the profile
+                // overwrites it at its next start (manager.cpp:1266, 1343).
+                <div class=ROW>
+                    <span class="flex-1 font-semibold text-text-blue-bright">
+                        {move || GUIDERS.iter().find(|(v, _)| *v == guider.get()).map_or("", |(_, l)| l(tr()))}
+                    </span>
                 </div>
+                <div class="text-xs text-text-faint leading-snug pb-1">{move || tr().guide_backend_note}</div>
                 {junos.map(|j| use_junos_row(j, guider, send.clone(), lang))}
                 <div class="flex flex-col" class:hidden=move || guider.get() != 1>
                     {option_row(&c, &send, options, "pHD2Host", |t| t.guide_host, false)}
@@ -252,16 +230,13 @@ pub fn GuideSettings(
                 {bool_row(&c, "kcfg_ResetGuideCalibration",      |t| t.guide_f_reset_each_start)}
                 {bool_row(&c, "kcfg_ReuseGuideCalibration",      |t| t.guide_f_reuse_cal)}
                 {bool_row(&c, "kcfg_ReverseDecOnPierSideChange", |t| t.guide_f_reverse_dec_flip)}
+                // Each row saves as it changes. Clearing mid-calibration /
+                // guiding / dithering would pull the rug from under KStars.
                 <div class="flex gap-2 pt-2">
-                    // Clearing mid-calibration / guiding / dithering would pull
-                    // the rug from under KStars.
                     <button class="btn btn-ghost flex-1 max-md:h-11"
                             disabled=move || matches!(status.get().as_str(), "Calibrating" | "Guiding" | "Dithering")
                             on:click=on_clear_cal>
                         {move || tr().guide_clear_cal}
-                    </button>
-                    <button class="btn btn-primary flex-1 max-md:h-11" on:click=on_save_cal>
-                        {move || tr().guide_save_calibration}
                     </button>
                 </div>
             })}

@@ -675,6 +675,7 @@
   "guide_dither": "Dither",
   "guide_algorithms": "Algorithmes de guidage",
   "guide_backend": "Moteur de guidage",
+  "guide_backend_note": "Ekos prend le guideur dans le profil KStars au démarrage du profil : changez-le dans Profils (ou avec Utiliser junos guider), puis redémarrez le profil.",
   "guide_phd2": "PHD2",
   "guide_linguider": "LinGuider",
   "guide_advanced": "Avancé",
