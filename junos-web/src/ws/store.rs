@@ -593,11 +593,22 @@ impl DeviceStore {
                             ms.device = dev.to_string();
                         }
                     }
+                    // KStars' states, untranslated (indimount.cpp:30-33), the
+                    // manual move with its direction after it ("Moving NE",
+                    // :1376). A word we don't know is a translated status
+                    // (sendModuleState sends the LED text, message.cpp:3278):
+                    // keep the flags.
                     if let Some(status) = payload["status"].as_str() {
-                        let sl = status.to_lowercase();
-                        ms.slewing = sl.contains("slewing");
-                        ms.tracking = sl.contains("tracking");
-                        ms.parked = sl.contains("park");
+                        let word = status.split_whitespace().next().unwrap_or("").to_lowercase();
+                        let known = matches!(word.as_str(),
+                            "idle" | "moving" | "slewing" | "tracking" | "parking" | "parked" | "error");
+                        if known {
+                            ms.slewing = word == "slewing";
+                            ms.tracking = word == "tracking";
+                            ms.parked = word == "parked";
+                            ms.parking = word == "parking";
+                            ms.moving = word == "moving";
+                        }
                         ms.connected = true;
                     }
                     // KStars sends RA and Dec in degrees.

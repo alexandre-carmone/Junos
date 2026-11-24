@@ -18,6 +18,8 @@ pub struct MountSnapshot {
     pub slewing: bool,
     pub tracking: bool,
     pub parked: bool,
+    pub parking: bool,
+    pub moving: bool,
     pub ra_h: Option<f64>,
     pub dec_deg: Option<f64>,
     pub ha_deg: Option<f64>,
@@ -165,6 +167,8 @@ pub fn derive_mount(store: &DeviceStore) -> Signal<MountSnapshot> {
                 slewing: ms.slewing,
                 tracking: ms.tracking,
                 parked: ms.parked,
+                parking: ms.parking,
+                moving: ms.moving,
                 ra_h: ms.ra_h,
                 dec_deg: ms.dec_deg,
                 ha_deg: ms.ha_deg,
@@ -488,8 +492,7 @@ pub fn derive_guider(store: &DeviceStore) -> GuiderSignals {
 /// (`message.cpp:2641` calls `statusString(false)`), one of Idle / Moving /
 /// Slewing / Tracking / Parking / Parked (`indimount.cpp:30-31`). Only the
 /// three that mean the mount is physically in motion block a Goto; `Parked` is
-/// at rest, and `MountStatusData::parked` cannot be used here because
-/// `store.rs` sets it from `contains("park")`, which is also true of `Parking`.
+/// at rest.
 pub fn derive_service_busy(
     store: &DeviceStore,
 ) -> (Signal<Option<&'static str>>, Signal<Option<&'static str>>) {
@@ -498,11 +501,7 @@ pub fn derive_service_busy(
 
     let mount_busy = Signal::derive(move || {
         let m = mount.get();
-        let moving = m.slewing
-            || matches!(
-                m.status_str.to_lowercase().as_str(),
-                "slewing" | "moving" | "parking"
-            );
+        let moving = m.slewing || m.moving || m.parking;
         moving.then_some("mount")
     });
 

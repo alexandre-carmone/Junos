@@ -9,6 +9,9 @@ pub struct MountStatusData {
     pub slewing: bool,
     pub tracking: bool,
     pub parked: bool,
+    pub parking: bool,
+    /// Moved by hand ("Moving NE", indimount.cpp:1376).
+    pub moving: bool,
     pub ra_h: Option<f64>,
     pub dec_deg: Option<f64>,
     pub ha_deg: Option<f64>,

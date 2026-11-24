@@ -95,7 +95,7 @@ translations! {
     files_dec, files_fov, files_rotation, files_plate_solved, files_parent, files_loading, files_error, files_empty_dir,
     livestack_title, livestack_start, livestack_stop, livestack_settings, livestack_state, livestack_frames, livestack_snr, livestack_align_method, livestack_stack_method, livestack_low_sigma, livestack_high_sigma, livestack_calc_snr, livestack_apply, livestack_latest, livestack_no_state, mount_title, mount_coords_section, mount_ra_jnow, mount_dec_jnow,
     mount_ra_j2000, mount_dec_j2000, mount_az, mount_alt, mount_ha, mount_pier_west, mount_pier_east, mount_pier_unknown,
-    mount_status_idle, mount_status_slewing, mount_status_tracking, mount_status_parking, mount_status_parked, mount_status_error, mount_goto_section, mount_ra_input,
+    mount_status_idle, mount_status_moving, mount_status_slewing, mount_status_tracking, mount_status_parking, mount_status_parked, mount_status_error, mount_goto_section, mount_ra_input,
     mount_dec_input, mount_target_input, mount_j2000_label, mount_goto_btn, mount_goto_target_btn, mount_sync_btn, mount_park_btn, mount_unpark_btn,
     mount_abort_btn, mount_tracking_on, mount_tracking_off, mount_meridian_flip, mount_autopark, mount_no_device, cardinal_n, cardinal_e,
     cardinal_s, cardinal_w, zenith_mark, solved_mark, overlay_lst, overlay_fov, overlay_center, overlay_alt,

@@ -134,12 +134,14 @@ fn mount_badge(m: &MountSnapshot, tr: &Translations) -> (&'static str, &'static 
         (tr.disconnected, "badge")
     } else if m.slewing {
         (tr.mount_status_slewing, "badge badge--warn")
+    } else if m.moving {
+        (tr.mount_status_moving, "badge badge--warn")
     } else if m.tracking {
         (tr.mount_status_tracking, "badge badge--ok")
+    } else if m.parking {
+        (tr.mount_status_parking, "badge badge--info")
     } else if m.parked {
         (tr.mount_status_parked, "badge badge--info")
-    } else if s.contains("parking") {
-        (tr.mount_status_parking, "badge badge--info")
     } else if s.contains("error") {
         (tr.mount_status_error, "badge badge--err")
     } else {
@@ -387,6 +389,7 @@ pub fn MountTab(
     let badge = Memo::new(move |_| snap.with(|m| mount_badge(m, tr())));
     let connected = Memo::new(move |_| snap.with(|m| m.connected));
     let parked = Memo::new(move |_| snap.with(|m| m.parked));
+    let parking = Memo::new(move |_| snap.with(|m| m.parking));
     let tracking = Memo::new(move |_| snap.with(|m| m.tracking));
     let rate = Memo::new(move |_| snap.with(|m| m.slew_rate));
     // The driver's own rates (TELESCOPE_SLEW_RATE labels): KStars' rate is an
@@ -876,7 +879,7 @@ pub fn MountTab(
 
             // Footer: Park / Unpark, Tracking, Stop.
             <div class=format!("{FOOTER} md:pl-4 md:pr-6")>
-                <button class="btn btn-ghost h-11 px-4 max-md:flex-1" disabled=move || !connected.get() on:click=on_park>
+                <button class="btn btn-ghost h-11 px-4 max-md:flex-1" disabled=move || !connected.get() || parking.get() on:click=on_park>
                     {move || if parked.get() { tr().mount_unpark_btn } else { tr().mount_park_btn }}
                 </button>
                 <button class=move || if tracking.get() {

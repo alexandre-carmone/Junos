@@ -347,6 +347,7 @@
   "mount_pier_east": "East",
   "mount_pier_unknown": "—",
   "mount_status_idle": "IDLE",
+  "mount_status_moving": "MOVING",
   "mount_status_slewing": "SLEWING",
   "mount_status_tracking": "TRACKING",
   "mount_status_parking": "PARKING",

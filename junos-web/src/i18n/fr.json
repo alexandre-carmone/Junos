@@ -437,6 +437,7 @@
   "mount_pier_east": "Est",
   "mount_pier_unknown": "—",
   "mount_status_idle": "INACTIF",
+  "mount_status_moving": "EN MOUVEMENT",
   "mount_status_slewing": "EN DÉPLACEMENT",
   "mount_status_tracking": "EN SUIVI",
   "mount_status_parking": "EN GARAGE",
