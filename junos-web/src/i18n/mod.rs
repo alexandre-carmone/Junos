@@ -150,14 +150,14 @@ translations! {
     sched_stage_slew_done, sched_stage_focusing, sched_stage_focus_done, sched_stage_aligning, sched_stage_align_done, sched_stage_reslewing, sched_stage_reslew_done, sched_stage_post_focus,
     sched_stage_post_focus_done, sched_stage_guiding, sched_stage_guide_done, sched_stage_capturing, sched_stage_done, sched_jobs_section, sched_refresh_jobs, sched_no_jobs, sched_log_title, sched_log_empty,
     sched_col_name, sched_col_coords, sched_col_state, sched_col_alt, sched_col_progress, sched_col_start, sched_col_end, sched_remove_job,
-    sched_btn_start, sched_btn_stop, sched_settings_section, sched_greedy, sched_remember_progress, sched_reschedule_error, sched_scripts_section, sched_startup_legend,
+    sched_btn_start, sched_btn_stop, sched_btn_resume, sched_paused_note, sched_settings_section, sched_greedy, sched_remember_progress, sched_reschedule_error, sched_scripts_section, sched_startup_legend,
     sched_enable_startup, sched_pre_script, sched_post_script, sched_shutdown_legend, sched_enable_shutdown, sched_apply_scripts, sched_add_job_section, sched_target_label,
     sched_target_placeholder, sched_search_catalog, sched_not_found, sched_ra_label, sched_dec_label, sched_min_alt, sched_moon_sep, sched_pa_label,
     sched_constraints_legend, sched_moon_max_alt, sched_twilight, sched_horizon,
     sched_steps_legend, sched_step_track, sched_step_focus, sched_step_align, sched_step_guide, sched_start_when, sched_cond_asap, sched_cond_at_time,
     sched_complete_when, sched_cond_seq, sched_cond_repeat, sched_cond_loop, sched_cond_finish_at, sched_times_unit, sched_seq_label, sched_seq_col_type,
     sched_seq_col_filter, sched_seq_col_exp, sched_seq_col_count, sched_add_frame, sched_clear_btn, sched_add_job_btn, sched_settings_btn, sched_err_ra, sched_err_dec,
-    sched_err_frames, sched_err_flat_adu, sched_err_flat_encoding, sched_split_calib,
+    sched_err_frames, sched_err_save_sequence, sched_err_flat_adu, sched_err_flat_encoding, sched_split_calib,
     // Scheduler tab — redesigned add-job sheet
     sched_err_name, sched_conditions_legend, sky_add_scheduler, sky_create_mosaic, sky_scheduler_jobs,
     // Scheduler tab — altitude tonight chart

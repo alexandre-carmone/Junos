@@ -28,8 +28,8 @@ use crate::components::sky::{derive_planner_mosaic_plan, fmt_dec, fmt_ra, mosaic
 use crate::components::tab_wheel_icons::tab_icon;
 use crate::dom::event_target_value;
 use crate::i18n::{Lang, t};
-use crate::ws::SendCmd;
-use crate::ws_helpers::send_cmd;
+use crate::ws::{FileReply, SendCmd};
+use crate::ws_helpers::{file_command, send_cmd};
 use crate::{ActiveTabCtx, MosaicPlannerCtx, Tab};
 
 fn sanitize_name(name: &str) -> String {
@@ -52,6 +52,8 @@ pub fn MosaicTab(
     #[prop(into)] focal_length_mm: Signal<Option<f64>>,
     #[prop(into)] home_dir: Signal<String>,
     mosaic_tiles: RwSignal<Option<serde_json::Value>>,
+    /// The answer to `scheduler_save_sequence_file` (`DeviceStore::file_reply`).
+    file_reply: RwSignal<Option<FileReply>>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -174,8 +176,7 @@ pub fn MosaicTab(
                 "path": format!("{}/.junos-sequences", home),
             }));
         }
-        send_cmd(&send_s, "scheduler_save_sequence_file",
-            serde_json::json!({"path": rel_path, "filedata": xml}));
+        let save = serde_json::json!({"path": rel_path, "filedata": xml});
 
         // One job per tile, the way the Scheduler tab adds one: fill KStars'
         // job form, then `scheduler_add_jobs`. Not `scheduler_import_mosaic`:
@@ -189,37 +190,49 @@ pub fn MosaicTab(
         );
         // KSUtils::rangePA, as importMosaic stored it.
         let pa_job = 180.0 - (180.0 - pa).rem_euclid(360.0);
-        for (i, tile) in plan.tiles.iter().enumerate() {
-            send_cmd(&send_s, "scheduler_set_all_settings", opts.settings_json());
-            send_cmd(&send_s, "scheduler_set_all_settings", serde_json::json!({
-                "nameEdit":          format!("{safe_name}-Part_{}", i + 1),
-                "raBox":             format!("{:.6}", tile.ra_deg.rem_euclid(360.0) / 15.0),
-                "decBox":            format!("{:.6}", tile.dec_deg),
-                "sequenceEdit":      abs_path,
-                "positionAngleSpin": pa_job,
-                "schedulerTrackStep": opts.track.get_untracked(),
-                "schedulerFocusStep": opts.focus.get_untracked(),
-                "schedulerAlignStep": opts.align.get_untracked(),
-                "schedulerGuideStep": opts.guide.get_untracked(),
-                "schedulerCompleteSequences":    seq_r,
-                "schedulerRepeatSequences":      rep_r,
-                "schedulerRepeatSequencesLimit": rep_lim,
-                "schedulerUntilTerminated":      loop_r,
-                "schedulerUntil":                until_r,
-                "schedulerUntilValue":           until_val,
-            }));
-            send_cmd(&send_s, "scheduler_add_jobs", serde_json::json!({}));
-        }
+        let shared = opts.settings_json();
+        let tiles: Vec<serde_json::Value> = plan.tiles.iter().enumerate().map(|(i, tile)| serde_json::json!({
+            "nameEdit":          format!("{safe_name}-Part_{}", i + 1),
+            "raBox":             format!("{:.6}", tile.ra_deg.rem_euclid(360.0) / 15.0),
+            "decBox":            format!("{:.6}", tile.dec_deg),
+            "sequenceEdit":      abs_path,
+            "positionAngleSpin": pa_job,
+            "schedulerTrackStep": opts.track.get_untracked(),
+            "schedulerFocusStep": opts.focus.get_untracked(),
+            "schedulerAlignStep": opts.align.get_untracked(),
+            "schedulerGuideStep": opts.guide.get_untracked(),
+            "schedulerCompleteSequences":    seq_r,
+            "schedulerRepeatSequences":      rep_r,
+            "schedulerRepeatSequencesLimit": rep_lim,
+            "schedulerUntilTerminated":      loop_r,
+            "schedulerUntil":                until_r,
+            "schedulerUntilValue":           until_val,
+        })).collect();
 
         form_error.set(None);
-        planner.planning.set(false);
-        mosaic_tiles.set(None);
-        if let Some(ctx) = tab_ctx { ctx.0.set(Tab::Scheduler); }
-
-        let send_refresh = Arc::clone(&send_s);
+        let send = Arc::clone(&send_s);
+        let save_failed = tr.sched_err_save_sequence;
         wasm_bindgen_futures::spawn_local(async move {
+            // The tiles need the file: wait for KStars to have written it
+            // ({result, path}, message.cpp:1300-1321) and use its absolute path.
+            let reply = file_command(&send, file_reply, "scheduler_save_sequence_file", save, 5_000).await;
+            let Some(path) = reply.filter(|r| r.ok).map(|r| r.path) else {
+                form_error.try_set(Some(save_failed.to_string()));
+                return;
+            };
+            for mut tile in tiles {
+                if !path.is_empty() {
+                    tile["sequenceEdit"] = path.clone().into();
+                }
+                send_cmd(&send, "scheduler_set_all_settings", shared.clone());
+                send_cmd(&send, "scheduler_set_all_settings", tile);
+                send_cmd(&send, "scheduler_add_jobs", serde_json::json!({}));
+            }
+            planner.planning.try_set(false);
+            mosaic_tiles.try_set(None);
+            if let Some(ctx) = tab_ctx { ctx.0.try_set(Tab::Scheduler); }
             gloo_timers::future::TimeoutFuture::new(1500).await;
-            send_cmd(&send_refresh, "scheduler_get_jobs", serde_json::json!({}));
+            send_cmd(&send, "scheduler_get_jobs", serde_json::json!({}));
         });
     };
 

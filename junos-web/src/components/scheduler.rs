@@ -61,9 +61,11 @@ use view_procedures::SchedulerProcedures;
 use view_save::{SaveScheduleSheet, SAVE_ICON};
 use view_settings::{SchedulerSettings, SchedulerSettingsSheet};
 
-/// KStars' `SchedulerState` (ekos.h): RUNNING, and the states a toggle
-/// shouldn't interrupt (STARTUP, SHUTDOWN, LOADING).
+/// KStars' `SchedulerState` (ekos.h): RUNNING, PAUSED (where the toggle
+/// resumes, scheduler.cpp:2063), and the states a toggle shouldn't interrupt
+/// (STARTUP, SHUTDOWN, LOADING).
 const RUNNING: i64 = 2;
+const PAUSED: i64 = 3;
 fn is_transitional(status: i64) -> bool {
     matches!(status, 1 | 4 | 6)
 }
@@ -226,7 +228,7 @@ pub fn SchedulerTab(
             <div class="flex-1 min-h-0 overflow-y-auto [overscroll-behavior:contain] flex flex-col gap-3 p-3 \
                         md:pl-4 md:pr-6 md:overflow-hidden md:grid md:grid-cols-[minmax(0,1fr)_320px] \
                         lg:grid-cols-[minmax(0,1fr)_400px] md:grid-rows-[minmax(0,1fr)]">
-                <SchedulerJobs jobs=jobs site=site send=Arc::clone(&send) lang=lang />
+                <SchedulerJobs jobs=jobs status=status site=site send=Arc::clone(&send) lang=lang />
                 <SchedulerLog log=log lang=lang />
             </div>
 
@@ -246,16 +248,23 @@ pub fn SchedulerTab(
                     }
                     disabled=move || is_transitional(status.get())
                     on:click=on_toggle.clone()>
-                    {move || if status.get() == RUNNING { tr().sched_btn_stop } else { tr().sched_btn_start }}
+                    {move || match status.get() {
+                        RUNNING => tr().sched_btn_stop,
+                        PAUSED => tr().sched_btn_resume,
+                        _ => tr().sched_btn_start,
+                    }}
                 </button>
             </div>
+            <Show when=move || status.get() == PAUSED>
+                <div class="shrink-0 px-3 pb-2 md:pl-4 md:pr-6 text-xs text-state-warn">{move || tr().sched_paused_note}</div>
+            </Show>
             </Show>
 
             <Show when=move || add_open.get()>
                 {sheet(move || tr().sched_add_job_btn, move || add_open.set(false), view! {
                     <AddJobSheet form=form site=site camera=camera filter_wheel=filter_wheel
                                  capture_settings=capture_settings jobs=jobs home_dir=home_dir
-                                 send=Arc::clone(&send_add) lang=lang open=add_open />
+                                 file_reply=file_reply send=Arc::clone(&send_add) lang=lang open=add_open />
                 })}
             </Show>
             <Show when=move || save_open.get()>

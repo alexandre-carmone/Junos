@@ -19,8 +19,8 @@ use crate::dom::event_target_value;
 use crate::dso_catalog::DsoCatalogData;
 use crate::horizon::HorizonMask;
 use crate::i18n::{t, Lang};
-use crate::ws::SendCmd;
-use crate::ws_helpers::send_cmd;
+use crate::ws::{FileReply, SendCmd};
+use crate::ws_helpers::{file_command, send_cmd};
 
 use super::altitude::{self, altaz, altitude, altitude_chart, hhmm, job_ms, samples, Night};
 use super::labels::sanitize_name;
@@ -346,6 +346,8 @@ pub fn AddJobSheet(
     /// The jobs already scheduled, whose ends the altitude card can start from.
     #[prop(into)] jobs: Signal<Vec<Value>>,
     #[prop(into)] home_dir: Signal<String>,
+    /// The answer to `scheduler_save_sequence_file` (`DeviceStore::file_reply`).
+    file_reply: RwSignal<Option<FileReply>>,
     #[prop(into)] send: SendCmd,
     lang: RwSignal<Lang>,
     open: RwSignal<bool>,
@@ -481,17 +483,15 @@ pub fn AddJobSheet(
         let once = resolve_completion_condition("sequence", String::new(), String::new());
         let pa = f.pa.get_untracked().trim().parse::<f64>().unwrap_or(0.0);
 
+        // Per job: the `.esq` to save, then the job form's fields.
+        let mut steps = Vec::new();
         for (job_name, stem, xml, calib_only) in jobs {
             let rel_path = format!(".junos-sequences/{stem}.esq");
             let abs_path = if home.is_empty() { rel_path.clone() } else { format!("{home}/{rel_path}") };
             let (seq_r, rep_r, rep_lim, loop_r, until_r, until_val) =
                 if calib_only { once.clone() } else { completion.clone() };
-            // 1. Save the ESQ file on the KStars machine.
-            send_cmd(&send, "scheduler_save_sequence_file",
-                serde_json::json!({"path": rel_path, "filedata": xml}));
-            // 2. Fill KStars' job form: shared options, then this job's fields.
-            send_cmd(&send, "scheduler_set_all_settings", o.settings_json());
-            send_cmd(&send, "scheduler_set_all_settings", serde_json::json!({
+            let save = serde_json::json!({"path": rel_path, "filedata": xml});
+            let fields = serde_json::json!({
                 "nameEdit":          job_name,
                 "raBox":             format!("{ra_h:.6}"),
                 "decBox":            format!("{dec_d:.6}"),
@@ -507,17 +507,37 @@ pub fn AddJobSheet(
                 "schedulerUntilTerminated":      loop_r,
                 "schedulerUntil":                until_r,
                 "schedulerUntilValue":           until_val,
-            }));
-            // 3. Add the job (KStars inserts it below the selected row and
-            //    selects it, so the calibration job follows its lights).
-            send_cmd(&send, "scheduler_add_jobs", serde_json::json!({}));
+            });
+            steps.push((save, fields));
         }
-        // Close, and refresh the list once KStars has them.
-        open.set(false);
-        let s = Arc::clone(&send);
+        let shared = o.settings_json();
+        let send = Arc::clone(&send);
+        let save_failed = tr.sched_err_save_sequence;
         wasm_bindgen_futures::spawn_local(async move {
+            for (save, mut fields) in steps {
+                // 1. Save the ESQ file on the KStars machine, and wait for it:
+                //    a job pointing at a file that was never written fails at
+                //    its start (message.cpp:1300-1321 answers {result, path}).
+                //    The job takes the absolute path KStars wrote to.
+                let reply = file_command(&send, file_reply, "scheduler_save_sequence_file", save, 5_000).await;
+                let Some(path) = reply.filter(|r| r.ok).map(|r| r.path) else {
+                    f.error.try_set(Some(save_failed.to_string()));
+                    return;
+                };
+                if !path.is_empty() {
+                    fields["sequenceEdit"] = path.into();
+                }
+                // 2. Fill KStars' job form: shared options, then this job's fields.
+                send_cmd(&send, "scheduler_set_all_settings", shared.clone());
+                send_cmd(&send, "scheduler_set_all_settings", fields);
+                // 3. Add the job (KStars inserts it below the selected row and
+                //    selects it, so the calibration job follows its lights).
+                send_cmd(&send, "scheduler_add_jobs", serde_json::json!({}));
+            }
+            // Close, and refresh the list once KStars has them.
+            open.try_set(false);
             gloo_timers::future::TimeoutFuture::new(800).await;
-            send_cmd(&s, "scheduler_get_jobs", serde_json::json!({}));
+            send_cmd(&send, "scheduler_get_jobs", serde_json::json!({}));
         });
     };
 

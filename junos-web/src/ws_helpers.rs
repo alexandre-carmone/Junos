@@ -29,7 +29,8 @@ pub fn send_cmd(send: &SendCmd, ty: &str, payload: Value) {
 }
 
 /// Send a file command (`scheduler_load_file`, `scheduler_save_file`,
-/// `capture_load_sequence_file`) and wait up to `timeout_ms` for its answer in
+/// `scheduler_save_sequence_file`, `capture_load_sequence_file`,
+/// `capture_save_sequence_file`) and wait up to `timeout_ms` for its answer in
 /// `DeviceStore::file_reply`. `None` when KStars stays silent — Ekos not
 /// started, or a save that wrote nothing.
 pub async fn file_command(

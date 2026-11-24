@@ -21,6 +21,8 @@ use super::labels::{job_stage_label, job_state_label};
 #[component]
 pub fn SchedulerJobs(
     #[prop(into)] jobs: Signal<Vec<Value>>,
+    /// KStars' `SchedulerState`, for which jobs can be removed.
+    #[prop(into)] status: Signal<i64>,
     #[prop(into)] site: Signal<SiteSnapshot>,
     #[prop(into)] send: SendCmd,
     lang: RwSignal<Lang>,
@@ -56,9 +58,17 @@ pub fn SchedulerJobs(
                             <div class="py-8 px-4 text-center text-sm text-text-faint">{tr.sched_no_jobs}</div>
                         }.into_any();
                     }
+                    // KStars refuses to remove the running job, and any job
+                    // while the scheduler is busy with none running
+                    // (schedulermodulestate.cpp:201-213); it only logs it.
+                    let any_busy = list.iter().any(|j| j["state"].as_i64() == Some(3));
+                    let idle = status.get() == 0;
                     list.into_iter()
                         .enumerate()
-                        .map(|(i, job)| job_card(i, job, tr, Arc::clone(&send)))
+                        .map(|(i, job)| {
+                            let removable = job["state"].as_i64() != Some(3) && (idle || any_busy);
+                            job_card(i, job, tr, removable, Arc::clone(&send))
+                        })
                         .collect::<Vec<_>>()
                         .into_any()
                 }}
@@ -86,7 +96,7 @@ fn job_track(i: usize, job: &Value) -> Track {
     }
 }
 
-fn job_card(i: usize, job: Value, tr: &'static Translations, send: SendCmd) -> impl IntoView {
+fn job_card(i: usize, job: Value, tr: &'static Translations, removable: bool, send: SendCmd) -> impl IntoView {
     let name = job["name"].as_str().unwrap_or("?").to_string();
     // targetRA / targetDEC are J2000 (ra0 / dec0), RA in hours.
     let coords = format!(
@@ -132,9 +142,11 @@ fn job_card(i: usize, job: Value, tr: &'static Translations, send: SendCmd) -> i
                     {state_label}
                     {(!stage.is_empty()).then(|| view! { <span class="text-text-muted">{format!(" \u{00b7} {stage}")}</span> })}
                 </span>
-                <button class="btn-icon shrink-0 -mr-1 text-text-muted" title=tr.sched_remove_job on:click=on_remove>
-                    "\u{2716}"
-                </button>
+                {removable.then(|| view! {
+                    <button class="btn-icon shrink-0 -mr-1 text-text-muted" title=tr.sched_remove_job on:click=on_remove>
+                        "\u{2716}"
+                    </button>
+                })}
             </div>
             <div class="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-xs text-text-muted">
                 <span>{coords}</span>

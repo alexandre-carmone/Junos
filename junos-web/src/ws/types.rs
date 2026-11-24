@@ -1812,14 +1812,17 @@ impl IndiProperty {
     }
 }
 
-/// KStars' answer to a file command the browser sent: `scheduler_load_file`
-/// and `capture_load_sequence_file` reply `{result, path}`; `scheduler_save_file`
-/// replies with the saved file's text, and nothing at all when it fails.
+/// KStars' answer to a file command the browser sent: `scheduler_load_file`,
+/// `capture_load_sequence_file` and `scheduler_save_sequence_file` reply
+/// `{result, path}`; `scheduler_save_file` and `capture_save_sequence_file`
+/// reply with the saved file's text, and nothing at all when they fail.
 #[derive(Debug, Clone)]
 pub struct FileReply {
     /// The command answered.
     pub cmd: String,
     pub ok: bool,
+    /// The absolute path KStars used, when the reply names it.
+    pub path: String,
 }
 
 /// Aggregated state from `new_livestacker_state`. KStars sends two flavours:

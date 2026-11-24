@@ -192,6 +192,7 @@ pub fn TabContent(
                 focal_length_mm=focal_length_mm
                 home_dir=home_dir
                 mosaic_tiles=store.mosaic_tiles
+                file_reply=store.file_reply
                 send=Arc::clone(&send_mosaic)
             />
         </div>

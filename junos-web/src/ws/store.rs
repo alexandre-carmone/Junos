@@ -1694,10 +1694,9 @@ impl DeviceStore {
                     if let Some(v) = payload["status"].as_i64() {
                         s.status = v;
                     }
+                    // The whole log text; "" once cleared (schedulerprocess.cpp:3938).
                     if let Some(l) = payload["log"].as_str() {
-                        if !l.is_empty() {
-                            s.log = l.to_string();
-                        }
+                        s.log = l.to_string();
                     }
                 });
             }
@@ -1722,16 +1721,17 @@ impl DeviceStore {
 
             // File commands (message.cpp:683, 1205, 1240): `{result, path}`,
             // except the saves.
-            "scheduler_load_file" | "capture_load_sequence_file" => {
+            "scheduler_load_file" | "capture_load_sequence_file" | "scheduler_save_sequence_file" => {
                 self.file_reply.set(Some(FileReply {
                     cmd: type_str.to_string(),
                     ok: payload["result"].as_bool().unwrap_or(false),
+                    path: payload["path"].as_str().unwrap_or("").to_string(),
                 }));
             }
             // Both answer only once written (capture: the file's text,
             // message.cpp:681-691).
             "scheduler_save_file" | "capture_save_sequence_file" => {
-                self.file_reply.set(Some(FileReply { cmd: type_str.to_string(), ok: true }));
+                self.file_reply.set(Some(FileReply { cmd: type_str.to_string(), ok: true, path: String::new() }));
             }
 
             // Debounced settings reply (message.cpp:623).
