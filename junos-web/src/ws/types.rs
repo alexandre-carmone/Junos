@@ -827,8 +827,11 @@ impl DriverInfo {
 /// Equipment profile mirrored from KStars `get_profiles` responses.
 ///
 /// Wire shape: `kstars/profileinfo.cpp::toJson` (~line 135). We model the
-/// scalar + driver-label fields the UI shows; the legacy `drivers`
-/// object-of-arrays is ignored on parse — typed slots cover the same data.
+/// scalar + driver-label fields the UI shows. The typed slots hold only the
+/// first driver of a few families (profileinfo.cpp:38-130), so the labels of
+/// `drivers` they don't cover are kept in `extra_drivers` and sent back:
+/// KStars rebuilds the whole driver list from what a save carries
+/// (profileeditor.cpp:200, 558-619).
 #[derive(Debug, Clone, Default)]
 pub struct ProfileInfo {
     pub name:                String,
@@ -855,6 +858,9 @@ pub struct ProfileInfo {
     pub aux4:                String,
     pub remote:              String,    // CSV of remote drivers
     pub driver_source:       String,
+    /// Driver labels in `drivers` that no typed slot shows (a rotator, a
+    /// third CCD, a second focuser…), kept so a save doesn't drop them.
+    pub extra_drivers:       Vec<String>,
 }
 
 impl ProfileInfo {
@@ -864,7 +870,7 @@ impl ProfileInfo {
         let u = |k: &str| v[k].as_u64().unwrap_or(0) as u16;
         let i = |k: &str| v[k].as_i64().unwrap_or(0) as i32;
         let mode = v["mode"].as_str().unwrap_or("local").to_string();
-        Self {
+        let mut p = Self {
             name:                s("name"),
             auto_connect:        b("auto_connect"),
             port_selector:       b("port_selector"),
@@ -889,14 +895,47 @@ impl ProfileInfo {
             aux4:                s("aux4"),
             remote:              s("remote"),
             driver_source:       s("driver_source"),
+            extra_drivers:       Vec::new(),
+        };
+        // `drivers` is {family: [label, …]} (profileinfo.cpp:163-175); an
+        // array of labels is accepted too. Each typed slot accounts for one
+        // label; whatever is left over is extra.
+        let mut labels: Vec<String> = match &v["drivers"] {
+            serde_json::Value::Object(m) => m.values()
+                .filter_map(|a| a.as_array())
+                .flatten()
+                .filter_map(|l| l.as_str().map(str::to_string))
+                .collect(),
+            serde_json::Value::Array(a) => a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect(),
+            _ => Vec::new(),
+        };
+        for slot in p.slots() {
+            if let Some(i) = labels.iter().position(|l| l == slot) {
+                labels.remove(i);
+            }
         }
+        p.extra_drivers = labels;
+        p
+    }
+
+    /// The non-empty typed driver slots.
+    fn slots(&self) -> Vec<&String> {
+        [&self.mount, &self.ccd, &self.guider, &self.focuser, &self.filter, &self.ao,
+         &self.dome, &self.weather, &self.aux1, &self.aux2, &self.aux3, &self.aux4]
+            .into_iter()
+            .filter(|s| !s.trim().is_empty() && s.as_str() != "--")
+            .collect()
     }
 
     /// Serialize for `profile_add` / `profile_update`. The ports go as
     /// text: `ProfileEditor::setSettings` reads them with
     /// `QJsonValue::toString(default)` (profileeditor.cpp:539, 542), which
     /// takes a number for its default (7624 / 4400); null keeps that default.
+    /// `drivers` goes as an array of labels (profileeditor.cpp:563): the
+    /// typed slots plus `extra_drivers`. With it present KStars ignores the
+    /// legacy slot keys, which stay for older builds.
     pub fn to_json(&self) -> serde_json::Value {
+        let drivers: Vec<&String> = self.slots().into_iter().chain(self.extra_drivers.iter()).collect();
         let port = |p: u16| if p == 0 { serde_json::Value::Null } else { p.to_string().into() };
         serde_json::json!({
             "name":                self.name,
@@ -923,6 +962,7 @@ impl ProfileInfo {
             "aux4":                self.aux4,
             "remote":              self.remote,
             "driver_source":       if self.driver_source.is_empty() { "system".to_string() } else { self.driver_source.clone() },
+            "drivers":             drivers,
         })
     }
 }
