@@ -535,6 +535,7 @@
   "imaging_remove_job": "Retirer le job",
   "imaging_clear_confirm": "Effacer ?",
   "imaging_queue_locked": "La file ne peut pas changer pendant la capture.",
+  "imaging_queue_done": "Tous les jobs sont terminés. KStars demanderait sur son bureau s'il faut les réinitialiser : rechargez la séquence, ou activez « Toujours réinitialiser la séquence au démarrage » dans Ekos.",
   "imaging_one_shot": "Prise unique",
   "imaging_add_exposure": "+ Ajouter une pose",
   "imaging_send_sequence": "Envoyer",

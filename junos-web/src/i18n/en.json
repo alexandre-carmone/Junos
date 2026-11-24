@@ -445,6 +445,7 @@
   "imaging_remove_job": "Remove job",
   "imaging_clear_confirm": "Clear?",
   "imaging_queue_locked": "The queue can't change while capturing.",
+  "imaging_queue_done": "Every job is complete. KStars would ask on its desktop whether to reset them: reload the sequence, or turn on \"Always reset sequence when starting\" in Ekos.",
   "imaging_one_shot": "One Shot",
   "imaging_add_exposure": "+ Add Exposure",
   "imaging_send_sequence": "Send to camera",

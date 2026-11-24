@@ -161,6 +161,8 @@ pub fn ImagingTab(
     livestacker_settings: RwSignal<Value>,
     /// Ekos started — the `livestacker_*` commands are dropped before that.
     #[prop(into)] online: Signal<bool>,
+    /// Global KStars `Options::` (`option_get`), for `alwaysResetSequenceWhenStarting`.
+    options: RwSignal<Value>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
@@ -184,6 +186,13 @@ pub fn ImagingTab(
     let looping = RwSignal::new(false);
     let ended = Memo::new(move |_| status.with(|s| matches!(s.to_lowercase().as_str(), "idle" | "aborted" | "complete")));
     Effect::new(move |_| if ended.get() { looping.set(false) });
+    // Start on a queue whose jobs are all Complete makes KStars ask, in a
+    // modal box on its desktop only, whether to reset them — and wait there
+    // (cameraprocess.cpp:3411). Not when it resets them on its own.
+    let queue_done = Memo::new(move |_| {
+        queue.with(|q| !q.is_empty() && q.iter().all(|j| j["Status"] == "Complete"))
+            && !options.with(|o| o["alwaysResetSequenceWhenStarting"].as_bool().unwrap_or(false))
+    });
     let busy = Memo::new(move |_| {
         looping.get()
             || status.with(|s| status_is_active(s))
@@ -703,6 +712,9 @@ pub fn ImagingTab(
                         <Show when=move || busy.get() && queue.with(|q| !q.is_empty())>
                             <span class="text-xs text-text-faint">{move || tr().imaging_queue_locked}</span>
                         </Show>
+                        <Show when=move || !busy.get() && queue_done.get()>
+                            <span class="text-xs text-state-warn">{move || tr().imaging_queue_done}</span>
+                        </Show>
                         // Paths are on the KStars host.
                         <Show when=move || !file_cmd.get().is_empty()>
                             <form class="flex items-center gap-2" on:submit=on_file.clone()>
@@ -745,7 +757,7 @@ pub fn ImagingTab(
                         } else {
                             "btn btn-primary h-11 px-5 font-semibold max-md:flex-1"
                         }
-                        disabled=move || !busy.get() && queue.with(Vec::is_empty)
+                        disabled=move || !busy.get() && (queue.with(Vec::is_empty) || queue_done.get())
                         on:click=on_run>
                     {move || if busy.get() {
                         format!("\u{25A0} {}", tr().imaging_stop)
