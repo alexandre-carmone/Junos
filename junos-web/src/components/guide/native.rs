@@ -106,7 +106,7 @@ pub fn NativeGuide(
     capture_status: Signal<String>,
     online: Signal<bool>,
     profiles: RwSignal<Vec<ProfileInfo>>,
-    selected_profile: RwSignal<Option<String>>,
+    selected_profile: Signal<Option<String>>,
     send: SendCmd,
 ) -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));

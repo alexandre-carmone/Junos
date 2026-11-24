@@ -105,12 +105,12 @@ fn option_row(r: &Rows, send: &SendCmd, options: Memo<Value>, name: &'static str
     }
 }
 
-/// What "Use junos guider" reads: KStars' profiles, the selected one, the
+/// What "Use junos guider" reads: KStars' profiles, the one to edit, the
 /// daemon's event-server port and whether Ekos is started.
 #[derive(Clone, Copy)]
 pub struct UseJunos {
     pub profiles: RwSignal<Vec<ProfileInfo>>,
-    pub selected: RwSignal<Option<String>>,
+    pub selected: Signal<Option<String>>,
     pub port: Memo<Option<u16>>,
     pub online: Signal<bool>,
 }

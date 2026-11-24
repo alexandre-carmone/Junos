@@ -212,9 +212,10 @@ pub fn GuideTab(
     #[prop(into)] capture_status: Signal<String>,
     /// Ekos is started (`new_connection_state.online`).
     #[prop(into)] online: Signal<bool>,
-    /// KStars' profiles and the selected one, for "Use junos guider".
+    /// KStars' profiles and the one to edit (the running one while Ekos
+    /// is online), for "Use junos guider".
     profiles: RwSignal<Vec<ProfileInfo>>,
-    selected_profile: RwSignal<Option<String>>,
+    #[prop(into)] selected_profile: Signal<Option<String>>,
     #[prop(into)] send: SendCmd,
 ) -> impl IntoView {
     let native = Memo::new(move |_| guider.state.with(Option::is_some));

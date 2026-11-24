@@ -98,6 +98,7 @@ enum Editor {
 pub fn ProfilesTab(
     profiles: RwSignal<Vec<ProfileInfo>>,
     selected_profile: RwSignal<Option<String>>,
+    running_profile: RwSignal<Option<String>>,
     drivers: RwSignal<Vec<DriverInfo>>,
     online: RwSignal<bool>,
     connected: RwSignal<bool>,
@@ -167,7 +168,7 @@ pub fn ProfilesTab(
                         pt-[max(0.375rem,env(safe-area-inset-top))] border-b border-border-base bg-bg-elev-1">
                 <span class="inline-block w-5 h-5 shrink-0 text-accent-cyan" inner_html=tab_icon(Tab::Profiles)></span>
                 <span class="shrink-0 font-semibold text-text-blue-bright">{move || tr().tab_profiles}</span>
-                <span class="min-w-0 truncate text-sm text-text-muted">{move || selected_profile.get()}</span>
+                <span class="min-w-0 truncate text-sm text-text-muted">{move || running_profile.get().or_else(|| selected_profile.get())}</span>
                 <span class=move || format!("{} ml-auto shrink-0", state.get().1)>{move || state.get().0}</span>
                 <button class="btn-icon shrink-0 text-text-muted" title=move || tr().files_refresh on:click=refresh>
                     "\u{21bb}"
@@ -194,7 +195,7 @@ pub fn ProfilesTab(
                                 if list.is_empty() {
                                     return hint(tr.profiles_empty).into_any();
                                 }
-                                let live = online.get().then(|| selected_profile.get()).flatten();
+                                let live = running_profile.get();
                                 let launching = starting.get();
                                 let can_launch = connected.get() && launching.is_none();
                                 list.into_iter().map(|p| {
@@ -273,7 +274,7 @@ pub fn ProfilesTab(
                 let send = send_editor.clone();
                 match e {
                     Editor::Profile(p) => {
-                        let live = online.get().then(|| selected_profile.get()).flatten();
+                        let live = running_profile.get();
                         profile_sheet(p, live, profiles, drivers, editor, send, lang).into_any()
                     }
                     Editor::Train(trn) => train_sheet(trn, devices, scopes, editor, send, lang).into_any(),

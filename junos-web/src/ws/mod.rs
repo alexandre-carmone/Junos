@@ -105,11 +105,16 @@ pub fn use_junos_ws() -> (DeviceStore, SendCmd) {
     let online_sig = store.online;
     {
         let prime_send = send_fn.clone();
+        let running_profile = store.running_profile;
         Effect::new(move |_| {
             if online_sig.get() {
                 for cmd in BOOTSTRAP_CMDS {
                     prime_send(cmd.to_string());
                 }
+                // Its answer names the running profile (store.rs `get_profiles`).
+                prime_send(r#"{"type":"get_profiles","payload":{}}"#.to_string());
+            } else {
+                running_profile.set(None);
             }
         });
     }

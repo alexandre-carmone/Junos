@@ -105,6 +105,11 @@ pub struct DeviceStore {
     pub profiles: RwSignal<Vec<ProfileInfo>>,
     /// Name of the currently-selected profile in KStars (`selectedProfile`).
     pub selected_profile: RwSignal<Option<String>>,
+    /// The profile Ekos runs: `selectedProfile` as first seen while online,
+    /// None while offline. KStars' own `selectedProfile` follows the profile
+    /// combo, which `profile_update` / `profile_add` move even mid-session
+    /// (manager.cpp:3090, 3106).
+    pub running_profile: RwSignal<Option<String>>,
     /// Installed INDI drivers reported by `get_drivers`. Available before
     /// `online == true` (same gate as `get_profiles`).
     pub drivers: RwSignal<Vec<DriverInfo>>,
@@ -308,6 +313,7 @@ impl DeviceStore {
             stack_preview_url: RwSignal::new(None),
             profiles: RwSignal::new(Vec::new()),
             selected_profile: RwSignal::new(None),
+            running_profile: RwSignal::new(None),
             drivers: RwSignal::new(Vec::new()),
             kstars_running: RwSignal::new(false),
             phd2_running: RwSignal::new(false),
@@ -656,11 +662,13 @@ impl DeviceStore {
                     self.profiles.set(list);
                 }
                 if let Some(s) = payload["selectedProfile"].as_str() {
-                    self.selected_profile.set(if s.is_empty() {
-                        None
-                    } else {
-                        Some(s.to_string())
-                    });
+                    let s = (!s.is_empty()).then(|| s.to_string());
+                    // The combo is locked while a profile runs (manager.cpp:280),
+                    // so the first answer seen online names the running one.
+                    if self.online.get_untracked() && self.running_profile.get_untracked().is_none() {
+                        self.running_profile.set(s.clone());
+                    }
+                    self.selected_profile.set(s);
                 }
             }
 

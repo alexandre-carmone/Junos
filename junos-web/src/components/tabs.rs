@@ -168,7 +168,8 @@ pub fn TabContent(
             <div class="absolute inset-0 z-[40] md:right-[var(--tab-strip-w)]">
                 <GuideTab guide=guide_snapshot guider=guider capture_status=capture_status online=store.online
                           ekos_status=guide_status ekos_settings=store.guide_settings ekos_options=store.options
-                          profiles=store.profiles selected_profile=store.selected_profile
+                          profiles=store.profiles
+                          selected_profile=Signal::derive(move || store.running_profile.get().or_else(|| store.selected_profile.get()))
                           send=Arc::clone(&send_guide) />
             </div>
         </Show>
@@ -208,6 +209,7 @@ pub fn TabContent(
                 <ProfilesTab
                     profiles=store.profiles
                     selected_profile=store.selected_profile
+                    running_profile=store.running_profile
                     drivers=store.drivers
                     online=store.online
                     connected=store.connected
