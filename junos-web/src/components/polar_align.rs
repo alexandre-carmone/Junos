@@ -72,9 +72,11 @@ fn algorithm_label(wire: &str, tr: &Translations) -> &'static str {
     }
 }
 
-const DEFAULT_SPEED_OPTIONS: &[&str] = &[
-    "1x", "2x", "4x", "8x", "16x", "32x", "64x", "128x", "256x", "Max",
-];
+/// The PAA's exposure range (`pAHExposure`, polaralignmentassistant.ui:349-360);
+/// KStars clamps anything else silently.
+const EXPOSURE_MIN: f64 = 1.0;
+const EXPOSURE_MAX: f64 = 30.0;
+
 fn speed_label(wire: &str, tr: &Translations) -> String {
     if wire == "Max" { tr.pa_speed_max.to_string() } else { wire.to_string() }
 }
@@ -397,7 +399,7 @@ pub fn PolarAlignTab(
     let s_exp = send.clone();
     let on_exposure_change = move |ev: web_sys::Event| {
         let Ok(v) = event_target_value(&ev).parse::<f64>() else { return };
-        let v = v.clamp(0.1, 60.0);
+        let v = v.clamp(EXPOSURE_MIN, EXPOSURE_MAX);
         exposure.set(v);
         mark_dirty();
         if let Some(num) = serde_json::Number::from_f64(v) {
@@ -701,8 +703,11 @@ pub fn PolarAlignTab(
                             {move || {
                                 let tr_ = tr();
                                 let current = speed_local.get();
-                                let mut opts: Vec<String> = DEFAULT_SPEED_OPTIONS
-                                    .iter().map(|s| s.to_string()).collect();
+                                // The mount driver's own rates: KStars fills
+                                // `pAHMountSpeed` with them and sets it by text
+                                // (polaralignmentassistant.cpp:109-115), so any
+                                // other label is dropped.
+                                let mut opts: Vec<String> = mount.with(|m| m.slew_rates.clone());
                                 // Keep an unexpected current value selectable.
                                 if !current.is_empty() && !opts.contains(&current) {
                                     opts.insert(0, current.clone());
@@ -723,7 +728,7 @@ pub fn PolarAlignTab(
                     })}
 
                     {setting_row(move || tr().pa_exposure_s_label, view! {
-                        <input type="number" min="0.1" max="60" step="0.1" inputmode="decimal" class=INPUT
+                        <input type="number" min=EXPOSURE_MIN max=EXPOSURE_MAX step="0.1" inputmode="decimal" class=INPUT
                                prop:value=move || exposure.get().to_string()
                                on:change=on_exposure_change.clone() />
                     })}
