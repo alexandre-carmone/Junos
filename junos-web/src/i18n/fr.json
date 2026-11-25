@@ -1138,6 +1138,7 @@
   "files_close_preview": "Fermer",
   "files_prev": "Précédent",
   "files_next": "Suivant",
+  "files_render_failed": "Impossible d’afficher cette image",
   "files_section_file": "Fichier",
   "apps_section": "Applications",
   "apps_kstars": "KStars",

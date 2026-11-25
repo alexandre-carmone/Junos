@@ -33,6 +33,12 @@ pub(super) fn is_image_ext(ext: &str) -> bool {
         || matches!(ext.to_ascii_lowercase().as_str(), "tif" | "tiff" | "xisf" | "cr2" | "nef" | "arw")
 }
 
+/// What the server can render (FITS, JPEG, PNG); the other image types get
+/// the extension placeholder.
+pub(super) fn is_viewable(ext: &str) -> bool {
+    is_fits_ext(ext) || is_jpg_ext(ext)
+}
+
 pub(super) fn is_fits_ext(ext: &str) -> bool {
     matches!(ext.to_ascii_lowercase().as_str(), "fits" | "fit" | "fts")
 }
@@ -45,14 +51,26 @@ pub(super) fn url_encode(s: &str) -> String {
     js_sys::encode_uri_component(s).as_string().unwrap_or_default()
 }
 
-/// The server's 256 px JPEG thumbnail (cached on disk).
-pub(super) fn thumb_url(rel: &str) -> String {
-    format!("/api/files/thumb?size=256&path={}", url_encode(rel))
+/// The server's JPEG render, longest side at most `size` px (cached on disk).
+/// `mtime` (seconds, as listed) makes the URL immutable for the browser.
+pub(super) fn thumb_url(rel: &str, size: u32, mtime: u64) -> String {
+    format!("/api/files/thumb?size={size}&path={}&v={mtime}", url_encode(rel))
 }
 
-/// The server's full-size preview render (FITS stretched to JPEG).
-pub(super) fn preview_url(rel: &str) -> String {
-    format!("/api/files/raw?as=preview&path={}", url_encode(rel))
+/// A grid card's thumbnail as `srcset`: 256 px, or 512 px where the card
+/// spans more device pixels. The viewer's placeholder uses the same so that
+/// the browser picks the one it already holds.
+pub(super) fn thumb_srcset(rel: &str, mtime: u64) -> String {
+    format!("{} 256w, {} 512w", thumb_url(rel, 256, mtime), thumb_url(rel, 512, mtime))
+}
+
+/// `sizes` of a grid card: two columns in a 12 px gutter with an 8 px gap on
+/// phones, ~160–200 px from `sm`.
+pub(super) const THUMB_SIZES: &str = "(min-width: 640px) 200px, calc(50vw - 16px)";
+
+/// The server's full-resolution render (FITS stretched to JPEG).
+pub(super) fn preview_url(rel: &str, mtime: u64) -> String {
+    format!("/api/files/raw?as=preview&path={}&v={mtime}", url_encode(rel))
 }
 
 pub(super) fn format_size(n: u64) -> String {

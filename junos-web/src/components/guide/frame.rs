@@ -349,5 +349,5 @@ pub fn zoom(p: FramePane) -> impl IntoView {
         frame.track();
         untrack(|| p.overlay_png())
     });
-    frame_zoom(url, overlay.into(), open, lang)
+    frame_zoom(url, overlay.into(), Signal::derive(|| None), open, lang)
 }

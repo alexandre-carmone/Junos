@@ -50,6 +50,8 @@ struct Shared {
     flash: RwSignal<Option<String>>,
     /// Full-screen frame (`frame_zoom`).
     zoom_url: RwSignal<Option<String>>,
+    /// The viewer's sharper render, shown under it while it loads.
+    zoom_under: RwSignal<Option<String>>,
     zoom_open: RwSignal<bool>,
     /// Absolute captures root on the host (`CaptureDirCtx`).
     root: RwSignal<String>,
@@ -64,8 +66,9 @@ impl Shared {
         self.refresh.update(|n| *n = n.wrapping_add(1));
     }
 
-    fn zoom(self, url: String) {
+    fn zoom(self, url: String, under: Option<String>) {
         self.zoom_url.set(Some(url));
+        self.zoom_under.set(under);
         self.zoom_open.set(true);
     }
 
@@ -133,6 +136,7 @@ pub fn FilesTab(
         refresh: RwSignal::new(0),
         flash: RwSignal::new(None),
         zoom_url: RwSignal::new(None),
+        zoom_under: RwSignal::new(None),
         zoom_open: RwSignal::new(false),
         root: use_context::<CaptureDirCtx>().map_or_else(|| RwSignal::new(String::new()), |c| c.0),
         online,
@@ -286,7 +290,7 @@ pub fn FilesTab(
                     {planning(s, plan_file, send_plan.get_value())}
                 })}
             </Show>
-            {frame_zoom(s.zoom_url.into(), Signal::derive(|| None), s.zoom_open, lang)}
+            {frame_zoom(s.zoom_url.into(), Signal::derive(|| None), s.zoom_under.into(), s.zoom_open, lang)}
 
             {move || s.flash.get().map(|msg| view! {
                 <div class="absolute left-1/2 -translate-x-1/2 z-[90] bottom-[max(5rem,calc(env(safe-area-inset-bottom)+4.5rem))] \

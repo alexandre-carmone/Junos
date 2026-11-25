@@ -5,6 +5,12 @@
 //! in Files › Planning, with its Load button in place of Resolve & Slew.
 //! ‹ ›, the arrow keys or a swipe on the frame step through the folder's files
 //! in list order; a tap opens the frame full screen.
+//!
+//! The frame: the grid's 256 px thumbnail (already cached) at once, then a
+//! 2048 px render (1024 in Lite) fading in over it, with a spinner while it
+//! loads and an error chip if it fails. Full screen loads the full resolution
+//! over that render. Every URL carries the file's mtime, so a re-saved file
+//! is fetched again while the others stay cached for good.
 
 use leptos::prelude::*;
 use serde_json::Value;
@@ -19,18 +25,29 @@ use super::api::fetch_meta;
 use super::planning::{actions as plan_actions, api::fetch_text, parse::Kind, view as plan_view};
 use super::types::FileMeta;
 use super::utils::{
-    ext_of, format_mtime, format_size, fov_str, is_image_ext, name_of, preview_url, thumb_url, url_encode,
-    value_or_dash, DASH, TRASH_ICON,
+    ext_of, format_mtime, format_size, fov_str, is_image_ext, is_viewable, name_of, preview_url, thumb_srcset,
+    thumb_url, url_encode, value_or_dash, DASH, REFRESH_ICON, THUMB_SIZES, TRASH_ICON,
 };
 use super::{Item, Shared};
 
 /// A horizontal drag past this many px is a swipe, not a tap.
 const SWIPE_PX: f64 = 60.0;
 
+/// The sharp render's progress.
+#[derive(Clone, Copy, PartialEq)]
+enum Load {
+    Loading,
+    Loaded,
+    Failed,
+}
+
 pub(super) fn viewer(s: Shared, files: Memo<Vec<Item>>, send: SendCmd, lang: RwSignal<Lang>) -> impl IntoView {
     let tr = move || t(lang.get());
     let rel = Memo::new(move |_| s.selected.get().unwrap_or_default());
     let image = move || rel.with(|r| is_image_ext(ext_of(r)));
+    // What the server can render; other image types show their extension.
+    let viewable = move || rel.with(|r| is_viewable(ext_of(r)));
+    let lite = use_context::<crate::LiteModeCtx>().map(|c| c.0);
     // Place in the list, for "3 / 42" and ‹ ›; None once filtered out.
     let pos = Memo::new(move |_| {
         rel.with(|r| files.with(|f| f.iter().position(|(x, _)| x == r).map(|i| (i, f.len()))))
@@ -62,6 +79,34 @@ pub(super) fn viewer(s: Shared, files: Memo<Vec<Item>>, send: SendCmd, lang: RwS
         });
     });
 
+    // The file's mtime: from the listing, else (a file filtered out of it)
+    // from its meta.
+    let mtime = Memo::new(move |_| {
+        rel.with(|r| files.with(|f| f.iter().find(|(x, _)| x == r).map(|(_, e)| e.mtime)))
+            .or_else(|| meta.with(|m| m.as_ref().and_then(|m| m.as_ref().ok()).map(|m| m.mtime)))
+    });
+    let sharp = Memo::new(move |_| {
+        let size = if lite.is_some_and(|l| l.get()) { 1024 } else { 2048 };
+        let mt = mtime.get()?;
+        rel.with(|r| is_viewable(ext_of(r)).then(|| thumb_url(r, size, mt)))
+    });
+    let load = RwSignal::new(Load::Loading);
+    Effect::new(move |_| {
+        sharp.track();
+        load.set(Load::Loading);
+    });
+    // What the frame's badge shows: an unlisted file whose meta failed has no
+    // render to wait for.
+    let shown_load = move || {
+        if sharp.with(Option::is_none) && meta.with(|m| matches!(m, Some(Err(_)))) { Load::Failed } else { load.get() }
+    };
+    // An event of a render no longer shown changes nothing.
+    let settle = move |url: &str, state: Load| {
+        if sharp.with_untracked(|s| s.as_deref() == Some(url)) {
+            load.set(state);
+        }
+    };
+
     // Swipe: where the pointer went down, and whether it swiped (no tap then).
     let down_x = StoredValue::new(None::<f64>);
     let swiped = StoredValue::new(false);
@@ -80,8 +125,12 @@ pub(super) fn viewer(s: Shared, files: Memo<Vec<Item>>, send: SendCmd, lang: RwS
         down_x.set_value(None);
     };
     let on_tap = move |_| {
-        if !swiped.get_value() && image() {
-            s.zoom(preview_url(&rel.get_untracked()));
+        if swiped.get_value() || !viewable() {
+            return;
+        }
+        if let Some(mt) = mtime.get_untracked() {
+            let under = sharp.get_untracked().filter(|_| load.get_untracked() == Load::Loaded);
+            s.zoom(preview_url(&rel.get_untracked(), mt), under);
         }
     };
 
@@ -138,29 +187,51 @@ pub(super) fn viewer(s: Shared, files: Memo<Vec<Item>>, send: SendCmd, lang: RwS
 
             <div class="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_360px] \
                         lg:grid-cols-[minmax(0,1fr)_400px] md:grid-rows-[minmax(0,1fr)] md:gap-3 md:p-3 md:pl-4 md:pr-6">
-                // Frame. The cached thumbnail shows at once; the full render
-                // covers it once loaded (same box, both `object-contain`).
+                // Frame. The cached thumbnail shows at once; the sharp render
+                // fades in over it once loaded (same box, both `object-contain`).
                 <div class="relative shrink-0 h-[40dvh] min-h-[180px] overflow-hidden flex items-center justify-center \
                             bg-bg-input-deep border-b border-border-base select-none [touch-action:pan-y] \
                             md:h-auto md:min-h-0 md:border md:rounded-lg"
-                     class:cursor-zoom-in=image
+                     class:cursor-zoom-in=viewable
                      on:pointerdown=on_down on:pointerup=on_up on:pointercancel=move |_| down_x.set_value(None)
                      on:click=on_tap>
                     {move || {
                         let r = rel.get();
-                        if is_image_ext(ext_of(&r)) {
-                            view! {
-                                <img class="absolute inset-0 w-full h-full object-contain" src=thumb_url(&r)
-                                     draggable="false" alt="" />
-                                <img class="absolute inset-0 w-full h-full object-contain" src=preview_url(&r)
-                                     draggable="false" alt="" />
-                            }.into_any()
-                        } else {
-                            view! {
+                        match (sharp.get(), mtime.get()) {
+                            (Some(url), Some(mt)) => {
+                                let (on_ok, on_err) = (url.clone(), url.clone());
+                                view! {
+                                    // The grid card's srcset: the size the grid already loaded.
+                                    <img class="absolute inset-0 w-full h-full object-contain" src=thumb_url(&r, 256, mt)
+                                         srcset=thumb_srcset(&r, mt) sizes=THUMB_SIZES draggable="false" alt="" />
+                                    <img class=move || format!(
+                                             "absolute inset-0 w-full h-full object-contain transition-opacity duration-300 {}",
+                                             if load.get() == Load::Loaded { "opacity-100" } else { "opacity-0" })
+                                         src=url decoding="async" draggable="false" alt=""
+                                         on:load=move |_| settle(&on_ok, Load::Loaded)
+                                         on:error=move |_| settle(&on_err, Load::Failed) />
+                                }.into_any()
+                            }
+                            // A viewable file not listed: its meta brings the mtime.
+                            _ if is_viewable(ext_of(&r)) => ().into_any(),
+                            _ => view! {
                                 <span class="font-mono text-3xl uppercase text-text-faint">{ext_of(&r).to_string()}</span>
-                            }.into_any()
+                            }.into_any(),
                         }
                     }}
+                    {move || viewable().then(|| match shown_load() {
+                        Load::Loading => view! {
+                            <span class="absolute top-2 right-2 p-1 rounded bg-[rgba(0,0,0,0.55)] text-text-muted pointer-events-none">
+                                <span class="block w-4 h-4 animate-spin" inner_html=REFRESH_ICON></span>
+                            </span>
+                        }.into_any(),
+                        Load::Failed => view! {
+                            <span class="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-[rgba(0,0,0,0.55)] text-xs text-state-err pointer-events-none">
+                                {tr().files_render_failed}
+                            </span>
+                        }.into_any(),
+                        Load::Loaded => ().into_any(),
+                    })}
                 </div>
 
                 // Info

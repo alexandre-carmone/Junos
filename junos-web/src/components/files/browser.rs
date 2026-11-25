@@ -8,7 +8,7 @@ use crate::dom::event_target_value;
 use crate::i18n::{t, Lang, Translations};
 
 use super::types::{FilterKind, SortDir, SortKey};
-use super::utils::{format_mtime, format_size, is_image_ext, join, parent_of, thumb_url, FOLDER_ICON};
+use super::utils::{format_mtime, format_size, is_viewable, join, parent_of, thumb_srcset, thumb_url, FOLDER_ICON, THUMB_SIZES};
 use super::{Item, Shared};
 
 const CRUMB: &str = "shrink-0 h-9 min-h-0 min-w-0 px-1.5 rounded-md bg-transparent border-0";
@@ -158,7 +158,7 @@ fn folder_row(s: Shared, (rel, e): Item) -> impl IntoView {
 }
 
 fn file_card(s: Shared, (rel, e): Item) -> impl IntoView {
-    let thumb = is_image_ext(&e.ext).then(|| thumb_url(&rel));
+    let thumb = is_viewable(&e.ext).then(|| (thumb_url(&rel, 256, e.mtime), thumb_srcset(&rel, e.mtime)));
     let info = format!("{} \u{00b7} {}", format_mtime(e.mtime, true), format_size(e.size));
     let open = rel.clone();
     view! {
@@ -176,8 +176,9 @@ fn file_card(s: Shared, (rel, e): Item) -> impl IntoView {
                 }>
             <div class="aspect-square bg-bg-input-deep flex items-center justify-center overflow-hidden">
                 {match thumb {
-                    Some(src) => view! {
-                        <img class="w-full h-full object-cover" src=src loading="lazy" decoding="async" alt="" />
+                    Some((src, srcset)) => view! {
+                        <img class="w-full h-full object-cover" src=src srcset=srcset sizes=THUMB_SIZES
+                             loading="lazy" decoding="async" alt="" />
                     }.into_any(),
                     None => view! {
                         <span class="font-mono text-lg uppercase text-text-faint">{e.ext.clone()}</span>

@@ -804,7 +804,7 @@ pub fn ImagingTab(
                 })}
             </Show>
             <FilterSettingsSheet open=filters_open send=send.clone() />
-            {frame_zoom(shown.into(), clip_map, zoom_open, lang)}
+            {frame_zoom(shown.into(), clip_map, Signal::derive(|| None), zoom_open, lang)}
         </div>
     }
 }

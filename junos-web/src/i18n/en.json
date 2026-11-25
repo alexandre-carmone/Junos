@@ -1048,6 +1048,7 @@
   "files_close_preview": "Close",
   "files_prev": "Previous",
   "files_next": "Next",
+  "files_render_failed": "Couldn't render this frame",
   "files_section_file": "File",
   "apps_section": "Applications",
   "apps_kstars": "KStars",

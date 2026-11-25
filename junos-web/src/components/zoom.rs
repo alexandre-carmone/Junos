@@ -2,7 +2,10 @@
 //! double-click resets, and a click at fit size closes. Imaging shows KStars'
 //! transmitted preview (stretched JPEGs, media.cpp), Files the server's
 //! preview render of a capture. `overlay` is an image the size of the frame
-//! laid over it under the same transform (Imaging's clip map).
+//! laid over it under the same transform (Imaging's clip map); `under` one
+//! shown beneath it until it loads (Files' smaller render of the same frame).
+//! The frame is drawn pixelated only once one image pixel covers two device
+//! pixels or more: smooth while a large frame shows downscaled.
 
 use std::collections::HashMap;
 
@@ -15,6 +18,7 @@ use crate::i18n::{t, Lang};
 pub fn frame_zoom(
     url: Signal<Option<String>>,
     overlay: Signal<Option<String>>,
+    under: Signal<Option<String>>,
     open: RwSignal<bool>,
     lang: RwSignal<Lang>,
 ) -> impl IntoView {
@@ -28,6 +32,21 @@ pub fn frame_zoom(
     let ptrs = StoredValue::new(HashMap::<i32, (f64, f64)>::new());
     let pinch = StoredValue::new(None::<f64>);
     let dragged = StoredValue::new(false);
+    // The frame's natural size, read on load, and its element for the box.
+    let natural = RwSignal::new((0.0_f64, 0.0_f64));
+    let img_ref = NodeRef::<leptos::html::Img>::new();
+    let pixelated = move || {
+        let (s, (nw, nh)) = (scale.get(), natural.get());
+        let Some(el) = img_ref.get() else { return false };
+        if nw <= 0.0 || nh <= 0.0 {
+            return false;
+        }
+        // `object-contain`: the shown width within the (untransformed) box.
+        let (bw, bh) = (f64::from(el.client_width()), f64::from(el.client_height()));
+        let shown_w = bw.min(bh * nw / nh);
+        let dpr = web_sys::window().map_or(1.0, |w| w.device_pixel_ratio());
+        s * shown_w / nw * dpr >= 2.0
+    };
 
     let reset = move || {
         scale.set(1.0);
@@ -106,10 +125,23 @@ pub fn frame_zoom(
                      on:wheel=on_wheel on:pointerdown=on_down on:pointermove=on_move
                      on:pointerup=on_up on:pointercancel=on_up
                      on:dblclick=move |_| reset() on:click=on_click>
-                    <img class="w-full h-full object-contain [image-rendering:pixelated] \
-                                pointer-events-none select-none will-change-transform"
+                    <Show when=move || under.with(Option::is_some)>
+                        <img class="absolute inset-0 w-full h-full object-contain \
+                                    pointer-events-none select-none will-change-transform"
+                             style:transform=move || format!("translate({}px,{}px) scale({})", tx.get(), ty.get(), scale.get())
+                             src=move || under.get().unwrap_or_default() />
+                    </Show>
+                    <img node_ref=img_ref
+                         class=move || format!(
+                             "relative w-full h-full object-contain pointer-events-none select-none will-change-transform {}",
+                             if pixelated() { "[image-rendering:pixelated]" } else { "" })
                          style:transform=move || format!("translate({}px,{}px) scale({})", tx.get(), ty.get(), scale.get())
-                         src=move || url.get().unwrap_or_default() />
+                         src=move || url.get().unwrap_or_default()
+                         on:load=move |ev| {
+                             if let Some(img) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) {
+                                 natural.set((f64::from(img.natural_width()), f64::from(img.natural_height())));
+                             }
+                         } />
                     // Fills the box as the frame does (a frame smaller than the
                     // box is scaled up too, or the two would part), and both
                     // transform about the box's centre, so they stay aligned.
