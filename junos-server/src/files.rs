@@ -4,9 +4,12 @@
 //!
 //! - `GET /list?path=<rel>`   — directory listing.
 //! - `GET /meta?path=<rel>`   — per-file metadata, including parsed FITS header.
-//! - `GET /thumb?path=<rel>&size=N` — JPEG thumbnail (cached on disk).
-//! - `GET /raw?path=<rel>[&as=preview]` — original bytes, or full-res JPEG
-//!   for FITS when `as=preview`.
+//! - `GET /thumb?path=<rel>&size=N[&v=mtime]` — JPEG q90 thumbnail, longest
+//!   side ≤ N (64–4096), FITS auto-stretched as KStars does (cached on disk).
+//! - `GET /raw?path=<rel>[&as=preview][&v=mtime]` — original bytes, or for a
+//!   FITS with `as=preview` the same render at full resolution.
+//! - With `v` (the file's mtime), thumb and raw are cached by the browser for
+//!   good: the URL names one version of the file.
 //! - `GET /download`, `POST /rename`, `DELETE /delete`, `GET /resolve?abs=`,
 //!   `POST /mkdir {path}` — see each handler.
 //!
@@ -16,8 +19,8 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use axum::body::Bytes;
@@ -26,6 +29,7 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tokio::sync::Semaphore;
 use tracing::warn;
 
 use crate::AppState;
@@ -81,12 +85,16 @@ pub struct PathQ {
     pub path: String,
 }
 
+/// `v` is the file's mtime as the client knows it: with it, the URL names one
+/// version of the file and the response is cached for good.
 #[derive(Debug, Deserialize)]
 pub struct ThumbQ {
     #[serde(default)]
     pub path: String,
     #[serde(default = "default_thumb_size")]
     pub size: u32,
+    #[serde(default)]
+    pub v: Option<String>,
 }
 
 fn default_thumb_size() -> u32 { 256 }
@@ -97,6 +105,8 @@ pub struct RawQ {
     pub path: String,
     #[serde(default)]
     pub r#as: Option<String>,
+    #[serde(default)]
+    pub v: Option<String>,
 }
 
 // ── Sandbox resolution ───────────────────────────────────────────────────────
@@ -259,6 +269,43 @@ pub async fn meta(
 
 // ── /thumb ───────────────────────────────────────────────────────────────────
 
+/// JPEG quality of every render the Files tab gets (thumbnails and previews).
+const PREVIEW_QUALITY: u8 = 90;
+
+/// Render version in the thumbnail cache key: bumped whenever the render
+/// changes, so a thumbnail cached by an older one is never served.
+const THUMB_RENDER_VERSION: &str = "stf1";
+
+/// Largest thumbnail kept in the disk cache: the grid's sizes. The viewer's
+/// larger renders are cached by the browser only (the URL carries `v`), so
+/// `.junos-thumbs` doesn't grow by megabytes per file opened.
+const THUMB_CACHE_MAX: u32 = 512;
+
+/// Render slots: a FITS cube decodes to hundreds of MB and a grid of
+/// thumbnails asks for dozens at once. Two for the grid's thumbnails, one for
+/// the viewer's renders, so opening a file doesn't wait behind the grid.
+fn render_permits(small: bool) -> Arc<Semaphore> {
+    static SMALL: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    static LARGE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    let slot = if small { &SMALL } else { &LARGE };
+    slot.get_or_init(|| Arc::new(Semaphore::new(if small { 2 } else { 1 }))).clone()
+}
+
+/// Run a render off the runtime under a permit. The permit moves into the
+/// blocking task, so a client that goes away doesn't free it early.
+async fn render_blocking<F>(small: bool, f: F) -> Result<Vec<u8>, String>
+where
+    F: FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
+{
+    let permit = render_permits(small).acquire_owned().await.map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        f()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 pub async fn thumb(
     State(state): State<AppState>,
     Query(q): Query<ThumbQ>,
@@ -266,56 +313,73 @@ pub async fn thumb(
     let (root, target) = resolve(&state, &q.path)?;
     let meta = std::fs::metadata(&target).map_err(|_| StatusCode::NOT_FOUND)?;
     if !meta.is_file() { return Err(StatusCode::BAD_REQUEST); }
-    let size = q.size.clamp(64, 1024);
+    let size = q.size.clamp(64, 4096);
+    let immutable = q.v.is_some();
 
-    // Le cache est indexé par contenu ; l'extension distingue PNG (couleur
-    // débayerisée) et JPEG (mono). On sonde les deux avant de décoder.
-    let cache_base = thumb_cache_base(&root, &target, size, mtime_secs(&meta));
-    let png_cache = cache_base.with_extension("png");
-    let jpg_cache = cache_base.with_extension("jpg");
-    if let Ok(bytes) = std::fs::read(&png_cache) {
-        return Ok(image_response(bytes, true));
-    }
-    if let Ok(bytes) = std::fs::read(&jpg_cache) {
-        return Ok(image_response(bytes, false));
+    let small = size <= THUMB_CACHE_MAX;
+    let cache_path = small.then(|| thumb_cache_path(&root, &target, size, mtime_secs(&meta), meta.len()));
+    if let Some(bytes) = cache_path.as_ref().and_then(|p| std::fs::read(p).ok()) {
+        // A whole JPEG only (written through a rename, but a disk may still
+        // have kept a cut one): anything else is rendered again.
+        if bytes.ends_with(&[0xFF, 0xD9]) {
+            return Ok(image_response(bytes, immutable));
+        }
     }
 
-    let ext = extension(&target);
-    let bytes = std::fs::read(&target).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let (img, is_png) = if is_fits_ext(&ext) {
-        fits_to_image(&bytes, Some(size)).map_err(|e| {
-            warn!("FITS thumb failed for {}: {e}", target.display());
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-    } else {
-        (image_resize_jpeg(&bytes, size).map_err(|e| {
-            warn!("Image thumb failed for {}: {e}", target.display());
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?, false)
-    };
-    let cache_path = if is_png { &png_cache } else { &jpg_cache };
-    if let Some(parent) = cache_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(cache_path, &img);
-    Ok(image_response(img, is_png))
+    let img = render_blocking(small, move || {
+        let ext = extension(&target);
+        let bytes = std::fs::read(&target).map_err(|e| e.to_string())?;
+        let img = if is_fits_ext(&ext) {
+            fits_to_image(&bytes, Some(size))
+        } else {
+            image_resize_jpeg(&bytes, size)
+        }
+        .map_err(|e| format!("thumb failed for {}: {e}", target.display()))?;
+        if let Some(path) = cache_path {
+            write_cache(&path, &img);
+        }
+        Ok(img)
+    })
+    .await
+    .map_err(|e| {
+        warn!("{e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(image_response(img, immutable))
 }
 
-/// Chemin de cache sans extension : l'appelant ajoute `.png`/`.jpg` selon le
-/// format effectivement produit par le décodage.
-fn thumb_cache_base(root: &Path, target: &Path, size: u32, mtime: u64) -> PathBuf {
+/// Write a cache file through a temporary one and a rename, so a concurrent
+/// read never sees it half written.
+fn write_cache(path: &Path, bytes: &[u8]) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, bytes).and_then(|_| std::fs::rename(&tmp, path)).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// Cache file of a thumbnail: the file (path, mtime, length), the size and
+/// the render version.
+fn thumb_cache_path(root: &Path, target: &Path, size: u32, mtime: u64, len: u64) -> PathBuf {
     let mut h = DefaultHasher::new();
     target.hash(&mut h);
     mtime.hash(&mut h);
-    let key = format!("{:016x}_{}", h.finish(), size);
+    len.hash(&mut h);
+    let key = format!("{:016x}_{}_{THUMB_RENDER_VERSION}.jpg", h.finish(), size);
     root.join(".junos-thumbs").join(key)
 }
 
-fn image_response(bytes: Vec<u8>, is_png: bool) -> Response {
-    let ctype = if is_png { "image/png" } else { "image/jpeg" };
+/// `Cache-Control` of a file response: for good when the URL carries `v`.
+fn cache_control(immutable: bool, default: &'static str) -> header::HeaderValue {
+    header::HeaderValue::from_static(if immutable { "private, max-age=31536000, immutable" } else { default })
+}
+
+fn image_response(bytes: Vec<u8>, immutable: bool) -> Response {
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, ctype.parse().unwrap());
-    headers.insert(header::CACHE_CONTROL, "private, max-age=300".parse().unwrap());
+    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static("image/jpeg"));
+    headers.insert(header::CACHE_CONTROL, cache_control(immutable, "private, max-age=300"));
     (StatusCode::OK, headers, Bytes::from(bytes)).into_response()
 }
 
@@ -331,14 +395,21 @@ pub async fn raw(
 
     let ext = extension(&target);
     let want_preview = q.r#as.as_deref() == Some("preview");
+    let immutable = q.v.is_some();
 
     if want_preview && is_fits_ext(&ext) {
-        let bytes = std::fs::read(&target).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let (img, is_png) = fits_to_image(&bytes, None).map_err(|e| {
-            warn!("FITS preview failed for {}: {e}", target.display());
+        // Full resolution (up to the JPEG limit), not cached on disk.
+        let img = render_blocking(false, move || {
+            let bytes = std::fs::read(&target).map_err(|e| e.to_string())?;
+            fits_to_image(&bytes, Some(u16::MAX as u32))
+                .map_err(|e| format!("FITS preview failed for {}: {e}", target.display()))
+        })
+        .await
+        .map_err(|e| {
+            warn!("{e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-        return Ok(image_response(img, is_png));
+        return Ok(image_response(img, immutable));
     }
 
     let bytes = std::fs::read(&target).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -348,7 +419,7 @@ pub async fn raw(
         .to_string();
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, mime.parse().unwrap());
-    headers.insert(header::CACHE_CONTROL, "private, max-age=60".parse().unwrap());
+    headers.insert(header::CACHE_CONTROL, cache_control(immutable, "private, max-age=60"));
     Ok((StatusCode::OK, headers, Bytes::from(bytes)).into_response())
 }
 
@@ -356,12 +427,16 @@ pub async fn raw(
 
 fn image_resize_jpeg(bytes: &[u8], max_side: u32) -> Result<Vec<u8>, String> {
     let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
-    let resized = img.thumbnail(max_side, max_side);
-    let mut out = Vec::new();
-    resized
-        .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Jpeg)
-        .map_err(|e| e.to_string())?;
-    Ok(out)
+    let img = if img.width().max(img.height()) > max_side { img.thumbnail(max_side, max_side) } else { img };
+    // The JPEG encoder takes 8-bit grey or RGB only (no alpha, no 16-bit).
+    let img = match img.color() {
+        image::ColorType::L8 | image::ColorType::Rgb8 => img,
+        image::ColorType::L16 | image::ColorType::La8 | image::ColorType::La16 => {
+            image::DynamicImage::ImageLuma8(img.to_luma8())
+        }
+        _ => image::DynamicImage::ImageRgb8(img.to_rgb8()),
+    };
+    encode_jpeg(&img, PREVIEW_QUALITY)
 }
 
 // ── FITS header parser ──────────────────────────────────────────────────────
@@ -528,14 +603,18 @@ fn parse_fits_meta(rows: &[FitsCard]) -> Value {
 
 // ── FITS pixel decode → image (auto-stretched) ──────────────────────────────
 //
-// Les FITS mono sont auto-étirés en niveaux de gris ; les FITS OSC (mosaïque
-// de Bayer, carte `BAYERPAT` présente) sont débayerisés et les cubes RGB
-// (NAXIS3 = 3, les empilements couleur du Live Stacker) rendus en couleur.
+// Les FITS sont étirés comme KStars les affiche : l'auto-stretch STF (preset
+// 1 de `Stretch::computeParams`), par canal et non lié. Les FITS mono en
+// niveaux de gris ; les FITS OSC (mosaïque de Bayer, carte `BAYERPAT`)
+// débayerisés en super-pixel ; les cubes RGB (NAXIS3 = 3, les empilements
+// couleur du Live Stacker) en couleur. Une pose de calibration (dark, bias /
+// offset) reste en gris même avec `BAYERPAT` : débayerisée, elle ne serait
+// que des confettis.
 
 /// Decoded image planes of a FITS: pixel values as `f32` (BZERO/BSCALE
 /// applied), plane after plane, the plane dimensions, the number of planes
-/// read (1, or 3 for an RGB cube), the parsed header, and NAXIS. Used by the
-/// preview renderer (`fits_to_dyn_image`).
+/// read (1, or 3 for an RGB cube), the parsed header, NAXIS and BITPIX. Used
+/// by the preview renderer (`fits_to_dyn_image`).
 struct FitsPlane {
     floats: Vec<f32>,
     w: usize,
@@ -543,6 +622,7 @@ struct FitsPlane {
     planes: usize,
     rows: Vec<FitsCard>,
     naxis: i64,
+    bitpix: i64,
 }
 
 /// Parse the header and decode the image into `f32`: the first 2D plane, or
@@ -611,121 +691,244 @@ fn decode_fits_plane(bytes: &[u8]) -> Result<FitsPlane, String> {
         other => return Err(format!("unsupported BITPIX {other}")),
     }
 
-    Ok(FitsPlane { floats, w, h, planes, rows, naxis })
+    Ok(FitsPlane { floats, w, h, planes, rows, naxis, bitpix })
 }
 
-/// Auto-étirement par canal d'une image RGB entrelacée (clip par centiles) :
-/// approxime une balance des blancs, sinon les données OSC (vert dominant)
-/// tirent vers le vert.
-fn stretch_rgb(rgb: &[f32], w: usize, h: usize) -> Result<image::RgbImage, String> {
-    let npx = w * h;
-    let mut chan: [Vec<f32>; 3] = [
-        Vec::with_capacity(npx),
-        Vec::with_capacity(npx),
-        Vec::with_capacity(npx),
-    ];
-    for px in rgb.chunks_exact(3) {
-        chan[0].push(px[0]);
-        chan[1].push(px[1]);
-        chan[2].push(px[2]);
+/// The stretch's input range, KStars' `getRange` and `recalculateInputRange`
+/// (stretch.cpp:288-310, 365-376): 256 for 8-bit, 65536 otherwise, 1.0 for a
+/// float frame whose sampled max (every 1000th pixel) is ≤ 1.01.
+///
+/// Deliberate deviation for BITPIX 32: KStars never stretches it sensibly
+/// (65536 whatever the data); a stack summed past 16 bits takes its sampled
+/// max instead, so it isn't one white sheet.
+fn stretch_input_range(bitpix: i64, data: &[f32]) -> f32 {
+    // `sampledMax` (stretch.cpp:28-37): starts at 0, a NaN never wins.
+    let sampled_max = || {
+        data.iter().step_by(1000).copied().filter(|v| v.is_finite()).fold(0f32, f32::max)
+    };
+    match bitpix {
+        8 => 256.0,
+        -32 | -64 if sampled_max() <= 1.01 => 1.0,
+        32 => sampled_max().max(65536.0),
+        _ => 65536.0,
     }
-    let ranges: Vec<(f32, f32)> = chan
-        .iter()
-        .map(|c| {
-            let (lo, hi) = percentile_range(c, 0.02, 0.995);
-            (lo, (hi - lo).max(1e-6))
-        })
-        .collect();
+}
 
-    let mut u8buf = vec![0u8; npx * 3];
-    for (dst, src) in u8buf.chunks_exact_mut(3).zip(rgb.chunks_exact(3)) {
-        for c in 0..3 {
-            let (lo, span) = ranges[c];
-            let n = ((src[c] - lo) / span).clamp(0.0, 1.0);
-            dst[c] = (n * 255.0) as u8;
+/// One channel's STF: shadows, midtones and highlights on a 0–1 scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Stf {
+    shadows: f32,
+    midtones: f32,
+    highlights: f32,
+}
+
+/// KStars' preset 1 (`setupStretchPreset`): target background B, clipping C.
+const STF_B: f32 = 0.25;
+const STF_C: f32 = 2.8;
+
+/// `computeParamsOneChannel` (stretch.cpp:227-282): median and MAD over at
+/// most ~500k strided samples, then PixInsight's STF (XISF spec 8.5.7).
+/// Non-finite samples are skipped (KStars would sort them in).
+fn stf_params(plane: &[f32], range: f32) -> Stf {
+    let n = plane.len();
+    let step = if n < 500_000 { 1 } else { n / 500_000 };
+    let mut s: Vec<f32> = plane
+        .iter()
+        .step_by(step)
+        .take(n / step)
+        .copied()
+        .filter(|v| v.is_finite())
+        .collect();
+    if s.is_empty() {
+        return Stf { shadows: 0.0, midtones: 0.5, highlights: 1.0 };
+    }
+    // `median` (stretch.cpp:21-26): nth_element at size / 2.
+    let mid = s.len() / 2;
+    let median = *s.select_nth_unstable_by(mid, f32::total_cmp).1;
+    for v in s.iter_mut() {
+        *v = (*v - median).abs();
+    }
+    let mad = *s.select_nth_unstable_by(mid, f32::total_cmp).1;
+
+    let nm = median / range;
+    let madn = 1.4826 * mad / range;
+    let upper = nm > 0.5;
+    let shadows = if upper || madn == 0.0 { 0.0 } else { (nm - STF_C * madn).clamp(0.0, 1.0) };
+    let highlights = if !upper || madn == 0.0 { 1.0 } else { (nm + STF_C * madn).clamp(0.0, 1.0) };
+    let (x, m) = if !upper { (nm - shadows, STF_B) } else { (STF_B, highlights - nm) };
+    let midtones = if x == 0.0 {
+        0.0
+    } else if x == m {
+        0.5
+    } else if x == 1.0 {
+        1.0
+    } else {
+        ((m - 1.0) * x) / ((2.0 * m - 1.0) * x - m)
+    };
+    Stf { shadows, midtones, highlights }
+}
+
+/// An `Stf` turned into the per-pixel map of `stretchOneChannel`
+/// (stretch.cpp:58-112): shadows and highlights in ADU on `range − 1`.
+struct StfMap {
+    lo: f32,
+    hi: f32,
+    inv_span: f32,
+    m: f32,
+}
+
+impl StfMap {
+    fn new(stf: Stf, range: f32) -> Self {
+        let max_in = if range > 1.0 { range - 1.0 } else { range };
+        let span = if stf.highlights == stf.shadows { 1.0 } else { stf.highlights - stf.shadows };
+        StfMap {
+            lo: stf.shadows * max_in,
+            hi: stf.highlights * max_in,
+            inv_span: 1.0 / (span * max_in),
+            m: stf.midtones,
+        }
+    }
+
+    /// One raw value → 0..=255: the midtones transfer function. A
+    /// non-finite pixel, and the 0/0 of midtones = 0 at the shadows, give 0.
+    fn map(&self, x: f32) -> u8 {
+        if !x.is_finite() || x < self.lo {
+            return 0;
+        }
+        if x >= self.hi {
+            return 255;
+        }
+        let y = (x - self.lo) * self.inv_span;
+        let m = self.m;
+        let out = 255.0 * (m - 1.0) * y / ((2.0 * m - 1.0) * y - m);
+        // Truncated, as KStars assigns the float to its `uint8_t`.
+        if out.is_finite() { out.clamp(0.0, 255.0) as u8 } else { 0 }
+    }
+}
+
+/// Three planar channels, each stretched on its own (KStars' unlinked
+/// stretch), straight into the interleaved RGB image.
+fn stretch_rgb(chans: [&[f32]; 3], w: usize, h: usize, range: f32) -> Result<image::RgbImage, String> {
+    let mut u8buf = vec![0u8; w * h * 3];
+    for (c, plane) in chans.iter().enumerate() {
+        let map = StfMap::new(stf_params(plane, range), range);
+        for (dst, &v) in u8buf.chunks_exact_mut(3).zip(plane.iter()) {
+            dst[c] = map.map(v);
         }
     }
     image::RgbImage::from_raw(w as u32, h as u32, u8buf).ok_or_else(|| "image build failed".into())
 }
 
-/// The auto-stretched picture of a FITS, at most `max_side` px when given:
-/// RGB (`true`) for a Bayer mosaic (débayerisation super-pixel 2×2, w/2 ×
-/// h/2) or a three-plane cube, grey otherwise.
-fn fits_to_dyn_image(bytes: &[u8], max_side: Option<u32>) -> Result<(image::DynamicImage, bool), String> {
-    let FitsPlane { floats, w, h, planes, rows, naxis } = decode_fits_plane(bytes)?;
-    let plane_pixels = w * h;
+/// A calibration frame (dark, bias / offset) by its `IMAGETYP` or `FRAME`.
+fn is_calibration_frame(rows: &[FitsCard]) -> bool {
+    ["IMAGETYP", "FRAME"].iter().any(|k| {
+        header_get(rows, k).is_some_and(|v| {
+            let v = v.to_ascii_lowercase();
+            v.contains("dark") || v.contains("bias") || v.contains("offset")
+        })
+    })
+}
 
-    // Motif de Bayer : présent ⇒ image couleur OSC à débayeriser. On ne tente
-    // rien sur les cubes déjà planaires (NAXIS >= 3).
-    let pattern = if naxis >= 3 {
+/// The Bayer pattern of the top-left 2×2 cell as stored, from `BAYERPAT`
+/// corrected as KStars' `checkDebayerFITS` (fitsdata.cpp:7797-7913):
+/// `ROWORDER = BOTTOM-UP` on an even height swaps the rows, an odd
+/// `XBAYROFF` the columns, an odd `YBAYROFF` the rows (once: KStars' OpenCV
+/// path corrects it twice).
+fn bayer_pattern(rows: &[FitsCard], h: usize) -> Option<String> {
+    let mut pat = header_get(rows, "BAYERPAT")?
+        .trim_matches(|c: char| c == '\'' || c.is_whitespace())
+        .to_ascii_uppercase();
+    if !matches!(pat.as_str(), "RGGB" | "BGGR" | "GRBG" | "GBRG") {
+        return None;
+    }
+    let swap_rows = |p: &str| match p {
+        "RGGB" => "GBRG", "GBRG" => "RGGB", "GRBG" => "BGGR", _ => "GRBG",
+    }.to_string();
+    let swap_cols = |p: &str| match p {
+        "RGGB" => "GRBG", "GRBG" => "RGGB", "GBRG" => "BGGR", _ => "GBRG",
+    }.to_string();
+    let bottom_up = header_get(rows, "ROWORDER")
+        .is_some_and(|o| o.trim().eq_ignore_ascii_case("BOTTOM-UP"));
+    if bottom_up && h.is_multiple_of(2) {
+        pat = swap_rows(&pat);
+    }
+    if header_i64(rows, "XBAYROFF").is_some_and(|x| x.rem_euclid(2) == 1) {
+        pat = swap_cols(&pat);
+    }
+    if header_i64(rows, "YBAYROFF").is_some_and(|y| y.rem_euclid(2) == 1) {
+        pat = swap_rows(&pat);
+    }
+    Some(pat)
+}
+
+/// The auto-stretched picture of a FITS, at most `max_side` px when given:
+/// RGB for a Bayer mosaic (débayerisation super-pixel 2×2, w/2 × h/2) or a
+/// three-plane cube, grey otherwise.
+fn fits_to_dyn_image(bytes: &[u8], max_side: Option<u32>) -> Result<image::DynamicImage, String> {
+    let FitsPlane { floats, w, h, planes, rows, naxis, bitpix } = decode_fits_plane(bytes)?;
+    let n = w * h;
+    // `recalculateInputRange` samples the first plane only.
+    let range = stretch_input_range(bitpix, &floats[..n]);
+
+    // Motif de Bayer : présent ⇒ image couleur OSC à débayeriser. Rien sur
+    // les cubes déjà planaires (NAXIS >= 3) ni sur les darks / bias.
+    let pattern = if naxis >= 3 || is_calibration_frame(&rows) {
         None
     } else {
-        header_get(&rows, "BAYERPAT")
-            .map(|p| p.trim().to_ascii_uppercase())
-            .filter(|p| matches!(p.as_str(), "RGGB" | "BGGR" | "GRBG" | "GBRG"))
+        bayer_pattern(&rows, h)
     };
 
-    let (img, colour) = if planes == 3 {
-        // ── Cube RGB planaire → entrelacé. ──
-        let mut rgb = vec![0f32; plane_pixels * 3];
-        for c in 0..3 {
-            for (i, &v) in floats[c * plane_pixels..(c + 1) * plane_pixels].iter().enumerate() {
-                rgb[i * 3 + c] = v;
-            }
-        }
-        (image::DynamicImage::ImageRgb8(stretch_rgb(&rgb, w, h)?), true)
+    let img = if planes == 3 {
+        let (r, gb) = floats.split_at(n);
+        let (g, b) = gb.split_at(n);
+        image::DynamicImage::ImageRgb8(stretch_rgb([r, g, b], w, h, range)?)
     } else if let Some(pat) = pattern {
-        let (rgb, cw, ch) = debayer_superpixel(&floats, w, h, &pat);
-        (image::DynamicImage::ImageRgb8(stretch_rgb(&rgb, cw, ch)?), true)
+        let ([r, g, b], cw, ch) = debayer_superpixel(&floats, w, h, &pat);
+        drop(floats);
+        image::DynamicImage::ImageRgb8(stretch_rgb([&r, &g, &b], cw, ch, range)?)
     } else {
-        // ── Mono : auto-stretch via percentile clip sur une vue sous-échantillonnée.
-        let (lo, hi) = percentile_range(&floats, 0.02, 0.995);
-        let span = (hi - lo).max(1e-6);
-        let mut u8buf = vec![0u8; plane_pixels];
-        for (dst, &v) in u8buf.iter_mut().zip(floats.iter()) {
-            let n = ((v - lo) / span).clamp(0.0, 1.0);
-            *dst = (n * 255.0) as u8;
-        }
+        let map = StfMap::new(stf_params(&floats, range), range);
+        let u8buf: Vec<u8> = floats.iter().map(|&v| map.map(v)).collect();
         let img = image::GrayImage::from_raw(w as u32, h as u32, u8buf)
             .ok_or("image build failed")?;
-        (image::DynamicImage::ImageLuma8(img), false)
+        image::DynamicImage::ImageLuma8(img)
     };
 
     // `thumbnail` fits the box both ways; never upscale a small frame.
-    let img = match max_side {
+    Ok(match max_side {
         Some(m) if img.width().max(img.height()) > m => img.thumbnail(m, m),
         _ => img,
-    };
-    Ok((img, colour))
+    })
+}
+
+/// JPEG of a grey or RGB 8-bit image.
+fn encode_jpeg(img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
+    img.write_with_encoder(enc).map_err(|e| e.to_string())?;
+    Ok(out)
 }
 
 /// A FITS as a JPEG at most `max_side` px, with its dimensions: the live
 /// stack's preview (`stack.rs`). JPEG whatever the colour, since the lite
 /// re-encode only handles JPEG (`kstars_ws::lite_jpeg`).
 pub(crate) fn fits_to_jpeg(bytes: &[u8], max_side: u32, quality: u8) -> Result<(Vec<u8>, u32, u32), String> {
-    let (img, _) = fits_to_dyn_image(bytes, Some(max_side))?;
-    let mut out = Vec::new();
-    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
-    img.write_with_encoder(enc).map_err(|e| e.to_string())?;
-    Ok((out, img.width(), img.height()))
+    let img = fits_to_dyn_image(bytes, Some(max_side))?;
+    Ok((encode_jpeg(&img, quality)?, img.width(), img.height()))
 }
 
-/// Renvoie `(octets, is_png)` : JPEG pour le mono (comportement historique),
-/// PNG pour la couleur, pour éviter les artefacts JPEG sur des données
-/// fortement étirées.
-fn fits_to_image(bytes: &[u8], max_side: Option<u32>) -> Result<(Vec<u8>, bool), String> {
-    let (img, colour) = fits_to_dyn_image(bytes, max_side)?;
-    let format = if colour { image::ImageFormat::Png } else { image::ImageFormat::Jpeg };
-    let mut out = Vec::new();
-    img.write_to(&mut Cursor::new(&mut out), format).map_err(|e| e.to_string())?;
-    Ok((out, colour))
+/// The Files tab's render of a FITS: JPEG q90, at most `max_side` px when
+/// given.
+fn fits_to_image(bytes: &[u8], max_side: Option<u32>) -> Result<Vec<u8>, String> {
+    encode_jpeg(&fits_to_dyn_image(bytes, max_side)?, PREVIEW_QUALITY)
 }
 
 /// Débayerisation « super-pixel » : chaque cellule de Bayer 2×2 donne un pixel
 /// RGB (R, moyenne des deux verts, B). Rapide et sans artefact — idéal pour des
-/// aperçus/vignettes. Décalage de Bayer supposé nul (XBAYROFF/YBAYROFF ignorés).
-/// Renvoie `(rgb, largeur/2, hauteur/2)` en f32 entrelacé.
-fn debayer_superpixel(floats: &[f32], w: usize, h: usize, pattern: &str) -> (Vec<f32>, usize, usize) {
+/// aperçus/vignettes. `pattern` est déjà corrigé des décalages
+/// (`bayer_pattern`). Renvoie les trois plans `[r, g, b]` en f32, largeur/2 ×
+/// hauteur/2.
+fn debayer_superpixel(floats: &[f32], w: usize, h: usize, pattern: &str) -> ([Vec<f32>; 3], usize, usize) {
     let cw = w / 2;
     let ch = h / 2;
     // Position (ligne, colonne) de R, G1, G2, B dans la cellule 2×2 :
@@ -742,17 +945,17 @@ fn debayer_superpixel(floats: &[f32], w: usize, h: usize, pattern: &str) -> (Vec
         let dc = idx % 2;
         floats[base + dr * w + dc]
     };
-    let mut rgb = vec![0f32; cw * ch * 3];
+    let mut out = [vec![0f32; cw * ch], vec![0f32; cw * ch], vec![0f32; cw * ch]];
     for y in 0..ch {
         for x in 0..cw {
             let base = (y * 2) * w + (x * 2);
-            let out = (y * cw + x) * 3;
-            rgb[out] = cell(base, r);
-            rgb[out + 1] = 0.5 * (cell(base, g1) + cell(base, g2));
-            rgb[out + 2] = cell(base, b);
+            let i = y * cw + x;
+            out[0][i] = cell(base, r);
+            out[1][i] = 0.5 * (cell(base, g1) + cell(base, g2));
+            out[2][i] = cell(base, b);
         }
     }
-    (rgb, cw, ch)
+    (out, cw, ch)
 }
 
 fn find_header_end(bytes: &[u8]) -> Result<usize, String> {
@@ -765,17 +968,6 @@ fn find_header_end(bytes: &[u8]) -> Result<usize, String> {
         if i > 64 * FITS_BLOCK { return Err("no END".into()); }
     }
     Err("no END".into())
-}
-
-/// Approximate percentile clip using a downsampled stride to keep this O(N).
-fn percentile_range(samples: &[f32], lo_p: f64, hi_p: f64) -> (f32, f32) {
-    let stride = (samples.len() / 100_000).max(1);
-    let mut sub: Vec<f32> = samples.iter().step_by(stride).copied().collect();
-    if sub.is_empty() { return (0.0, 1.0); }
-    sub.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let lo_idx = ((sub.len() as f64) * lo_p).floor() as usize;
-    let hi_idx = (((sub.len() as f64) * hi_p).floor() as usize).min(sub.len() - 1);
-    (sub[lo_idx], sub[hi_idx])
 }
 
 // ── /download ────────────────────────────────────────────────────────────────
@@ -992,18 +1184,19 @@ pub async fn resolve_abs(
 mod tests {
     use super::*;
 
-    /// Build a minimal 8-bit FITS, a 2D image or a cube of `planes`, with
-    /// the given extra cards.
-    fn make_fits(w: usize, h: usize, planes: usize, extra: &[(&str, &str)]) -> Vec<u8> {
-        fn card(key: &str, value: &str) -> Vec<u8> {
-            let text = format!("{key:<8}= {value}");
-            let mut rec = text.into_bytes();
-            rec.resize(FITS_RECORD, b' ');
-            rec
-        }
+    fn card(key: &str, value: &str) -> Vec<u8> {
+        let text = format!("{key:<8}= {value}");
+        let mut rec = text.into_bytes();
+        rec.resize(FITS_RECORD, b' ');
+        rec
+    }
+
+    /// A minimal FITS, a 2D image or a cube of `planes`, with the given
+    /// extra cards and big-endian pixel `data`.
+    fn fits_bytes(bitpix: i64, w: usize, h: usize, planes: usize, extra: &[(&str, &str)], mut data: Vec<u8>) -> Vec<u8> {
         let mut hdr = Vec::new();
         hdr.extend(card("SIMPLE", "T"));
-        hdr.extend(card("BITPIX", "8"));
+        hdr.extend(card("BITPIX", &bitpix.to_string()));
         hdr.extend(card("NAXIS", if planes > 1 { "3" } else { "2" }));
         hdr.extend(card("NAXIS1", &w.to_string()));
         hdr.extend(card("NAXIS2", &h.to_string()));
@@ -1019,39 +1212,68 @@ mod tests {
         hdr.extend(end);
         let pad = (hdr.len() + FITS_BLOCK - 1) / FITS_BLOCK * FITS_BLOCK - hdr.len();
         hdr.extend(std::iter::repeat(b' ').take(pad));
-        // Ramp pixel data, padded to a full block.
-        let mut data: Vec<u8> = (0..w * h * planes).map(|i| (i % 256) as u8).collect();
+        // Pixel data, padded to a full block.
         let dpad = (data.len() + FITS_BLOCK - 1) / FITS_BLOCK * FITS_BLOCK - data.len();
         data.extend(std::iter::repeat(0u8).take(dpad));
         hdr.extend(data);
         hdr
     }
 
+    /// An 8-bit ramp image or cube.
+    fn make_fits(w: usize, h: usize, planes: usize, extra: &[(&str, &str)]) -> Vec<u8> {
+        let data = (0..w * h * planes).map(|i| (i % 256) as u8).collect();
+        fits_bytes(8, w, h, planes, extra, data)
+    }
+
+    /// Deterministic noise of roughly unit sigma (Irwin–Hall, 12 uniforms).
+    struct Noise(u64);
+    impl Noise {
+        fn next(&mut self) -> f32 {
+            let mut sum = 0.0;
+            for _ in 0..12 {
+                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                sum += (self.0 >> 40) as f32 / (1u64 << 24) as f32;
+            }
+            sum - 6.0
+        }
+    }
+
+    /// Unsigned 16-bit pixels (BZERO = 32768) as FITS stores them.
+    fn u16_data(values: impl Iterator<Item = f32>) -> Vec<u8> {
+        values
+            .flat_map(|v| ((v.round().clamp(0.0, 65535.0) as i32 - 32768) as i16).to_be_bytes())
+            .collect()
+    }
+
+    fn median_u8(mut v: Vec<u8>) -> u8 {
+        let mid = v.len() / 2;
+        *v.select_nth_unstable(mid).1
+    }
+
     #[test]
     fn mono_fits_renders_jpeg() {
         let fits = make_fits(8, 8, 1, &[]);
-        let (bytes, is_png) = fits_to_image(&fits, None).unwrap();
-        assert!(!is_png);
+        let bytes = fits_to_image(&fits, None).unwrap();
         assert!(bytes.starts_with(&[0xFF, 0xD8, 0xFF])); // JPEG SOI
     }
 
     #[test]
-    fn bayer_fits_debayers_to_png() {
+    fn bayer_fits_debayers_to_jpeg() {
         let fits = make_fits(8, 8, 1, &[("BAYERPAT", "'RGGB    '")]);
-        let (bytes, is_png) = fits_to_image(&fits, None).unwrap();
-        assert!(is_png);
-        assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G'])); // PNG signature
+        let bytes = fits_to_image(&fits, None).unwrap();
+        assert!(bytes.starts_with(&[0xFF, 0xD8, 0xFF]));
+        let img = fits_to_dyn_image(&fits, None).unwrap();
+        assert!(matches!(img, image::DynamicImage::ImageRgb8(_)));
+        assert_eq!((img.width(), img.height()), (4, 4));
     }
 
     #[test]
     fn rgb_cube_fits_renders_colour() {
         let fits = make_fits(8, 8, 3, &[]);
-        let (img, colour) = fits_to_dyn_image(&fits, None).unwrap();
-        assert!(colour);
+        let img = fits_to_dyn_image(&fits, None).unwrap();
+        assert!(matches!(img, image::DynamicImage::ImageRgb8(_)));
         assert_eq!((img.width(), img.height()), (8, 8));
-        let (bytes, is_png) = fits_to_image(&fits, None).unwrap();
-        assert!(is_png);
-        assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
+        assert!(fits_to_image(&fits, None).unwrap().starts_with(&[0xFF, 0xD8, 0xFF]));
     }
 
     #[test]
@@ -1062,5 +1284,122 @@ mod tests {
         assert_eq!((w, h), (8, 4));
         let (_, w, h) = fits_to_jpeg(&make_fits(8, 8, 1, &[]), 1920, 80).unwrap();
         assert_eq!((w, h), (8, 8));
+    }
+
+    #[test]
+    fn stf_params_match_hand_computed_values() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        // Lower half, shadows clamped to 0: median 30, MAD 10 on a 100 range.
+        let p = stf_params(&[10.0, 20.0, 30.0, 40.0, 50.0], 100.0);
+        assert!(close(p.shadows, 0.0) && close(p.highlights, 1.0), "{p:?}");
+        assert!(close(p.midtones, 0.5625), "{p:?}"); // (-0.75·0.3)/(-0.5·0.3 − 0.25)
+        // Upper half: median 80, MAD 10 → X = B, M = 1 − 0.8.
+        let p = stf_params(&[60.0, 70.0, 80.0, 90.0, 100.0], 100.0);
+        assert!(close(p.shadows, 0.0) && close(p.highlights, 1.0), "{p:?}");
+        assert!(close(p.midtones, 0.2 / 0.35), "{p:?}");
+        // A sky background: median 1000, MAD 5 on 65536.
+        let p = stf_params(&[1000.0, 1010.0, 990.0, 1005.0, f32::NAN, 995.0], 65536.0);
+        assert!((p.shadows - 0.014_942_07).abs() < 1e-7, "{p:?}");
+        assert!((p.midtones - 0.000_949_55).abs() < 1e-7, "{p:?}");
+        assert_eq!(p.highlights, 1.0);
+        // A flat plane (MAD 0): no clipping.
+        let p = stf_params(&[5.0; 10], 256.0);
+        assert_eq!((p.shadows, p.highlights), (0.0, 1.0));
+    }
+
+    #[test]
+    fn mono_background_lands_on_a_quarter() {
+        let (w, h) = (200, 200);
+        let mut noise = Noise(1);
+        let data = u16_data((0..w * h).map(|_| 1000.0 + 20.0 * noise.next()));
+        let fits = fits_bytes(16, w, h, 1, &[("BZERO", "32768"), ("BSCALE", "1")], data);
+        let img = fits_to_dyn_image(&fits, None).unwrap();
+        let image::DynamicImage::ImageLuma8(g) = img else { panic!("not grey") };
+        let med = median_u8(g.into_raw()) as i32;
+        assert!((med - 64).abs() <= 15, "median {med}");
+    }
+
+    #[test]
+    fn rgb_cube_background_is_neutral() {
+        let (w, h) = (150, 100);
+        let mut noise = Noise(7);
+        let bgs = [(800.0, 15.0), (1500.0, 25.0), (3000.0, 40.0)];
+        let values: Vec<f32> = bgs
+            .iter()
+            .flat_map(|&(bg, sigma)| (0..w * h).map(|_| bg + sigma * noise.next()).collect::<Vec<_>>())
+            .collect();
+        let fits = fits_bytes(16, w, h, 3, &[("BZERO", "32768")], u16_data(values.into_iter()));
+        let image::DynamicImage::ImageRgb8(rgb) = fits_to_dyn_image(&fits, None).unwrap() else {
+            panic!("not RGB")
+        };
+        let raw = rgb.into_raw();
+        let meds: Vec<i32> = (0..3)
+            .map(|c| median_u8(raw.iter().skip(c).step_by(3).copied().collect()) as i32)
+            .collect();
+        let spread = meds.iter().max().unwrap() - meds.iter().min().unwrap();
+        assert!(spread <= 3, "channel medians {meds:?}");
+    }
+
+    #[test]
+    fn bayer_dark_stays_grey_and_light_is_debayered() {
+        let (w, h) = (64, 48);
+        let mut noise = Noise(3);
+        let data = u16_data((0..w * h).map(|_| 500.0 + 10.0 * noise.next()));
+        let render = |imagetyp: &str| {
+            let fits = fits_bytes(16, w, h, 1, &[
+                ("BZERO", "32768"),
+                ("BAYERPAT", "'GRBG'"),
+                ("IMAGETYP", imagetyp),
+            ], data.clone());
+            fits_to_dyn_image(&fits, None).unwrap()
+        };
+        let dark = render("'Dark Frame'");
+        assert!(matches!(dark, image::DynamicImage::ImageLuma8(_)));
+        assert_eq!((dark.width(), dark.height()), (64, 48));
+        let light = render("'Light Frame'");
+        assert!(matches!(light, image::DynamicImage::ImageRgb8(_)));
+        assert_eq!((light.width(), light.height()), (32, 24));
+        let flat = render("'Flat Field'");
+        assert!(matches!(flat, image::DynamicImage::ImageRgb8(_)));
+    }
+
+    #[test]
+    fn bayer_pattern_follows_roworder_and_offsets() {
+        let rows = |cards: &[(&str, &str)]| -> Vec<FitsCard> {
+            let mut fits = Vec::new();
+            for (k, v) in cards {
+                fits.extend(card(k, v));
+            }
+            let mut end = b"END".to_vec();
+            end.resize(FITS_RECORD, b' ');
+            fits.extend(end);
+            parse_fits_header(&fits).unwrap()
+        };
+        let pat = |cards: &[(&str, &str)], h| bayer_pattern(&rows(cards), h);
+        assert_eq!(pat(&[("BAYERPAT", "' rggb '")], 10).as_deref(), Some("RGGB"));
+        assert_eq!(pat(&[("BAYERPAT", "'RGGB'"), ("ROWORDER", "'BOTTOM-UP'")], 10).as_deref(), Some("GBRG"));
+        assert_eq!(pat(&[("BAYERPAT", "'RGGB'"), ("ROWORDER", "'BOTTOM-UP'")], 11).as_deref(), Some("RGGB"));
+        assert_eq!(pat(&[("BAYERPAT", "'GRBG'"), ("XBAYROFF", "1")], 10).as_deref(), Some("RGGB"));
+        assert_eq!(pat(&[("BAYERPAT", "'BGGR'"), ("YBAYROFF", "1")], 10).as_deref(), Some("GRBG"));
+        assert_eq!(pat(&[("BAYERPAT", "'XYZW'")], 10), None);
+    }
+
+    #[test]
+    fn float_frame_with_nans_maps_them_to_zero() {
+        let (w, h) = (40, 30);
+        let mut noise = Noise(5);
+        let values: Vec<f32> = (0..w * h)
+            .map(|i| if i % 7 == 0 { f32::NAN } else { 0.1 + 0.01 * noise.next() })
+            .collect();
+        let data = values.iter().flat_map(|v| v.to_be_bytes()).collect();
+        let fits = fits_bytes(-32, w, h, 1, &[], data);
+        let image::DynamicImage::ImageLuma8(g) = fits_to_dyn_image(&fits, None).unwrap() else {
+            panic!("not grey")
+        };
+        let raw = g.into_raw();
+        assert!(raw.iter().step_by(7).all(|&v| v == 0));
+        let med = median_u8(raw.iter().enumerate().filter(|(i, _)| i % 7 != 0).map(|(_, &v)| v).collect()) as i32;
+        assert!((med - 64).abs() <= 15, "median {med}");
+        assert_eq!(stretch_input_range(-32, &values), 1.0);
     }
 }
